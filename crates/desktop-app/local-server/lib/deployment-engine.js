@@ -1,12 +1,17 @@
 /**
- * Deployment Engine — orchestrates the full L2 deployment lifecycle.
+ * Deployment Engine -- orchestrates the full L2 deployment lifecycle.
  *
  * Supports two modes:
  * - Local: builds from source via Docker Compose on the platform host
  * - Remote: uses pre-built images, deploys via SSH to a remote server
  *
- * State machine: configured → building/pulling → l1_starting → deploying_contracts → l2_starting → running
- * On error: → error (with rollback)
+ * State machine: configured -> building/pulling -> l1_starting -> deploying_contracts -> l2_starting -> running
+ * On error: -> error (with rollback)
+ *
+ * Features:
+ * - Active deployment registry (tracks which provisions are running)
+ * - Persistent event/log storage in DB (survives page navigation)
+ * - Recovery on server restart (detects stuck deployments)
  */
 
 const EventEmitter = require("events");
@@ -21,11 +26,14 @@ const {
   getAppProfile,
 } = require("./compose-generator");
 const { isHealthy } = require("./rpc-client");
-const { updateDeployment, getNextAvailablePorts } = require("../db/deployments");
+const { updateDeployment, getNextAvailablePorts, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
 const { getHostById } = require("../db/hosts");
 
 // Active deployments event emitters (keyed by deployment ID)
 const deploymentEvents = new Map();
+
+// Active provision registry -- tracks which deployments have a running provision()
+const activeProvisions = new Map(); // id -> { startedAt, phase, abortController }
 
 const PHASES = [
   "configured",
@@ -40,6 +48,11 @@ const PHASES = [
   "running",
 ];
 
+const ACTIVE_PHASES = [
+  "checking_docker", "building", "pulling", "l1_starting",
+  "deploying_contracts", "l2_starting", "starting_prover", "starting_tools",
+];
+
 function getEmitter(deploymentId) {
   if (!deploymentEvents.has(deploymentId)) {
     deploymentEvents.set(deploymentId, new EventEmitter());
@@ -49,9 +62,38 @@ function getEmitter(deploymentId) {
 
 function emit(deploymentId, event, data) {
   const emitter = deploymentEvents.get(deploymentId);
+  const payload = { event, ...data, timestamp: Date.now() };
   if (emitter) {
-    emitter.emit("event", { event, ...data, timestamp: Date.now() });
+    emitter.emit("event", payload);
   }
+  // Persist to DB (skip high-frequency log lines to avoid DB bloat, keep last 500)
+  try {
+    const phase = data?.phase || null;
+    const message = data?.message || null;
+    const extraData = { ...data };
+    delete extraData.event;
+    delete extraData.phase;
+    delete extraData.message;
+    delete extraData.timestamp;
+    const hasExtra = Object.keys(extraData).length > 0;
+    insertDeployEvent(deploymentId, event, phase, message, hasExtra ? extraData : null);
+  } catch (e) {
+    console.error(`[deploy-engine] Failed to persist event for ${deploymentId}:`, e.message);
+  }
+}
+
+/** Check if a deployment has an active provision running */
+function isProvisionActive(deploymentId) {
+  return activeProvisions.has(deploymentId);
+}
+
+/** Get info about all active provisions */
+function getActiveProvisions() {
+  const result = [];
+  for (const [id, info] of activeProvisions) {
+    result.push({ id, startedAt: info.startedAt, phase: info.phase });
+  }
+  return result;
 }
 
 // ============================================================
@@ -61,6 +103,13 @@ function emit(deploymentId, event, data) {
 async function provision(deployment) {
   const { id, program_slug: programSlug } = deployment;
 
+  // Register as active
+  const provisionInfo = { startedAt: Date.now(), phase: "checking_docker" };
+  activeProvisions.set(id, provisionInfo);
+
+  // Clear previous events for a fresh run
+  clearDeployEvents(id);
+
   emit(id, "phase", { phase: "checking_docker", message: "Checking Docker availability..." });
   updateDeployment(id, { phase: "checking_docker", error_message: null });
 
@@ -68,6 +117,7 @@ async function provision(deployment) {
     const errMsg = "Docker is not running. Please install and start Docker Desktop first.";
     emit(id, "error", { message: errMsg });
     updateDeployment(id, { phase: "error", error_message: errMsg });
+    activeProvisions.delete(id);
     throw new Error(errMsg);
   }
 
@@ -82,7 +132,7 @@ async function provision(deployment) {
     dumpFixtures = !!config.dumpFixtures;
   } catch {}
 
-  const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = getNextAvailablePorts();
+  const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
 
   updateDeployment(id, {
@@ -100,6 +150,7 @@ async function provision(deployment) {
     error_message: null,
   });
 
+  provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
 
   try {
@@ -109,24 +160,24 @@ async function provision(deployment) {
 
     emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
     await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
-      // Stream build log lines to SSE
       const lines = chunk.split("\n").filter(Boolean);
       for (const line of lines) {
         emit(id, "log", { message: line });
       }
     });
 
+    provisionInfo.phase = "l1_starting";
     emit(id, "phase", { phase: "l1_starting", message: "Starting L1 node..." });
     updateDeployment(id, { phase: "l1_starting" });
     await docker.startL1(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
     await waitForHealthy(`http://127.0.0.1:${l1Port}`, 60000, id);
     emit(id, "phase", { phase: "l1_starting", message: "L1 node is running" });
 
+    provisionInfo.phase = "deploying_contracts";
     emit(id, "phase", { phase: "deploying_contracts", message: "Deploying L1 contracts (bridge, proposer, verifier)..." });
     updateDeployment(id, { phase: "deploying_contracts" });
     await docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
 
-    // Stop the deployer to prevent restart: on-failure from overwriting /env/.env
     await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
 
     let envVars = {};
@@ -154,7 +205,6 @@ async function provision(deployment) {
       );
     }
 
-    // Save with project ID and timestamp for consistency verification
     updateDeployment(id, {
       bridge_address: bridgeAddress,
       proposer_address: proposerAddress,
@@ -164,18 +214,19 @@ async function provision(deployment) {
 
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
 
+    provisionInfo.phase = "l2_starting";
     emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node..." });
     updateDeployment(id, { phase: "l2_starting" });
     await docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
     await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
     emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
 
+    provisionInfo.phase = "starting_prover";
     emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
     updateDeployment(id, { phase: "starting_prover" });
     await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
 
-    // Start support tools (Blockscout, Bridge UI, Dashboard)
-    // Re-read env volume to get the definitive addresses (L2 watcher uses these)
+    provisionInfo.phase = "starting_tools";
     emit(id, "phase", { phase: "starting_tools", message: "Starting support tools (Blockscout, Bridge UI, Dashboard)..." });
     updateDeployment(id, { phase: "starting_tools" });
     try {
@@ -195,7 +246,6 @@ async function provision(deployment) {
       await docker.startTools(envVars, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port, l2Port, toolsMetricsPort });
       emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
     } catch (toolsErr) {
-      // Tools failure is non-fatal — deployment still works without them
       emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
     }
 
@@ -208,14 +258,14 @@ async function provision(deployment) {
       proposerAddress,
     });
     updateDeployment(id, { phase: "running", status: "active" });
+    activeProvisions.delete(id);
     return updateDeployment(id, {});
   } catch (err) {
     emit(id, "error", { message: err.message });
     updateDeployment(id, { phase: "error", error_message: err.message });
-    try {
-      const composeFile = require("path").join(getDeploymentDir(id), "docker-compose.yaml");
-      await docker.destroy(projectName, composeFile);
-    } catch {}
+    activeProvisions.delete(id);
+    // Do NOT auto-destroy Docker containers on error.
+    // User can inspect logs/state and manually delete or retry.
     throw err;
   }
 }
@@ -229,7 +279,11 @@ async function provisionRemote(deployment, hostId) {
   const host = getHostById(hostId);
   if (!host) throw new Error("Host not found");
 
-  const { l1Port, l2Port, proofCoordPort } = getNextAvailablePorts();
+  const provisionInfo = { startedAt: Date.now(), phase: "pulling" };
+  activeProvisions.set(id, provisionInfo);
+  clearDeployEvents(id);
+
+  const { l1Port, l2Port, proofCoordPort } = await getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
   const remoteDir = `/opt/tokamak/${id}`;
 
@@ -249,7 +303,6 @@ async function provisionRemote(deployment, hostId) {
   try {
     conn = await remote.connect(host);
 
-    // Generate compose file for remote (pre-built images)
     const composeContent = generateRemoteComposeFile({
       programSlug,
       l1Port,
@@ -259,48 +312,41 @@ async function provisionRemote(deployment, hostId) {
       dataDir: remoteDir,
     });
 
-    // Save locally too
     writeComposeFile(id, composeContent);
 
+    provisionInfo.phase = "pulling";
     emit(id, "phase", { phase: "pulling", message: "Uploading configuration and pulling images..." });
 
-    // Create remote dir
     await remote.exec(conn, `mkdir -p ${remoteDir}`);
-
-    // Upload compose file
     await remote.uploadFile(conn, composeContent, `${remoteDir}/docker-compose.yaml`);
 
-    // Upload programs.toml if needed
     const profile = getAppProfile(programSlug);
     if (profile.programsToml) {
       const tomlContent = generateProgramsToml(programSlug);
       await remote.uploadFile(conn, tomlContent, `${remoteDir}/programs.toml`);
     }
 
-    // Pull images
     await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} pull`, {
       timeout: 300000,
     });
 
-    // Start L1
+    provisionInfo.phase = "l1_starting";
     emit(id, "phase", { phase: "l1_starting", message: "Starting L1 node on remote server..." });
     updateDeployment(id, { phase: "l1_starting" });
     await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d tokamak-app-l1`, {
       timeout: 60000,
     });
 
-    // Wait for L1 (via remote curl)
     await waitForRemoteHealthy(conn, l1Port, 60000, id);
     emit(id, "phase", { phase: "l1_starting", message: "L1 node is running" });
 
-    // Deploy contracts
+    provisionInfo.phase = "deploying_contracts";
     emit(id, "phase", { phase: "deploying_contracts", message: "Deploying contracts on remote..." });
     updateDeployment(id, { phase: "deploying_contracts" });
     await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up tokamak-app-deployer`, {
       timeout: 600000,
     });
 
-    // Extract contract addresses
     let envVars = {};
     try { envVars = await remote.extractEnvRemote(conn, projectName); } catch {}
     const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
@@ -316,7 +362,7 @@ async function provisionRemote(deployment, hostId) {
     updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
 
-    // Start L2
+    provisionInfo.phase = "l2_starting";
     emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node on remote..." });
     updateDeployment(id, { phase: "l2_starting" });
     await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d tokamak-app-l2`, {
@@ -325,14 +371,13 @@ async function provisionRemote(deployment, hostId) {
     await waitForRemoteHealthy(conn, l2Port, 120000, id);
     emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
 
-    // Start prover
+    provisionInfo.phase = "starting_prover";
     emit(id, "phase", { phase: "starting_prover", message: "Starting prover on remote..." });
     updateDeployment(id, { phase: "starting_prover" });
     await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d tokamak-app-prover`, {
       timeout: 60000,
     });
 
-    // Done
     const l1Rpc = `http://${host.hostname}:${l1Port}`;
     const l2Rpc = `http://${host.hostname}:${l2Port}`;
     emit(id, "phase", {
@@ -344,18 +389,16 @@ async function provisionRemote(deployment, hostId) {
       proposerAddress,
     });
     updateDeployment(id, { phase: "running", status: "active" });
+    activeProvisions.delete(id);
     conn.end();
     return updateDeployment(id, {});
   } catch (err) {
     emit(id, "error", { message: err.message });
     updateDeployment(id, { phase: "error", error_message: err.message });
-    // Cleanup on remote
-    if (conn) {
-      try {
-        await remote.destroyRemote(conn, projectName, remoteDir);
-      } catch {}
-      conn.end();
-    }
+    activeProvisions.delete(id);
+    // Do NOT auto-destroy remote containers on error.
+    // User can inspect logs/state and manually delete or retry.
+    if (conn) conn.end();
     throw err;
   }
 }
@@ -369,7 +412,7 @@ async function stopDeployment(deployment) {
     return await stopDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
-  try { await docker.stopTools(); } catch {}
+  // Only stop this deployment's containers, NOT shared tools (Explorer, Bridge UI)
   await docker.stop(deployment.docker_project, composeFile);
   return updateDeployment(deployment.id, { phase: "stopped", status: "configured" });
 }
@@ -388,7 +431,7 @@ async function destroyDeployment(deployment) {
     return await destroyDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
-  try { await docker.stopTools(); } catch {}
+  // Only destroy this deployment's containers, NOT shared tools
   await docker.destroy(deployment.docker_project, composeFile);
   const fs = require("fs");
   const deployDir = getDeploymentDir(deployment.id);
@@ -442,6 +485,31 @@ async function destroyDeploymentRemote(deployment) {
 }
 
 // ============================================================
+// SERVER STARTUP RECOVERY
+// ============================================================
+
+/**
+ * Called on server start. Detects deployments stuck in active phases
+ * (building, l1_starting, etc.) with no running provision.
+ * Marks them as error since the build process was lost.
+ */
+function recoverStuckDeployments() {
+  try {
+    const deployments = getAllDeployments();
+    for (const dep of deployments) {
+      if (ACTIVE_PHASES.includes(dep.phase) && !activeProvisions.has(dep.id)) {
+        console.log(`[recovery] Deployment ${dep.id} (${dep.name}) stuck in phase "${dep.phase}" -- marking as error`);
+        const errMsg = `Server restarted while deployment was in "${dep.phase}" phase. The build process was lost. Please retry.`;
+        updateDeployment(dep.id, { phase: "error", error_message: errMsg });
+        insertDeployEvent(dep.id, "error", dep.phase, errMsg, null);
+      }
+    }
+  } catch (e) {
+    console.error("[recovery] Failed to recover stuck deployments:", e.message);
+  }
+}
+
+// ============================================================
 // HELPERS
 // ============================================================
 
@@ -479,5 +547,8 @@ module.exports = {
   startDeployment,
   destroyDeployment,
   getEmitter,
+  isProvisionActive,
+  getActiveProvisions,
+  recoverStuckDeployments,
   PHASES,
 };

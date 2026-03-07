@@ -11,19 +11,19 @@ const PORT = process.env.LOCAL_SERVER_PORT || 5002;
 
 // Middleware
 app.use(cors({
-  origin: [
-    "http://localhost:3002",
-    "http://127.0.0.1:3002",
-    "http://localhost:1420",  // Tauri dev server
-    "http://127.0.0.1:1420",
-    "tauri://localhost",      // Tauri production
-  ],
+  origin: true,  // Allow all origins (localhost-only server)
   credentials: true,
 }));
 app.use(express.json());
 
-// Static web UI
-app.use(express.static(path.join(__dirname, "public")));
+// Static web UI (no cache during development)
+app.use(express.static(path.join(__dirname, "public"), {
+  etag: false,
+  maxAge: 0,
+  setHeaders: (res) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  },
+}));
 
 // API Routes
 app.use("/api/deployments", deploymentRoutes);
@@ -45,14 +45,35 @@ app.get("/api/store/programs", async (req, res) => {
   } catch (_) {
     // Platform unreachable, use defaults
   }
-  // Fallback default programs
+  // Fallback — 2 official programs (only ones with ready implementations)
   res.json([
-    { id: "default-erc20", name: "ERC-20 Token", description: "Deploy a standard ERC-20 token on your L2", author: "Tokamak", tags: ["token", "defi"] },
-    { id: "default-nft", name: "NFT Collection", description: "Launch an NFT collection with minting capabilities", author: "Tokamak", tags: ["nft", "collectible"] },
-    { id: "default-dex", name: "DEX (AMM)", description: "Automated Market Maker decentralized exchange", author: "Tokamak", tags: ["defi", "exchange"] },
-    { id: "default-bridge", name: "Token Bridge", description: "Bridge tokens between L1 and your L2 chain", author: "Tokamak", tags: ["bridge", "infra"] },
-    { id: "default-blank", name: "Blank Chain", description: "Empty L2 chain — deploy your own contracts later", author: "Tokamak", tags: ["custom"] },
+    { id: "evm-l2", program_id: "evm-l2", name: "EVM L2", description: "Default Ethereum execution environment. Full EVM compatibility for general-purpose L2 chains.", author: "Tokamak", category: "defi", tags: ["evm", "defi"], is_official: true },
+    { id: "zk-dex", program_id: "zk-dex", name: "ZK-DEX", description: "Decentralized exchange circuits optimized for on-chain order matching and settlement.", author: "Tokamak", category: "defi", tags: ["zk", "defi", "exchange"], is_official: true },
   ]);
+});
+
+// Recovery: detect stuck deployments on server start
+const { recoverStuckDeployments } = require("./lib/deployment-engine");
+recoverStuckDeployments();
+
+// Open URL in system browser (for Tauri WebviewWindow where window.open is blocked)
+app.post("/api/open-url", (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== "string") return res.status(400).json({ error: "url required" });
+  // Only allow http/https URLs on localhost or known domains
+  if (!url.startsWith("http://127.0.0.1") && !url.startsWith("http://localhost") && !url.startsWith("https://")) {
+    return res.status(400).json({ error: "Invalid URL" });
+  }
+  const { exec } = require("child_process");
+  const escaped = url.replace(/"/g, '\\"');
+  const platform = process.platform;
+  const cmd = platform === "win32" ? `start "" "${escaped}"`
+    : platform === "darwin" ? `open "${escaped}"`
+    : `xdg-open "${escaped}"`;
+  exec(cmd, (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ ok: true });
+  });
 });
 
 // Health check

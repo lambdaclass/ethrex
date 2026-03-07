@@ -43,5 +43,17 @@ CREATE TABLE IF NOT EXISTS hosts (
   created_at INTEGER NOT NULL
 );
 
+-- Deploy events (persistent log of all deployment phases, events, build logs)
+CREATE TABLE IF NOT EXISTS deploy_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,       -- 'phase', 'log', 'error', 'waiting', 'complete'
+  phase TEXT,                     -- current phase when event occurred
+  message TEXT,
+  data TEXT,                      -- JSON extra data (bridgeAddress, etc.)
+  created_at INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_deployments_status ON deployments(status);
 CREATE INDEX IF NOT EXISTS idx_hosts_status ON hosts(status);
+CREATE INDEX IF NOT EXISTS idx_deploy_events_deployment ON deploy_events(deployment_id, created_at);

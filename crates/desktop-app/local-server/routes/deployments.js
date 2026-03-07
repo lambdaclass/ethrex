@@ -9,7 +9,10 @@ const {
   startDeployment,
   destroyDeployment,
   getEmitter,
+  isProvisionActive,
+  getActiveProvisions,
 } = require("../lib/deployment-engine");
+const { getDeployEvents } = require("../db/deployments");
 const docker = require("../lib/docker-local");
 const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
@@ -217,10 +220,44 @@ router.post("/:id/destroy", async (req, res) => {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
-    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
 
-    const updated = await destroyDeployment(deployment);
-    res.json({ deployment: updated });
+    // Destroy Docker containers if provisioned
+    if (deployment.docker_project) {
+      await destroyDeployment(deployment);
+    }
+
+    // Remove from DB
+    db.prepare("DELETE FROM deploy_events WHERE deployment_id = ?").run(req.params.id);
+    db.prepare("DELETE FROM deployments WHERE id = ?").run(req.params.id);
+    res.json({ ok: true, deleted: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/:id/service/:service/stop — stop a single service
+router.post("/:id/service/:service/stop", async (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+    const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
+    await docker.stopService(deployment.docker_project, composeFile, req.params.service);
+    res.json({ ok: true, message: `Service ${req.params.service} stopped` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/:id/service/:service/start — start a single service
+router.post("/:id/service/:service/start", async (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+    const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
+    await docker.startService(deployment.docker_project, composeFile, req.params.service, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    res.json({ ok: true, message: `Service ${req.params.service} started` });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -313,6 +350,14 @@ router.get("/:id/status", async (req, res) => {
     if (fs.existsSync(composeFile)) {
       containers = await docker.getStatus(deployment.docker_project, composeFile);
     }
+    // Also fetch tools containers (Explorer, Bridge UI, etc.)
+    try {
+      const toolsContainers = await docker.getToolsStatus();
+      if (toolsContainers.length > 0) {
+        containers = containers.concat(toolsContainers);
+      }
+    } catch {}
+
 
     res.json({
       phase: deployment.phase,
@@ -359,6 +404,32 @@ router.get("/:id/events", (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/deployments/:id/events/history — get stored events from DB
+router.get("/:id/events/history", (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+
+    const since = req.query.since ? parseInt(req.query.since) : undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit) : 1000;
+    const events = getDeployEvents(deployment.id, { since, limit });
+
+    res.json({
+      events,
+      isActive: isProvisionActive(deployment.id),
+      phase: deployment.phase,
+      createdAt: deployment.created_at,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/deployments/active/provisions — list currently running provisions
+router.get("/active/provisions", (req, res) => {
+  res.json({ provisions: getActiveProvisions() });
 });
 
 // GET /api/deployments/:id/logs
