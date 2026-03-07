@@ -1539,15 +1539,6 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
@@ -1568,12 +1559,8 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
+        for address in touched_account_storage_slots.keys() {
+            let hashed_address = hash_address(address);
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
@@ -1590,7 +1577,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_trie_roots.insert(*address, (*node).clone());
         }
 
         Ok(ExecutionWitness {
@@ -1600,7 +1587,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            keys,
         })
     }
 
@@ -1781,15 +1767,6 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
@@ -1810,12 +1787,8 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
+        for address in touched_account_storage_slots.keys() {
+            let hashed_address = hash_address(address);
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
@@ -1832,7 +1805,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_trie_roots.insert(*address, (*node).clone());
         }
 
         Ok(ExecutionWitness {
@@ -1842,7 +1815,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            keys,
         })
     }
 

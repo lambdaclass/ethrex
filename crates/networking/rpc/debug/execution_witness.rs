@@ -107,7 +107,6 @@ pub fn execution_witness_from_rpc_chain_config(
             .collect(),
         state_trie_root,
         storage_trie_roots,
-        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 
     Ok(witness)

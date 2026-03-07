@@ -79,10 +79,6 @@ pub struct ExecutionWitness {
     /// Root nodes per account storage embedded with the rest of the trie's nodes
     #[rkyv(with = MapKV<H160Wrapper, Identity>)]
     pub storage_trie_roots: BTreeMap<Address, Node>,
-    /// Flattened map of account addresses and storage keys whose values
-    /// are needed for stateless execution.
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub keys: Vec<Vec<u8>>,
 }
 
 /// RPC-friendly representation of an execution witness.
@@ -98,6 +94,7 @@ pub struct RpcExecutionWitness {
     )]
     pub state: Vec<Bytes>,
     #[serde(
+        default,
         serialize_with = "serde_utils::bytes::vec::serialize",
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
@@ -127,7 +124,7 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         }
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
-            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            keys: Vec::new(),
             codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value
                 .block_headers_bytes
