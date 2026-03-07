@@ -60,7 +60,6 @@ pub const MAX_WITNESSES: u64 = 128;
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
-#[allow(unused)]
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
@@ -233,6 +232,8 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Accounts that were destroyed and need their storage cleared from the DB.
+    pub destroyed_accounts: Vec<H256>,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -251,6 +252,8 @@ pub struct AccountUpdatesList {
     pub storage_updates: StorageUpdates,
     /// New contract bytecode deployments.
     pub code_updates: Vec<(H256, Code)>,
+    /// Accounts that were destroyed and need their storage cleared from the DB.
+    pub destroyed_accounts: Vec<H256>,
 }
 
 impl Store {
@@ -1338,6 +1341,7 @@ impl Store {
         let UpdateBatch {
             account_updates,
             storage_updates,
+            destroyed_accounts,
             ..
         } = update_batch;
 
@@ -1348,6 +1352,7 @@ impl Store {
             parent_state_root,
             account_updates,
             storage_updates,
+            destroyed_accounts,
             result_sender: notify_tx,
             child_state_root: last_state_root,
         };
@@ -1428,7 +1433,7 @@ impl Store {
         }
     }
 
-    fn from_backend(
+    pub fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
         commit_threshold: usize,
@@ -1671,9 +1676,13 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
+        let mut destroyed_accounts = Vec::new();
         let state_root = state_trie.hash_no_commit();
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
+            if update.removed || update.removed_storage {
+                destroyed_accounts.push(hashed_address);
+            }
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(hashed_address.as_bytes())?;
@@ -1721,11 +1730,13 @@ impl Store {
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
+
         Ok(AccountUpdatesList {
             state_trie_hash,
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
+            destroyed_accounts,
         })
     }
 
@@ -1742,6 +1753,12 @@ impl Store {
         let mut code_updates = Vec::new();
 
         let state_root = state_trie.hash_no_commit();
+
+        let destroyed_accounts = account_updates
+            .iter()
+            .filter(|u| u.removed || u.removed_storage)
+            .map(|u| hash_address_fixed(&u.address))
+            .collect();
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -1819,6 +1836,7 @@ impl Store {
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
+            destroyed_accounts,
         };
 
         Ok((storage_tries, account_updates_list))
@@ -2665,6 +2683,7 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    destroyed_accounts: Vec<H256>,
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
@@ -2681,6 +2700,7 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
+        destroyed_accounts,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -2699,7 +2719,7 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
-    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+    trie_mut.put_batch(parent_state_root, child_state_root, new_layer, destroyed_accounts);
     let trie = Arc::new(trie_mut);
     *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
@@ -2708,7 +2728,7 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let Some(root) = trie.get_commitable(parent_state_root) else {
+    let Some(root) = trie.get_commitable(child_state_root) else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
@@ -2730,7 +2750,16 @@ fn apply_trie_updates(
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
     // Commit removes the bottom layer and returns it, this is the mutation step.
-    let nodes = trie_mut.commit(root).unwrap_or_default();
+    let (nodes, destroyed_accounts_to_commit) = trie_mut.commit(root).unwrap_or_default();
+
+    // Remove storage associated to destroyed accounts that are finally being written to disk
+    for address_hash in &destroyed_accounts_to_commit {
+        let prefix_nibbles = apply_prefix(Some(*address_hash), Nibbles::default());
+        let prefix_bytes = prefix_nibbles.as_ref();
+        let _ = write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, prefix_bytes);
+        let _ = write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, prefix_bytes);
+    }
+
     let mut result = Ok(());
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
