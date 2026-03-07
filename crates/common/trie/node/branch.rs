@@ -68,8 +68,8 @@ impl BranchNode {
         mut path: Nibbles,
         value: ValueOrHash,
     ) -> Result<(), TrieError> {
-        // If path is at the end, insert or replace its own value.
-        // Otherwise, check the corresponding choice and insert or delegate accordingly.
+        // Check the corresponding choice in the path and insert or delegate accordingly.
+        // Branch nodes don't hold values, so paths cannot end here securely.
         if let Some(choice) = path.next_choice() {
             match (&mut self.choices[choice], value) {
                 // Create new child (leaf node)
@@ -116,8 +116,9 @@ impl BranchNode {
                 }
             }
         } else {
-            // Branch nodes don't hold values
-            unreachable!("branch nodes should never receive a value directly")
+            return Err(TrieError::Verify(
+                "Key paths may not be prefixes of each other since branch values are not supported".to_string(),
+            ));
         }
 
         Ok(())
@@ -131,22 +132,19 @@ impl BranchNode {
         db: &dyn TrieDB,
         mut path: Nibbles,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
-        /* Possible flow paths:
+        /* Possible flow paths for remaining children:
             Step 1: Removal
-                Branch { [ ... ] Value } -> Branch { [...], None, None } (remove from self)
-                Branch { [ childA, ... ], Value } -> Branch { [childA', ... ], Value } (remove from child)
+                Branch { [ childA, ... ] } -> Branch { [childA', ... ] } (remove from child)
 
             Step 2: Restructure
-                [0 children]
-                Branch { [], Value } -> Leaf { Value } (no children, with value)
-                Branch { [], None } -> Branch { [], None } (no children, no value)
-                [1 child]
+                [0 children remaining]
+                (Impossible as branches securely hold 2+ choices, shrinking below 1 is handled inside 1 child case)
+                [1 child remaining]
                 Branch { [ ExtensionChild], _ , _ } -> Extension { ChoiceIndex+ExtensionChildPrefx, ExtensionChildChild }
                 Branch { [ BranchChild ], None } -> Extension { ChoiceIndex, BranchChild }
                 Branch { [ LeafChild], None } -> LeafChild
-                Branch { [LeafChild], Value } -> Branch { [ LeafChild ], Value }
-                [+1 children]
-                Branch { [childA, childB, ... ], None } ->   Branch { [childA, childB, ... ], None }
+                [+1 children remaining]
+                Branch { [childA, childB, ... ], None } ->   Branch { [childA, childB, ... ] }
         */
         let base_path = path.clone();
 
