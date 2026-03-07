@@ -2756,8 +2756,8 @@ fn apply_trie_updates(
     for address_hash in &destroyed_accounts_to_commit {
         let prefix_nibbles = apply_prefix(Some(*address_hash), Nibbles::default());
         let prefix_bytes = prefix_nibbles.as_ref();
-        let _ = write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, prefix_bytes);
-        let _ = write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, prefix_bytes);
+        write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, prefix_bytes)?;
+        write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, prefix_bytes)?;
     }
 
     let mut result = Ok(());

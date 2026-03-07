@@ -178,20 +178,22 @@ impl TrieLayerCache {
         let mut destroyed_to_commit = Vec::new();
         let mut layers_removed_ids = Vec::new();
 
+        let mut layers_to_commit = Vec::new();
         // Extract all layers forming the path up to `state_root`.
         let mut current_hash = state_root;
         while let Some(layer_arc) = self.layers.remove(&current_hash) {
             let layer = Arc::unwrap_or_clone(layer_arc);
             layers_removed_ids.push(layer.id);
+            current_hash = layer.parent;
+            layers_to_commit.push(layer);
+        }
 
-            // Because we're traversing from child to parent,
-            // later layers will overwrite older ones, which is the correct
-            // behavior for a diff-layer architecture.
+        // Process oldest-first so newer values override older ones on collision.
+        for layer in layers_to_commit.into_iter().rev() {
             for (key, value) in layer.nodes.into_iter() {
                 nodes_to_commit.insert(key, value);
             }
             destroyed_to_commit.extend(layer.destroyed_accounts.into_iter());
-            current_hash = layer.parent;
         }
 
         // Determine the highest ID among the layers just committed.
