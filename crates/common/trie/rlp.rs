@@ -15,7 +15,7 @@ use crate::{Nibbles, NodeHash};
 
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let value_len = <[u8] as RLPEncode>::length(&[] as &[u8]);
         let payload_len = self.choices.iter().fold(value_len, |acc, child| {
             acc + RLPEncode::length(child.compute_hash_ref())
         });
@@ -28,12 +28,12 @@ impl RLPEncode for BranchNode {
                 NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
             }
         }
-        <[u8] as RLPEncode>::encode(&self.value, buf);
+        <[u8] as RLPEncode>::encode(&[] as &[u8], buf);
     }
 
     // Duplicated to prealloc the buffer and avoid calculating the payload length twice
     fn encode_to_vec(&self) -> Vec<u8> {
-        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let value_len = <[u8] as RLPEncode>::length(&[] as &[u8]);
         let choices_len = self.choices.iter().fold(0, |acc, child| {
             acc + RLPEncode::length(child.compute_hash_ref())
         });
@@ -51,7 +51,7 @@ impl RLPEncode for BranchNode {
                 }
             }
         }
-        <[u8] as RLPEncode>::encode(&self.value, &mut buf);
+        <[u8] as RLPEncode>::encode(&[] as &[u8], &mut buf);
 
         buf
     }
@@ -135,9 +135,13 @@ impl RLPDecode for Node {
                 });
                 let (value, _) =
                     decode_bytes(rlp_items[16].expect("we already checked the length"))?;
+                if !value.is_empty() {
+                    return Err(RLPDecodeError::Custom(
+                        "Branch node has a value".to_string(),
+                    ));
+                }
                 BranchNode {
                     choices,
-                    value: value.to_vec(),
                 }
                 .into()
             }
