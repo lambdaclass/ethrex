@@ -70,32 +70,9 @@ impl LeafNode {
             let new_leaf_choice_idx = path.at(match_index);
             self.partial = self.partial.offset(match_index + 1);
 
-            let branch_node = if self_choice_idx == 16 {
-                // Create a new leaf node and store the value in it
-                // Create a new branch node with the leaf as a child and store self's value
-                // Branch { [ Leaf { Value } , ... ], SelfValue}
-                let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = match value {
-                    ValueOrHash::Value(value) => {
-                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
-                    }
-                    ValueOrHash::Hash(hash) => hash.into(),
-                };
-                BranchNode::new_with_value(choices, mem::take(&mut self.value))
-            } else if new_leaf_choice_idx == 16 {
-                // Create a branch node with self as a child and store the value in the branch node
-                // Branch { [Self,...], Value }
-                let mut choices = BranchNode::EMPTY_CHOICES;
-                let child: Node = self.take().into();
-                choices[self_choice_idx] = child.into();
-                BranchNode::new_with_value(
-                    choices,
-                    match value {
-                        ValueOrHash::Value(value) => value,
-                        // Value in branches don't happen in our use-case.
-                        ValueOrHash::Hash(_) => todo!("handle override case (error?)"),
-                    },
-                )
+            let branch_node = if self_choice_idx == 16 || new_leaf_choice_idx == 16 {
+                return Err(TrieError::Verify("Key paths may not be prefixes of each other since branch values are not supported".to_string()));
+
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children

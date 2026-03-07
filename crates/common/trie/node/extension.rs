@@ -104,8 +104,8 @@ impl ExtensionNode {
             let mut choices = BranchNode::EMPTY_CHOICES;
             let mut branch_node = if self.prefix.at(0) == 16 {
                 match new_node.get_node_mut(db, path.current())? {
-                    Some(Node::Leaf(leaf)) => {
-                        BranchNode::new_with_value(choices, leaf.value.clone())
+                    Some(Node::Leaf(_)) => {
+                        return Err(TrieError::Verify("Key paths may not be prefixes of each other since branch values are not supported".to_string()));
                     }
                     Some(_) => {
                         return Err(TrieError::InconsistentTree(Box::new(
