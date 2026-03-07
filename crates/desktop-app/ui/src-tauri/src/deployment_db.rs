@@ -1,7 +1,6 @@
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Represents a deployment row from the local-server SQLite DB.
 #[derive(Debug, Serialize, Clone)]
@@ -25,12 +24,37 @@ pub struct DeploymentRow {
     pub created_at: i64,
 }
 
+/// Container info returned by local-server status endpoint.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ContainerInfo {
+    #[serde(alias = "Name")]
+    pub name: String,
+    #[serde(alias = "Service")]
+    pub service: String,
+    #[serde(alias = "State")]
+    pub state: String,
+    #[serde(alias = "Status")]
+    pub status: String,
+    #[serde(alias = "Ports", default)]
+    pub ports: String,
+    #[serde(alias = "Image", default)]
+    pub image: String,
+    #[serde(alias = "ID", default)]
+    pub id: String,
+}
+
+/// Status response from local-server GET /api/deployments/:id/status
+#[derive(Debug, Deserialize)]
+struct DeploymentStatus {
+    containers: Vec<ContainerInfo>,
+}
+
 fn db_path() -> PathBuf {
     let home = dirs::home_dir().expect("Cannot determine home directory");
     home.join(".tokamak-appchain").join("local.sqlite")
 }
 
-/// Read all deployments directly from the SQLite DB (no server needed).
+/// Read all deployments directly from the SQLite DB (read-only, no server needed).
 pub fn list_deployments_from_db() -> Result<Vec<DeploymentRow>, String> {
     let path = db_path();
     if !path.exists() {
@@ -80,233 +104,85 @@ pub fn list_deployments_from_db() -> Result<Vec<DeploymentRow>, String> {
     Ok(result)
 }
 
-/// Get the compose file path for a deployment: ~/.tokamak/deployments/{id}/docker-compose.yaml
-fn compose_file_for(id: &str) -> PathBuf {
-    let home = dirs::home_dir().expect("Cannot determine home directory");
-    home.join(".tokamak")
-        .join("deployments")
-        .join(id)
-        .join("docker-compose.yaml")
+/// Proxy Docker lifecycle operations through the local-server HTTP API.
+/// This ensures a single source of truth for Docker management.
+pub struct DeploymentProxy {
+    base_url: String,
 }
 
-/// Find the docker binary (macOS apps don't always have /usr/local/bin in PATH)
-fn docker_bin() -> String {
-    for path in &[
-        "/usr/local/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/usr/bin/docker",
-    ] {
-        if std::path::Path::new(path).exists() {
-            return path.to_string();
-        }
-    }
-    "docker".to_string()
-}
-
-/// Run `docker compose` with the project name and compose file for a deployment.
-fn docker_compose(docker_project: &str, compose_file: &std::path::Path, args: &[&str]) -> Result<(), String> {
-    let compose_str = compose_file.to_string_lossy();
-    let mut cmd_args = vec!["compose".to_string(), "-p".to_string(), docker_project.to_string()];
-    if compose_file.exists() {
-        cmd_args.push("-f".to_string());
-        cmd_args.push(compose_str.to_string());
-    }
-    for arg in args {
-        cmd_args.push(arg.to_string());
-    }
-
-    let docker = docker_bin();
-    log::info!("Running: {} {}", docker, cmd_args.join(" "));
-
-    let output = Command::new(&docker)
-        .args(&cmd_args)
-        .output()
-        .map_err(|e| format!("Failed to run docker: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!("docker compose failed: {}", stderr);
-        return Err(format!("docker compose failed: {}", stderr));
-    }
-    Ok(())
-}
-
-/// Delete a deployment: clean up Docker resources, remove deploy dir, then remove from DB.
-pub fn delete_deployment_from_db(id: &str) -> Result<(), String> {
-    let path = db_path();
-    if !path.exists() {
-        return Err("Database not found".to_string());
-    }
-
-    let conn = Connection::open(&path)
-        .map_err(|e| format!("Failed to open deployment DB: {e}"))?;
-
-    // Get docker_project before deleting
-    let docker_project: Option<String> = conn
-        .query_row(
-            "SELECT docker_project FROM deployments WHERE id = ?",
-            [id],
-            |row| row.get(0),
-        )
-        .unwrap_or(None);
-
-    // Clean up Docker resources
-    if let Some(ref project) = docker_project {
-        let compose = compose_file_for(id);
-        if let Err(e) = docker_compose(project, &compose, &["down", "--volumes", "--remove-orphans"]) {
-            log::warn!("Docker cleanup failed for {}: {}", id, e);
-            // Continue with DB deletion even if Docker cleanup fails
+impl DeploymentProxy {
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
         }
     }
 
-    // Delete from DB
-    conn.execute("DELETE FROM deployments WHERE id = ?", [id])
-        .map_err(|e| format!("Failed to delete from DB: {e}"))?;
+    /// Stop a deployment via local-server POST /api/deployments/:id/stop
+    pub async fn stop_deployment(&self, id: &str) -> Result<(), String> {
+        let url = format!("{}/api/deployments/{}/stop", self.base_url, id);
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local-server: {e}"))?;
 
-    // Remove deployment directory
-    let deploy_dir = compose_file_for(id)
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    if deploy_dir.exists() {
-        let _ = std::fs::remove_dir_all(&deploy_dir);
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Stop failed: {body}"));
+        }
+        Ok(())
     }
 
-    Ok(())
-}
+    /// Start a deployment via local-server POST /api/deployments/:id/start
+    pub async fn start_deployment(&self, id: &str) -> Result<(), String> {
+        let url = format!("{}/api/deployments/{}/start", self.base_url, id);
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local-server: {e}"))?;
 
-/// Stop a deployment's Docker containers.
-pub fn stop_deployment_in_db(id: &str) -> Result<(), String> {
-    let path = db_path();
-    if !path.exists() {
-        return Err("Database not found".to_string());
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Start failed: {body}"));
+        }
+        Ok(())
     }
 
-    let conn = Connection::open(&path)
-        .map_err(|e| format!("Failed to open deployment DB: {e}"))?;
+    /// Delete/destroy a deployment via local-server POST /api/deployments/:id/destroy
+    pub async fn destroy_deployment(&self, id: &str) -> Result<(), String> {
+        let url = format!("{}/api/deployments/{}/destroy", self.base_url, id);
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local-server: {e}"))?;
 
-    let docker_project: Option<String> = conn
-        .query_row(
-            "SELECT docker_project FROM deployments WHERE id = ?",
-            [id],
-            |row| row.get(0),
-        )
-        .unwrap_or(None);
-
-    if let Some(ref project) = docker_project {
-        let compose = compose_file_for(id);
-        docker_compose(project, &compose, &["stop"])?;
-        conn.execute("UPDATE deployments SET status = 'stopped' WHERE id = ?", [id])
-            .map_err(|e| format!("Failed to update status: {e}"))?;
-    } else {
-        return Err("Deployment not found or has no Docker project".to_string());
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Destroy failed: {body}"));
+        }
+        Ok(())
     }
 
-    Ok(())
-}
+    /// Get containers for a deployment via local-server GET /api/deployments/:id/status
+    pub async fn get_containers(&self, id: &str) -> Result<Vec<ContainerInfo>, String> {
+        let url = format!("{}/api/deployments/{}/status", self.base_url, id);
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local-server: {e}"))?;
 
-/// Container info from `docker compose ps --format json`
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ContainerInfo {
-    #[serde(alias = "Name")]
-    pub name: String,
-    #[serde(alias = "Service")]
-    pub service: String,
-    #[serde(alias = "State")]
-    pub state: String,
-    #[serde(alias = "Status")]
-    pub status: String,
-    #[serde(alias = "Ports", default)]
-    pub ports: String,
-    #[serde(alias = "Image", default)]
-    pub image: String,
-    #[serde(alias = "ID", default)]
-    pub id: String,
-}
+        if !resp.status().is_success() {
+            return Ok(vec![]);
+        }
 
-/// Get container status for a deployment via `docker compose ps --format json`.
-pub fn get_containers_for_deployment(deployment_id: &str) -> Result<Vec<ContainerInfo>, String> {
-    let path = db_path();
-    if !path.exists() {
-        return Ok(vec![]);
+        let status: DeploymentStatus = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse status: {e}"))?;
+
+        Ok(status.containers)
     }
-
-    let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| format!("Failed to open DB: {e}"))?;
-
-    let docker_project: Option<String> = conn
-        .query_row(
-            "SELECT docker_project FROM deployments WHERE id = ?",
-            [deployment_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(None);
-
-    let project = match docker_project {
-        Some(p) => p,
-        None => return Ok(vec![]),
-    };
-
-    let compose = compose_file_for(deployment_id);
-    let docker = docker_bin();
-
-    let mut cmd_args = vec![
-        "compose".to_string(),
-        "-p".to_string(),
-        project,
-    ];
-    if compose.exists() {
-        cmd_args.push("-f".to_string());
-        cmd_args.push(compose.to_string_lossy().to_string());
-    }
-    cmd_args.extend(["ps".to_string(), "--format".to_string(), "json".to_string()]);
-
-    let output = Command::new(&docker)
-        .args(&cmd_args)
-        .output()
-        .map_err(|e| format!("Failed to run docker: {e}"))?;
-
-    if !output.status.success() {
-        return Ok(vec![]);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let containers: Vec<ContainerInfo> = stdout
-        .trim()
-        .lines()
-        .filter(|l| !l.is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-
-    Ok(containers)
-}
-
-/// Start a stopped deployment's Docker containers.
-pub fn start_deployment_in_db(id: &str) -> Result<(), String> {
-    let path = db_path();
-    if !path.exists() {
-        return Err("Database not found".to_string());
-    }
-
-    let conn = Connection::open(&path)
-        .map_err(|e| format!("Failed to open deployment DB: {e}"))?;
-
-    let docker_project: Option<String> = conn
-        .query_row(
-            "SELECT docker_project FROM deployments WHERE id = ?",
-            [id],
-            |row| row.get(0),
-        )
-        .unwrap_or(None);
-
-    if let Some(ref project) = docker_project {
-        let compose = compose_file_for(id);
-        docker_compose(project, &compose, &["start"])?;
-        conn.execute("UPDATE deployments SET status = 'running' WHERE id = ?", [id])
-            .map_err(|e| format!("Failed to update status: {e}"))?;
-    } else {
-        return Err("Deployment not found or has no Docker project".to_string());
-    }
-
-    Ok(())
 }

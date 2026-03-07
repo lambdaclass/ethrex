@@ -2,7 +2,7 @@ use crate::ai_provider::{AiConfig, AiProvider, ChatMessage};
 use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
-use crate::deployment_db::{self, ContainerInfo, DeploymentRow};
+use crate::deployment_db::{self, ContainerInfo, DeploymentProxy, DeploymentRow};
 use crate::local_server::LocalServer;
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
 use crate::runner::ProcessRunner;
@@ -417,7 +417,7 @@ pub fn delete_platform_token() -> Result<(), String> {
 }
 
 // ============================================================================
-// Deployment DB (direct SQLite read — no server needed)
+// Deployment DB (read-only) + Docker lifecycle (proxied to local-server)
 // ============================================================================
 
 #[tauri::command]
@@ -426,21 +426,37 @@ pub fn list_docker_deployments() -> Result<Vec<DeploymentRow>, String> {
 }
 
 #[tauri::command]
-pub fn delete_docker_deployment(id: String) -> Result<(), String> {
-    deployment_db::delete_deployment_from_db(&id)
+pub async fn delete_docker_deployment(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.destroy_deployment(&id).await
 }
 
 #[tauri::command]
-pub fn stop_docker_deployment(id: String) -> Result<(), String> {
-    deployment_db::stop_deployment_in_db(&id)
+pub async fn stop_docker_deployment(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.stop_deployment(&id).await
 }
 
 #[tauri::command]
-pub fn start_docker_deployment(id: String) -> Result<(), String> {
-    deployment_db::start_deployment_in_db(&id)
+pub async fn start_docker_deployment(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.start_deployment(&id).await
 }
 
 #[tauri::command]
-pub fn get_docker_containers(id: String) -> Result<Vec<ContainerInfo>, String> {
-    deployment_db::get_containers_for_deployment(&id)
+pub async fn get_docker_containers(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<Vec<ContainerInfo>, String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.get_containers(&id).await
 }
