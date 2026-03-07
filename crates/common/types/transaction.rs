@@ -8,7 +8,8 @@ pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
-    AccessListEntry, AuthorizationTupleEntry, GenericTransaction, GenericTransactionError,
+    AccessListEntry, AuthorizationTupleEntry, FrameEntry, GenericTransaction,
+    GenericTransactionError,
 };
 
 /// The serialized length of a default eip1559 transaction
@@ -2174,6 +2175,29 @@ mod serde_impl {
         }
     }
 
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct FrameEntry {
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub mode: u64,
+        pub to: Option<Address>,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub gas_limit: u64,
+        #[serde(with = "crate::serde_utils::bytes")]
+        pub data: Bytes,
+    }
+
+    impl From<&Frame> for FrameEntry {
+        fn from(value: &Frame) -> FrameEntry {
+            FrameEntry {
+                mode: value.mode as u64,
+                to: value.target,
+                gas_limit: value.gas_limit,
+                data: value.data.clone(),
+            }
+        }
+    }
+
     impl Serialize for LegacyTransaction {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
@@ -2440,11 +2464,19 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 8)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 9)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             s.serialize_field("sender", &format!("{:#x}", self.sender))?;
+            s.serialize_field(
+                "frames",
+                &self
+                    .frames
+                    .iter()
+                    .map(FrameEntry::from)
+                    .collect::<Vec<_>>(),
+            )?;
             s.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
