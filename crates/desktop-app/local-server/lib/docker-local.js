@@ -9,7 +9,7 @@ const { spawn, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
-const ETHREX_ROOT = path.resolve(__dirname, "../../..");
+const ETHREX_ROOT = path.resolve(__dirname, "../../../..");
 
 function composeCmd(projectName, composeFile, args) {
   return ["docker", "compose", "-p", projectName, "-f", composeFile, ...args];
@@ -134,6 +134,11 @@ async function startProver(projectName, composeFile, env = {}) {
 /** Stop a single service */
 async function stopService(projectName, composeFile, service) {
   return runCompose(projectName, composeFile, ["stop", service], { ignoreError: true });
+}
+
+/** Start a single service */
+async function startService(projectName, composeFile, service, env = {}) {
+  return runCompose(projectName, composeFile, ["up", "-d", service], { env, ignoreError: true });
 }
 
 /** Stop all services (keep volumes) */
@@ -374,6 +379,34 @@ function streamToolsLogs(service) {
   return spawn("docker", args, { cwd: l2Dir, stdio: "pipe" });
 }
 
+/** Get support tools container status */
+async function getToolsStatus() {
+  const l2Dir = path.resolve(ETHREX_ROOT, "crates/l2");
+  const toolsCompose = path.join(l2Dir, "docker-compose-zk-dex-tools.yaml");
+  if (!fs.existsSync(toolsCompose)) return [];
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const proc = spawn("docker", ["compose", "-f", toolsCompose, "ps", "--format", "json"], {
+        cwd: l2Dir,
+        stdio: "pipe",
+      });
+      let stdout = "";
+      proc.stdout.on("data", (d) => (stdout += d));
+      proc.on("close", () => resolve(stdout));
+      proc.on("error", reject);
+    });
+    return result
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** Stop support tools */
 async function stopTools() {
   const l2Dir = path.resolve(ETHREX_ROOT, "crates/l2");
@@ -416,6 +449,7 @@ module.exports = {
   deployContracts,
   extractEnv,
   stopService,
+  startService,
   startL2,
   startProver,
   stop,
@@ -432,5 +466,6 @@ module.exports = {
   getToolsLogs,
   streamToolsLogs,
   stopTools,
+  getToolsStatus,
   ETHREX_ROOT,
 };

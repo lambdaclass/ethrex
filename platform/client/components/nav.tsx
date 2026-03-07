@@ -18,6 +18,9 @@ export function Nav() {
               <Link href="/store" className="text-gray-600 hover:text-gray-900">
                 Store
               </Link>
+              <Link href="/showroom" className="text-gray-600 hover:text-gray-900">
+                Showroom
+              </Link>
               {user && (
                 <>
                   <Link href="/launch" className="text-gray-600 hover:text-gray-900">

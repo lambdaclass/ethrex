@@ -191,10 +191,6 @@ ${l1Build}
       - ${ETHREX_ROOT}/fixtures/genesis/l1.json:${workdir}/fixtures/genesis/l1.json
       - ${ETHREX_ROOT}/fixtures/genesis/l2.json:${workdir}/fixtures/genesis/l2.json
       - ${ETHREX_ROOT}/fixtures/keys/private_keys_l1.txt:${workdir}/fixtures/keys/private_keys_l1.txt
-      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/:${workdir}/sp1_out
-      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32:${workdir}/riscv32im-succinct-zkvm-vk-u32
-      - ${ETHREX_ROOT}/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254:${workdir}/riscv32im-succinct-zkvm-vk-bn254
-      - ${ETHREX_ROOT}/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk:${workdir}/riscv32im-risc0-vk
 ${deployerExtraVolumes}    environment:
       - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
       - ETHREX_DEPLOYER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
@@ -206,8 +202,8 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
@@ -387,8 +383,8 @@ services:
       - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e

@@ -77,6 +77,7 @@ bench-results/
 Claude.md
 GEMINI.md
 .claude/
+Claude-Sessions/
 
 # RKYV
 *.bin
@@ -160,6 +161,7 @@ platform/server/db/*.sqlite-wal
 zk-dex-l2-*.toml
 
 crates/desktop-app/ui/node_modules/
+crates/desktop-app/local-server/node_modules/
 
 # TypeScript build info
 *.tsbuildinfo
@@ -169,6 +171,3 @@ platform/server/db/platform.sqlite
 
 # ZK-DEX deployed contract addresses (local deployment state)
 crates/l2/.zk-dex-deployed.env
-
-# Platform build artifacts
-# platform/

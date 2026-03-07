@@ -3,10 +3,16 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "deploy-manager"
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-create",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:webview:allow-create-webview-window",
     "shell:allow-open"
   ]
 }

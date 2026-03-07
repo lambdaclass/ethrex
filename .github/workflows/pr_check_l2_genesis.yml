@@ -25,6 +25,7 @@ env:
 jobs:
   check-l2-genesis:
     name: Check L2 Genesis is up to date
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

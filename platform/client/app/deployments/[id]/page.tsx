@@ -1,25 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { deploymentsApi } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
-import { Deployment, DeploymentStatus, MonitoringData } from "@/lib/types";
-import { DeploymentStatusBadge, ContainerStatusCards } from "@/components/deployment-status";
-import LogViewer from "@/components/log-viewer";
+import { Deployment } from "@/lib/types";
+import { DeploymentStatusBadge } from "@/components/deployment-status";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
-
-type Tab = "overview" | "logs" | "config";
+const DESKTOP_DOWNLOAD_URL = "https://github.com/tokamak-network/ethrex/releases";
 
 function parseConfig(deployment: Deployment): { mode: string; l1Image: string } {
   try {
     const parsed = deployment.config ? JSON.parse(deployment.config) : {};
-    return {
-      mode: parsed.mode || "local",
-      l1Image: parsed.l1Image || "ethrex",
-    };
+    return { mode: parsed.mode || "local", l1Image: parsed.l1Image || "ethrex" };
   } catch {
     return { mode: "local", l1Image: "ethrex" };
   }
@@ -47,133 +41,19 @@ function downloadFile(content: string, filename: string, type: string) {
 
 export default function DeploymentDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const { user } = useAuth();
   const [deployment, setDeployment] = useState<Deployment | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [actionLoading, setActionLoading] = useState("");
-  const [toolsLoading, setToolsLoading] = useState("");
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
-
-  // Status & monitoring
-  const [status, setStatus] = useState<DeploymentStatus | null>(null);
-  const [monitoring, setMonitoring] = useState<MonitoringData | null>(null);
-
-  // Edit mode
-  const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editChainId, setEditChainId] = useState("");
-  const [editRpcUrl, setEditRpcUrl] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  // Load deployment
   useEffect(() => {
     if (!params.id || !user) return;
     deploymentsApi
       .get(params.id as string)
-      .then((d) => {
-        setDeployment(d);
-        setEditName(d.name);
-        setEditChainId(d.chain_id?.toString() || "");
-        setEditRpcUrl(d.rpc_url || "");
-      })
+      .then(setDeployment)
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
       .finally(() => setLoading(false));
   }, [params.id, user]);
-
-  // Poll status & monitoring for running deployments
-  const fetchStatus = useCallback(async () => {
-    if (!deployment?.docker_project) return;
-    try {
-      const [s, m] = await Promise.all([
-        deploymentsApi.status(deployment.id),
-        deploymentsApi.monitoring(deployment.id),
-      ]);
-      setStatus(s);
-      setMonitoring(m);
-    } catch {
-      // Ignore polling errors
-    }
-  }, [deployment?.id, deployment?.docker_project]);
-
-  useEffect(() => {
-    if (!deployment?.docker_project) return;
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 10000);
-    return () => clearInterval(interval);
-  }, [deployment?.docker_project, fetchStatus]);
-
-  // Actions
-  const handleAction = async (action: "provision" | "start" | "stop" | "destroy") => {
-    if (!deployment) return;
-    setActionLoading(action);
-    try {
-      let updated: Deployment;
-      switch (action) {
-        case "provision":
-          await deploymentsApi.provision(deployment.id);
-          // Refetch after a moment to get updated state
-          setTimeout(async () => {
-            const d = await deploymentsApi.get(deployment.id);
-            setDeployment(d);
-            setActionLoading("");
-          }, 2000);
-          return;
-        case "start":
-          updated = await deploymentsApi.start(deployment.id);
-          break;
-        case "stop":
-          updated = await deploymentsApi.stop(deployment.id);
-          break;
-        case "destroy":
-          if (!confirm("This will permanently delete all containers and volumes. Continue?")) {
-            setActionLoading("");
-            return;
-          }
-          updated = await deploymentsApi.destroy(deployment.id);
-          break;
-      }
-      setDeployment(updated!);
-      fetchStatus();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to ${action}`);
-    } finally {
-      setActionLoading("");
-    }
-  };
-
-  const handleSave = async () => {
-    if (!deployment || !editName.trim()) return;
-    setSaving(true);
-    try {
-      const updated = await deploymentsApi.update(deployment.id, {
-        name: editName.trim(),
-        chain_id: editChainId ? parseInt(editChainId) : null,
-        rpc_url: editRpcUrl || null,
-      });
-      setDeployment(updated);
-      setEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!confirm("Remove this L2? This will also destroy any running containers.")) return;
-    setActionLoading("delete");
-    try {
-      await deploymentsApi.remove(deployment!.id);
-      router.push("/deployments");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete");
-      setActionLoading("");
-    }
-  };
 
   if (!user) {
     return (
@@ -191,26 +71,17 @@ export default function DeploymentDetailPage() {
     );
   }
 
-  if (error && !deployment) {
+  if (error || !deployment) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-center">
         <h1 className="text-xl font-bold text-red-600 mb-4">L2 Not Found</h1>
         <p className="text-gray-600 mb-4">{error}</p>
-        <Link href="/deployments" className="text-blue-600 hover:underline">
-          Back to My L2s
-        </Link>
+        <Link href="/deployments" className="text-blue-600 hover:underline">Back to My L2s</Link>
       </div>
     );
   }
 
-  if (!deployment) return null;
-
   const config = parseConfig(deployment);
-  const isProvisioned = !!deployment.docker_project;
-  const isRunning = deployment.phase === "running";
-  const isStopped = deployment.phase === "stopped";
-  const isError = deployment.phase === "error";
-  const isDeploying = ["checking_docker", "building", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools"].includes(deployment.phase);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -226,235 +97,59 @@ export default function DeploymentDetailPage() {
             <p className="text-gray-500 mt-1">
               App: {deployment.program_name || deployment.program_slug}
               {deployment.category && (
-                <span className="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs">
-                  {deployment.category}
-                </span>
+                <span className="ml-2 px-2 py-0.5 bg-gray-100 rounded text-xs">{deployment.category}</span>
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`px-3 py-1 rounded-full text-sm font-medium ${
-                config.mode === "local"
-                  ? "bg-purple-100 text-purple-700"
-                  : config.mode === "remote"
-                  ? "bg-cyan-100 text-cyan-700"
-                  : "bg-indigo-100 text-indigo-700"
-              }`}
-            >
-              {config.mode === "local" ? "Local" : config.mode === "remote" ? "Remote" : "Manual"}
-            </span>
-            <DeploymentStatusBadge phase={deployment.phase} />
-          </div>
+          <DeploymentStatusBadge phase={deployment.phase} />
         </div>
-
-        {/* Action buttons */}
-        <div className="flex gap-2 mt-4 pt-4 border-t">
-          {!isProvisioned && (config.mode === "local" || config.mode === "remote") && (
-            <button
-              onClick={() => handleAction("provision")}
-              disabled={!!actionLoading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
-              {actionLoading === "provision" ? "Deploying..." : "Deploy"}
-            </button>
-          )}
-          {isStopped && (
-            <button
-              onClick={() => handleAction("start")}
-              disabled={!!actionLoading}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
-            >
-              {actionLoading === "start" ? "Starting..." : "Start"}
-            </button>
-          )}
-          {(isRunning || isDeploying) && (
-            <button
-              onClick={() => handleAction("stop")}
-              disabled={!!actionLoading}
-              className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50"
-            >
-              {actionLoading === "stop" ? "Stopping..." : "Stop"}
-            </button>
-          )}
-          {isProvisioned && (
-            <button
-              onClick={() => handleAction("destroy")}
-              disabled={!!actionLoading}
-              className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm hover:bg-red-50 disabled:opacity-50"
-            >
-              {actionLoading === "destroy" ? "Destroying..." : "Destroy"}
-            </button>
-          )}
-          {isError && (
-            <button
-              onClick={() => handleAction("provision")}
-              disabled={!!actionLoading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
-              Retry Deploy
-            </button>
-          )}
-        </div>
-
-        {/* Error message */}
-        {deployment.error_message && (
-          <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
-            {deployment.error_message}
-          </div>
-        )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b mb-6">
-        {(["overview", "logs", "config"] as Tab[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-              activeTab === tab
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {tab === "overview" ? "Overview" : tab === "logs" ? "Logs" : "Config"}
-          </button>
-        ))}
+      {/* Desktop App CTA */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-6">
+        <h2 className="text-lg font-semibold text-blue-800 mb-2">Manage with Desktop App</h2>
+        <p className="text-sm text-blue-700 mb-4">
+          Deployment, monitoring, logs, and lifecycle management are handled by the Tokamak Desktop App.
+          Install it to deploy, start, stop, and manage your L2 chain.
+        </p>
+        <a
+          href={DESKTOP_DOWNLOAD_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Get Desktop App
+        </a>
       </div>
 
-      {/* Tab content */}
-      {activeTab === "overview" && (
-        <div className="space-y-6">
-          {/* Container status */}
-          {status && status.containers.length > 0 && (
-            <div className="bg-white rounded-xl border p-6">
-              <h2 className="text-lg font-semibold mb-4">Containers</h2>
-              <ContainerStatusCards containers={status.containers} />
+      {/* Info */}
+      <div className="space-y-6">
+        <div className="bg-white rounded-xl border p-6">
+          <h2 className="text-lg font-semibold mb-4">Configuration</h2>
+          <dl className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Chain ID</dt>
+              <dd className="font-medium">{deployment.chain_id || "Not set"}</dd>
             </div>
-          )}
-
-          {/* Endpoints */}
-          {isProvisioned && (
-            <div className="bg-white rounded-xl border p-6">
-              <h2 className="text-lg font-semibold mb-4">Endpoints</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <div className="text-sm font-medium text-gray-700 mb-1">L1 RPC</div>
-                  <code className="text-sm font-mono text-blue-600">
-                    {deployment.l1_port ? `http://127.0.0.1:${deployment.l1_port}` : "Not assigned"}
-                  </code>
-                  {monitoring?.l1?.healthy && (
-                    <span className="ml-2 text-xs text-green-600">Connected</span>
-                  )}
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <div className="text-sm font-medium text-gray-700 mb-1">L2 RPC</div>
-                  <code className="text-sm font-mono text-blue-600">
-                    {deployment.l2_port ? `http://127.0.0.1:${deployment.l2_port}` : "Not assigned"}
-                  </code>
-                  {monitoring?.l2?.healthy && (
-                    <span className="ml-2 text-xs text-green-600">Connected</span>
-                  )}
-                </div>
-                {isRunning && (
-                  <>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-700">L1 Block Explorer</span>
-                        <a href={`http://127.0.0.1:${deployment.tools_l1_explorer_port || 8083}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600" title="Open in new tab">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                        </a>
-                      </div>
-                      <a href={`http://127.0.0.1:${deployment.tools_l1_explorer_port || 8083}`} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-blue-600 hover:underline">
-                        {`http://127.0.0.1:${deployment.tools_l1_explorer_port || 8083}`}
-                      </a>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-700">L2 Block Explorer</span>
-                        <a href={`http://127.0.0.1:${deployment.tools_l2_explorer_port || 8082}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600" title="Open in new tab">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                        </a>
-                      </div>
-                      <a href={`http://127.0.0.1:${deployment.tools_l2_explorer_port || 8082}`} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-blue-600 hover:underline">
-                        {`http://127.0.0.1:${deployment.tools_l2_explorer_port || 8082}`}
-                      </a>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-700">Bridge UI / Dashboard</span>
-                        <a href={`http://127.0.0.1:${deployment.tools_bridge_ui_port || 3000}`} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-600" title="Open in new tab">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                        </a>
-                      </div>
-                      <a href={`http://127.0.0.1:${deployment.tools_bridge_ui_port || 3000}`} target="_blank" rel="noopener noreferrer" className="text-sm font-mono text-blue-600 hover:underline">
-                        {`http://127.0.0.1:${deployment.tools_bridge_ui_port || 3000}`}
-                      </a>
-                    </div>
-                  </>
-                )}
-              </div>
-              {isRunning && (
-                <div className="flex gap-2 mt-4 pt-4 border-t">
-                  <button
-                    onClick={async () => {
-                      setToolsLoading("build");
-                      try {
-                        await deploymentsApi.buildTools(deployment.id);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "Failed to build tools");
-                      } finally {
-                        setToolsLoading("");
-                      }
-                    }}
-                    disabled={!!toolsLoading}
-                    className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
-                  >
-                    {toolsLoading === "build" ? "Building..." : "Build Tools"}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setToolsLoading("restart");
-                      try {
-                        await deploymentsApi.restartTools(deployment.id);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "Failed to restart tools");
-                      } finally {
-                        setToolsLoading("");
-                      }
-                    }}
-                    disabled={!!toolsLoading}
-                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {toolsLoading === "restart" ? "Restarting..." : "Restart Tools"}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setToolsLoading("stop");
-                      try {
-                        await deploymentsApi.stopTools(deployment.id);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "Failed to stop tools");
-                      } finally {
-                        setToolsLoading("");
-                      }
-                    }}
-                    disabled={!!toolsLoading}
-                    className="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    {toolsLoading === "stop" ? "Stopping..." : "Stop Tools"}
-                  </button>
-                  <span className="text-xs text-gray-400 self-center ml-2">Blockscout, Bridge UI, Dashboard</span>
-                </div>
-              )}
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Mode</dt>
+              <dd className="font-medium capitalize">{config.mode}</dd>
             </div>
-          )}
-
-          {/* Contract addresses */}
-          {(deployment.bridge_address || deployment.proposer_address) && (
-            <div className="bg-white rounded-xl border p-6">
-              <h2 className="text-lg font-semibold mb-4">Contracts</h2>
-              <dl className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Guest Program</dt>
+              <dd className="font-medium">{deployment.program_slug}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-gray-500">Created</dt>
+              <dd className="font-medium">{new Date(deployment.created_at).toLocaleString()}</dd>
+            </div>
+            {(deployment.bridge_address || deployment.proposer_address) && (
+              <>
                 {deployment.bridge_address && (
                   <div className="flex justify-between">
                     <dt className="text-gray-500">Bridge</dt>
@@ -467,263 +162,42 @@ export default function DeploymentDetailPage() {
                     <dd className="font-mono text-xs">{deployment.proposer_address}</dd>
                   </div>
                 )}
-              </dl>
-            </div>
-          )}
-
-          {/* Monitoring */}
-          {monitoring && (monitoring.l1 || monitoring.l2) && (
-            <div className="bg-white rounded-xl border p-6">
-              <h2 className="text-lg font-semibold mb-4">Chain Info</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {monitoring.l1 && (
-                  <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                    <h3 className="text-sm font-medium text-gray-700">L1</h3>
-                    <div className="text-sm">
-                      <span className="text-gray-500">Block: </span>
-                      <span className="font-mono">{monitoring.l1.blockNumber ?? "N/A"}</span>
-                    </div>
-                    <div className="text-sm">
-                      <span className="text-gray-500">Chain ID: </span>
-                      <span className="font-mono">{monitoring.l1.chainId ?? "N/A"}</span>
-                    </div>
-                  </div>
-                )}
-                {monitoring.l2 && (
-                  <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                    <h3 className="text-sm font-medium text-gray-700">L2</h3>
-                    <div className="text-sm">
-                      <span className="text-gray-500">Block: </span>
-                      <span className="font-mono">{monitoring.l2.blockNumber ?? "N/A"}</span>
-                    </div>
-                    <div className="text-sm">
-                      <span className="text-gray-500">Chain ID: </span>
-                      <span className="font-mono">{monitoring.l2.chainId ?? "N/A"}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Settings */}
-          <div className="bg-white rounded-xl border p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold">Settings</h2>
-              {!editing && (
-                <button
-                  onClick={() => setEditing(true)}
-                  className="text-blue-600 text-sm hover:underline"
-                >
-                  Edit
-                </button>
-              )}
-            </div>
-
-            {editing ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">L2 Name</label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Chain ID</label>
-                  <input
-                    type="number"
-                    value={editChainId}
-                    onChange={(e) => setEditChainId(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">L1 RPC URL</label>
-                  <input
-                    type="text"
-                    value={editRpcUrl}
-                    onChange={(e) => setEditRpcUrl(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {saving ? "Saving..." : "Save"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setEditing(false);
-                      setEditName(deployment.name);
-                      setEditChainId(deployment.chain_id?.toString() || "");
-                      setEditRpcUrl(deployment.rpc_url || "");
-                    }}
-                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <dl className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">Chain ID</dt>
-                  <dd className="font-medium">{deployment.chain_id || "Not set"}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">L1 RPC URL</dt>
-                  <dd className="font-medium font-mono text-xs">
-                    {deployment.rpc_url || (deployment.l1_port ? `http://127.0.0.1:${deployment.l1_port}` : "Not set")}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">Docker Project</dt>
-                  <dd className="font-medium font-mono text-xs">{deployment.docker_project || "Not provisioned"}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-gray-500">Created</dt>
-                  <dd className="font-medium">{new Date(deployment.created_at).toLocaleString()}</dd>
-                </div>
-              </dl>
+              </>
             )}
-          </div>
+          </dl>
+        </div>
 
-          {/* Danger zone */}
-          <div className="bg-white rounded-xl border border-red-200 p-6">
-            <h2 className="text-lg font-semibold text-red-600 mb-3">Danger Zone</h2>
+        {/* Manual setup guide */}
+        <div className="bg-white rounded-xl border p-6">
+          <h2 className="text-lg font-semibold mb-3">Manual Setup (CLI)</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            You can also run this L2 manually using the ethrex CLI.
+          </p>
+          <div className="flex gap-2 mb-4">
             <button
-              onClick={handleDelete}
-              disabled={!!actionLoading}
-              className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
+              onClick={() => downloadFile(generateTomlConfig(deployment), "programs.toml", "application/toml")}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
             >
-              {actionLoading === "delete" ? "Removing..." : "Remove L2"}
+              Download programs.toml
             </button>
           </div>
-        </div>
-      )}
-
-      {activeTab === "logs" && (
-        <div className="bg-white rounded-xl border p-6">
-          <h2 className="text-lg font-semibold mb-4">Logs</h2>
-          {isProvisioned ? (
-            <LogViewer deploymentId={deployment.id} />
-          ) : (
-            <p className="text-gray-500 text-sm">Deploy your L2 first to see logs.</p>
-          )}
-        </div>
-      )}
-
-      {activeTab === "config" && (
-        <div className="space-y-6">
-          {/* App info */}
-          <div className="bg-white rounded-xl border p-6">
-            <h2 className="text-lg font-semibold mb-4">App Configuration</h2>
-            <div className="text-sm space-y-2">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Guest Program</span>
-                <span className="font-medium">{deployment.program_slug}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Program Name</span>
-                <span className="font-medium">{deployment.program_name}</span>
-              </div>
-              {deployment.program_slug === "zk-dex" && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">ZK Backend</span>
-                    <span className="font-medium">SP1</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Genesis</span>
-                    <span className="font-medium font-mono text-xs">l2-zk-dex.json</span>
-                  </div>
-                </>
-              )}
-              {deployment.program_slug === "evm-l2" && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">ZK Backend</span>
-                    <span className="font-medium">exec (no proofs)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Genesis</span>
-                    <span className="font-medium font-mono text-xs">l2.json</span>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Config downloads */}
-          <div className="bg-white rounded-xl border p-6">
-            <h2 className="text-lg font-semibold mb-4">Configuration Files</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Download configuration files to run an ethrex L2 node with this guest program.
-            </p>
-            <div className="flex gap-2 mb-4">
-              <button
-                onClick={() => downloadFile(generateTomlConfig(deployment), "programs.toml", "application/toml")}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
-              >
-                Download programs.toml
-              </button>
+          <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-3">
+            <div>
+              <p className="font-medium text-gray-700 mb-1">1. Clone & build</p>
+              <pre className="bg-gray-900 text-gray-100 rounded p-2 text-xs">
+{`git clone https://github.com/tokamak-network/ethrex.git
+cd ethrex`}
+              </pre>
             </div>
             <div>
-              <p className="text-xs font-medium text-gray-500 mb-1">programs.toml</p>
-              <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs overflow-x-auto">
-                {generateTomlConfig(deployment)}
+              <p className="font-medium text-gray-700 mb-1">2. Run with guest program</p>
+              <pre className="bg-gray-900 text-gray-100 rounded p-2 text-xs">
+{`make -C crates/l2 init-guest-program PROGRAM=${deployment.program_slug || deployment.program_id}`}
               </pre>
             </div>
           </div>
-
-          {/* Quick Start */}
-          <div className="bg-white rounded-xl border p-6">
-            <h2 className="text-lg font-semibold mb-3">Manual Setup</h2>
-            <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-3">
-              <div>
-                <p className="font-medium text-gray-700 mb-1">1. Clone ethrex</p>
-                <pre className="bg-gray-900 text-gray-100 rounded p-2 text-xs">
-{`git clone https://github.com/tokamak-network/ethrex.git
-cd ethrex`}
-                </pre>
-              </div>
-              <div>
-                <p className="font-medium text-gray-700 mb-1">2. Run with guest program</p>
-                <pre className="bg-gray-900 text-gray-100 rounded p-2 text-xs">
-{`make -C crates/l2 init-guest-program PROGRAM=${deployment.program_slug || deployment.program_id}`}
-                </pre>
-              </div>
-              <div>
-                <p className="font-medium text-gray-700 mb-1">3. Endpoints</p>
-                <div className="text-gray-500 space-y-1">
-                  <p>L1 RPC: <code className="bg-gray-200 px-1 rounded text-xs">http://localhost:8545</code></p>
-                  <p>L2 RPC: <code className="bg-gray-200 px-1 rounded text-xs">http://localhost:1729</code></p>
-                </div>
-              </div>
-              <div>
-                <p className="font-medium text-gray-700 mb-1">4. Stop</p>
-                <pre className="bg-gray-900 text-gray-100 rounded p-2 text-xs">
-{`make -C crates/l2 down-guest-program`}
-                </pre>
-              </div>
-            </div>
-          </div>
         </div>
-      )}
-
-      {/* Error display */}
-      {error && (
-        <div className="fixed bottom-4 right-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800 shadow-lg">
-          {error}
-          <button onClick={() => setError("")} className="ml-2 text-red-600 hover:underline">Dismiss</button>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

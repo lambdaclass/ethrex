@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tokamak L2 Manager</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="logo">
+        <img src="/logo.png" alt="Tokamak" width="28" height="28">
+      </div>
+      <span class="name">Tokamak L2</span>
+    </div>
+
+    <div class="sidebar-nav">
+      <button class="nav-link active" data-view="deployments">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+        </svg>
+        <span>My L2s</span>
+      </button>
+      <button class="nav-link" data-view="launch">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        <span>Launch L2</span>
+      </button>
+
+      <div class="sidebar-section">Infrastructure</div>
+      <button class="nav-link" data-view="hosts">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+        </svg>
+        <span>Remote Hosts</span>
+      </button>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-status">
+        <span class="dot" id="server-status-dot"></span>
+        <span id="server-status-text">connecting...</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Area -->
+  <div class="main-area">
+    <!-- Header -->
+    <header class="main-header">
+      <span class="page-title" id="page-title">My L2s</span>
+      <div class="header-actions">
+        <button class="btn-primary" id="header-launch-btn" onclick="showView('launch')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Launch L2
+        </button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="main-content">
+      <!-- Deployments List -->
+      <section id="view-deployments" class="view active">
+        <div id="deployments-list">
+          <p class="empty-state">Loading...</p>
+        </div>
+      </section>
+
+      <!-- Launch Wizard -->
+      <section id="view-launch" class="view">
+        <div class="step-indicator" id="step-indicator"></div>
+
+        <!-- Step 1: Select Program -->
+        <div id="launch-step1" class="launch-step">
+          <h2>Select an App</h2>
+          <p class="step-desc">Choose an application to deploy on your L2 chain.</p>
+          <div class="search-bar" style="display:flex;gap:10px">
+            <input type="text" id="program-search" placeholder="Search apps..." oninput="filterPrograms()" style="flex:1">
+            <select id="category-filter" onchange="filterPrograms()" style="width:auto;min-width:140px">
+              <option value="">All Categories</option>
+            </select>
+          </div>
+          <div id="programs-grid" class="card-grid">
+            <p class="empty-state">Loading programs...</p>
+          </div>
+        </div>
+
+        <!-- Step 2: Configure -->
+        <div id="launch-step2" class="launch-step" style="display:none">
+          <h2>Configure Your L2</h2>
+          <p class="step-desc" id="step2-desc">Set up your L2 chain.</p>
+
+          <div id="selected-program-info" class="selected-program-card"></div>
+
+          <div class="config-form">
+            <label>Environment</label>
+            <div class="mode-cards">
+              <button type="button" class="mode-card active" data-mode="local" onclick="setLaunchMode('local')">
+                <div class="mode-title">Local (Docker)</div>
+                <div class="mode-desc">Build and run on this machine</div>
+              </button>
+              <button type="button" class="mode-card" data-mode="remote" onclick="setLaunchMode('remote')">
+                <div class="mode-title">Remote Server</div>
+                <div class="mode-desc">Deploy to a remote server via SSH</div>
+              </button>
+              <button type="button" class="mode-card" data-mode="manual" onclick="setLaunchMode('manual')">
+                <div class="mode-title">Manual</div>
+                <div class="mode-desc">Download config and run manually</div>
+              </button>
+            </div>
+
+            <label>L2 Name *
+              <input type="text" id="launch-name" placeholder="My L2 Chain">
+            </label>
+
+            <label>Chain ID
+              <input type="number" id="launch-chain-id" placeholder="auto-generated">
+              <p class="form-hint">Auto-generated. Any unique value works.</p>
+            </label>
+
+            <div id="deploy-dir-area">
+              <label>Deploy Directory</label>
+              <div style="display:flex;gap:6px;margin-bottom:4px">
+                <input type="text" id="launch-deploy-dir" placeholder="~/.tokamak/deployments/<id> (default)" style="flex:1;margin:0">
+                <button type="button" class="btn-secondary" onclick="browseDirPicker()" style="white-space:nowrap">Browse</button>
+              </div>
+              <p class="form-hint" style="margin-bottom:16px">docker-compose.yaml will be generated here.</p>
+            </div>
+
+            <div id="l1-node-area">
+              <label>L1 Node
+                <select id="launch-l1-image">
+                  <option value="ethrex">ethrex (Tokamak)</option>
+                  <option value="geth">Geth (go-ethereum)</option>
+                  <option value="reth">Reth</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="docker-status-area"></div>
+
+            <div id="remote-host-area" style="display:none">
+              <label>Target Server
+                <select id="launch-host-select"><option value="">Select a server...</option></select>
+              </label>
+              <div class="remote-info-box">
+                <p style="font-weight:500;margin-bottom:4px">Remote deployment</p>
+                <p>Pre-built Docker images will be pulled on the remote server.</p>
+              </div>
+            </div>
+
+            <div id="manual-rpc-area" style="display:none">
+              <label>L1 RPC URL *
+                <input type="text" id="launch-rpc-url" placeholder="https://mainnet.infura.io/v3/...">
+                <p class="form-hint">The Ethereum L1 endpoint your L2 will settle to.</p>
+              </label>
+            </div>
+
+            <div id="launch-error" class="error-msg" style="display:none"></div>
+
+            <div class="form-actions">
+              <button class="btn-secondary" onclick="launchGoStep(1)">Back</button>
+              <button class="btn-primary" id="launch-deploy-btn" onclick="handleLaunchDeploy()">Deploy L2</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: Deploying -->
+        <div id="launch-step3" class="launch-step" style="display:none">
+          <h2>Deploying Your L2</h2>
+          <p class="step-desc" id="deploy-info-text"></p>
+          <div class="deploy-card">
+            <div class="elapsed-bar">
+              <div>Total elapsed: <span class="time" id="deploy-elapsed">0s</span></div>
+              <div class="step-count" id="deploy-step-count"></div>
+            </div>
+            <div id="deploy-progress-steps" class="progress-steps"></div>
+            <div id="deploy-message" class="deploy-message" style="display:none"></div>
+            <details id="build-log-details">
+              <summary class="build-log-summary">Build output (<span id="build-log-count">0</span> lines)</summary>
+              <div id="build-log" class="build-log-container"></div>
+            </details>
+            <details id="event-log-details" style="margin-top:4px">
+              <summary class="event-log-summary">Event log (<span id="event-log-count">0</span> events)</summary>
+              <div id="event-log" class="event-log"></div>
+            </details>
+            <div id="deploy-error-msg" class="error-box" style="display:none"></div>
+            <div id="deploy-complete" class="success-box" style="display:none"></div>
+          </div>
+          <div class="form-actions" style="margin-top:16px">
+            <button class="btn-primary" id="goto-dashboard-btn" style="display:none" onclick="goToDashboard()">Go to Dashboard</button>
+            <button class="btn-secondary" onclick="showView('deployments')">View All L2s</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Deployment Detail -->
+      <section id="view-detail" class="view">
+        <div class="detail-header">
+          <div class="back-link">
+            <button class="btn-back" onclick="showView('deployments')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              Back to My L2s
+            </button>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <h2 id="detail-name" style="font-size:18px;font-weight:700"></h2>
+            <span id="detail-mode-badge"></span>
+            <span id="detail-phase"></span>
+          </div>
+        </div>
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+          <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">Logs</button>
+          <button class="tab-btn" data-tab="config" onclick="switchTab('config')">Config</button>
+        </div>
+        <div class="detail-content">
+          <div id="tab-overview" class="tab-panel active">
+            <div id="container-cards"></div>
+            <div id="detail-endpoints" class="card" style="display:none;margin-bottom:20px">
+              <div id="endpoints-content"></div>
+            </div>
+          </div>
+          <div id="tab-logs" class="tab-panel"></div>
+          <div id="tab-config" class="tab-panel"></div>
+        </div>
+      </section>
+
+      <!-- Remote Hosts -->
+      <section id="view-hosts" class="view">
+        <div class="form-card">
+          <h2>Remote Hosts</h2>
+          <form id="host-form">
+            <div class="form-row">
+              <label>Name <input type="text" name="name" required placeholder="my-server"></label>
+              <label>Hostname <input type="text" name="hostname" required placeholder="192.168.1.100"></label>
+            </div>
+            <div class="form-row">
+              <label>Username <input type="text" name="username" required placeholder="ubuntu"></label>
+              <label>Port <input type="number" name="port" value="22"></label>
+            </div>
+            <label>Private Key (PEM)
+              <textarea name="privateKey" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">Add Host</button>
+            </div>
+          </form>
+        </div>
+        <div id="hosts-list" class="card-grid" style="margin-top:20px"></div>
+      </section>
+    </div>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+      <span class="footer-dot" id="footer-engine-dot"></span>
+      <span id="footer-engine-text">Engine connecting...</span>
+      <span style="margin-left:auto" id="footer-info"></span>
+    </footer>
+  </div>
+
+  <script src="/app.js?v=2"></script>
+</body>
+</html>

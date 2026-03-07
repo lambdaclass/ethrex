@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const { getActivePrograms, getProgramById, getCategories } = require("../db/programs");
+const { getActiveDeployments } = require("../db/deployments");
 
 // GET /api/store/programs — public program listing
 router.get("/programs", (req, res) => {
@@ -47,6 +48,21 @@ router.get("/featured", (req, res) => {
   try {
     const programs = getActivePrograms({ limit: 6 });
     res.json({ programs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/store/appchains — public Open Appchain listing (Showroom)
+router.get("/appchains", (req, res) => {
+  try {
+    const { search, limit, offset } = req.query;
+    const appchains = getActiveDeployments({
+      search,
+      limit: parseInt(limit) || 50,
+      offset: parseInt(offset) || 0,
+    });
+    res.json({ appchains });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

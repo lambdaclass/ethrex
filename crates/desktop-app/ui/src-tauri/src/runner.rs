@@ -275,48 +275,57 @@ impl ProcessRunner {
         }
     }
 
-    /// Parse a log line from ethrex l2 --dev and update progress
+    // -- Log pattern definitions for ethrex l2 --dev output --
+    // Stage markers: (pattern, user-facing message)
+    const STAGE_PATTERNS: &[(&str, &str)] = &[
+        ("Removing L1 and L2 databases", "[stage] Cleaning up old databases"),
+        ("Initializing L1", "[stage] Starting local L1 node"),
+        ("Deploying contracts", "[stage] Deploying L2 contracts to L1"),
+        ("Initializing L2", "[stage] Starting L2 node"),
+    ];
+
+    // Ready indicators: any of these means L2 is fully operational
+    const READY_PATTERNS: &[&str] = &[
+        "Starting rpc server",
+        "RPC server started",
+        "Blockchain is ready",
+        "started on",
+        "listening on",
+    ];
+
+    // Fatal error indicators that should mark the appchain as failed
+    const FATAL_PATTERNS: &[&str] = &["panic", "FATAL"];
+
+    /// Parse a log line from ethrex l2 --dev and update progress.
+    ///
+    /// Note: This relies on matching known log strings from ethrex output.
+    /// If ethrex log format changes, update the pattern constants above.
     fn process_dev_log_line(am: &AppchainManager, chain_id: &str, line: &str) {
-        // Add all lines to logs (limit to last 500)
         am.add_log(chain_id, line.to_string());
 
-        // Detect stage transitions from the println! output in command.rs
-        if line.contains("Removing L1 and L2 databases") {
-            am.add_log(chain_id, "[stage] Cleaning up old databases".to_string());
-        } else if line.contains("Initializing L1") {
-            am.add_log(chain_id, "[stage] Starting local L1 node".to_string());
-        } else if line.contains("Deploying contracts") {
-            am.add_log(
-                chain_id,
-                "[stage] Deploying L2 contracts to L1".to_string(),
-            );
-        } else if line.contains("Initializing L2") {
-            am.add_log(chain_id, "[stage] Starting L2 node".to_string());
+        // Detect stage transitions
+        for &(pattern, message) in Self::STAGE_PATTERNS {
+            if line.contains(pattern) {
+                am.add_log(chain_id, message.to_string());
+                return;
+            }
         }
 
         // Detect when L2 is fully running
-        // The L2 is considered ready when we see RPC server started
-        if line.contains("Starting rpc server")
-            || line.contains("RPC server started")
-            || line.contains("Blockchain is ready")
-            || line.contains("started on")
-            || line.contains("listening on")
-        {
+        if Self::READY_PATTERNS.iter().any(|p| line.contains(p)) {
             am.update_step_status(chain_id, "dev", StepStatus::Done);
             am.advance_step(chain_id);
             am.update_step_status(chain_id, "done", StepStatus::Done);
             am.update_status(chain_id, AppchainStatus::Running);
             am.add_log(chain_id, "[ready] Appchain is running!".to_string());
+            return;
         }
 
-        // Detect errors
-        if line.contains("panic") || line.contains("FATAL") || line.contains("Error:") {
-            // Don't immediately mark as error for warnings
-            if line.contains("panic") || line.contains("FATAL") {
-                am.update_step_status(chain_id, "dev", StepStatus::Error);
-                am.set_setup_error(chain_id, line.to_string());
-                am.update_status(chain_id, AppchainStatus::Error);
-            }
+        // Detect fatal errors
+        if Self::FATAL_PATTERNS.iter().any(|p| line.contains(p)) {
+            am.update_step_status(chain_id, "dev", StepStatus::Error);
+            am.set_setup_error(chain_id, line.to_string());
+            am.update_status(chain_id, AppchainStatus::Error);
         }
     }
 
@@ -333,6 +342,7 @@ impl ProcessRunner {
     }
 
     /// Check if a chain has a running process
+    #[allow(dead_code)]
     pub async fn is_running(&self, chain_id: &str) -> bool {
         let children = self.children.lock().await;
         children.contains_key(chain_id)

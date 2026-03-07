@@ -1,6 +1,8 @@
 mod ai_provider;
 mod appchain_manager;
 mod commands;
+mod deployment_db;
+mod local_server;
 mod process_manager;
 mod runner;
 
@@ -24,6 +26,15 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Auto-start local server for deployment management
+            let server = Arc::new(local_server::LocalServer::new());
+            app.manage(server.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = server.start().await {
+                    log::warn!("Failed to auto-start local server: {e}");
+                }
+            });
 
             // System tray
             let show_item =
@@ -65,6 +76,7 @@ pub fn run() {
         .manage(Arc::new(appchain_manager::AppchainManager::new()))
         .manage(Arc::new(runner::ProcessRunner::new()))
         .manage(Arc::new(ai_provider::AiProvider::new()))
+        // LocalServer is managed in setup() above
         .invoke_handler(tauri::generate_handler![
             get_ai_config,
             save_ai_config,
@@ -85,6 +97,20 @@ pub fn run() {
             start_appchain_setup,
             get_setup_progress,
             stop_appchain,
+            update_appchain_public,
+            get_chat_context,
+            start_local_server,
+            stop_local_server,
+            get_local_server_status,
+            open_deployment_ui,
+            save_platform_token,
+            get_platform_token,
+            delete_platform_token,
+            list_docker_deployments,
+            delete_docker_deployment,
+            stop_docker_deployment,
+            start_docker_deployment,
+            get_docker_containers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

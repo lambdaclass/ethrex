@@ -1,11 +1,8 @@
 const express = require("express");
 const router = express.Router();
 
-const { requireAuth } = require("../middleware/auth");
-const { createHost, getHostsByUser, getHostById, updateHost, deleteHost } = require("../db/hosts");
+const { createHost, getAllHosts, getHostById, updateHost, deleteHost } = require("../db/hosts");
 const { testConnection } = require("../lib/docker-remote");
-
-router.use(requireAuth);
 
 // POST /api/hosts — add a remote host
 router.post("/", (req, res) => {
@@ -19,7 +16,6 @@ router.post("/", (req, res) => {
     }
 
     const host = createHost({
-      userId: req.user.id,
       name: name.trim(),
       hostname: hostname.trim(),
       port: port || 22,
@@ -28,7 +24,6 @@ router.post("/", (req, res) => {
       privateKey: privateKey || null,
     });
 
-    // Return without private_key for security
     const { private_key, ...safeHost } = host;
     res.status(201).json({ host: safeHost });
   } catch (e) {
@@ -36,10 +31,10 @@ router.post("/", (req, res) => {
   }
 });
 
-// GET /api/hosts — list my hosts
+// GET /api/hosts — list all hosts
 router.get("/", (req, res) => {
   try {
-    const hosts = getHostsByUser(req.user.id);
+    const hosts = getAllHosts();
     res.json({ hosts });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -50,7 +45,7 @@ router.get("/", (req, res) => {
 router.get("/:id", (req, res) => {
   try {
     const host = getHostById(req.params.id);
-    if (!host || host.user_id !== req.user.id) {
+    if (!host) {
       return res.status(404).json({ error: "Host not found" });
     }
     const { private_key, ...safeHost } = host;
@@ -64,13 +59,12 @@ router.get("/:id", (req, res) => {
 router.post("/:id/test", async (req, res) => {
   try {
     const host = getHostById(req.params.id);
-    if (!host || host.user_id !== req.user.id) {
+    if (!host) {
       return res.status(404).json({ error: "Host not found" });
     }
 
     const result = await testConnection(host);
 
-    // Update host status
     updateHost(host.id, {
       status: result.ok && result.docker ? "active" : result.ok ? "no_docker" : "error",
       last_tested: Date.now(),
@@ -86,7 +80,7 @@ router.post("/:id/test", async (req, res) => {
 router.put("/:id", (req, res) => {
   try {
     const host = getHostById(req.params.id);
-    if (!host || host.user_id !== req.user.id) {
+    if (!host) {
       return res.status(404).json({ error: "Host not found" });
     }
     const updated = updateHost(req.params.id, req.body);
@@ -101,7 +95,7 @@ router.put("/:id", (req, res) => {
 router.delete("/:id", (req, res) => {
   try {
     const host = getHostById(req.params.id);
-    if (!host || host.user_id !== req.user.id) {
+    if (!host) {
       return res.status(404).json({ error: "Host not found" });
     }
     deleteHost(req.params.id);

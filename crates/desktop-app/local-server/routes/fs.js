@@ -4,10 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const { requireAuth } = require("../middleware/auth");
-
-router.use(requireAuth);
-
 // GET /api/fs/browse?path=/some/dir — list directories
 router.get("/browse", (req, res) => {
   try {

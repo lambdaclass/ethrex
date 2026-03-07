@@ -1,13 +1,72 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
 import { useLang } from '../App'
 import { t } from '../i18n'
+import type { ViewType } from '../App'
 import type { Lang } from '../i18n'
+import type { NetworkMode } from './CreateL2Wizard'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
+}
+
+interface ChatAction {
+  action: string
+  params: Record<string, string>
+}
+
+function parseActions(text: string): { cleanText: string; actions: ChatAction[] } {
+  const actionRegex = /\[ACTION:(\w+)(?::([^\]]*))?\]/g
+  const actions: ChatAction[] = []
+  let match: RegExpExecArray | null
+  while ((match = actionRegex.exec(text)) !== null) {
+    const params: Record<string, string> = {}
+    if (match[2]) {
+      match[2].split(',').forEach(p => {
+        const [k, v] = p.split('=')
+        if (k && v) params[k.trim()] = v.trim()
+      })
+    }
+    actions.push({ action: match[1], params })
+  }
+  const cleanText = text.replace(actionRegex, '').trim()
+  return { cleanText, actions }
+}
+
+const actionLabels: Record<string, Record<Lang, string>> = {
+  navigate: { ko: '이동', en: 'Go to' },
+  create_appchain: { ko: '앱체인 만들기', en: 'Create Appchain' },
+  stop_appchain: { ko: '앱체인 중지', en: 'Stop Appchain' },
+  open_appchain: { ko: '앱체인 보기', en: 'View Appchain' },
+}
+
+const viewLabels: Record<string, Record<Lang, string>> = {
+  home: { ko: '홈', en: 'Home' },
+  myl2: { ko: '내 앱체인', en: 'My Appchains' },
+  store: { ko: '프로그램 스토어', en: 'Program Store' },
+  openl2: { ko: '오픈 앱체인', en: 'Open Appchain' },
+  wallet: { ko: '지갑', en: 'Wallet' },
+  dashboard: { ko: '대시보드', en: 'Dashboard' },
+  settings: { ko: '설정', en: 'Settings' },
+}
+
+function actionLabel(action: ChatAction, lang: Lang): string {
+  const base = actionLabels[action.action]?.[lang] || action.action
+  if (action.action === 'navigate' && action.params.view) {
+    const view = viewLabels[action.params.view]?.[lang] || action.params.view
+    return `${base}: ${view}`
+  }
+  if (action.action === 'create_appchain' && action.params.network) {
+    return `${base} (${action.params.network})`
+  }
+  return base
+}
+
+interface ChatViewProps {
+  onNavigate?: (view: ViewType) => void
+  onCreateWithNetwork?: (network: NetworkMode) => void
 }
 
 interface AiConfig {
@@ -16,7 +75,7 @@ interface AiConfig {
   model: string
 }
 
-export default function ChatView() {
+export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewProps) {
   const { lang } = useLang()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -98,6 +157,31 @@ export default function ChatView() {
     }
   }
 
+  const executeAction = useCallback((action: ChatAction) => {
+    switch (action.action) {
+      case 'navigate':
+        if (action.params.view && onNavigate) {
+          onNavigate(action.params.view as ViewType)
+        }
+        break
+      case 'create_appchain':
+        if (onCreateWithNetwork) {
+          onCreateWithNetwork((action.params.network || 'local') as NetworkMode)
+        }
+        break
+      case 'stop_appchain':
+        if (action.params.id) {
+          invoke('stop_appchain', { id: action.params.id }).catch(console.error)
+        }
+        break
+      case 'open_appchain':
+        if (action.params.id && onNavigate) {
+          onNavigate('myl2')
+        }
+        break
+    }
+  }, [onNavigate, onCreateWithNetwork])
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return
     const userMsg: Message = { role: 'user', content: input }
@@ -106,12 +190,17 @@ export default function ChatView() {
     setInput('')
     setLoading(true)
     try {
-      // Send full conversation history for context
+      // Fetch current app context
+      const context = await invoke<Record<string, unknown>>('get_chat_context')
+      const contextJson = JSON.stringify(context)
+
+      // Send full conversation history with context
       const apiMessages = newMessages
         .filter(m => m.content !== t('chat.welcome.connected', lang))
         .map(m => ({ role: m.role, content: m.content }))
       const response = await invoke<{ role: string; content: string }>('send_chat_message', {
         messages: apiMessages,
+        context: contextJson,
       })
       setMessages(prev => [...prev, { role: 'assistant', content: response.content }])
     } catch (e) {
@@ -425,19 +514,40 @@ export default function ChatView() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5 bg-[var(--color-bg-chat)]">
-        {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[80%] rounded-2xl px-3 py-2 text-[13px] whitespace-pre-wrap leading-relaxed shadow-sm ${
-                msg.role === 'user'
-                  ? 'bg-[var(--color-bubble-user)] text-[var(--color-accent-text)] rounded-br-sm'
-                  : 'bg-[var(--color-bubble-ai)] text-[var(--color-text-primary)] rounded-bl-sm'
-              }`}
-            >
-              {msg.content}
+        {messages.map((msg, i) => {
+          const { cleanText, actions } = msg.role === 'assistant'
+            ? parseActions(msg.content)
+            : { cleanText: msg.content, actions: [] }
+
+          return (
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className="max-w-[80%] space-y-1.5">
+                <div
+                  className={`rounded-2xl px-3 py-2 text-[13px] whitespace-pre-wrap leading-relaxed shadow-sm ${
+                    msg.role === 'user'
+                      ? 'bg-[var(--color-bubble-user)] text-[var(--color-accent-text)] rounded-br-sm'
+                      : 'bg-[var(--color-bubble-ai)] text-[var(--color-text-primary)] rounded-bl-sm'
+                  }`}
+                >
+                  {cleanText}
+                </div>
+                {actions.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {actions.map((action, j) => (
+                      <button
+                        key={j}
+                        onClick={() => executeAction(action)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[var(--color-accent)] text-[var(--color-accent-text)] hover:bg-[var(--color-accent-hover)] transition-colors cursor-pointer shadow-sm"
+                      >
+                        {actionLabel(action, lang)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         {loading && (
           <div className="flex justify-start">
             <div className="bg-[var(--color-bubble-ai)] rounded-2xl rounded-bl-sm px-3 py-2 text-[13px] shadow-sm">

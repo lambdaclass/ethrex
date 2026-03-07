@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
+import { platformAPI } from '../api/platform'
 import type { L2Config } from './MyL2View'
 
 interface Props {
@@ -21,6 +22,14 @@ const statusColor = (status: string) => {
 export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   const { lang } = useLang()
   const [activeTab, setActiveTab] = useState<DetailTab>('control')
+  const [isPublic, setIsPublic] = useState(l2.isPublic)
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  const [platformLoggedIn, setPlatformLoggedIn] = useState(false)
+
+  useEffect(() => {
+    platformAPI.loadToken().then(ok => setPlatformLoggedIn(ok))
+  }, [])
 
   const handleStop = async () => {
     try {
@@ -181,14 +190,64 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
                 />
               </div>
             </div>
-            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)] flex items-center justify-between">
-              <div>
-                <div className="text-[13px] font-medium">{t('myl2.detail.configPublic', lang)}</div>
-                <div className="text-[11px] text-[var(--color-text-secondary)]">{t('myl2.detail.configPublicDesc', lang)}</div>
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[13px] font-medium">{t('myl2.detail.configPublic', lang)}</div>
+                  <div className="text-[11px] text-[var(--color-text-secondary)]">{t('myl2.detail.configPublicDesc', lang)}</div>
+                </div>
+                <button
+                  disabled={publishing || (l2.networkMode === 'local')}
+                  onClick={async () => {
+                    if (!isPublic) {
+                      if (!platformLoggedIn) {
+                        setPublishError(lang === 'ko' ? 'Platform 로그인이 필요합니다. 설정에서 로그인하세요.' : 'Platform login required. Please login in Settings.')
+                        return
+                      }
+                      setPublishing(true)
+                      setPublishError('')
+                      try {
+                        const result = await platformAPI.registerDeployment({
+                          programId: 'ethrex-appchain',
+                          name: l2.name,
+                          chainId: l2.chainId,
+                          rpcUrl: `http://localhost:${l2.rpcPort}`,
+                        })
+                        await platformAPI.activateDeployment(result.deployment.id)
+                        setIsPublic(true)
+                        await invoke('update_appchain_public', { id: l2.id, isPublic: true })
+                        onRefresh?.()
+                      } catch (e: unknown) {
+                        setPublishError(e instanceof Error ? e.message : String(e))
+                      } finally {
+                        setPublishing(false)
+                      }
+                    } else {
+                      setIsPublic(false)
+                      try {
+                        await invoke('update_appchain_public', { id: l2.id, isPublic: false })
+                        onRefresh?.()
+                      } catch { /* ignore */ }
+                    }
+                  }}
+                  className={`w-10 h-5 rounded-full flex items-center px-0.5 cursor-pointer transition-colors disabled:opacity-50 ${isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}
+                >
+                  <div className={`w-4 h-4 bg-white rounded-full transition-transform ${isPublic ? 'translate-x-5' : ''}`} />
+                </button>
               </div>
-              <div className={`w-10 h-5 rounded-full flex items-center px-0.5 cursor-pointer transition-colors ${l2.isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}>
-                <div className={`w-4 h-4 bg-white rounded-full transition-transform ${l2.isPublic ? 'translate-x-5' : ''}`} />
-              </div>
+              {l2.networkMode === 'local' && (
+                <p className="text-[11px] text-[var(--color-warning)] mt-2">
+                  {lang === 'ko' ? '로컬 모드에서는 오픈 앱체인으로 공개할 수 없습니다.' : 'Cannot publish as open appchain in local mode.'}
+                </p>
+              )}
+              {publishError && (
+                <p className="text-[11px] text-[var(--color-error)] mt-2">{publishError}</p>
+              )}
+              {publishing && (
+                <p className="text-[11px] text-[var(--color-text-secondary)] mt-2">
+                  {lang === 'ko' ? 'Platform에 등록 중...' : 'Registering on Platform...'}
+                </p>
+              )}
             </div>
             <button className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-xl py-2.5 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]">
               {t('settings.save', lang)}
@@ -208,6 +267,15 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
               <div className="text-[11px] text-[var(--color-text-secondary)]">
                 <code className="bg-[var(--color-bg-sidebar)] px-2 py-0.5 rounded text-[11px] border border-[var(--color-border)]">http://localhost:{l2.rpcPort + 1000}</code>
               </div>
+              <button
+                onClick={async () => {
+                  try { await invoke('open_deployment_ui') }
+                  catch (e) { console.error('Failed to open deployment UI:', e) }
+                }}
+                className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-text)] text-xs font-medium px-5 py-2.5 rounded-xl transition-colors cursor-pointer"
+              >
+                {lang === 'ko' ? 'Docker 배포 관리 열기' : 'Open Docker Deployment Manager'}
+              </button>
               <p className="text-[11px] text-[var(--color-text-secondary)] whitespace-pre-line">
                 {t('dashboard.hint', lang)}
               </p>

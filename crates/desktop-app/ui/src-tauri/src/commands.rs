@@ -2,6 +2,8 @@ use crate::ai_provider::{AiConfig, AiProvider, ChatMessage};
 use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
+use crate::deployment_db::{self, ContainerInfo, DeploymentProxy, DeploymentRow};
+use crate::local_server::LocalServer;
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
 use crate::runner::ProcessRunner;
 use serde::{Deserialize, Serialize};
@@ -59,7 +61,7 @@ pub async fn test_ai_connection(ai: State<'_, Arc<AiProvider>>) -> Result<String
             .to_string(),
     }];
     let ai = ai.inner().clone();
-    ai.chat(messages).await
+    ai.chat(messages, None).await
 }
 
 // ============================================================================
@@ -69,10 +71,11 @@ pub async fn test_ai_connection(ai: State<'_, Arc<AiProvider>>) -> Result<String
 #[tauri::command]
 pub async fn send_chat_message(
     messages: Vec<ChatMessage>,
+    context: Option<String>,
     ai: State<'_, Arc<AiProvider>>,
 ) -> Result<ChatMessage, String> {
     let ai = ai.inner().clone();
-    let content = ai.chat(messages).await?;
+    let content = ai.chat(messages, context).await?;
     Ok(ChatMessage {
         role: "assistant".to_string(),
         content,
@@ -276,4 +279,184 @@ pub async fn stop_appchain(
     am.update_status(&id, AppchainStatus::Stopped);
     am.add_log(&id, "Appchain stopped by user.".to_string());
     Ok(())
+}
+
+#[tauri::command]
+pub fn update_appchain_public(
+    id: String,
+    is_public: bool,
+    am: State<Arc<AppchainManager>>,
+) -> Result<(), String> {
+    am.get_appchain(&id)
+        .ok_or(format!("Appchain not found: {id}"))?;
+    am.update_public(&id, is_public);
+    Ok(())
+}
+
+/// Returns current app state as context for AI chat
+#[tauri::command]
+pub fn get_chat_context(am: State<Arc<AppchainManager>>) -> serde_json::Value {
+    let chains = am.list_appchains();
+    let chain_summaries: Vec<serde_json::Value> = chains
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "name": c.name,
+                "chain_id": c.chain_id,
+                "status": format!("{:?}", c.status),
+                "network_mode": format!("{:?}", c.network_mode),
+                "rpc_port": c.l2_rpc_port,
+                "is_public": c.is_public,
+                "native_token": c.native_token,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "appchains": chain_summaries,
+        "total_count": chains.len(),
+    })
+}
+
+// ============================================================================
+// Local Server (Deployment Engine)
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct LocalServerStatus {
+    pub running: bool,
+    pub healthy: bool,
+    pub url: String,
+    pub port: u16,
+}
+
+#[tauri::command]
+pub async fn start_local_server(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<String, String> {
+    server.start().await?;
+    Ok(server.url())
+}
+
+#[tauri::command]
+pub async fn stop_local_server(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    server.stop().await
+}
+
+#[tauri::command]
+pub async fn get_local_server_status(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<LocalServerStatus, String> {
+    let running = server.is_running().await;
+    let healthy = if running {
+        server.health_check().await
+    } else {
+        false
+    };
+    Ok(LocalServerStatus {
+        running,
+        healthy,
+        url: server.url(),
+        port: server.port(),
+    })
+}
+
+#[tauri::command]
+pub async fn open_deployment_ui(
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<String, String> {
+    // Ensure server is running
+    if !server.is_running().await {
+        server.start().await?;
+        // Wait briefly for server to be ready
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+
+    Ok(format!("http://127.0.0.1:{}", server.port()))
+}
+
+// ============================================================================
+// Platform Auth (token stored in OS Keychain)
+// ============================================================================
+
+const KEYRING_SERVICE_PLATFORM: &str = "tokamak-appchain";
+const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
+
+#[tauri::command]
+pub fn save_platform_token(token: String) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    entry
+        .set_password(&token)
+        .map_err(|e| format!("Failed to save token: {e}"))
+}
+
+#[tauri::command]
+pub fn get_platform_token() -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to get token: {e}")),
+    }
+}
+
+#[tauri::command]
+pub fn delete_platform_token() -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Failed to delete token: {e}")),
+    }
+}
+
+// ============================================================================
+// Deployment DB (read-only) + Docker lifecycle (proxied to local-server)
+// ============================================================================
+
+#[tauri::command]
+pub fn list_docker_deployments() -> Result<Vec<DeploymentRow>, String> {
+    deployment_db::list_deployments_from_db()
+}
+
+#[tauri::command]
+pub async fn delete_docker_deployment(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.destroy_deployment(&id).await
+}
+
+#[tauri::command]
+pub async fn stop_docker_deployment(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.stop_deployment(&id).await
+}
+
+#[tauri::command]
+pub async fn start_docker_deployment(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<(), String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.start_deployment(&id).await
+}
+
+#[tauri::command]
+pub async fn get_docker_containers(
+    id: String,
+    server: State<'_, Arc<LocalServer>>,
+) -> Result<Vec<ContainerInfo>, String> {
+    let proxy = DeploymentProxy::new(&server.url());
+    proxy.get_containers(&id).await
 }

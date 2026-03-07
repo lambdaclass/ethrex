@@ -29,7 +29,7 @@ env:
 
 jobs:
   ef-test:
-    if: ${{ github.event_name != 'merge_group' }}
+    if: ${{ github.event_name != 'merge_group' && !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     name: EF Tests Check
     runs-on: ubuntu-22.04
     steps:

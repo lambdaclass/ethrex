@@ -23,6 +23,7 @@ env:
 jobs:
   benchmark-pr:
     name: Benchmark for PR
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

@@ -19,6 +19,7 @@ env:
 jobs:
   report-loc-changes:
     name: Report PR Line Changes
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
     if: github.event.pull_request.head.repo.fork == false
