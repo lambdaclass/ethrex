@@ -2770,32 +2770,32 @@ fn apply_trie_updates(
 
     if result.is_ok() {
         for (key, value) in nodes {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+            let is_leaf = key.len() == 65 || key.len() == 131;
+            let is_account = key.len() <= 65;
 
-        if is_leaf && key > last_written {
-            continue;
-        }
-        let table = if is_leaf {
-            if is_account {
-                &ACCOUNT_FLATKEYVALUE
-            } else {
-                &STORAGE_FLATKEYVALUE
+            if is_leaf && key > last_written {
+                continue;
             }
-        } else if is_account {
-            &ACCOUNT_TRIE_NODES
-        } else {
-            &STORAGE_TRIE_NODES
-        };
-        if value.is_empty() {
-            result = write_tx.delete(table, &key);
-        } else {
-            result = write_tx.put(table, &key, &value);
+            let table = if is_leaf {
+                if is_account {
+                    &ACCOUNT_FLATKEYVALUE
+                } else {
+                    &STORAGE_FLATKEYVALUE
+                }
+            } else if is_account {
+                &ACCOUNT_TRIE_NODES
+            } else {
+                &STORAGE_TRIE_NODES
+            };
+            if value.is_empty() {
+                result = write_tx.delete(table, &key);
+            } else {
+                result = write_tx.put(table, &key, &value);
+            }
+            if result.is_err() {
+                break;
+            }
         }
-        if result.is_err() {
-            break;
-        }
-    }
     }
     if result.is_ok() {
         result = write_tx.commit();

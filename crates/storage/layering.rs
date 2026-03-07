@@ -174,36 +174,35 @@ impl TrieLayerCache {
             return None;
         }
 
-        let mut nodes_to_commit = FxHashMap::default();
-        let mut destroyed_to_commit = Vec::new();
+        let mut layers_in_order = Vec::new();
         let mut layers_removed_ids = Vec::new();
+        let mut destroyed_to_commit = Vec::new();
 
-        let mut layers_to_commit = Vec::new();
         // Extract all layers forming the path up to `state_root`.
         let mut current_hash = state_root;
         while let Some(layer_arc) = self.layers.remove(&current_hash) {
             let layer = Arc::unwrap_or_clone(layer_arc);
             layers_removed_ids.push(layer.id);
             current_hash = layer.parent;
-            layers_to_commit.push(layer);
+            layers_in_order.push(layer);
         }
 
+        // Determine the highest ID among the layers just committed.
+        // All layers with an ID less than or equal to this should be removed.
+        let max_removed_id = layers_removed_ids.into_iter().max().unwrap_or(0);
+        self.layers.retain(|_, item| item.id > max_removed_id);
+        self.rebuild_bloom();
+
+        let mut nodes_to_commit = FxHashMap::default();
         // Process oldest-first so newer values override older ones on collision.
-        for layer in layers_to_commit.into_iter().rev() {
+        for layer in layers_in_order.into_iter().rev() {
             for (key, value) in layer.nodes.into_iter() {
                 nodes_to_commit.insert(key, value);
             }
             destroyed_to_commit.extend(layer.destroyed_accounts.into_iter());
         }
 
-        // Determine the highest ID among the layers just committed.
-        // All layers with an ID less than or equal to this should be removed.
-        let max_removed_id = layers_removed_ids.into_iter().max().unwrap_or(0);
-
-        // Remove any remaining layers that are older than the committed ones.
-        self.layers.retain(|_, item| item.id > max_removed_id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        Some((nodes_to_commit.into_iter().collect(), destroyed_to_commit))
+        Some((nodes_to_commit.into_iter().map(|(k, v)| (k.into(), v)).collect(), destroyed_to_commit))
     }
 }
 
