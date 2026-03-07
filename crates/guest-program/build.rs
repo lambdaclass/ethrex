@@ -144,6 +144,17 @@ fn build_sp1_program() {
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
 
+    // Remove stale directories if they exist (can happen from prior builds)
+    for p in &[
+        "./bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+        "./bin/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+    ] {
+        let path = std::path::Path::new(p);
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+
     std::fs::write(
         "./bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
         format!("{}\n", vk.vk.bytes32()),
