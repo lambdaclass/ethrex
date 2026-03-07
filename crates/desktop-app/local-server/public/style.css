@@ -237,7 +237,8 @@ body {
 /* Views */
 .view { display: none; }
 .view.active { display: block; }
-#view-launch, #view-hosts, #view-detail { padding: 24px; }
+#view-launch, #view-hosts { padding: 24px; }
+#view-detail { padding: 20px 24px; }
 
 /* ============================================================
    Table Layout (Docker Desktop style list)
@@ -418,7 +419,7 @@ body {
 .step-indicator {
   display: flex;
   align-items: center;
-  margin-bottom: 32px;
+  margin-bottom: 16px;
 }
 .step-item {
   display: flex;
@@ -701,9 +702,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
 /* ============================================================
    Detail Page
    ============================================================ */
-.detail-header { margin-bottom: 20px; }
-.detail-header .back-link { display: inline-block; margin-bottom: 12px; }
-.tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.detail-header { margin-bottom: 14px; }
+.detail-header .back-link { display: inline-block; margin-bottom: 8px; }
+.tab-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
 .tab-btn {
   padding: 8px 16px; background: none; border: none;
   border-bottom: 2px solid transparent; color: var(--text-muted);
@@ -715,28 +716,58 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
 .tab-panel.active { display: block; }
 
 /* Container Cards */
-.container-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 20px; }
+.container-cards { display: flex; gap: 8px; margin-bottom: 12px; }
 .container-card {
   background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); padding: 14px; text-align: center;
+  border-radius: var(--radius-sm); padding: 8px 14px; text-align: center; flex: 1;
 }
 .container-card.running { border-color: #86efac; background: var(--green-50); }
 .container-card.exited { border-color: var(--border); background: var(--bg); }
-.container-card h4 { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 3px; }
+.container-card h4 { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 1px; }
 .container-card .status { font-size: 11px; font-weight: 600; }
 .container-card .status.running { color: var(--green-600); }
 .container-card .status.stopped { color: var(--text-muted); }
 
 /* Endpoints */
-.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-.endpoints-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.endpoint-card { padding: 12px 14px; background: var(--bg); border-radius: var(--radius-sm); }
-.endpoint-card .label { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 3px; }
-.endpoint-card code { font-size: 12px; color: var(--blue-600); font-family: monospace; }
-.endpoint-card a { color: var(--blue-600); text-decoration: none; font-size: 12px; font-family: monospace; }
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+.endpoints-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; }
+.endpoint-card { padding: 8px 10px; background: var(--bg); border-radius: var(--radius-sm); }
+.endpoint-card .label { font-size: 11px; font-weight: 500; color: var(--text-secondary); margin-bottom: 1px; }
+.endpoint-card code { font-size: 11px; color: var(--blue-600); font-family: monospace; }
+.endpoint-card a { color: var(--blue-600); text-decoration: none; font-size: 11px; font-family: monospace; }
 .endpoint-card a:hover { text-decoration: underline; }
-.endpoint-card .health { font-size: 11px; margin-left: 6px; }
+.endpoint-card .health { font-size: 10px; margin-left: 4px; }
 .endpoint-card .health.ok { color: var(--green-600); }
+
+/* Endpoint rows (compact single-line) */
+.endpoint-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 0; font-size: 12px; border-bottom: 1px solid var(--border-light);
+}
+.endpoint-row:last-of-type { border-bottom: none; }
+.endpoint-row .ep-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); min-width: 70px; flex-shrink: 0; }
+.endpoint-row code { font-size: 11px; color: var(--blue-600); font-family: monospace; }
+.endpoint-row a { font-size: 11px; color: var(--blue-600); text-decoration: none; font-family: monospace; }
+.endpoint-row a:hover { text-decoration: underline; }
+.endpoint-row .health { font-size: 10px; }
+.endpoint-row .health.ok { color: var(--green-600); }
+
+/* Overview 2-column layout */
+.overview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.overview-grid .card { margin-bottom: 0; }
+.overview-full { grid-column: 1 / -1; }
+@media (max-width: 860px) { .overview-grid { grid-template-columns: 1fr; } }
+
+/* Service tree rows */
+.svc-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; font-size: 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+.svc-row:last-child { border-bottom: none; }
+.svc-name {
+  font-weight: 500; color: var(--text); min-width: 80px;
+}
 
 /* Log Controls */
 .log-controls { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }

@@ -4,7 +4,7 @@
 # for building and proving with real ZK proofs.
 #
 # Build:
-#   docker build -f Dockerfile.sp1 -t ethrex:sp1 .
+#   docker build -f Dockerfile.sp1 -t tokamak-appchain:sp1 .
 #
 # Build args:
 #   GUEST_PROGRAMS: Comma-separated guest programs (default: evm-l2,zk-dex)

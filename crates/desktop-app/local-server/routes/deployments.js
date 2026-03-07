@@ -10,6 +10,7 @@ const {
   destroyDeployment,
   getEmitter,
   isProvisionActive,
+  cancelProvision,
   getActiveProvisions,
 } = require("../lib/deployment-engine");
 const { getDeployEvents } = require("../db/deployments");
@@ -120,6 +121,9 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
+    // Cancel active provision if running
+    cancelProvision(req.params.id);
+
     // Cleanup Docker resources if any
     if (deployment.docker_project && deployment.phase !== "configured") {
       try {
@@ -129,6 +133,7 @@ router.delete("/:id", async (req, res) => {
       }
     }
 
+    db.prepare("DELETE FROM deploy_events WHERE deployment_id = ?").run(req.params.id);
     db.prepare("DELETE FROM deployments WHERE id = ?").run(req.params.id);
     res.json({ ok: true });
   } catch (e) {
@@ -220,6 +225,9 @@ router.post("/:id/destroy", async (req, res) => {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+
+    // Cancel active provision if running
+    cancelProvision(req.params.id);
 
     // Destroy Docker containers if provisioned
     if (deployment.docker_project) {

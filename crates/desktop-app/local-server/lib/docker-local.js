@@ -59,7 +59,7 @@ async function buildImages(projectName, composeFile, env = {}, onLog) {
   // Remove any existing images for this project to avoid "already exists" errors
   try {
     const existing = execSync(
-      `docker images --filter "reference=ethrex:*-${projectName}" --format "{{.Repository}}:{{.Tag}}"`,
+      `docker images --filter "reference=tokamak-appchain:*-${projectName}" --format "{{.Repository}}:{{.Tag}}"`,
       { timeout: 10000 }
     ).toString().trim();
     if (existing) {

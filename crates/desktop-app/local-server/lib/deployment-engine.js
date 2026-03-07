@@ -66,7 +66,7 @@ function emit(deploymentId, event, data) {
   if (emitter) {
     emitter.emit("event", payload);
   }
-  // Persist to DB (skip high-frequency log lines to avoid DB bloat, keep last 500)
+  // Persist to DB (skip if deployment no longer exists)
   try {
     const phase = data?.phase || null;
     const message = data?.message || null;
@@ -78,13 +78,27 @@ function emit(deploymentId, event, data) {
     const hasExtra = Object.keys(extraData).length > 0;
     insertDeployEvent(deploymentId, event, phase, message, hasExtra ? extraData : null);
   } catch (e) {
-    console.error(`[deploy-engine] Failed to persist event for ${deploymentId}:`, e.message);
+    // Log once per deployment to avoid spam
+    if (!emit._warned) emit._warned = new Set();
+    if (!emit._warned.has(deploymentId)) {
+      emit._warned.add(deploymentId);
+      console.warn(`[deploy-engine] Cannot persist event for ${deploymentId}: ${e.message}`);
+    }
   }
 }
 
 /** Check if a deployment has an active provision running */
 function isProvisionActive(deploymentId) {
   return activeProvisions.has(deploymentId);
+}
+
+/** Cancel an active provision (cleanup before delete) */
+function cancelProvision(deploymentId) {
+  if (activeProvisions.has(deploymentId)) {
+    activeProvisions.delete(deploymentId);
+    deploymentEvents.delete(deploymentId);
+    console.log(`[deploy-engine] Cancelled active provision for ${deploymentId}`);
+  }
 }
 
 /** Get info about all active provisions */
@@ -412,7 +426,8 @@ async function stopDeployment(deployment) {
     return await stopDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
-  // Only stop this deployment's containers, NOT shared tools (Explorer, Bridge UI)
+  // Stop tools (Explorer, Bridge UI) first, then the deployment containers
+  try { await docker.stopTools(); } catch { /* tools may not be running */ }
   await docker.stop(deployment.docker_project, composeFile);
   return updateDeployment(deployment.id, { phase: "stopped", status: "configured" });
 }
@@ -431,7 +446,8 @@ async function destroyDeployment(deployment) {
     return await destroyDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
-  // Only destroy this deployment's containers, NOT shared tools
+  // Stop tools (Explorer, Bridge UI) first, then destroy the deployment
+  try { await docker.stopTools(); } catch { /* tools may not be running */ }
   await docker.destroy(deployment.docker_project, composeFile);
   const fs = require("fs");
   const deployDir = getDeploymentDir(deployment.id);
@@ -548,6 +564,7 @@ module.exports = {
   destroyDeployment,
   getEmitter,
   isProvisionActive,
+  cancelProvision,
   getActiveProvisions,
   recoverStuckDeployments,
   PHASES,

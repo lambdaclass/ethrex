@@ -253,15 +253,19 @@ function launchGoStep(step) {
     }
 
     document.getElementById('selected-program-info').innerHTML = `
-      <div class="selected-program-top">
-        <div class="program-icon">${esc(selectedProgram.name.charAt(0).toUpperCase())}</div>
-        <div class="info">
-          <h3>${esc(selectedProgram.name)}</h3>
-          <div class="id">${esc(pid)}</div>
+      <div style="display:flex;gap:16px;align-items:flex-start">
+        <div style="flex-shrink:0">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="program-icon" style="width:30px;height:30px;font-size:14px">${esc(selectedProgram.name.charAt(0).toUpperCase())}</div>
+            <div>
+              <h3 style="font-size:13px;font-weight:700">${esc(selectedProgram.name)}</h3>
+              <div style="font-size:11px;color:var(--text-muted)">${esc(pid)}</div>
+            </div>
+          </div>
+          <button class="btn-change" onclick="launchGoStep(1)" style="margin-top:4px">Change</button>
         </div>
-        <button class="btn-change" onclick="launchGoStep(1)">Change</button>
+        <div class="app-config-box" style="padding:6px 12px;margin:0;flex:1;font-size:11px">${configHtml}</div>
       </div>
-      <div class="app-config-box">${configHtml}</div>
     `;
 
     checkDocker();
@@ -915,8 +919,8 @@ async function startDeploy(id) {
 
 async function retryDeploy(id) {
   try {
-    // Destroy existing containers (ignore errors if not provisioned yet)
-    await fetch(`${API}/deployments/${id}/destroy`, { method: 'POST' }).catch(() => {});
+    // Stop existing containers without deleting DB record
+    await fetch(`${API}/deployments/${id}/stop`, { method: 'POST' }).catch(() => {});
 
     // Fetch deployment info for display
     const depRes = await fetch(`${API}/deployments`);
@@ -940,7 +944,6 @@ async function retryDeploy(id) {
     }
   } catch (e) {
     console.error('Retry failed:', e);
-    console.error('Retry failed:', e.message);
   }
 }
 
@@ -983,6 +986,9 @@ async function showDeploymentDetail(id) {
   detailTab = 'overview';
   if (detailPollInterval) { clearInterval(detailPollInterval); detailPollInterval = null; }
   if (logEventSource) { logEventSource.close(); logEventSource = null; }
+
+  // Reset tab buttons to overview active
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === 'overview'));
 
   try {
     const res = await fetch(`${API}/deployments/${id}`);
@@ -1039,50 +1045,9 @@ function renderOverviewTab() {
   const isError = d.phase === 'error';
   const isDeploying = ['checking_docker','building','l1_starting','deploying_contracts','l2_starting','starting_prover','starting_tools'].includes(d.phase);
 
-  // Containers
-  const containerCards = document.getElementById('container-cards');
-  if (detailStatus?.containers?.length > 0) {
-    const services = ['tokamak-app-l1','tokamak-app-l2','tokamak-app-prover','tokamak-app-deployer'];
-    const labels = {'tokamak-app-l1':'L1 Node','tokamak-app-l2':'L2 Node','tokamak-app-prover':'Prover','tokamak-app-deployer':'Deployer'};
-    containerCards.innerHTML = '<div class="container-cards">' + services.map(svc => {
-      const c = detailStatus.containers.find(c => c.Service === svc || c.Name?.includes(svc.replace('tokamak-app-','')));
-      const state = c ? c.State : 'not started';
-      return `<div class="container-card ${state === 'running' ? 'running' : state === 'exited' ? 'exited' : ''}">
-        <h4>${labels[svc] || svc}</h4>
-        <div class="status ${state === 'running' ? 'running' : 'stopped'}">${state}</div>
-      </div>`;
-    }).join('') + '</div>';
-  } else {
-    containerCards.innerHTML = '';
-  }
+  document.getElementById('container-cards').innerHTML = '';
+  document.getElementById('detail-endpoints').style.display = 'none';
 
-  // Endpoints
-  const endpointsEl = document.getElementById('detail-endpoints');
-  if (isProvisioned) {
-    endpointsEl.style.display = 'block';
-    let html = '<h3 style="margin-bottom:16px">Endpoints</h3><div class="endpoints-grid">';
-    html += `<div class="endpoint-card"><div class="label">L1 RPC</div><code>${d.l1_port ? `http://127.0.0.1:${d.l1_port}` : 'Not assigned'}</code>${detailMonitoring?.l1?.healthy ? '<span class="health ok">Connected</span>' : ''}</div>`;
-    html += `<div class="endpoint-card"><div class="label">L2 RPC</div><code>${d.l2_port ? `http://127.0.0.1:${d.l2_port}` : 'Not assigned'}</code>${detailMonitoring?.l2?.healthy ? '<span class="health ok">Connected</span>' : ''}</div>`;
-    if (isRunning) {
-      html += `<div class="endpoint-card"><div class="label">L1 Explorer</div><a href="http://127.0.0.1:${d.tools_l1_explorer_port||8083}" target="_blank">http://127.0.0.1:${d.tools_l1_explorer_port||8083}</a></div>`;
-      html += `<div class="endpoint-card"><div class="label">L2 Explorer</div><a href="http://127.0.0.1:${d.tools_l2_explorer_port||8082}" target="_blank">http://127.0.0.1:${d.tools_l2_explorer_port||8082}</a></div>`;
-      html += `<div class="endpoint-card"><div class="label">Bridge UI</div><a href="http://127.0.0.1:${d.tools_bridge_ui_port||3000}" target="_blank">http://127.0.0.1:${d.tools_bridge_ui_port||3000}</a></div>`;
-    }
-    html += '</div>';
-    if (isRunning) {
-      html += `<div style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-200);align-items:center">
-        <button class="btn-secondary" onclick="toolsAction('build')">Build Tools</button>
-        <button class="btn-secondary" onclick="toolsAction('restart')">Restart Tools</button>
-        <button class="btn-secondary" onclick="toolsAction('stop-tools')">Stop Tools</button>
-        <span style="font-size:12px;color:var(--gray-400);margin-left:8px">Blockscout, Bridge UI</span>
-      </div>`;
-    }
-    document.getElementById('endpoints-content').innerHTML = html;
-  } else {
-    endpointsEl.style.display = 'none';
-  }
-
-  // Dynamic content
   let dynamicEl = document.querySelector('#tab-overview .overview-dynamic');
   if (!dynamicEl) {
     dynamicEl = document.createElement('div');
@@ -1091,63 +1056,107 @@ function renderOverviewTab() {
   }
 
   let html = '';
+  if (d.error_message) html += `<div class="error-box" style="margin-bottom:10px">${esc(d.error_message)}</div>`;
 
-  // Error
-  if (d.error_message) html += `<div class="error-box" style="margin-bottom:24px">${esc(d.error_message)}</div>`;
+  // Helper: find container state
+  const containers = detailStatus?.containers || [];
+  function svcState(name) {
+    const c = containers.find(c => c.Service === name || c.Name?.includes(name.replace('tokamak-app-','').replace('zk-dex-tools-','')));
+    return c ? (c.State || 'stopped') : 'stopped';
+  }
 
-  // Actions
-  html += '<div style="display:flex;gap:8px;margin-bottom:24px">';
-  if (!isProvisioned) html += '<button class="btn-primary" onclick="deployAction(\'provision\')">Deploy</button>';
-  if (isStopped) html += '<button class="btn-green" onclick="deployAction(\'start\')">Start</button>';
-  if (isRunning || isDeploying) html += '<button class="btn-orange" onclick="deployAction(\'stop\')">Stop</button>';
-  if (isProvisioned) html += '<button class="btn-danger" onclick="deployAction(\'destroy\')">Destroy</button>';
-  if (isError) html += '<button class="btn-primary" onclick="deployAction(\'provision\')">Retry Deploy</button>';
+  // Helper: render service row
+  function svcRow(label, svcName, endpoint, isTools) {
+    const state = svcState(svcName);
+    const running = state === 'running';
+    const dot = `<span style="width:7px;height:7px;border-radius:50%;background:${running ? 'var(--green-500)' : 'var(--text-muted)'};flex-shrink:0"></span>`;
+    const stateText = `<span style="font-size:11px;color:${running ? 'var(--green-600)' : 'var(--text-muted)'}">${state}</span>`;
+    const openIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;cursor:pointer"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+    const ep = endpoint
+      ? (isTools && running
+        ? `<span style="font-size:11px;font-family:monospace;color:var(--blue-600)">${endpoint}</span> <a href="http://localhost${endpoint}" target="_blank" title="Open in browser" style="color:var(--blue-600)">${openIcon}</a>`
+        : `<span style="font-size:11px;font-family:monospace;color:var(--blue-600)">${endpoint}</span>`)
+      : '';
+    const btn = running
+      ? `<button class="btn-secondary" style="padding:2px 8px;font-size:10px" onclick="serviceAction('${d.id}','${svcName}','stop')">Stop</button>`
+      : (isProvisioned ? `<button class="btn-secondary" style="padding:2px 8px;font-size:10px" onclick="serviceAction('${d.id}','${svcName}','start')">Start</button>` : '');
+    return `<div class="svc-row">${dot}<span class="svc-name">${label}</span>${stateText}${ep}<span style="margin-left:auto">${btn}</span></div>`;
+  }
+
+  // 2-column layout
+  html += '<div class="overview-grid">';
+
+  // LEFT: Services
+  html += '<div style="display:flex;flex-direction:column;gap:14px">';
+  html += '<div class="card">';
+  html += '<h3 style="font-size:13px;margin-bottom:8px">Services</h3>';
+
+  // Core services
+  html += '<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:4px">Core</div>';
+  html += svcRow('L1 Node', 'tokamak-app-l1', d.l1_port ? `:${d.l1_port}` : null);
+  html += svcRow('L2 Node', 'tokamak-app-l2', d.l2_port ? `:${d.l2_port}` : null);
+  html += svcRow('Prover', 'tokamak-app-prover', null);
+
+  // Tools services
+  html += '<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin:8px 0 4px;padding-top:8px;border-top:1px solid var(--border-light)">Tools</div>';
+  html += svcRow('L1 Explorer', 'frontend-l1', d.tools_l1_explorer_port ? `:${d.tools_l1_explorer_port}` : null, true);
+  html += svcRow('L2 Explorer', 'frontend-l2', d.tools_l2_explorer_port ? `:${d.tools_l2_explorer_port}` : null, true);
+  html += svcRow('Dashboard', 'bridge-ui', d.tools_bridge_ui_port ? `:${d.tools_bridge_ui_port}` : null, true);
+
+  // Global actions
+  html += '<div style="display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">';
+  if (!isProvisioned) html += '<button class="btn-primary" style="padding:5px 12px;font-size:12px" onclick="deployAction(\'provision\')">Deploy</button>';
+  if (isStopped) html += '<button class="btn-green" style="padding:5px 12px;font-size:12px" onclick="deployAction(\'start\')">Start All</button>';
+  if (isRunning || isDeploying) html += '<button class="btn-orange" style="padding:5px 12px;font-size:12px" onclick="deployAction(\'stop\')">Stop All</button>';
+  if (isProvisioned) html += '<button class="btn-danger" style="padding:5px 12px;font-size:12px" onclick="deployAction(\'destroy\')">Destroy</button>';
+  if (isError) html += '<button class="btn-primary" style="padding:5px 12px;font-size:12px" onclick="deployAction(\'provision\')">Retry</button>';
   html += '</div>';
+
+  html += '</div>'; // card
 
   // Contracts
   if (d.bridge_address || d.proposer_address) {
-    html += '<div class="card" style="margin-bottom:24px"><h3 style="margin-bottom:12px">Contracts</h3><dl class="info-grid">';
-    if (d.bridge_address) html += `<dt>Bridge</dt><dd style="font-size:11px">${esc(d.bridge_address)}</dd>`;
-    if (d.proposer_address) html += `<dt>OnChainProposer</dt><dd style="font-size:11px">${esc(d.proposer_address)}</dd>`;
-    html += '</dl></div>';
+    html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">Contracts</h3>';
+    if (d.bridge_address) html += `<div class="endpoint-row"><span class="ep-label">Bridge</span><code style="font-size:10px">${esc(d.bridge_address)}</code></div>`;
+    if (d.proposer_address) html += `<div class="endpoint-row"><span class="ep-label">Proposer</span><code style="font-size:10px">${esc(d.proposer_address)}</code></div>`;
+    html += '</div>';
   }
+  html += '</div>'; // end left
 
-  // Monitoring
+  // RIGHT: Chain Info + Settings
+  html += '<div style="display:flex;flex-direction:column;gap:14px">';
   if (detailMonitoring && (detailMonitoring.l1 || detailMonitoring.l2)) {
-    html += '<div class="card" style="margin-bottom:24px"><h3 style="margin-bottom:12px">Chain Info</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
-    if (detailMonitoring.l1) html += `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div style="font-weight:500;margin-bottom:4px">L1</div><div style="font-size:13px"><span style="color:var(--gray-500)">Block:</span> <span style="font-family:monospace">${detailMonitoring.l1.blockNumber ?? 'N/A'}</span></div><div style="font-size:13px"><span style="color:var(--gray-500)">Chain ID:</span> <span style="font-family:monospace">${detailMonitoring.l1.chainId ?? 'N/A'}</span></div></div>`;
-    if (detailMonitoring.l2) html += `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div style="font-weight:500;margin-bottom:4px">L2</div><div style="font-size:13px"><span style="color:var(--gray-500)">Block:</span> <span style="font-family:monospace">${detailMonitoring.l2.blockNumber ?? 'N/A'}</span></div><div style="font-size:13px"><span style="color:var(--gray-500)">Chain ID:</span> <span style="font-family:monospace">${detailMonitoring.l2.chainId ?? 'N/A'}</span></div></div>`;
+    html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">Chain Info</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+    if (detailMonitoring.l1) html += `<div style="padding:6px 8px;background:var(--bg);border-radius:6px"><div style="font-weight:600;font-size:11px;margin-bottom:2px">L1</div><div style="font-size:11px"><span style="color:var(--text-muted)">Block</span> <span style="font-family:monospace">${detailMonitoring.l1.blockNumber ?? '-'}</span></div><div style="font-size:11px"><span style="color:var(--text-muted)">Chain</span> <span style="font-family:monospace">${detailMonitoring.l1.chainId ?? '-'}</span></div></div>`;
+    if (detailMonitoring.l2) html += `<div style="padding:6px 8px;background:var(--bg);border-radius:6px"><div style="font-weight:600;font-size:11px;margin-bottom:2px">L2</div><div style="font-size:11px"><span style="color:var(--text-muted)">Block</span> <span style="font-family:monospace">${detailMonitoring.l2.blockNumber ?? '-'}</span></div><div style="font-size:11px"><span style="color:var(--text-muted)">Chain</span> <span style="font-family:monospace">${detailMonitoring.l2.chainId ?? '-'}</span></div></div>`;
     html += '</div></div>';
   }
-
-  // Info with Edit
-  html += `<div class="card" style="margin-bottom:24px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h3>Settings</h3>
-      <button class="btn-back" style="font-size:13px" onclick="toggleSettingsEdit()">Edit</button>
+  html += `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3 style="font-size:13px">Settings</h3>
+      <button class="btn-back" style="font-size:11px" onclick="toggleSettingsEdit()">Edit</button>
     </div>
     <div id="settings-display">
-      <dl class="info-grid">
-        <dt>Chain ID</dt><dd>${d.chain_id || 'Not set'}</dd>
-        <dt>L1 RPC URL</dt><dd style="font-size:11px">${d.rpc_url || (d.l1_port ? `http://127.0.0.1:${d.l1_port}` : 'Not set')}</dd>
-        <dt>Docker Project</dt><dd style="font-size:11px">${d.docker_project || 'Not provisioned'}</dd>
-        <dt>Created</dt><dd>${new Date(d.created_at).toLocaleString()}</dd>
+      <dl class="info-grid" style="font-size:12px">
+        <dt>Chain ID</dt><dd>${d.chain_id || '-'}</dd>
+        <dt>Docker</dt><dd style="font-size:10px">${d.docker_project || '-'}</dd>
+        <dt>Created</dt><dd style="font-size:10px">${new Date(d.created_at).toLocaleDateString()}</dd>
       </dl>
     </div>
     <div id="settings-edit" style="display:none">
       <label>L2 Name<input type="text" id="edit-name" value="${esc(d.name)}"></label>
       <label>Chain ID<input type="number" id="edit-chain-id" value="${d.chain_id || ''}"></label>
       <label>L1 RPC URL<input type="text" id="edit-rpc-url" value="${esc(d.rpc_url || '')}"></label>
-      <div style="display:flex;gap:8px;margin-top:12px">
+      <div style="display:flex;gap:6px;margin-top:6px">
         <button class="btn-primary" onclick="saveSettings()">Save</button>
         <button class="btn-secondary" onclick="toggleSettingsEdit()">Cancel</button>
       </div>
     </div>
   </div>`;
+  html += `<button class="btn-danger" style="font-size:11px;padding:6px 12px;align-self:flex-start" onclick="deleteDeployment('${d.id}')">Remove L2</button>`;
+  html += '</div>'; // end right
 
-  // Danger zone
-  html += `<div class="danger-zone"><h3>Danger Zone</h3><button class="btn-danger" onclick="deleteDeployment('${d.id}')">Remove L2</button></div>`;
-
+  html += '</div>'; // close overview-grid
   dynamicEl.innerHTML = html;
 }
 

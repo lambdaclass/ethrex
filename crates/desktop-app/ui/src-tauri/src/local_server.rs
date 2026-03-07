@@ -109,6 +109,28 @@ impl LocalServer {
         let server_dir =
             Self::find_server_dir().ok_or("local-server directory not found")?;
 
+        // Auto-install dependencies if node_modules is missing
+        if !server_dir.join("node_modules").exists() {
+            log::info!("node_modules not found, running npm install...");
+            let npm = if cfg!(target_os = "windows") { "npm.cmd" } else { "npm" };
+            let install = std::process::Command::new(npm)
+                .arg("install")
+                .current_dir(&server_dir)
+                .output();
+            match install {
+                Ok(out) if out.status.success() => {
+                    log::info!("npm install completed successfully");
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    log::warn!("npm install finished with warnings: {}", stderr);
+                }
+                Err(e) => {
+                    return Err(format!("Failed to run npm install: {e}"));
+                }
+            }
+        }
+
         log::info!(
             "Starting local-server: {} {} (port {})",
             node.display(),

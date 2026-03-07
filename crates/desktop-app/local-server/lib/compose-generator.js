@@ -7,7 +7,7 @@
  * - Chain configuration
  *
  * Local deployments always build from source (no pull strategy).
- * Each deployment gets a unique image name: ethrex:{programSlug}-{projectName}
+ * Each deployment gets a unique image name: tokamak-appchain:{programSlug}-{projectName}
  *
  * Different apps require different:
  * - Docker images (built per-deployment)
@@ -91,9 +91,9 @@ function generateComposeFile(opts) {
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
-  // Unique image names per deployment: ethrex:{programSlug}-{projectName}
-  const l1Image = `ethrex:l1-${projectName}`;
-  const l2Image = `ethrex:${programSlug}-${projectName}`;
+  // Unique image names per deployment: tokamak-appchain:{programSlug}-{projectName}
+  const l1Image = `tokamak-appchain:l1-${projectName}`;
+  const l2Image = `tokamak-appchain:${programSlug}-${projectName}`;
 
   // Build section for L2 image
   const buildSection = profile.dockerfile
@@ -291,9 +291,9 @@ function imageRef(name) {
 }
 
 const PULL_IMAGES = {
-  "ethrex:main": imageRef("ethrex:main"),
-  "ethrex:main-l2": imageRef("ethrex:main-l2"),
-  "ethrex:sp1": imageRef("ethrex:sp1"),
+  "tokamak-appchain:main": imageRef("tokamak-appchain:main"),
+  "tokamak-appchain:main-l2": imageRef("tokamak-appchain:main-l2"),
+  "tokamak-appchain:sp1": imageRef("tokamak-appchain:sp1"),
 };
 
 /**
@@ -317,9 +317,9 @@ function generateRemoteComposeFile(opts) {
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
-  const l1Image = PULL_IMAGES["ethrex:main"];
+  const l1Image = PULL_IMAGES["tokamak-appchain:main"];
   // Map profile to the correct pre-built image name for remote
-  const remoteImageKey = profile.sp1Enabled ? "ethrex:sp1" : "ethrex:main-l2";
+  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:main-l2";
   const l2Image = PULL_IMAGES[remoteImageKey];
 
   const l2Genesis = profile.genesisFile !== "l2.json"
