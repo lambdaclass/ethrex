@@ -2752,16 +2752,24 @@ fn apply_trie_updates(
     // Commit removes the bottom layer and returns it, this is the mutation step.
     let (nodes, destroyed_accounts_to_commit) = trie_mut.commit(root).unwrap_or_default();
 
+    let mut result = Ok(());
+
     // Remove storage associated to destroyed accounts that are finally being written to disk
     for address_hash in &destroyed_accounts_to_commit {
         let prefix_nibbles = apply_prefix(Some(*address_hash), Nibbles::default());
         let prefix_bytes = prefix_nibbles.as_ref();
-        write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, prefix_bytes)?;
-        write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, prefix_bytes)?;
+        if let Err(e) = write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, prefix_bytes) {
+            result = Err(e);
+            break;
+        }
+        if let Err(e) = write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, prefix_bytes) {
+            result = Err(e);
+            break;
+        }
     }
 
-    let mut result = Ok(());
-    for (key, value) in nodes {
+    if result.is_ok() {
+        for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
 
@@ -2787,6 +2795,7 @@ fn apply_trie_updates(
         if result.is_err() {
             break;
         }
+    }
     }
     if result.is_ok() {
         result = write_tx.commit();
