@@ -30,3 +30,4 @@ kzg-rs = { git = "https://github.com/0xPolygonHermez/zisk-patch-kzg/", tag = "pa
 
 [features]
 l2 = ["ethrex-guest-program/l2"]
+eip-8025 = ["ethrex-guest-program/eip-8025"]

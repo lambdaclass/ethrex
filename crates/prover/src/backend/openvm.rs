@@ -10,7 +10,7 @@ use rkyv::rancor::Error;
 use crate::backend::{BackendError, ProverBackend};
 
 static PROGRAM_ELF: &[u8] =
-    include_bytes!("../../../../guest-program/bin/openvm/out/riscv32im-openvm-elf");
+    include_bytes!("../../../guest-program/bin/openvm/out/riscv32im-openvm-elf");
 
 /// OpenVM-specific proof output.
 pub enum OpenVmProveOutput {

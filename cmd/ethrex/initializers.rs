@@ -482,7 +482,6 @@ pub async fn init_l1(
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
-            precompute_witnesses: opts.precompute_witnesses,
         },
     );
 
@@ -532,6 +531,9 @@ pub async fn init_l1(
     )
     .await;
 
+    #[cfg(feature = "eip-8025")]
+    init_proof_engine(&opts);
+
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
     }
@@ -560,6 +562,26 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+#[cfg(feature = "eip-8025")]
+fn init_proof_engine(opts: &Options) {
+    use ethrex_blockchain::proof_engine::config::ProofEngineConfig;
+
+    let config = ProofEngineConfig {
+        callback_url: opts.proof_callback_url.clone(),
+        coordinator_addr: opts.proof_coordinator_addr.clone(),
+        coordinator_port: opts.proof_coordinator_port,
+    };
+
+    info!(
+        coordinator = %config.coordinator_socket_addr(),
+        callback_url = ?config.callback_url,
+        "EIP-8025 ProofEngine enabled"
+    );
+
+    // TODO: Start ProofCoordinator TCP server on config.coordinator_socket_addr()
+    // and wire ProofEngine into RpcApiContext once the prover-infra integration is complete.
 }
 
 /// Regenerates the state up to the head block by re-applying blocks from the

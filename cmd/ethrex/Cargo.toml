@@ -127,6 +127,7 @@ risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
+eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-rpc/eip-8025"]
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7", features = ["rustc"] }

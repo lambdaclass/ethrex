@@ -33,6 +33,7 @@ lru = "0.16.2"
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+eip-8025 = []
 
 [dev-dependencies]
 hex.workspace = true

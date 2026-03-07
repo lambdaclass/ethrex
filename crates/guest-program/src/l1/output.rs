@@ -29,3 +29,23 @@ impl ProgramOutput {
         .concat()
     }
 }
+
+/// EIP-8025 output: 33 bytes = hash_tree_root(NewPayloadRequest) + valid flag.
+#[cfg(feature = "eip-8025")]
+pub struct Eip8025ProgramOutput {
+    /// hash_tree_root of the NewPayloadRequest (SSZ Merkleization).
+    pub new_payload_request_root: [u8; 32],
+    /// Whether block validation succeeded.
+    pub valid: bool,
+}
+
+#[cfg(feature = "eip-8025")]
+impl Eip8025ProgramOutput {
+    /// Encode the output to 33 bytes for commitment.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(33);
+        out.extend_from_slice(&self.new_payload_request_root);
+        out.push(self.valid as u8);
+        out
+    }
+}

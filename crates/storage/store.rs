@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_PROOFS,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -2023,6 +2024,120 @@ impl Store {
             }
             None => Ok(None),
         }
+    }
+
+    // ── EIP-8025 Execution Proof Storage ──────────────────────────────
+
+    /// Maximum number of blocks to retain proofs for.
+    const MAX_PROOF_RETENTION: u64 = 128;
+
+    /// Key format: block_number (8 bytes BE) + new_payload_request_root (32 bytes) + proof_type (8 bytes BE)
+    fn make_proof_key(block_number: u64, root: &H256, proof_type: u64) -> Vec<u8> {
+        let mut key = Vec::with_capacity(48);
+        key.extend_from_slice(&block_number.to_be_bytes());
+        key.extend_from_slice(root.as_bytes());
+        key.extend_from_slice(&proof_type.to_be_bytes());
+        key
+    }
+
+    /// Store an execution proof for a block.
+    pub fn store_execution_proof(
+        &self,
+        block_number: u64,
+        root: H256,
+        proof_type: u64,
+        proof_data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let key = Self::make_proof_key(block_number, &root, proof_type);
+        self.write(EXECUTION_PROOFS, key, proof_data)?;
+        self.cleanup_old_proofs(block_number)
+    }
+
+    /// Retrieve all proofs for a given `new_payload_request_root`.
+    ///
+    /// Returns a list of `(proof_type, proof_data)` tuples.
+    pub fn get_proofs_by_root(
+        &self,
+        block_number: u64,
+        root: H256,
+    ) -> Result<Vec<(u64, Vec<u8>)>, StoreError> {
+        let mut prefix = Vec::with_capacity(40);
+        prefix.extend_from_slice(&block_number.to_be_bytes());
+        prefix.extend_from_slice(root.as_bytes());
+
+        let mut results = Vec::new();
+        let read_txn = self.backend.begin_read()?;
+        let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
+
+        for item in iter {
+            let (key, value) = item?;
+            if key.len() < 48 {
+                continue;
+            }
+            let mut proof_type_bytes = [0u8; 8];
+            proof_type_bytes.copy_from_slice(&key[40..48]);
+            let proof_type = u64::from_be_bytes(proof_type_bytes);
+            results.push((proof_type, value.to_vec()));
+        }
+
+        Ok(results)
+    }
+
+    fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        if latest_block_number <= Self::MAX_PROOF_RETENTION {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - Self::MAX_PROOF_RETENTION;
+
+        if let Some(oldest_block_number) = self.get_oldest_proof_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut to_delete = Vec::new();
+
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
+
+                for item in iter {
+                    let (key, _value) = item?;
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    if block_number > threshold {
+                        break;
+                    }
+                    to_delete.push(key.to_vec());
+                }
+            }
+
+            for key in to_delete {
+                self.delete(EXECUTION_PROOFS, key)?;
+            }
+        }
+
+        self.update_oldest_proof_number(threshold + 1)?;
+
+        Ok(())
+    }
+
+    fn update_oldest_proof_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"oldest_proof_block_number".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_proof_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(MISC_VALUES, b"oldest_proof_block_number".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest proof block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {

@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod proof_engine;
 pub mod tracing;
 pub mod vm;
 
@@ -204,8 +205,14 @@ pub struct BlockchainOptions {
     /// EIP-7872: User-configured maximum blobs per block for local building.
     /// If None, uses the protocol maximum for the current fork.
     pub max_blobs_per_block: Option<u32>,
-    /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
-    pub precompute_witnesses: bool,
+}
+
+impl BlockchainOptions {
+    /// Returns true if execution witnesses should be precomputed upon receiving newPayload.
+    /// Under the `eip-8025` feature, witnesses are always precomputed.
+    pub fn precompute_witnesses(&self) -> bool {
+        cfg!(feature = "eip-8025")
+    }
 }
 
 impl Default for BlockchainOptions {
@@ -215,7 +222,6 @@ impl Default for BlockchainOptions {
             perf_logs_enabled: false,
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
-            precompute_witnesses: false,
         }
     }
 }
@@ -574,7 +580,7 @@ impl Blockchain {
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.precompute_witnesses {
+            if self.options.precompute_witnesses() {
                 Some(FxHashMap::default())
             } else {
                 None
@@ -775,7 +781,7 @@ impl Blockchain {
         }
 
         // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
+        let accumulated_updates = if self.options.precompute_witnesses() {
             Some(all_updates.values().cloned().collect::<Vec<_>>())
         } else {
             None
@@ -1951,7 +1957,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+        let (mut vm, logger) = if self.options.precompute_witnesses() && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.

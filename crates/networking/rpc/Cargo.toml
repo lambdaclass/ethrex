@@ -49,6 +49,7 @@ thiserror.workspace = true
 secp256k1.workspace = true
 uuid.workspace = true
 hex-literal = "0.4.1"
+ssz_rs = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -62,3 +63,4 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
+eip-8025 = ["ethrex-blockchain/eip-8025", "dep:ssz_rs"]

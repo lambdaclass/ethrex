@@ -24,6 +24,10 @@ hex.workspace = true
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+ssz_rs = { workspace = true, optional = true }
+
 
 [dev-dependencies]
 serde_json.workspace = true
@@ -38,6 +42,7 @@ default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+eip-8025 = ["dep:ssz_rs", "dep:serde", "dep:serde_json"]
 
 [lints.clippy]
 unwrap_used = "deny"

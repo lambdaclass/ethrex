@@ -3,6 +3,8 @@ pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
+#[cfg(feature = "eip-8025")]
+pub mod proof;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -66,6 +68,16 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
     }
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+        #[allow(unused_mut)]
+        let mut caps: Vec<&str> = CAPABILITIES.to_vec();
+        #[cfg(feature = "eip-8025")]
+        {
+            caps.extend_from_slice(&[
+                "engine_requestProofsV1",
+                "engine_verifyExecutionProofV1",
+                "engine_verifyNewPayloadRequestHeaderV1",
+            ]);
+        }
+        Ok(json!(caps))
     }
 }
