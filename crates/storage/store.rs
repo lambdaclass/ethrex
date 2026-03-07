@@ -21,6 +21,7 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -42,7 +43,6 @@ use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use arc_swap::ArcSwap;
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
@@ -1017,19 +1017,37 @@ impl Store {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
+            let read_txn = db.begin_read()?;
 
             for (block_number, block_hash) in new_canonical_blocks {
                 let head_key = block_number.to_le_bytes();
+
+                // Purge old entries from canonical TX index if this block height was already canonical.
+                if let Some(old_block_hash_bytes) =
+                    read_txn.get(CANONICAL_BLOCK_HASHES, &head_key)?
+                {
+                    let old_block_hash = BlockHash::decode(&old_block_hash_bytes)?;
+                    // Only purge if the hash actually changed (reorg at this height).
+                    if old_block_hash != block_hash {
+                        let old_body_key = old_block_hash.encode_to_vec();
+                        if let Some(old_body_bytes) = read_txn.get(BODIES, &old_body_key)? {
+                            let old_body: BlockBody = BlockBodyRLP::from_bytes(old_body_bytes)
+                                .to()
+                                .map_err(StoreError::from)?;
+                            for transaction in old_body.transactions.iter() {
+                                txn.delete(CANONICAL_TX_INDEX, transaction.hash().as_bytes())?;
+                            }
+                        }
+                    }
+                }
+
                 let head_value = block_hash.encode_to_vec();
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
 
                 // Populate canonical transaction index for O(1) lookups.
                 // Read the block body to get transaction hashes.
                 let hash_key = block_hash.encode_to_vec();
-                if let Some(body_bytes) = {
-                    let read_txn = db.begin_read()?;
-                    read_txn.get(BODIES, &hash_key)?
-                } {
+                if let Some(body_bytes) = read_txn.get(BODIES, &hash_key)? {
                     let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
                         .to()
                         .map_err(StoreError::from)?;
@@ -1045,16 +1063,12 @@ impl Store {
             for number in (head_number + 1)..=(latest) {
                 // Purge canonical TX index entries for de-canonicalized blocks (reorg cleanup).
                 let old_hash_key = number.to_le_bytes();
-                if let Some(old_block_hash_bytes) = {
-                    let read_txn = db.begin_read()?;
+                if let Some(old_block_hash_bytes) =
                     read_txn.get(CANONICAL_BLOCK_HASHES, &old_hash_key)?
-                } {
+                {
                     let old_block_hash = BlockHash::decode(&old_block_hash_bytes)?;
                     let body_key = old_block_hash.encode_to_vec();
-                    if let Some(body_bytes) = {
-                        let read_txn = db.begin_read()?;
-                        read_txn.get(BODIES, &body_key)?
-                    } {
+                    if let Some(body_bytes) = read_txn.get(BODIES, &body_key)? {
                         let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
                             .to()
                             .map_err(StoreError::from)?;
@@ -1069,22 +1083,36 @@ impl Store {
 
             // Make head canonical
             let head_key = head_number.to_le_bytes();
+
+            // Purge old entries from canonical TX index if head block height was already canonical.
+            if let Some(old_block_hash_bytes) = read_txn.get(CANONICAL_BLOCK_HASHES, &head_key)? {
+                let old_block_hash = BlockHash::decode(&old_block_hash_bytes)?;
+                // Only purge if the hash actually changed (reorg at this height).
+                if old_block_hash != head_hash {
+                    let old_body_key = old_block_hash.encode_to_vec();
+                    if let Some(old_body_bytes) = read_txn.get(BODIES, &old_body_key)? {
+                        let old_body: BlockBody = BlockBodyRLP::from_bytes(old_body_bytes)
+                            .to()
+                            .map_err(StoreError::from)?;
+                        for transaction in old_body.transactions.iter() {
+                            txn.delete(CANONICAL_TX_INDEX, transaction.hash().as_bytes())?;
+                        }
+                    }
+                }
+            }
+
             let head_value = head_hash.encode_to_vec();
             txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
 
             // Index head block transactions (head may not be in new_canonical_blocks)
             let head_hash_key = head_hash.encode_to_vec();
-            if let Some(body_bytes) = {
-                let read_txn = db.begin_read()?;
-                read_txn.get(BODIES, &head_hash_key)?
-            } {
+            if let Some(body_bytes) = read_txn.get(BODIES, &head_hash_key)? {
                 let body: BlockBody = BlockBodyRLP::from_bytes(body_bytes)
                     .to()
                     .map_err(StoreError::from)?;
                 for (index, transaction) in body.transactions.iter().enumerate() {
                     let tx_hash = transaction.hash();
-                    let location_value =
-                        (head_number, head_hash, index as u64).encode_to_vec();
+                    let location_value = (head_number, head_hash, index as u64).encode_to_vec();
                     txn.put(CANONICAL_TX_INDEX, tx_hash.as_bytes(), &location_value)?;
                 }
             }
