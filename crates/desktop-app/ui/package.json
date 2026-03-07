@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "tauri": "tauri",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@rollup/rollup-darwin-arm64": "^4.59.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "react": "^19.2.0",

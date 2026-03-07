@@ -2,6 +2,7 @@ use crate::ai_provider::{AiConfig, AiProvider, ChatMessage};
 use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
+use crate::deployment_db::{self, ContainerInfo, DeploymentRow};
 use crate::local_server::LocalServer;
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
 use crate::runner::ProcessRunner;
@@ -366,7 +367,7 @@ pub async fn get_local_server_status(
 #[tauri::command]
 pub async fn open_deployment_ui(
     server: State<'_, Arc<LocalServer>>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     // Ensure server is running
     if !server.is_running().await {
         server.start().await?;
@@ -374,8 +375,7 @@ pub async fn open_deployment_ui(
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
-    let url = format!("http://127.0.0.1:{}", server.port());
-    open::that(&url).map_err(|e| format!("Failed to open browser: {e}"))
+    Ok(format!("http://127.0.0.1:{}", server.port()))
 }
 
 // ============================================================================
@@ -414,4 +414,33 @@ pub fn delete_platform_token() -> Result<(), String> {
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("Failed to delete token: {e}")),
     }
+}
+
+// ============================================================================
+// Deployment DB (direct SQLite read — no server needed)
+// ============================================================================
+
+#[tauri::command]
+pub fn list_docker_deployments() -> Result<Vec<DeploymentRow>, String> {
+    deployment_db::list_deployments_from_db()
+}
+
+#[tauri::command]
+pub fn delete_docker_deployment(id: String) -> Result<(), String> {
+    deployment_db::delete_deployment_from_db(&id)
+}
+
+#[tauri::command]
+pub fn stop_docker_deployment(id: String) -> Result<(), String> {
+    deployment_db::stop_deployment_in_db(&id)
+}
+
+#[tauri::command]
+pub fn start_docker_deployment(id: String) -> Result<(), String> {
+    deployment_db::start_deployment_in_db(&id)
+}
+
+#[tauri::command]
+pub fn get_docker_containers(id: String) -> Result<Vec<ContainerInfo>, String> {
+    deployment_db::get_containers_for_deployment(&id)
 }

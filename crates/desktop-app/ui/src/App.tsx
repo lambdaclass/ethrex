@@ -63,7 +63,7 @@ function App() {
   const renderView = () => {
     switch (activeView) {
       case 'home': return <HomeView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} />
-      case 'myl2': return <MyL2View initialNetwork={createNetwork} onNetworkConsumed={() => setCreateNetwork(undefined)} />
+      case 'myl2': return <MyL2View />
       case 'chat': return <ChatView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} />
       case 'nodes': return <NodeControlView />
       case 'dashboard': return <DashboardView />

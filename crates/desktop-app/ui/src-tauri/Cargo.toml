@@ -29,3 +29,4 @@ chrono = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 keyring = "3"
 open = "5"
+rusqlite = { version = "0.31", features = ["bundled"] }

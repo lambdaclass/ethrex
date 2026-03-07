@@ -1,104 +1,16 @@
 import type React from 'react'
+import { useState } from 'react'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import type { ViewType } from '../App'
 import type { NetworkMode } from './CreateL2Wizard'
 import { invoke } from '@tauri-apps/api/core'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 interface HomeViewProps {
   onNavigate: (view: ViewType) => void
   onCreateWithNetwork: (network: NetworkMode) => void
 }
-
-const features: { icon: React.JSX.Element; titleKey: string }[] = [
-  {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-      </svg>
-    ),
-    titleKey: 'home.why1',
-  },
-  {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    ),
-    titleKey: 'home.why2',
-  },
-  {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 2a10 10 0 1 0 10 10H12V2z"/><path d="M20 12a8 8 0 0 0-8-8v8h8z"/>
-      </svg>
-    ),
-    titleKey: 'home.why3',
-  },
-  {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-      </svg>
-    ),
-    titleKey: 'home.why4',
-  },
-  {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="7 17 2 12 7 7"/><polyline points="17 7 22 12 17 17"/><line x1="2" y1="12" x2="22" y2="12"/>
-      </svg>
-    ),
-    titleKey: 'home.why5',
-  },
-  {
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="20 6 9 17 4 12"/>
-      </svg>
-    ),
-    titleKey: 'home.why6',
-  },
-]
-
-const steps: { num: string; titleKey: string; descKey: string; badgeColor: string; network: NetworkMode; icon: React.JSX.Element }[] = [
-  {
-    num: '1',
-    titleKey: 'home.step1',
-    descKey: 'home.step1.desc',
-    badgeColor: 'bg-[var(--color-success)]',
-    network: 'local',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-      </svg>
-    ),
-  },
-  {
-    num: '2',
-    titleKey: 'home.step2',
-    descKey: 'home.step2.desc',
-    badgeColor: 'bg-[var(--color-warning)]',
-    network: 'testnet',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-      </svg>
-    ),
-  },
-  {
-    num: '3',
-    titleKey: 'home.step3',
-    descKey: 'home.step3.desc',
-    badgeColor: 'bg-[var(--color-accent)]',
-    network: 'mainnet',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-      </svg>
-    ),
-  },
-]
 
 const quickLinks: { labelKey: string; view: ViewType; icon: React.JSX.Element }[] = [
   {
@@ -148,8 +60,37 @@ const quickLinks: { labelKey: string; view: ViewType; icon: React.JSX.Element }[
   },
 ]
 
-export default function HomeView({ onNavigate, onCreateWithNetwork }: HomeViewProps) {
+async function openDeployManager() {
+  const url = await invoke<string>('open_deployment_ui')
+  const existing = await WebviewWindow.getByLabel('deploy-manager')
+  if (existing) {
+    await existing.show()
+    await existing.setFocus()
+  } else {
+    new WebviewWindow('deploy-manager', {
+      url,
+      title: 'Tokamak L2 Manager',
+      width: 1100,
+      height: 800,
+      minWidth: 800,
+      minHeight: 600,
+      center: true,
+    })
+  }
+}
+
+export default function HomeView({ onNavigate }: HomeViewProps) {
   const { lang } = useLang()
+  const [deploymentOpened, setDeploymentOpened] = useState(false)
+
+  const handleOpenDeploy = async () => {
+    try {
+      await openDeployManager()
+      setDeploymentOpened(true)
+    } catch (e) {
+      console.error('Failed to open deployment UI:', e)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
@@ -168,7 +109,7 @@ export default function HomeView({ onNavigate, onCreateWithNetwork }: HomeViewPr
             </div>
             <div className="flex gap-2 mt-4">
               <button
-                onClick={() => onCreateWithNetwork('local')}
+                onClick={handleOpenDeploy}
                 className="flex-1 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-lg py-2 text-[12px] font-medium transition-colors cursor-pointer"
               >
                 {t('home.quickStart', lang)}
@@ -183,65 +124,83 @@ export default function HomeView({ onNavigate, onCreateWithNetwork }: HomeViewPr
           </div>
         </div>
 
-        {/* Why Tokamak - 2 column grid with icons */}
+        {/* Create New Appchain */}
         <div className="px-4 pb-4">
           <h2 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
-            {t('home.whyTitle', lang)}
+            {lang === 'ko' ? '앱체인 관리' : 'Appchain Management'}
           </h2>
-          <div className="grid grid-cols-2 gap-2">
-            {features.map((f) => (
-              <div
-                key={f.titleKey}
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--color-bg-sidebar)] border border-[var(--color-border)]"
-              >
-                <div className="w-7 h-7 rounded-lg bg-[var(--color-bg-main)] flex items-center justify-center flex-shrink-0 text-[var(--color-text-secondary)]">
-                  {f.icon}
-                </div>
-                <span className="text-[11px] font-medium leading-tight">{t(f.titleKey, lang)}</span>
+          <div className="bg-[var(--color-bg-sidebar)] rounded-xl border border-[var(--color-border)] overflow-hidden">
+            <button
+              onClick={handleOpenDeploy}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left border-b border-[var(--color-border)]"
+            >
+              <div className="w-10 h-10 rounded-xl bg-[var(--color-success)] flex items-center justify-center text-white flex-shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
               </div>
-            ))}
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-semibold">
+                  {lang === 'ko' ? '새 앱체인 만들기' : 'Create New Appchain'}
+                </div>
+                <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                  {lang === 'ko' ? 'L2 체인을 배포하고 관리합니다' : 'Deploy and manage your L2 chain'}
+                </div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)] flex-shrink-0">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+            <button
+              onClick={() => onNavigate('myl2')}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left"
+            >
+              <div className="w-10 h-10 rounded-xl bg-[#2563eb] flex items-center justify-center text-white flex-shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-semibold">
+                  {lang === 'ko' ? '내 앱체인' : 'My Appchains'}
+                </div>
+                <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                  {lang === 'ko' ? '기존 앱체인 목록 보기' : 'View your existing appchains'}
+                </div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)] flex-shrink-0">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
           </div>
         </div>
 
-        {/* Journey - vertical timeline style */}
-        <div className="px-4 pb-4">
-          <h2 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
-            {t('home.journey', lang)}
-          </h2>
-          <div className="bg-[var(--color-bg-sidebar)] rounded-xl border border-[var(--color-border)] overflow-hidden">
-            {steps.map((step, i) => (
+        {/* Deployment UI opened banner */}
+        {deploymentOpened && (
+          <div className="px-4 pb-4">
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[#122b1e] border border-[#1a4d2e]">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-semibold text-[#22c55e]">
+                  {lang === 'ko' ? '배포 매니저가 열렸습니다' : 'Deployment Manager opened'}
+                </div>
+                <div className="text-[11px] text-[#22c55e]/70 mt-0.5">
+                  {lang === 'ko' ? '별도 창에서 L2 체인을 배포하고 관리할 수 있습니다' : 'Deploy and manage L2 chains in the separate window'}
+                </div>
+              </div>
               <button
-                key={step.titleKey}
-                onClick={() => {
-                  if (step.network === 'local') {
-                    invoke('open_deployment_ui')
-                  } else {
-                    onCreateWithNetwork(step.network)
-                  }
-                }}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left ${
-                  i < steps.length - 1 ? 'border-b border-[var(--color-border)]' : ''
-                }`}
+                onClick={() => setDeploymentOpened(false)}
+                className="text-[#22c55e]/50 hover:text-[#22c55e] cursor-pointer flex-shrink-0"
               >
-                <div className="relative flex-shrink-0">
-                  <div className={`w-10 h-10 rounded-xl ${step.badgeColor} flex items-center justify-center text-white`}>
-                    {step.icon}
-                  </div>
-                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] flex items-center justify-center text-[9px] font-bold text-[var(--color-text-secondary)]">
-                    {step.num}
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-semibold">{t(step.titleKey, lang)}</div>
-                  <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">{t(step.descKey, lang)}</div>
-                </div>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)] flex-shrink-0">
-                  <polyline points="9 18 15 12 9 6"/>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
               </button>
-            ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Quick Links */}
         <div className="px-4 pb-6">

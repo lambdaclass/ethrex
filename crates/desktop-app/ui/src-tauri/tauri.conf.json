@@ -36,7 +36,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../../../local-server/**/*"
+      "../../local-server/**/*"
     ]
   }
 }
