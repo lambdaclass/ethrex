@@ -1,0 +1,10 @@
+.env
+.env.local
+.env*.local
+.env.local.example
+.vercel
+node_modules
+tests
+.next
+Claude-Sessions
+tsconfig.tsbuildinfo
