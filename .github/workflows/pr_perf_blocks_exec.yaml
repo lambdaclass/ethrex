@@ -24,6 +24,7 @@ jobs:
       matrix:
         branch: [base, head]
     name: Build ethrex for ${{ matrix.branch }}
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache

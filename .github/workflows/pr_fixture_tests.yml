@@ -21,6 +21,7 @@ env:
 jobs:
   fixture-tests:
     name: Fixture offline tests
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
