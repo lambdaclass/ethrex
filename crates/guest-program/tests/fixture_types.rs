@@ -16,7 +16,8 @@ pub struct TestFixture {
     pub program_type_id: u8,
     pub chain_id: u64,
     pub description: String,
-    pub prover: ProverFixture,
+    #[serde(default)]
+    pub prover: Option<ProverFixture>,
     pub committer: CommitterFixture,
 }
 
@@ -123,8 +124,9 @@ pub fn hex_to_bytes(s: &str) -> Vec<u8> {
 }
 
 /// Build a ProgramOutput from the prover fixture fields.
+/// Panics if the fixture has no prover data (e.g. exec backend).
 pub fn fixture_to_program_output(f: &TestFixture) -> ProgramOutput {
-    let p = &f.prover;
+    let p = f.prover.as_ref().expect("fixture has no prover data (exec backend?)");
     ProgramOutput {
         initial_state_hash: hex_to_h256(&p.initial_state_hash),
         final_state_hash: hex_to_h256(&p.final_state_hash),

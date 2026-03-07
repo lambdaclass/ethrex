@@ -2,8 +2,11 @@
 # Merge committer.json + prover.json into a single test fixture.
 # Usage: ./merge-fixtures.sh <dump-dir>/<app>/batch_<N>
 #
-# Reads:  committer.json, prover.json  (from ETHREX_DUMP_FIXTURES output)
-# Writes: fixture.json                 (test-ready, same format as tests/fixtures/)
+# Reads:  committer.json (required), prover.json (optional)
+# Writes: fixture.json   (test-ready, same format as tests/fixtures/)
+#
+# If prover.json is missing (e.g. exec backend), the fixture will have
+# prover: null — tests automatically skip prover-specific checks.
 #
 # Example:
 #   ETHREX_DUMP_FIXTURES=/tmp/fixtures docker compose up
@@ -19,16 +22,17 @@ COMMITTER="$DIR/committer.json"
 PROVER="$DIR/prover.json"
 
 if [ ! -f "$COMMITTER" ]; then echo "Missing $COMMITTER"; exit 1; fi
-if [ ! -f "$PROVER" ]; then echo "Missing $PROVER"; exit 1; fi
 
-# Use python3 (or jq) to merge
 python3 -c "
-import json, sys
+import json, sys, os
 
 with open('$COMMITTER') as f:
     c = json.load(f)
-with open('$PROVER') as f:
-    p = json.load(f)
+
+prover_data = None
+if os.path.isfile('$PROVER'):
+    with open('$PROVER') as f:
+        prover_data = json.load(f)
 
 fixture = {
     'app': c.get('app', 'unknown'),
@@ -36,12 +40,14 @@ fixture = {
     'program_type_id': c.get('program_type_id', 0),
     'chain_id': c.get('chain_id', 0),
     'description': c.get('description', ''),
-    'prover': p,
     'committer': c.get('committer', {}),
 }
+if prover_data is not None:
+    fixture['prover'] = prover_data
 
 with open('$DIR/fixture.json', 'w') as f:
     json.dump(fixture, f, indent=2)
 
-print(f'Written: $DIR/fixture.json')
+suffix = ' (with prover)' if prover_data else ' (committer only)'
+print(f'Written: $DIR/fixture.json' + suffix)
 "

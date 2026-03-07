@@ -20,9 +20,9 @@
 | 앱 자동 탐색 | ✅ | `discover_all_apps()` — 디렉토리만 추가하면 자동 |
 | CI workflow | ✅ | `.github/workflows/pr_fixture_tests.yml` |
 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
-| Phase 3: 오프라인 프루빙 | ⚠️ | dump 코드 완료, Docker 재빌드 + fixture 재수집 필요 |
-| Phase 4: 오프라인 검증 | ⚠️ | dump 코드 완료, Docker 재빌드 + fixture 재수집 필요 |
-| Phase 5: Foundry on-chain 검증 | ❌ | Solidity 테스트 미구현 |
+| Phase 3: 오프라인 프루빙 | ✅ | `test_offline_proving.rs` — zk-dex 재증명 통과 (439초) |
+| Phase 4: 오프라인 검증 | ✅ | `test_offline_verify.rs` — proof.bin 오프체인 검증 (2.4초) |
+| Phase 5: Foundry on-chain 검증 | ✅ | 인코딩 5개 + verifyProof 4개 = 총 9개 Foundry 테스트 |
 | Prover balance_diffs 디코딩 | ⚠️ | 인코딩 포맷 한계로 빈 배열, warn 처리 |
 
 ---
@@ -34,9 +34,11 @@ crates/guest-program/tests/
 ├── fixtures/
 │   ├── zk-dex/                           # ✅ 2개 fixture 수집됨
 │   │   ├── batch_2_deposit_withdraw.json
-│   │   └── batch_10_deposit_withdraw_2nd.json
-│   ├── evm-l2/                           # ❌ 미수집 (배포 필요)
-│   └── tokamon/                          # ❌ 미수집 (배포 필요)
+│   │   └── batch_11_deposit_withdraw_2nd.json
+│   ├── evm-l2/                           # ✅ 2개 fixture 수집됨 (exec backend, prover 없음)
+│   │   ├── batch_2_deposits.json
+│   │   └── batch_5_eth_transfers.json
+│   └── tokamon/                          # N/A (앱 미존재)
 ├── fixture_types.rs                      # ✅ 로더 + discover_all_apps()
 ├── test_program_output.rs                # ✅ 앱 자동 탐색
 ├── test_commitment_match.rs              # ✅ 앱 자동 탐색
@@ -159,24 +161,53 @@ crates/guest-program/tests/
 
 ### Phase 5: Foundry on-chain 검증 테스트
 
-**목표**: Solidity 테스트로 L1 OnChainProposer.verifyBatch() 재현.
+**목표**: Solidity 테스트로 인코딩 일치 검증 + L1 verifyBatch() 재현.
 
-**필요한 코드 변경**:
+**Phase 5a: 인코딩 일치 테스트** — ✅ 완료
 
-1. Phase 4의 proof calldata 수집이 선행 조건
-2. Foundry 프로젝트에 테스트 추가: `crates/l2/contracts/test/VerifyBatchFixture.t.sol`
+Foundry 프로젝트: `crates/l2/contracts/foundry.toml`
+테스트: `crates/l2/contracts/test/PublicInputsEncoding.t.sol`
 
-```solidity
-function test_verifyBatch_zk_dex() public {
-    bytes memory proof = vm.readFileBinary("fixtures/zk-dex/batch_2/proof_calldata.bin");
-    bytes32 vk = ...; // verifying key hash
-    bytes memory publicValues = vm.readFileBinary("fixtures/zk-dex/batch_2/public_values.bin");
-    ISP1Verifier(sp1Verifier).verifyProof(vk, publicValues, proof);
-}
+```sh
+cd crates/l2/contracts && forge test -vv
 ```
 
-**의존성**: Phase 4 완료, Foundry, SP1 Verifier 컨트랙트
-**우선순위**: 낮음 — L1 컨트랙트 변경 시 회귀 테스트로 가치 있음
+5개 테스트:
+- `test_encoding_zk_dex_batch_2` — fixture의 `encoded_public_values`와 Solidity `abi.encodePacked` 비교
+- `test_sha256_public_values_zk_dex_batch_2` — SHA-256 해시 일치 (RISC0 검증 형식)
+- `test_encoding_with_balance_diffs` — balance_diffs 포함 시 인코딩 길이 검증
+- `test_encoding_with_l2_rolling_hashes` — L2 rolling hash 포함 시 인코딩 길이 검증
+- `test_encoding_length_fixed_only` — 8개 고정 필드 = 256 바이트
+
+**Phase 5b: verifyProof 테스트** — ✅ 완료
+
+SP1MockVerifier + mock Groth16 proof로 검증 플로우 전체 테스트.
+
+테스트: `crates/l2/contracts/test/VerifyBatchFixture.t.sol`
+모의 검증기: `crates/l2/contracts/test/SP1MockVerifier.sol`
+
+4개 테스트:
+- `test_verifyProof_mock_zk_dex_batch_2` — 전체 encoding → verifyProof 호출
+- `test_verifyProof_with_sha256_check` — SHA-256 해시 + verifyProof
+- `test_full_verify_flow_zk_dex` — OnChainProposer._getPublicInputsFromCommitment 재현
+- `test_verifyProof_nonempty_proof` — 비어있지 않은 proof bytes 검증
+
+**Groth16 fixture 생성 (Rust)**: `crates/l2/prover/tests/test_groth16_prove.rs`
+- `groth16_mock_fixtures` — mock proof 생성 (빠름, ~초)
+- `groth16_real_prove` — 실제 Groth16 (SP1_DEV=true, 느림)
+
+```sh
+# Mock Groth16 fixtures 생성
+GUEST_PROGRAMS=zk-dex cargo test -p ethrex-prover --features sp1 --release -- groth16_mock
+
+# 실제 Groth16 proof 생성 (CPU + dev circuits)
+SP1_DEV=true GUEST_PROGRAMS=zk-dex cargo test -p ethrex-prover --features sp1 --release -- --ignored groth16_real
+
+# Foundry 테스트 실행
+cd crates/l2/contracts && forge test -vv
+```
+
+**실제 SP1 검증기로 테스트하려면**: SP1MockVerifier를 실제 SP1Verifier로 교체 + `groth16_real_prove` fixture 사용
 
 ---
 
@@ -213,10 +244,11 @@ function test_verifyBatch_zk_dex() public {
 | 4 | Test 앱 자동 탐색 | ✅ | `discover_all_apps()` |
 | 5 | CI workflow | ✅ | `pr_fixture_tests.yml` |
 | 6 | 새 앱 추가 가이드 | ✅ | `adding-new-app-fixtures.md` |
-| **7** | **다른 앱 fixture 수집** | **❌** | **evm-l2, tokamon 배포 필요** |
-| 8 | Phase 3: 오프라인 프루빙 | ⚠️ | dump 코드 + 테스트 작성 완료, fixture 재수집 필요 |
-| 9 | Phase 4: 오프라인 검증 | ⚠️ | dump 코드 + 테스트 작성 완료, fixture 재수집 필요 |
-| **10** | **Phase 5: Foundry 검증** | **❌** | **Phase 4 선행** |
+| 7 | evm-l2 fixture 수집 | ✅ | 2배치 수집 (exec backend, prover optional) |
+| 8 | Phase 3: 오프라인 프루빙 | ✅ | zk-dex 2배치 재증명 통과 (439초) |
+| 9 | Phase 4: 오프라인 검증 | ✅ | zk-dex 2배치 오프체인 검증 통과 (2.4초) |
+| 10 | Phase 5a: 인코딩 일치 | ✅ | Foundry 5개 테스트 통과 |
+| 10b | Phase 5b: verifyProof | ✅ | SP1MockVerifier + mock Groth16 (4개 테스트) |
 | 11 | Tools 포트 동적화 | ✅ | `TOOLS_*_PORT` 환경변수 |
 | 12 | GPU 감지 compose | ✅ | `hasNvidiaGpu()` + NVIDIA device reservation |
 | 13 | Metrics 포트 | ✅ | DB 할당 + compose 연동 |

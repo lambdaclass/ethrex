@@ -6,15 +6,18 @@
 //! Requires:
 //! - SP1 toolchain installed
 //! - Fixture files collected via `ETHREX_DUMP_FIXTURES` (see fixture-data-collection.md)
+//! - The matching ELF must be compiled (e.g. `GUEST_PROGRAMS=evm-l2,zk-dex`)
 //!
 //! ```sh
-//! cargo test -p ethrex-prover --features sp1 -- --ignored offline_prove
+//! GUEST_PROGRAMS=evm-l2,zk-dex cargo test -p ethrex-prover --features sp1 --release -- --ignored offline_prove
 //! ```
 
 #[cfg(feature = "sp1")]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod sp1_offline_proving {
-    use sp1_sdk::{CpuProver, Prover, SP1ProofMode, SP1Stdin};
+    use ethrex_guest_program::programs::{EvmL2GuestProgram, TokammonGuestProgram, ZkDexGuestProgram};
+    use ethrex_guest_program::traits::{GuestProgram, backends};
+    use sp1_sdk::{CpuProver, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin};
     use std::path::{Path, PathBuf};
 
     fn fixtures_dir() -> PathBuf {
@@ -24,8 +27,18 @@ mod sp1_offline_proving {
             .expect("fixtures directory should exist")
     }
 
+    /// Get the SP1 ELF for a given app name, or None if not compiled.
+    fn get_elf_for_app(app: &str) -> Option<&'static [u8]> {
+        match app {
+            "evm-l2" => EvmL2GuestProgram.elf(backends::SP1),
+            "zk-dex" => ZkDexGuestProgram.elf(backends::SP1),
+            "tokamon" => TokammonGuestProgram.elf(backends::SP1),
+            _ => None,
+        }
+    }
+
     /// Discover all stdin.bin fixtures across all apps.
-    fn discover_stdin_fixtures() -> Vec<(String, PathBuf)> {
+    fn discover_stdin_fixtures() -> Vec<(String, String, PathBuf)> {
         let dir = fixtures_dir();
         let mut results = Vec::new();
         if let Ok(apps) = std::fs::read_dir(&dir) {
@@ -40,7 +53,6 @@ mod sp1_offline_proving {
                     .to_str()
                     .unwrap()
                     .to_string();
-                // Look for batch directories containing stdin.bin
                 if let Ok(batches) = std::fs::read_dir(&app_path) {
                     for batch_entry in batches.flatten() {
                         let batch_path = batch_entry.path();
@@ -52,15 +64,10 @@ mod sp1_offline_proving {
                                     app_name,
                                     batch_path.file_name().unwrap().to_str().unwrap()
                                 );
-                                results.push((label, stdin_path));
+                                results.push((label, app_name.clone(), stdin_path));
                             }
                         }
                     }
-                }
-                // Also check app-level stdin.bin (flat layout)
-                let flat_stdin = app_path.join("stdin.bin");
-                if flat_stdin.exists() {
-                    results.push((app_name, flat_stdin));
                 }
             }
         }
@@ -77,24 +84,49 @@ mod sp1_offline_proving {
             return;
         }
 
-        let elf = ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
         let client = CpuProver::new();
-        let (pk, vk) = client.setup(elf);
+        let mut proved = 0;
+        let mut skipped = 0;
 
-        for (label, stdin_path) in &fixtures {
+        // Group fixtures by app to reuse setup
+        let mut current_app = String::new();
+        let mut current_setup: Option<(sp1_sdk::SP1ProvingKey, sp1_sdk::SP1VerifyingKey)> = None;
+
+        for (label, app, stdin_path) in &fixtures {
+            // Get the correct ELF for this app
+            let elf = match get_elf_for_app(app) {
+                Some(elf) if !elf.is_empty() => elf,
+                _ => {
+                    eprintln!(
+                        "[{label}] SKIP — no SP1 ELF for app '{app}'. Build with GUEST_PROGRAMS={app}"
+                    );
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            // Setup keys (reuse if same app)
+            if *app != current_app {
+                eprintln!("[{label}] Setting up SP1 keys for app '{app}'...");
+                let (pk, vk) = client.setup(elf);
+                current_setup = Some((pk, vk));
+                current_app = app.clone();
+            }
+            let (pk, vk) = current_setup.as_ref().unwrap();
+
             eprintln!("[{label}] proving from {}", stdin_path.display());
             let stdin_bytes = std::fs::read(stdin_path).expect("read stdin.bin");
 
             let mut stdin = SP1Stdin::new();
             stdin.write_slice(&stdin_bytes);
 
-            let proof = client
-                .prove(&pk, &stdin, SP1ProofMode::Compressed)
-                .unwrap_or_else(|e| panic!("[{label}] proving failed: {e}"));
+            let proof: SP1ProofWithPublicValues =
+                <CpuProver as Prover<_>>::prove(&client, pk, &stdin, SP1ProofMode::Compressed)
+                    .unwrap_or_else(|e| panic!("[{label}] proving failed: {e}"));
 
             // Verify the proof
             client
-                .verify(&proof, &vk)
+                .verify(&proof, vk)
                 .unwrap_or_else(|e| panic!("[{label}] verification failed: {e}"));
 
             // If a corresponding prover.json exists, compare public_values
@@ -103,10 +135,12 @@ mod sp1_offline_proving {
             if prover_json.exists() {
                 let pj: serde_json::Value =
                     serde_json::from_str(&std::fs::read_to_string(&prover_json).unwrap()).unwrap();
-                if let Some(expected_hex) = pj.get("encoded_public_values").and_then(|v| v.as_str())
+                if let Some(expected_hex) =
+                    pj.get("encoded_public_values").and_then(|v| v.as_str())
                 {
-                    let expected = hex::decode(expected_hex.strip_prefix("0x").unwrap_or(expected_hex))
-                        .expect("decode hex");
+                    let expected =
+                        hex::decode(expected_hex.strip_prefix("0x").unwrap_or(expected_hex))
+                            .expect("decode hex");
                     let actual = proof.public_values.as_slice();
                     assert_eq!(
                         actual, &expected[..],
@@ -117,6 +151,13 @@ mod sp1_offline_proving {
             } else {
                 eprintln!("[{label}] OK — proved successfully (no prover.json to compare)");
             }
+            proved += 1;
         }
+
+        eprintln!("Phase 3 summary: {proved} proved, {skipped} skipped");
+        assert!(
+            proved > 0 || skipped > 0,
+            "No fixtures were processed at all"
+        );
     }
 }

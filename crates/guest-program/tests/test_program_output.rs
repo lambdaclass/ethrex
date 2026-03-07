@@ -16,9 +16,16 @@ fn encode_matches_all_app_fixtures() {
     for app in &apps {
         let fixtures = load_all_fixtures(app);
         for f in &fixtures {
+            let Some(ref prover) = f.prover else {
+                eprintln!(
+                    "[{app}] batch {} ({}): SKIP — no prover data (exec backend)",
+                    f.batch_number, f.description
+                );
+                continue;
+            };
             let output = fixture_to_program_output(f);
             let encoded = output.encode();
-            let expected = hex_to_bytes(&f.prover.encoded_public_values);
+            let expected = hex_to_bytes(&prover.encoded_public_values);
             assert_eq!(
                 encoded, expected,
                 "[{app}] batch {} ({}): ProgramOutput.encode() mismatch",
@@ -26,7 +33,7 @@ fn encode_matches_all_app_fixtures() {
             );
             assert_eq!(
                 sha256_hex(&encoded),
-                f.prover.sha256_public_values,
+                prover.sha256_public_values,
                 "[{app}] batch {} ({}): sha256 mismatch",
                 f.batch_number, f.description
             );
