@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sql, ensureSchema } from "@/lib/db";
+import { sql, sqlUpdate, ensureSchema } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { isValidName, isValidCategory, sanitizeString } from "@/lib/validate";
 
@@ -30,21 +30,26 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const body = await req.json();
+    const fields: Record<string, unknown> = {};
+
     if (body.name !== undefined) {
       if (!isValidName(body.name)) {
         return NextResponse.json({ error: "Name must be 1-100 characters" }, { status: 400 });
       }
-      await sql`UPDATE programs SET name = ${body.name.trim()} WHERE id = ${id}`;
+      fields.name = body.name.trim();
     }
     if (body.description !== undefined) {
-      const desc = sanitizeString(body.description, 2000);
-      await sql`UPDATE programs SET description = ${desc} WHERE id = ${id}`;
+      fields.description = sanitizeString(body.description, 2000);
     }
     if (body.category !== undefined) {
       if (!isValidCategory(body.category)) {
         return NextResponse.json({ error: "Invalid category" }, { status: 400 });
       }
-      await sql`UPDATE programs SET category = ${body.category} WHERE id = ${id}`;
+      fields.category = body.category;
+    }
+
+    if (Object.keys(fields).length > 0) {
+      await sqlUpdate("programs", id, fields);
     }
 
     const { rows: updated } = await sql`SELECT * FROM programs WHERE id = ${id}`;

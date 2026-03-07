@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sql, ensureSchema } from "@/lib/db";
+import { sql, sqlUpdate, ensureSchema } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -33,17 +33,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const body = await req.json();
-    const configJson = body.config && typeof body.config === "object" ? JSON.stringify(body.config) : body.config;
+    const allowed = ["name", "chain_id", "rpc_url", "status", "config", "phase", "bridge_address", "proposer_address"];
+    const fields: Record<string, unknown> = {};
+    for (const key of allowed) {
+      if (body[key] !== undefined) {
+        fields[key] = key === "config" && typeof body[key] === "object" ? JSON.stringify(body[key]) : body[key];
+      }
+    }
 
-    // Update each allowed field individually with safe parameterized queries
-    if (body.name !== undefined) await sql`UPDATE deployments SET name = ${body.name} WHERE id = ${id}`;
-    if (body.chain_id !== undefined) await sql`UPDATE deployments SET chain_id = ${body.chain_id} WHERE id = ${id}`;
-    if (body.rpc_url !== undefined) await sql`UPDATE deployments SET rpc_url = ${body.rpc_url} WHERE id = ${id}`;
-    if (body.status !== undefined) await sql`UPDATE deployments SET status = ${body.status} WHERE id = ${id}`;
-    if (body.config !== undefined) await sql`UPDATE deployments SET config = ${configJson} WHERE id = ${id}`;
-    if (body.phase !== undefined) await sql`UPDATE deployments SET phase = ${body.phase} WHERE id = ${id}`;
-    if (body.bridge_address !== undefined) await sql`UPDATE deployments SET bridge_address = ${body.bridge_address} WHERE id = ${id}`;
-    if (body.proposer_address !== undefined) await sql`UPDATE deployments SET proposer_address = ${body.proposer_address} WHERE id = ${id}`;
+    if (Object.keys(fields).length > 0) {
+      await sqlUpdate("deployments", id, fields);
+    }
 
     const { rows: updated } = await sql`
       SELECT d.*, p.name as program_name, p.program_id as program_slug, p.category

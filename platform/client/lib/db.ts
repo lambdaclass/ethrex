@@ -43,6 +43,29 @@ export async function sql(
 }
 
 /**
+ * Dynamic UPDATE helper. Builds a single UPDATE query for multiple columns.
+ * Usage: await sqlUpdate("deployments", id, { name: "foo", chain_id: 123 })
+ */
+export async function sqlUpdate(
+  table: string,
+  id: string,
+  fields: Record<string, unknown>
+): Promise<{ rows: Record<string, unknown>[] }> {
+  const keys = Object.keys(fields);
+  if (keys.length === 0) {
+    return { rows: [] };
+  }
+
+  const setClauses = keys.map((key, i) => `${key} = $${i + 1}`);
+  const values = keys.map((k) => fields[k]);
+  values.push(id);
+
+  const query = `UPDATE ${table} SET ${setClauses.join(", ")} WHERE id = $${values.length} RETURNING *`;
+  const result = await getPool().query(query, values);
+  return { rows: result.rows };
+}
+
+/**
  * Initialize database schema. Called on first request (lazy init).
  */
 let initialized = false;
