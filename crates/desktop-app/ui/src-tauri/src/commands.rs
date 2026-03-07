@@ -1,4 +1,4 @@
-use crate::ai_provider::{AiConfig, AiProvider, ChatMessage};
+use crate::ai_provider::{AiConfig, AiMode, AiProvider, ChatMessage, TokenUsage};
 use crate::appchain_manager::{
     AppchainConfig, AppchainManager, AppchainStatus, NetworkMode, SetupProgress, StepStatus,
 };
@@ -51,6 +51,21 @@ pub async fn fetch_ai_models(
 #[tauri::command]
 pub fn disconnect_ai(ai: State<Arc<AiProvider>>) -> Result<(), String> {
     ai.clear_config()
+}
+
+#[tauri::command]
+pub fn get_ai_mode(ai: State<Arc<AiProvider>>) -> AiMode {
+    ai.get_mode()
+}
+
+#[tauri::command]
+pub fn set_ai_mode(mode: AiMode, ai: State<Arc<AiProvider>>) -> Result<(), String> {
+    ai.set_mode(mode)
+}
+
+#[tauri::command]
+pub fn get_token_usage(ai: State<Arc<AiProvider>>) -> TokenUsage {
+    ai.get_token_usage()
 }
 
 #[tauri::command]

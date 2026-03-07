@@ -75,11 +75,23 @@ interface AiConfig {
   model: string
 }
 
+type AiMode = 'tokamak' | 'custom'
+
+interface TokenUsage {
+  date: string
+  used: number
+  limit: number
+}
+
 export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewProps) {
   const { lang } = useLang()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [aiMode, setAiMode] = useState<AiMode>('tokamak')
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null)
+
+  // Custom AI state
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [keyInput, setKeyInput] = useState('')
   const [savingKey, setSavingKey] = useState(false)
@@ -93,12 +105,50 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    checkApiKey()
+    loadAiMode()
   }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const loadAiMode = async () => {
+    try {
+      const mode = await invoke<AiMode>('get_ai_mode')
+      setAiMode(mode)
+      if (mode === 'tokamak') {
+        const usage = await invoke<TokenUsage>('get_token_usage')
+        setTokenUsage(usage)
+        if (messages.length === 0) {
+          setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
+        }
+      } else {
+        await checkApiKey()
+      }
+    } catch {
+      // Default to tokamak mode
+      setAiMode('tokamak')
+      if (messages.length === 0) {
+        setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
+      }
+    }
+  }
+
+  const switchMode = async (mode: AiMode) => {
+    try {
+      await invoke('set_ai_mode', { mode })
+      setAiMode(mode)
+      setMessages([])
+      setShowDisconnect(false)
+      if (mode === 'tokamak') {
+        const usage = await invoke<TokenUsage>('get_token_usage')
+        setTokenUsage(usage)
+        setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
+      } else {
+        await checkApiKey()
+      }
+    } catch {}
+  }
 
   const checkApiKey = async () => {
     try {
@@ -142,7 +192,6 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
         apiKey: keyInput.trim(),
         model: selectedModel,
       })
-      // Test connection
       const response = await invoke<string>('test_ai_connection')
       setHasKey(true)
       const cfg = await invoke<AiConfig>('get_ai_config')
@@ -190,21 +239,31 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     setInput('')
     setLoading(true)
     try {
-      // Fetch current app context
       const context = await invoke<Record<string, unknown>>('get_chat_context')
       const contextJson = JSON.stringify(context)
 
-      // Send full conversation history with context
+      const welcomeKeys = [t('chat.welcome.connected', lang), t('chat.welcome.tokamak', lang)]
       const apiMessages = newMessages
-        .filter(m => m.content !== t('chat.welcome.connected', lang))
+        .filter(m => !welcomeKeys.includes(m.content))
         .map(m => ({ role: m.role, content: m.content }))
       const response = await invoke<{ role: string; content: string }>('send_chat_message', {
         messages: apiMessages,
         context: contextJson,
       })
       setMessages(prev => [...prev, { role: 'assistant', content: response.content }])
+
+      // Refresh token usage after Tokamak AI call
+      if (aiMode === 'tokamak') {
+        const usage = await invoke<TokenUsage>('get_token_usage')
+        setTokenUsage(usage)
+      }
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])
+      const errorStr = `${e}`
+      if (errorStr.includes('daily_limit_exceeded')) {
+        setMessages(prev => [...prev, { role: 'assistant', content: t('chat.dailyLimitExceeded', lang) }])
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])
+      }
     } finally {
       setLoading(false)
     }
@@ -215,7 +274,7 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
   }
 
   // Loading state
-  if (hasKey === null) {
+  if (aiMode === 'custom' && hasKey === null) {
     return (
       <div className="flex flex-col h-full bg-[var(--color-bg-main)] items-center justify-center">
         <div className="w-6 h-6 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin" />
@@ -223,30 +282,8 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     )
   }
 
-  // Provider info
+  // Provider info (for custom mode setup)
   const providers: Record<string, { name: string; icon: string; models: string[]; placeholder: string; guide: Record<Lang, string[]> }> = {
-    tokamak: {
-      name: 'Tokamak AI',
-      icon: '🔷',
-      models: [],
-      placeholder: 'sk-...',
-      guide: {
-        ko: [
-          '1. 아래 링크에서 로그인',
-          '__link__https://api.ai.tokamak.network/ui/login/',
-          '2. 로그인 후 API Keys 메뉴로 이동',
-          '3. 새 API 키 생성',
-          '4. 생성된 키를 복사하여 아래에 붙여넣기',
-        ],
-        en: [
-          '1. Sign in at the link below',
-          '__link__https://api.ai.tokamak.network/ui/login/',
-          '2. After login, navigate to API Keys',
-          '3. Create a new API key',
-          '4. Copy the key and paste it below',
-        ],
-      },
-    },
     claude: {
       name: 'Claude (Anthropic)',
       icon: '🟠',
@@ -311,32 +348,42 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     },
   }
 
-  // API Key setup screen
-  if (!hasKey) {
+  // Mode toggle button (top-right)
+  const ModeToggle = () => (
+    <button
+      onClick={() => switchMode(aiMode === 'tokamak' ? 'custom' : 'tokamak')}
+      className="text-[11px] px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-border)] transition-colors cursor-pointer text-[var(--color-text-secondary)] whitespace-nowrap"
+    >
+      {aiMode === 'tokamak' ? t('chat.switchToMyAi', lang) : t('chat.switchToTokamak', lang)}
+    </button>
+  )
+
+  // Custom mode: API key setup screen
+  if (aiMode === 'custom' && !hasKey) {
     const prov = selectedProvider ? providers[selectedProvider] : null
 
     return (
       <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-sm">🤖</div>
             <div>
               <div className="text-sm font-semibold">{t('chat.title', lang)}</div>
-              <div className="text-[11px] text-[var(--color-text-secondary)]">{t('chat.notConnected', lang)}</div>
+              <div className="text-[11px] text-[var(--color-text-secondary)]">{t('chat.myAi', lang)} · {t('chat.notConnected', lang)}</div>
             </div>
           </div>
+          <ModeToggle />
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
           <div className="max-w-sm mx-auto space-y-4">
-            {/* Title */}
             <div className="text-center space-y-2 pt-4">
               <div className="w-14 h-14 rounded-2xl bg-[var(--color-accent)] flex items-center justify-center text-xl mx-auto">🤖</div>
               <h2 className="text-base font-semibold">{t('chat.setupTitle', lang)}</h2>
               <p className="text-[12px] text-[var(--color-text-secondary)]">{t('chat.setupDesc', lang)}</p>
             </div>
 
-            {/* Step 1: Provider Selection */}
+            {/* Provider Selection */}
             <div className="space-y-2">
               <h3 className="text-[12px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
                 {t('chat.step1Provider', lang)}
@@ -369,10 +416,9 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
               </div>
             </div>
 
-            {/* Step 2: Guide & Key Input (shown after provider selection) */}
+            {/* Guide & Key Input */}
             {prov && (
               <div className="space-y-3 animate-[fadeIn_0.2s_ease-in]">
-                {/* Guide */}
                 <div className="space-y-2">
                   <h3 className="text-[12px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
                     {t('chat.step2Guide', lang)}
@@ -395,7 +441,6 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
                   </div>
                 </div>
 
-                {/* Key Input */}
                 <div>
                   <h3 className="text-[12px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
                     {t('chat.step3Key', lang)}
@@ -421,7 +466,6 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
                   </div>
                 </div>
 
-                {/* Model Selection */}
                 <div>
                   <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
                     {t('settings.model', lang)}
@@ -463,7 +507,11 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     )
   }
 
-  // Chat screen
+  // Chat screen (both Tokamak AI and Custom connected)
+  const headerSubtitle = aiMode === 'tokamak'
+    ? t('chat.tokamakConnected', lang)
+    : `${config?.provider === 'claude' ? 'Claude' : config?.provider} · ${config?.model}`
+
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
@@ -472,44 +520,50 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
           <div className="w-9 h-9 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-sm">🤖</div>
           <div>
             <div className="text-sm font-semibold">{t('chat.title', lang)}</div>
-            <div className="text-[11px] text-[var(--color-success)]">
-              {config?.provider === 'claude' ? 'Claude' : config?.provider} · {config?.model}
-            </div>
+            <div className="text-[11px] text-[var(--color-success)]">{headerSubtitle}</div>
           </div>
         </div>
-        {!showDisconnect ? (
-          <button
-            onClick={() => setShowDisconnect(true)}
-            className="text-[11px] px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-border)] transition-colors cursor-pointer text-[var(--color-text-secondary)]"
-          >
-            {t('chat.changeProvider', lang)}
-          </button>
-        ) : (
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-[var(--color-text-secondary)]">{t('chat.disconnectConfirm', lang)}</span>
+        <div className="flex items-center gap-1.5">
+          {aiMode === 'tokamak' && tokenUsage && (
+            <span className="text-[10px] text-[var(--color-text-secondary)] mr-1">
+              {tokenUsage.used.toLocaleString()}/{tokenUsage.limit.toLocaleString()}
+            </span>
+          )}
+          {aiMode === 'custom' && !showDisconnect && (
             <button
-              onClick={async () => {
-                try {
-                  await invoke('disconnect_ai')
-                  setHasKey(false)
-                  setConfig(null)
-                  setMessages([])
-                  setSelectedProvider(null)
-                  setShowDisconnect(false)
-                } catch {}
-              }}
-              className="text-[11px] px-2.5 py-1 rounded-lg bg-[var(--color-error)] text-white cursor-pointer"
+              onClick={() => setShowDisconnect(true)}
+              className="text-[11px] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-border)] transition-colors cursor-pointer text-[var(--color-text-secondary)] mr-1"
             >
-              {t('chat.disconnect', lang)}
+              {t('chat.changeProvider', lang)}
             </button>
-            <button
-              onClick={() => setShowDisconnect(false)}
-              className="text-[11px] px-2.5 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-border)] cursor-pointer text-[var(--color-text-secondary)]"
-            >
-              {lang === 'ko' ? '취소' : 'Cancel'}
-            </button>
-          </div>
-        )}
+          )}
+          {aiMode === 'custom' && showDisconnect && (
+            <div className="flex items-center gap-1 mr-1">
+              <button
+                onClick={async () => {
+                  try {
+                    await invoke('disconnect_ai')
+                    setHasKey(false)
+                    setConfig(null)
+                    setMessages([])
+                    setSelectedProvider(null)
+                    setShowDisconnect(false)
+                  } catch {}
+                }}
+                className="text-[10px] px-2 py-1 rounded-lg bg-[var(--color-error)] text-white cursor-pointer"
+              >
+                {t('chat.disconnect', lang)}
+              </button>
+              <button
+                onClick={() => setShowDisconnect(false)}
+                className="text-[10px] px-2 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-border)] cursor-pointer text-[var(--color-text-secondary)]"
+              >
+                {lang === 'ko' ? '취소' : 'Cancel'}
+              </button>
+            </div>
+          )}
+          <ModeToggle />
+        </div>
       </div>
 
       {/* Messages */}

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tokamak L2 Manager</title>
-  <link rel="stylesheet" href="/style.css">
+  <title>Tokamak Appchain Manager</title>
+  <link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
   <!-- Sidebar -->
@@ -13,7 +13,7 @@
       <div class="logo">
         <img src="/logo.png" alt="Tokamak" width="28" height="28">
       </div>
-      <span class="name">Tokamak L2</span>
+      <span class="name">Tokamak Appchain</span>
     </div>
 
     <div class="sidebar-nav">
@@ -90,48 +90,49 @@
 
         <!-- Step 2: Configure -->
         <div id="launch-step2" class="launch-step" style="display:none">
-          <h2>Configure Your L2</h2>
-          <p class="step-desc" id="step2-desc">Set up your L2 chain.</p>
+          <h2 style="font-size:16px;margin-bottom:4px">Configure Your L2</h2>
+          <p class="step-desc" id="step2-desc" style="margin-bottom:14px">Set up your L2 chain.</p>
 
-          <div id="selected-program-info" class="selected-program-card"></div>
+          <div id="selected-program-info" class="selected-program-card" style="padding:10px 16px;margin-bottom:12px"></div>
 
           <div class="config-form">
-            <label>Environment</label>
-            <div class="mode-cards">
-              <button type="button" class="mode-card active" data-mode="local" onclick="setLaunchMode('local')">
+            <label style="margin-bottom:8px">Environment</label>
+            <div class="mode-cards" style="margin-bottom:12px">
+              <button type="button" class="mode-card active" data-mode="local" onclick="setLaunchMode('local')" style="padding:8px">
                 <div class="mode-title">Local (Docker)</div>
                 <div class="mode-desc">Build and run on this machine</div>
               </button>
-              <button type="button" class="mode-card" data-mode="remote" onclick="setLaunchMode('remote')">
+              <button type="button" class="mode-card" data-mode="remote" onclick="setLaunchMode('remote')" style="padding:8px">
                 <div class="mode-title">Remote Server</div>
                 <div class="mode-desc">Deploy to a remote server via SSH</div>
               </button>
-              <button type="button" class="mode-card" data-mode="manual" onclick="setLaunchMode('manual')">
+              <button type="button" class="mode-card" data-mode="manual" onclick="setLaunchMode('manual')" style="padding:8px">
                 <div class="mode-title">Manual</div>
                 <div class="mode-desc">Download config and run manually</div>
               </button>
             </div>
 
-            <label>L2 Name *
-              <input type="text" id="launch-name" placeholder="My L2 Chain">
-            </label>
-
-            <label>Chain ID
-              <input type="number" id="launch-chain-id" placeholder="auto-generated">
-              <p class="form-hint">Auto-generated. Any unique value works.</p>
-            </label>
+            <div class="form-row" style="margin-bottom:0">
+              <label style="margin-bottom:8px">L2 Name *
+                <input type="text" id="launch-name" placeholder="My L2 Chain">
+              </label>
+              <label style="margin-bottom:8px">Chain ID
+                <input type="number" id="launch-chain-id" placeholder="auto-generated">
+                <p class="form-hint">Auto-generated.</p>
+              </label>
+            </div>
 
             <div id="deploy-dir-area">
-              <label>Deploy Directory</label>
+              <label style="margin-bottom:4px">Deploy Directory</label>
               <div style="display:flex;gap:6px;margin-bottom:4px">
                 <input type="text" id="launch-deploy-dir" placeholder="~/.tokamak/deployments/<id> (default)" style="flex:1;margin:0">
                 <button type="button" class="btn-secondary" onclick="browseDirPicker()" style="white-space:nowrap">Browse</button>
               </div>
-              <p class="form-hint" style="margin-bottom:16px">docker-compose.yaml will be generated here.</p>
+              <p class="form-hint" style="margin-bottom:8px">docker-compose.yaml will be generated here.</p>
             </div>
 
             <div id="l1-node-area">
-              <label>L1 Node
+              <label style="margin-bottom:8px">L1 Node
                 <select id="launch-l1-image">
                   <option value="ethrex">ethrex (Tokamak)</option>
                   <option value="geth">Geth (go-ethereum)</option>
@@ -161,7 +162,7 @@
 
             <div id="launch-error" class="error-msg" style="display:none"></div>
 
-            <div class="form-actions">
+            <div class="form-actions" style="margin-top:12px">
               <button class="btn-secondary" onclick="launchGoStep(1)">Back</button>
               <button class="btn-primary" id="launch-deploy-btn" onclick="handleLaunchDeploy()">Deploy L2</button>
             </div>
@@ -220,7 +221,7 @@
         <div class="detail-content">
           <div id="tab-overview" class="tab-panel active">
             <div id="container-cards"></div>
-            <div id="detail-endpoints" class="card" style="display:none;margin-bottom:20px">
+            <div id="detail-endpoints" class="card" style="display:none;margin-bottom:12px">
               <div id="endpoints-content"></div>
             </div>
           </div>
@@ -262,6 +263,6 @@
     </footer>
   </div>
 
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=14"></script>
 </body>
 </html>

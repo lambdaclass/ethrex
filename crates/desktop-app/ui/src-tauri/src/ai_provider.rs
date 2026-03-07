@@ -6,6 +6,18 @@ use std::time::Duration;
 const KEYRING_SERVICE: &str = "tokamak-appchain";
 const KEYRING_API_KEY: &str = "ai-api-key";
 const KEYRING_AI_CONFIG: &str = "ai-config";
+const KEYRING_DEVICE_ID: &str = "device-id";
+const KEYRING_AI_MODE: &str = "ai-mode";
+
+const TOKAMAK_AI_BASE_URL: &str = "https://api.ai.tokamak.network";
+const DAILY_TOKEN_LIMIT: u32 = 50_000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiMode {
+    Tokamak,
+    Custom,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
@@ -25,8 +37,18 @@ impl Default for AiConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub date: String,
+    pub used: u32,
+    pub limit: u32,
+}
+
 pub struct AiProvider {
     config: Mutex<AiConfig>,
+    mode: Mutex<AiMode>,
+    device_id: String,
+    daily_tokens: Mutex<TokenUsage>,
     client: Client,
 }
 
@@ -34,14 +56,115 @@ impl AiProvider {
     pub fn new() -> Self {
         let mut config = Self::load_config_meta().unwrap_or_default();
         config.api_key = Self::load_api_key().unwrap_or_default();
+        let mode = Self::load_mode().unwrap_or(AiMode::Tokamak);
+        let device_id = Self::load_or_create_device_id();
+        let daily_tokens = Self::load_token_usage();
+
         Self {
             config: Mutex::new(config),
+            mode: Mutex::new(mode),
+            device_id,
+            daily_tokens: Mutex::new(daily_tokens),
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap_or_default(),
         }
     }
+
+    // ---- Device ID ----
+
+    fn load_or_create_device_id() -> String {
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_ID) {
+            if let Ok(id) = entry.get_password() {
+                return id;
+            }
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_ID) {
+            let _ = entry.set_password(&id);
+        }
+        id
+    }
+
+    pub fn get_device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    // ---- AI Mode ----
+
+    fn load_mode() -> Option<AiMode> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_AI_MODE).ok()?;
+        let data = entry.get_password().ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    fn save_mode(mode: &AiMode) -> Result<(), String> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_AI_MODE)
+            .map_err(|e| format!("Keyring error: {e}"))?;
+        let data = serde_json::to_string(mode).map_err(|e| e.to_string())?;
+        entry
+            .set_password(&data)
+            .map_err(|e| format!("Failed to save mode: {e}"))
+    }
+
+    pub fn get_mode(&self) -> AiMode {
+        self.mode.lock().unwrap().clone()
+    }
+
+    pub fn set_mode(&self, mode: AiMode) -> Result<(), String> {
+        Self::save_mode(&mode)?;
+        *self.mode.lock().unwrap() = mode;
+        Ok(())
+    }
+
+    // ---- Token Usage (local tracking) ----
+
+    fn today() -> String {
+        chrono::Local::now().format("%Y-%m-%d").to_string()
+    }
+
+    fn load_token_usage() -> TokenUsage {
+        let today = Self::today();
+        // Simple in-memory reset per day; starts fresh each app launch per day
+        TokenUsage {
+            date: today,
+            used: 0,
+            limit: DAILY_TOKEN_LIMIT,
+        }
+    }
+
+    pub fn get_token_usage(&self) -> TokenUsage {
+        let mut usage = self.daily_tokens.lock().unwrap();
+        let today = Self::today();
+        if usage.date != today {
+            usage.date = today;
+            usage.used = 0;
+        }
+        usage.clone()
+    }
+
+    fn add_token_usage(&self, tokens: u32) {
+        let mut usage = self.daily_tokens.lock().unwrap();
+        let today = Self::today();
+        if usage.date != today {
+            usage.date = today;
+            usage.used = 0;
+        }
+        usage.used += tokens;
+    }
+
+    fn check_token_limit(&self) -> Result<(), String> {
+        let usage = self.get_token_usage();
+        if usage.used >= usage.limit {
+            return Err(
+                "daily_limit_exceeded".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    // ---- Config persistence (for custom mode) ----
 
     fn load_config_meta() -> Option<AiConfig> {
         let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_AI_CONFIG).ok()?;
@@ -99,11 +222,9 @@ impl AiProvider {
     }
 
     pub fn clear_config(&self) -> Result<(), String> {
-        // Delete API key from keychain
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_API_KEY) {
             let _ = entry.delete_credential();
         }
-        // Delete config from keychain
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_AI_CONFIG) {
             let _ = entry.delete_credential();
         }
@@ -111,7 +232,8 @@ impl AiProvider {
         Ok(())
     }
 
-    /// Fetch available models from provider API
+    // ---- Model fetching ----
+
     pub async fn fetch_models(&self, provider: &str, api_key: &str) -> Result<Vec<String>, String> {
         let url = Self::models_url(provider);
         let response = self
@@ -120,18 +242,18 @@ impl AiProvider {
             .header("Authorization", format!("Bearer {api_key}"))
             .send()
             .await
-            .map_err(|e| format!("모델 목록 조회 실패: {e}"))?;
+            .map_err(|e| format!("Failed to fetch models: {e}"))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("API 에러 ({status}): {body}"));
+            return Err(format!("API error ({status}): {body}"));
         }
 
         let result: serde_json::Value = response
             .json()
             .await
-            .map_err(|e| format!("응답 파싱 실패: {e}"))?;
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
 
         let models = result["data"]
             .as_array()
@@ -145,27 +267,111 @@ impl AiProvider {
         Ok(models)
     }
 
+    // ---- Chat ----
+
     pub async fn chat(
         &self,
         messages: Vec<ChatMessage>,
         context_json: Option<String>,
     ) -> Result<String, String> {
-        let config = self.get_config();
-        if config.api_key.is_empty() {
-            return Err(
-                "API 키가 설정되지 않았습니다. 설정에서 API 키를 입력하세요.".to_string(),
-            );
-        }
-
+        let mode = self.get_mode();
         let ctx_ref = context_json.as_deref();
-        match config.provider.as_str() {
-            "claude" => self.chat_claude(&config, messages, ctx_ref).await,
-            "tokamak" | "gpt" | "gemini" => {
-                self.chat_openai_compat(&config, messages, ctx_ref).await
+
+        match mode {
+            AiMode::Tokamak => {
+                self.check_token_limit()?;
+                let result = self.chat_tokamak(messages, ctx_ref).await?;
+                // Rough token estimate: ~4 chars per token
+                let estimated_tokens = (result.len() as u32) / 4;
+                self.add_token_usage(estimated_tokens);
+                Ok(result)
             }
-            _ => Err(format!("지원하지 않는 프로바이더: {}", config.provider)),
+            AiMode::Custom => {
+                let config = self.get_config();
+                if config.api_key.is_empty() {
+                    return Err("API key not configured. Please enter your API key in Settings.".to_string());
+                }
+                match config.provider.as_str() {
+                    "claude" => self.chat_claude(&config, messages, ctx_ref).await,
+                    "gpt" | "gemini" => {
+                        self.chat_openai_compat(&config, messages, ctx_ref).await
+                    }
+                    _ => Err(format!("Unsupported provider: {}", config.provider)),
+                }
+            }
         }
     }
+
+    // ---- Tokamak AI (no API key, device_id auth) ----
+
+    async fn chat_tokamak(
+        &self,
+        messages: Vec<ChatMessage>,
+        context_json: Option<&str>,
+    ) -> Result<String, String> {
+        let system_prompt = Self::build_system_prompt(context_json);
+
+        let mut api_messages = vec![serde_json::json!({
+            "role": "system",
+            "content": system_prompt
+        })];
+        for m in &messages {
+            api_messages.push(serde_json::json!({
+                "role": m.role,
+                "content": m.content
+            }));
+        }
+
+        let body = serde_json::json!({
+            "model": "tokamak-default",
+            "messages": api_messages,
+            "max_tokens": 4096
+        });
+
+        let response = self
+            .client
+            .post(format!("{TOKAMAK_AI_BASE_URL}/v1/chat/completions"))
+            .header("X-Device-Id", &self.device_id)
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Tokamak AI request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(format!("Tokamak AI error ({status}): {error_body}"));
+        }
+
+        let result: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+        // Update token usage from server response if available
+        if let Some(usage) = result.get("usage") {
+            if let Some(total) = usage["total_tokens"].as_u64() {
+                // Server-reported tokens override our estimate; adjust by subtracting
+                // the rough estimate we'll add in chat() and using real value
+                let real_tokens = total as u32;
+                let estimated = (result["choices"][0]["message"]["content"]
+                    .as_str()
+                    .map(|s| s.len())
+                    .unwrap_or(0) as u32) / 4;
+                if real_tokens > estimated {
+                    self.add_token_usage(real_tokens - estimated);
+                }
+            }
+        }
+
+        result["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "No text found in response".to_string())
+    }
+
+    // ---- URL helpers ----
 
     fn models_url(provider: &str) -> String {
         match provider {
@@ -183,12 +389,13 @@ impl AiProvider {
 
     fn base_url(provider: &str) -> &'static str {
         match provider {
-            "tokamak" => "https://api.ai.tokamak.network",
             "gpt" => "https://api.openai.com",
             "claude" => "https://api.anthropic.com",
-            _ => "https://api.ai.tokamak.network",
+            _ => "https://api.openai.com",
         }
     }
+
+    // ---- Custom provider chat methods ----
 
     async fn chat_openai_compat(
         &self,
@@ -232,23 +439,23 @@ impl AiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("API 요청 실패: {e}"))?;
+            .map_err(|e| format!("API request failed: {e}"))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(format!("API 에러 ({status}): {error_body}"));
+            return Err(format!("API error ({status}): {error_body}"));
         }
 
         let result: serde_json::Value = response
             .json()
             .await
-            .map_err(|e| format!("응답 파싱 실패: {e}"))?;
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
 
         result["choices"][0]["message"]["content"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| "응답에서 텍스트를 찾을 수 없습니다".to_string())
+            .ok_or_else(|| "No text found in response".to_string())
     }
 
     async fn chat_claude(
@@ -285,23 +492,23 @@ impl AiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("API 요청 실패: {e}"))?;
+            .map_err(|e| format!("API request failed: {e}"))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            return Err(format!("Claude API 에러 ({status}): {error_body}"));
+            return Err(format!("Claude API error ({status}): {error_body}"));
         }
 
         let result: serde_json::Value = response
             .json()
             .await
-            .map_err(|e| format!("응답 파싱 실패: {e}"))?;
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
 
         result["content"][0]["text"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| "응답에서 텍스트를 찾을 수 없습니다".to_string())
+            .ok_or_else(|| "No text found in response".to_string())
     }
 
     pub fn build_system_prompt(context_json: Option<&str>) -> String {
@@ -318,7 +525,7 @@ impl AiProvider {
 3. **Appchain Pilot (this chat)** - AI-powered guidance
 4. **Open Appchain** - Browse and connect to public appchains
 5. **Dashboard** - Monitor L1/L2 node status
-6. **Tokamak Wallet** - Manage TON tokens, bridge L1↔L2
+6. **Tokamak Wallet** - Manage TON tokens, bridge L1<>L2
 7. **Program Store** - Browse available programs
 8. **Settings** - AI provider, Platform account, node config
 
