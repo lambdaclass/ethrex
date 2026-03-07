@@ -354,6 +354,37 @@ impl StorageWriteBatch for RocksDBWriteTx {
         Ok(())
     }
 
+    fn delete_range_with_prefix(&mut self, table: &'static str, prefix: &[u8]) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        let mut end_prefix = prefix.to_vec();
+        let mut i = end_prefix.len();
+        while i > 0 {
+            i -= 1;
+            if end_prefix[i] != 0xff {
+                end_prefix[i] += 1;
+                self.batch.delete_range_cf(&cf, prefix, &end_prefix);
+                return Ok(());
+            }
+        }
+        
+        // If the prefix is all 0xffs, delete_range goes up to the very end of the CF keys,
+        // but RocksDB delete_range might not handle upper bound wrapping well if we don't supply an end.
+        // In that precise case, we delete manually.
+        let mut iter = self.db.prefix_iterator_cf(&cf, prefix);
+        while let Some(Ok((key, _))) = iter.next() {
+            if key.starts_with(prefix) {
+                self.batch.delete_cf(&cf, key);
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         let batch = std::mem::take(&mut self.batch);

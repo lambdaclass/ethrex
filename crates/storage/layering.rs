@@ -10,17 +10,18 @@ const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
-struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
-    parent: H256,
-    id: usize,
+pub struct TrieLayer {
+    pub nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    pub destroyed_accounts: Vec<H256>,
+    pub parent: H256,
+    pub id: u64,
 }
 
 #[derive(Clone)]
 pub struct TrieLayerCache {
     /// Monotonically increasing ID for layers, starting at 1.
     /// TODO: this implementation panics on overflow
-    last_id: usize,
+    last_id: u64,
     /// Number of layers after which we should commit to the database.
     commit_threshold: usize,
     layers: FxHashMap<H256, Arc<TrieLayer>>,
@@ -101,11 +102,11 @@ impl TrieLayerCache {
     pub fn get_commitable(&self, mut state_root: H256) -> Option<H256> {
         let mut counter = 0;
         while let Some(layer) = self.layers.get(&state_root) {
-            state_root = layer.parent;
             counter += 1;
             if counter > self.commit_threshold {
                 return Some(state_root);
             }
+            state_root = layer.parent;
         }
         None
     }
@@ -115,8 +116,9 @@ impl TrieLayerCache {
         parent: H256,
         state_root: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
+        destroyed_accounts: Vec<H256>,
     ) {
-        if parent == state_root && key_values.is_empty() {
+        if parent == state_root && key_values.is_empty() && destroyed_accounts.is_empty() {
             return;
         } else if parent == state_root {
             // L1 always changes the state root (system contracts run even on empty blocks), so
@@ -143,6 +145,7 @@ impl TrieLayerCache {
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
+            destroyed_accounts,
             parent,
             id: self.last_id,
         };
@@ -166,24 +169,40 @@ impl TrieLayerCache {
         self.bloom = filter;
     }
 
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let mut layers_to_commit = vec![];
-        let mut current_state_root = state_root;
-        while let Some(layer) = self.layers.remove(&current_state_root) {
-            let layer = Arc::unwrap_or_clone(layer);
-            current_state_root = layer.parent;
-            layers_to_commit.push(layer);
+    pub fn commit(&mut self, state_root: H256) -> Option<(Vec<(Vec<u8>, Vec<u8>)>, Vec<H256>)> {
+        if !self.layers.contains_key(&state_root) {
+            return None;
         }
-        let top_layer_id = layers_to_commit.first()?.id;
-        // older layers are useless
-        self.layers.retain(|_, item| item.id > top_layer_id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        let nodes_to_commit = layers_to_commit
-            .into_iter()
-            .rev()
-            .flat_map(|layer| layer.nodes)
-            .collect();
-        Some(nodes_to_commit)
+
+        let mut layers_in_order = Vec::new();
+        let mut layers_removed_ids = Vec::new();
+        let mut destroyed_to_commit = Vec::new();
+
+        // Extract all layers forming the path up to `state_root`.
+        let mut current_hash = state_root;
+        while let Some(layer_arc) = self.layers.remove(&current_hash) {
+            let layer = Arc::unwrap_or_clone(layer_arc);
+            layers_removed_ids.push(layer.id);
+            current_hash = layer.parent;
+            layers_in_order.push(layer);
+        }
+
+        // Determine the highest ID among the layers just committed.
+        // All layers with an ID less than or equal to this should be removed.
+        let max_removed_id = layers_removed_ids.into_iter().max().unwrap_or(0);
+        self.layers.retain(|_, item| item.id > max_removed_id);
+        self.rebuild_bloom();
+
+        let mut nodes_to_commit = FxHashMap::default();
+        // Process oldest-first so newer values override older ones on collision.
+        for layer in layers_in_order.into_iter().rev() {
+            for (key, value) in layer.nodes.into_iter() {
+                nodes_to_commit.insert(key, value);
+            }
+            destroyed_to_commit.extend(layer.destroyed_accounts.into_iter());
+        }
+
+        Some((nodes_to_commit.into_iter().map(|(k, v)| (k.into(), v)).collect(), destroyed_to_commit))
     }
 }
 

@@ -20,7 +20,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_rlp::structs::Encoder;
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::Store;
 use std::collections::BTreeMap;
 
 // ==================== Helpers ====================
@@ -208,8 +208,9 @@ async fn run_selfdestruct_then_recreate_scenario() -> Store {
         ..Default::default()
     };
 
+    let backend = std::sync::Arc::new(ethrex_storage::backend::in_memory::InMemoryBackend::open().expect("open backend"));
     let mut store =
-        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+        Store::from_backend(backend, "store.db".into(), 0).expect("Failed to build DB for testing");
     store
         .add_initial_state(genesis)
         .await
