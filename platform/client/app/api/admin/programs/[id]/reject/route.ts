@@ -12,9 +12,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (rows.length === 0) {
       return NextResponse.json({ error: "Program not found" }, { status: 404 });
     }
+    if (rows[0].status !== "pending") {
+      return NextResponse.json({ error: `Cannot reject program with status '${rows[0].status}'` }, { status: 400 });
+    }
 
-    await sql`UPDATE programs SET status = 'rejected' WHERE id = ${id}`;
-    const { rows: updated } = await sql`SELECT * FROM programs WHERE id = ${id}`;
+    const { rows: updated } = await sql`UPDATE programs SET status = 'rejected' WHERE id = ${id} RETURNING *`;
     return NextResponse.json({ program: updated[0] });
   } catch (e) {
     if (e instanceof Response) return e;

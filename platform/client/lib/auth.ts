@@ -32,8 +32,7 @@ export async function destroySession(token: string): Promise<void> {
 
 export async function getSessionUser(req: NextRequest): Promise<{ user: SessionUser; token: string } | null> {
   await ensureSchema();
-  const bearer = req.headers.get("authorization")?.replace("Bearer ", "") ||
-    req.nextUrl.searchParams.get("token");
+  const bearer = req.headers.get("authorization")?.replace("Bearer ", "");
   if (!bearer) return null;
 
   const { rows } = await sql`SELECT user_id, created_at FROM sessions WHERE token = ${bearer}`;

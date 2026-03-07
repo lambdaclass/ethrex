@@ -5,7 +5,7 @@ import {
   LimitExceededError,
 } from "@/lib/token-limiter";
 
-const TOKAMAK_AI_URL = "https://api.ai.tokamak.network/v1/chat/completions";
+const TOKAMAK_AI_URL = process.env.TOKAMAK_AI_URL || "https://api.ai.tokamak.network/v1/chat/completions";
 
 export async function POST(req: NextRequest) {
   // 1. Validate device ID

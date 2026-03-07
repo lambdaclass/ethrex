@@ -177,7 +177,7 @@ Vercel 대시보드에서 GitHub 레포를 연결하면:
 | creator_id | TEXT (FK→users) | 생성자 |
 | name | TEXT | 프로그램 이름 |
 | description | TEXT | 설명 |
-| category | TEXT | general / defi / gaming / social / infrastructure |
+| category | TEXT | general / defi / gaming / payments / nft / social / infrastructure / other |
 | status | TEXT | pending / active / rejected / disabled |
 | is_official | INTEGER | 1=공식 프로그램 |
 | use_count | INTEGER | 배포 횟수 |
@@ -230,7 +230,8 @@ Vercel 대시보드에서 GitHub 레포를 연결하면:
 
 ### 토큰 사용량 조회
 ```
-GET /api/ai/usage?deviceId=xxx
+GET /api/ai/usage
+Header: X-Device-Id: <device-uuid>
 → { used: 12000, limit: 50000, remaining: 38000 }
 ```
 

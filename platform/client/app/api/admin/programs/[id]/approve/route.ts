@@ -16,8 +16,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: `Cannot approve program with status '${rows[0].status}'` }, { status: 400 });
     }
 
-    await sql`UPDATE programs SET status = 'active' WHERE id = ${id}`;
-    const { rows: updated } = await sql`SELECT * FROM programs WHERE id = ${id}`;
+    const { rows: updated } = await sql`UPDATE programs SET status = 'active' WHERE id = ${id} RETURNING *`;
     return NextResponse.json({ program: updated[0] });
   } catch (e) {
     if (e instanceof Response) return e;

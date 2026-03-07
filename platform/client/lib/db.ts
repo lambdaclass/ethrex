@@ -14,7 +14,7 @@ function getPool(): Pool {
     if (!url) throw new Error("DATABASE_URL environment variable is not set");
     pool = new Pool({
       connectionString: url,
-      ssl: url.includes("neon.tech") || url.includes("vercel-storage") ? { rejectUnauthorized: false } : undefined,
+      ssl: url.includes("neon.tech") || url.includes("vercel-storage") ? true : undefined,
       max: 10,
     });
   }

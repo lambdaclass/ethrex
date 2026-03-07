@@ -7,8 +7,8 @@ export async function GET(req: NextRequest) {
     const { searchParams } = req.nextUrl;
     const category = searchParams.get("category");
     const search = searchParams.get("search");
-    const limit = parseInt(searchParams.get("limit") || "50");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    const limit = Math.max(0, parseInt(searchParams.get("limit") || "50", 10));
+    const offset = Math.max(0, parseInt(searchParams.get("offset") || "0", 10));
 
     let rows;
     if (category && search) {

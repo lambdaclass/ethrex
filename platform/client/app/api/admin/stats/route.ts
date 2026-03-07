@@ -7,13 +7,16 @@ export async function GET(req: NextRequest) {
     await requireAdmin(req);
     await ensureSchema();
 
-    const { rows: [{ count: users }] } = await sql`SELECT COUNT(*) as count FROM users`;
-    const { rows: [{ count: programs }] } = await sql`SELECT COUNT(*) as count FROM programs`;
-    const { rows: [{ count: active }] } = await sql`SELECT COUNT(*) as count FROM programs WHERE status = 'active'`;
-    const { rows: [{ count: pending }] } = await sql`SELECT COUNT(*) as count FROM programs WHERE status = 'pending'`;
-    const { rows: [{ count: deployments }] } = await sql`SELECT COUNT(*) as count FROM deployments`;
+    const { rows: [stats] } = await sql`
+      SELECT
+        (SELECT COUNT(*) FROM users) as users,
+        (SELECT COUNT(*) FROM programs) as programs,
+        (SELECT COUNT(*) FROM programs WHERE status = 'active') as active,
+        (SELECT COUNT(*) FROM programs WHERE status = 'pending') as pending,
+        (SELECT COUNT(*) FROM deployments) as deployments
+    `;
 
-    return NextResponse.json({ users, programs, active, pending, deployments });
+    return NextResponse.json(stats);
   } catch (e) {
     if (e instanceof Response) return e;
     return NextResponse.json({ error: String(e) }, { status: 500 });
