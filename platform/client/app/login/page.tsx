@@ -22,11 +22,16 @@ export default function LoginPage() {
     try {
       await fetch("/api/auth/desktop-code", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: desktopCode, token }),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: desktopCode }),
       });
       setDesktopDone(true);
-    } catch {}
+    } catch (e) {
+      console.error("Failed to link desktop code:", e);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

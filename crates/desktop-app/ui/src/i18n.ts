@@ -127,6 +127,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'chat.loggingIn': '브라우저에서 로그인 페이지를 열었습니다.\n로그인을 완료하면 자동으로 연결됩니다...',
     'chat.loginSuccess': '로그인 완료! Tokamak AI가 연결되었습니다.',
     'chat.loginTimeout': '로그인 시간이 초과되었습니다. 다시 시도해주세요.\n[ACTION:login]',
+    'chat.loginError': '로그인 중 오류가 발생했습니다. 다시 시도해주세요.\n[ACTION:login]',
     'chat.welcome.tokamak': '안녕하세요! Appchain Pilot입니다.\nTokamak AI로 연결되어 있습니다.\n\n앱체인 생성, 관리, 상태 확인 등을 도와드릴게요.\n무엇을 도와드릴까요?',
     // Nodes
     'nodes.title': '노드 제어',
@@ -327,6 +328,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'chat.loggingIn': 'Opening login page in browser...\nComplete the login and it will connect automatically.',
     'chat.loginSuccess': 'Login complete! Tokamak AI is now connected.',
     'chat.loginTimeout': 'Login timed out. Please try again.\n[ACTION:login]',
+    'chat.loginError': 'An error occurred during login. Please try again.\n[ACTION:login]',
     'chat.welcome.tokamak': 'Hello! I\'m Appchain Pilot.\nConnected via Tokamak AI.\n\nI can help you create, manage, and check appchain status.\nHow can I help you?',
     // Nodes
     'nodes.title': 'Node Control',

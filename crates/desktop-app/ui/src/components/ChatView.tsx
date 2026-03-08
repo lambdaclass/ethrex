@@ -233,7 +233,8 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
       if (errorStr.includes('login_timeout')) {
         setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loginTimeout', lang) }])
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: `Login error: ${e}` }])
+        console.error('Login error:', e)
+        setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loginError', lang) }])
       }
     } finally {
       setLoggingIn(false)

@@ -1,21 +1,22 @@
 /**
- * Desktop token retrieval API.
- * GET: Poll for session token after desktop login flow completes.
+ * Desktop token retrieval API with PKCE verification.
+ * GET: Poll for session token — requires code_verifier to prove ownership.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { sql, ensureSchema } from "@/lib/db";
-
-const CODE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+import { sql } from "@/lib/db";
+import { ensureDesktopTable, verifyCodeChallenge, CODE_TTL_MS } from "@/lib/desktop-auth";
 
 export async function GET(req: NextRequest) {
-  await ensureSchema();
+  await ensureDesktopTable();
 
   const code = req.nextUrl.searchParams.get("code");
-  if (!code) {
-    return NextResponse.json({ error: "code_required" }, { status: 400 });
+  const codeVerifier = req.nextUrl.searchParams.get("code_verifier");
+
+  if (!code || !codeVerifier) {
+    return NextResponse.json({ error: "code_and_verifier_required" }, { status: 400 });
   }
 
-  const { rows } = await sql`SELECT session_token, created_at FROM desktop_auth_codes WHERE code = ${code}`;
+  const { rows } = await sql`SELECT session_token, code_challenge, created_at FROM desktop_auth_codes WHERE code = ${code}`;
   if (rows.length === 0) {
     return NextResponse.json({ error: "invalid_code" }, { status: 404 });
   }
@@ -28,12 +29,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "code_expired" }, { status: 410 });
   }
 
+  // Verify PKCE: SHA-256(code_verifier) must match stored code_challenge
+  const valid = await verifyCodeChallenge(codeVerifier, row.code_challenge as string);
+  if (!valid) {
+    return NextResponse.json({ error: "invalid_verifier" }, { status: 403 });
+  }
+
   // Not yet linked to a session
   if (!row.session_token) {
     return NextResponse.json({ status: "pending" });
   }
 
-  // Token is ready - delete code and return token
+  // Token is ready — delete code and return token
   await sql`DELETE FROM desktop_auth_codes WHERE code = ${code}`;
   return NextResponse.json({ status: "ready", token: row.session_token });
 }
