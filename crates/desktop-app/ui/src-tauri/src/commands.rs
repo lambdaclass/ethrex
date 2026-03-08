@@ -437,6 +437,100 @@ pub fn delete_platform_token() -> Result<(), String> {
     }
 }
 
+// Desktop login flow constants
+const POLL_INTERVAL_SECS: u64 = 2;
+const POLL_MAX_ATTEMPTS: u32 = 150; // 2s × 150 = 5 minutes
+
+/// PKCE: generate code_verifier and code_challenge (SHA-256 hex)
+fn generate_pkce() -> (String, String) {
+    use sha2::{Digest, Sha256};
+    let verifier: String = (0..64)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect();
+    let challenge = hex::encode(Sha256::digest(verifier.as_bytes()));
+    (verifier, challenge)
+}
+
+#[derive(Deserialize)]
+struct DesktopCodeResponse {
+    code: String,
+}
+
+#[derive(Deserialize)]
+struct DesktopTokenResponse {
+    status: Option<String>,
+    token: Option<String>,
+    error: Option<String>,
+}
+
+/// Desktop login flow with PKCE: request code → open browser → poll for token
+#[tauri::command]
+pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let client = reqwest::Client::new();
+    let base_url = crate::ai_provider::PLATFORM_BASE_URL;
+
+    // 1. Generate PKCE pair
+    let (code_verifier, code_challenge) = generate_pkce();
+
+    // 2. Request a desktop auth code with code_challenge
+    let resp = client
+        .post(format!("{base_url}/api/auth/desktop-code"))
+        .json(&serde_json::json!({ "code_challenge": code_challenge }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to request code: {e}"))?;
+
+    let result: DesktopCodeResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    let code = result.code;
+
+    // 3. Open browser with login page
+    let login_url = format!("{base_url}/login?desktop_code={code}");
+    app.shell()
+        .open(&login_url, None)
+        .map_err(|e| format!("Failed to open browser: {e}"))?;
+
+    // 4. Poll for token with code_verifier (PKCE proof)
+    for _ in 0..POLL_MAX_ATTEMPTS {
+        tokio::time::sleep(tokio::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
+
+        let poll_resp = client
+            .get(format!(
+                "{base_url}/api/auth/desktop-token?code={code}&code_verifier={code_verifier}"
+            ))
+            .send()
+            .await;
+
+        let poll_resp = match poll_resp {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let poll_result: DesktopTokenResponse = match poll_resp.json().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if poll_result.status.as_deref() == Some("ready") {
+            if let Some(token) = poll_result.token {
+                save_platform_token(token.clone())?;
+                return Ok(token);
+            }
+        }
+
+        if poll_result.error.as_deref().is_some_and(|e| e == "code_expired" || e == "invalid_code") {
+            return Err("login_timeout".to_string());
+        }
+    }
+
+    Err("login_timeout".to_string())
+}
+
 // ============================================================================
 // Deployment DB (read-only) + Docker lifecycle (proxied to local-server)
 // ============================================================================

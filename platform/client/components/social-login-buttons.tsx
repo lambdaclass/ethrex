@@ -48,7 +48,7 @@ export function KakaoLoginButton() {
   );
 }
 
-export function GoogleLoginButton() {
+export function GoogleLoginButton({ onDesktopLogin }: { onDesktopLogin?: (token: string) => Promise<void> } = {}) {
   const { login } = useAuth();
 
   if (!GOOGLE_CLIENT_ID) return null;
@@ -58,7 +58,11 @@ export function GoogleLoginButton() {
     try {
       const data = await authApi.google(response.credential);
       login(data.token, data.user);
-      window.location.href = "/store";
+      if (onDesktopLogin) {
+        await onDesktopLogin(data.token);
+      } else {
+        window.location.href = "/store";
+      }
     } catch (e) {
       console.error("Google login failed:", e);
     }
