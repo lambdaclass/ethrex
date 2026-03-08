@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import {
   checkLimit,
   recordUsage,
@@ -8,18 +9,20 @@ import {
 const TOKAMAK_AI_URL = process.env.TOKAMAK_AI_URL || "https://api.ai.tokamak.network/v1/chat/completions";
 
 export async function POST(req: NextRequest) {
-  // 1. Validate device ID
-  const deviceId = req.headers.get("x-device-id");
-  if (!deviceId || deviceId.length < 10) {
-    return NextResponse.json(
-      { error: "missing_device_id" },
-      { status: 400 }
-    );
+  // 1. Authenticate user via session token
+  let user;
+  try {
+    user = await requireAuth(req);
+  } catch (e) {
+    if (e instanceof Response) return e;
+    return NextResponse.json({ error: "auth_error" }, { status: 401 });
   }
+
+  const dailyLimit = user.daily_ai_limit || 50000;
 
   // 2. Check daily token limit
   try {
-    await checkLimit(deviceId);
+    await checkLimit(user.id, dailyLimit);
   } catch (e) {
     if (e instanceof LimitExceededError) {
       return NextResponse.json(
@@ -60,7 +63,7 @@ export async function POST(req: NextRequest) {
     (result.usage?.total_tokens as number) ||
     Math.ceil(JSON.stringify(result).length / 4); // fallback estimate
 
-  const usage = await recordUsage(deviceId, totalTokens);
+  const usage = await recordUsage(user.id, totalTokens, dailyLimit);
 
   // 6. Return response with usage info
   return NextResponse.json({

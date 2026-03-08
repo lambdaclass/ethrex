@@ -6,11 +6,11 @@ use std::time::Duration;
 const KEYRING_SERVICE: &str = "tokamak-appchain";
 const KEYRING_API_KEY: &str = "ai-api-key";
 const KEYRING_AI_CONFIG: &str = "ai-config";
-const KEYRING_DEVICE_ID: &str = "device-id";
 const KEYRING_AI_MODE: &str = "ai-mode";
+const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
 
-const TOKAMAK_AI_BASE_URL: &str = "https://api.ai.tokamak.network";
-const DAILY_TOKEN_LIMIT: u32 = 50_000;
+const PLATFORM_AI_BASE_URL: &str = "/api/ai";
+const PLATFORM_BASE_URL: &str = "https://tokamak-platform.vercel.app";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -47,8 +47,7 @@ pub struct TokenUsage {
 pub struct AiProvider {
     config: Mutex<AiConfig>,
     mode: Mutex<AiMode>,
-    device_id: String,
-    daily_tokens: Mutex<TokenUsage>,
+    last_usage: Mutex<Option<TokenUsage>>,
     client: Client,
 }
 
@@ -57,14 +56,11 @@ impl AiProvider {
         let mut config = Self::load_config_meta().unwrap_or_default();
         config.api_key = Self::load_api_key().unwrap_or_default();
         let mode = Self::load_mode().unwrap_or(AiMode::Tokamak);
-        let device_id = Self::load_or_create_device_id();
-        let daily_tokens = Self::load_token_usage();
 
         Self {
             config: Mutex::new(config),
             mode: Mutex::new(mode),
-            device_id,
-            daily_tokens: Mutex::new(daily_tokens),
+            last_usage: Mutex::new(None),
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
@@ -72,23 +68,16 @@ impl AiProvider {
         }
     }
 
-    // ---- Device ID ----
+    // ---- Platform Session Token ----
 
-    fn load_or_create_device_id() -> String {
-        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_ID) {
-            if let Ok(id) = entry.get_password() {
-                return id;
-            }
+    fn get_platform_token() -> Result<String, String> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_PLATFORM_TOKEN)
+            .map_err(|e| format!("Keyring error: {e}"))?;
+        match entry.get_password() {
+            Ok(token) => Ok(token),
+            Err(keyring::Error::NoEntry) => Err("login_required".to_string()),
+            Err(e) => Err(format!("Failed to get token: {e}")),
         }
-        let id = uuid::Uuid::new_v4().to_string();
-        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_ID) {
-            let _ = entry.set_password(&id);
-        }
-        id
-    }
-
-    pub fn get_device_id(&self) -> &str {
-        &self.device_id
     }
 
     // ---- AI Mode ----
@@ -118,50 +107,52 @@ impl AiProvider {
         Ok(())
     }
 
-    // ---- Token Usage (local tracking) ----
-
-    fn today() -> String {
-        chrono::Local::now().format("%Y-%m-%d").to_string()
-    }
-
-    fn load_token_usage() -> TokenUsage {
-        let today = Self::today();
-        // Simple in-memory reset per day; starts fresh each app launch per day
-        TokenUsage {
-            date: today,
-            used: 0,
-            limit: DAILY_TOKEN_LIMIT,
-        }
-    }
+    // ---- Token Usage (server-tracked) ----
 
     pub fn get_token_usage(&self) -> TokenUsage {
-        let mut usage = self.daily_tokens.lock().unwrap();
-        let today = Self::today();
-        if usage.date != today {
-            usage.date = today;
-            usage.used = 0;
-        }
-        usage.clone()
+        self.last_usage.lock().unwrap().clone().unwrap_or(TokenUsage {
+            date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+            used: 0,
+            limit: 50000,
+        })
     }
 
-    fn add_token_usage(&self, tokens: u32) {
-        let mut usage = self.daily_tokens.lock().unwrap();
-        let today = Self::today();
-        if usage.date != today {
-            usage.date = today;
-            usage.used = 0;
+    fn update_usage_from_server(&self, usage: &serde_json::Value) {
+        if let (Some(used), Some(limit)) = (usage["used"].as_u64(), usage["limit"].as_u64()) {
+            let remaining = usage["remaining"].as_u64().unwrap_or(0);
+            *self.last_usage.lock().unwrap() = Some(TokenUsage {
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                used: used as u32,
+                limit: limit as u32,
+            });
+            let _ = remaining; // used in response to client
         }
-        usage.used += tokens;
     }
 
-    fn check_token_limit(&self) -> Result<(), String> {
-        let usage = self.get_token_usage();
-        if usage.used >= usage.limit {
-            return Err(
-                "daily_limit_exceeded".to_string(),
-            );
+    /// Fetch current usage from server
+    pub async fn fetch_token_usage(&self) -> Result<TokenUsage, String> {
+        let token = Self::get_platform_token()?;
+        let url = format!("{}{}/usage", PLATFORM_BASE_URL, PLATFORM_AI_BASE_URL);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch usage: {e}"))?;
+
+        if response.status().as_u16() == 401 {
+            return Err("login_required".to_string());
         }
-        Ok(())
+
+        let result: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse usage: {e}"))?;
+
+        self.update_usage_from_server(&result);
+        Ok(self.get_token_usage())
     }
 
     // ---- Config persistence (for custom mode) ----
@@ -279,12 +270,7 @@ impl AiProvider {
 
         match mode {
             AiMode::Tokamak => {
-                self.check_token_limit()?;
-                let result = self.chat_tokamak(messages, ctx_ref).await?;
-                // Rough token estimate: ~4 chars per token
-                let estimated_tokens = (result.len() as u32) / 4;
-                self.add_token_usage(estimated_tokens);
-                Ok(result)
+                self.chat_tokamak(messages, ctx_ref).await
             }
             AiMode::Custom => {
                 let config = self.get_config();
@@ -302,13 +288,14 @@ impl AiProvider {
         }
     }
 
-    // ---- Tokamak AI (no API key, device_id auth) ----
+    // ---- Tokamak AI (via Platform server, session token auth) ----
 
     async fn chat_tokamak(
         &self,
         messages: Vec<ChatMessage>,
         context_json: Option<&str>,
     ) -> Result<String, String> {
+        let token = Self::get_platform_token()?;
         let system_prompt = Self::build_system_prompt(context_json);
 
         let mut api_messages = vec![serde_json::json!({
@@ -328,15 +315,24 @@ impl AiProvider {
             "max_tokens": 4096
         });
 
+        let url = format!("{}{}/chat", PLATFORM_BASE_URL, PLATFORM_AI_BASE_URL);
         let response = self
             .client
-            .post(format!("{TOKAMAK_AI_BASE_URL}/v1/chat/completions"))
-            .header("X-Device-Id", &self.device_id)
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
             .header("content-type", "application/json")
             .json(&body)
             .send()
             .await
             .map_err(|e| format!("Tokamak AI request failed: {e}"))?;
+
+        if response.status().as_u16() == 401 {
+            return Err("login_required".to_string());
+        }
+
+        if response.status().as_u16() == 429 {
+            return Err("daily_limit_exceeded".to_string());
+        }
 
         if !response.status().is_success() {
             let status = response.status();
@@ -349,20 +345,9 @@ impl AiProvider {
             .await
             .map_err(|e| format!("Failed to parse response: {e}"))?;
 
-        // Update token usage from server response if available
-        if let Some(usage) = result.get("usage") {
-            if let Some(total) = usage["total_tokens"].as_u64() {
-                // Server-reported tokens override our estimate; adjust by subtracting
-                // the rough estimate we'll add in chat() and using real value
-                let real_tokens = total as u32;
-                let estimated = (result["choices"][0]["message"]["content"]
-                    .as_str()
-                    .map(|s| s.len())
-                    .unwrap_or(0) as u32) / 4;
-                if real_tokens > estimated {
-                    self.add_token_usage(real_tokens - estimated);
-                }
-            }
+        // Update token usage from server response
+        if let Some(usage) = result.get("_tokamak_usage") {
+            self.update_usage_from_server(usage);
         }
 
         result["choices"][0]["message"]["content"]

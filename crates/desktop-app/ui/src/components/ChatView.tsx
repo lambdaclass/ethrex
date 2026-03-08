@@ -117,11 +117,7 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
       const mode = await invoke<AiMode>('get_ai_mode')
       setAiMode(mode)
       if (mode === 'tokamak') {
-        const usage = await invoke<TokenUsage>('get_token_usage')
-        setTokenUsage(usage)
-        if (messages.length === 0) {
-          setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
-        }
+        await loadTokamakUsage()
       } else {
         await checkApiKey()
       }
@@ -134,6 +130,23 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     }
   }
 
+  const loadTokamakUsage = async () => {
+    try {
+      const usage = await invoke<TokenUsage>('get_token_usage')
+      setTokenUsage(usage)
+      if (messages.length === 0) {
+        setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
+      }
+    } catch (e) {
+      const errorStr = `${e}`
+      if (errorStr.includes('login_required')) {
+        if (messages.length === 0) {
+          setMessages([{ role: 'assistant', content: t('chat.loginRequired', lang) }])
+        }
+      }
+    }
+  }
+
   const switchMode = async (mode: AiMode) => {
     try {
       await invoke('set_ai_mode', { mode })
@@ -141,9 +154,7 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
       setMessages([])
       setShowDisconnect(false)
       if (mode === 'tokamak') {
-        const usage = await invoke<TokenUsage>('get_token_usage')
-        setTokenUsage(usage)
-        setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
+        await loadTokamakUsage()
       } else {
         await checkApiKey()
       }
@@ -259,7 +270,9 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
       }
     } catch (e) {
       const errorStr = `${e}`
-      if (errorStr.includes('daily_limit_exceeded')) {
+      if (errorStr.includes('login_required')) {
+        setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loginRequired', lang) }])
+      } else if (errorStr.includes('daily_limit_exceeded')) {
         setMessages(prev => [...prev, { role: 'assistant', content: t('chat.dailyLimitExceeded', lang) }])
       } else {
         setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])

@@ -83,6 +83,7 @@ export async function ensureSchema() {
       role TEXT DEFAULT 'user',
       picture TEXT,
       status TEXT DEFAULT 'active',
+      daily_ai_limit INTEGER DEFAULT 50000,
       created_at BIGINT NOT NULL
     )
   `;

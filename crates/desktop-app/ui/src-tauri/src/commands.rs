@@ -64,8 +64,14 @@ pub fn set_ai_mode(mode: AiMode, ai: State<Arc<AiProvider>>) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn get_token_usage(ai: State<Arc<AiProvider>>) -> TokenUsage {
-    ai.get_token_usage()
+pub async fn get_token_usage(ai: State<'_, Arc<AiProvider>>) -> Result<TokenUsage, String> {
+    let ai = ai.inner().clone();
+    // Try to fetch from server; fall back to cached usage
+    match ai.fetch_token_usage().await {
+        Ok(usage) => Ok(usage),
+        Err(e) if e == "login_required" => Err(e),
+        Err(_) => Ok(ai.get_token_usage()),
+    }
 }
 
 #[tauri::command]

@@ -100,31 +100,31 @@ delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
 import { getUsage, checkLimit, recordUsage, LimitExceededError } from "../lib/token-limiter";
 
-test("getUsage — new device has 0 used", async () => {
-  const usage = await getUsage("test-device-unit-001");
+test("getUsage — new user has 0 used", async () => {
+  const usage = await getUsage("test-user-unit-001", 50000);
   assert(usage.used === 0, `expected 0 used, got ${usage.used}`);
   assert(usage.limit === 50000, `expected 50000 limit, got ${usage.limit}`);
   assert(usage.remaining === 50000, `expected 50000 remaining, got ${usage.remaining}`);
 });
 
 test("recordUsage — records and returns updated usage", async () => {
-  const usage = await recordUsage("test-device-unit-002", 1000);
+  const usage = await recordUsage("test-user-unit-002", 1000, 50000);
   assert(usage.used === 1000, `expected 1000 used, got ${usage.used}`);
   assert(usage.remaining === 49000, `expected 49000 remaining, got ${usage.remaining}`);
 });
 
 test("recordUsage — accumulates", async () => {
-  await recordUsage("test-device-unit-003", 25000);
-  const usage = await recordUsage("test-device-unit-003", 25000);
+  await recordUsage("test-user-unit-003", 25000, 50000);
+  const usage = await recordUsage("test-user-unit-003", 25000, 50000);
   assert(usage.used === 50000, `expected 50000, got ${usage.used}`);
   assert(usage.remaining === 0, `expected 0 remaining, got ${usage.remaining}`);
 });
 
 test("checkLimit — throws when limit exceeded", async () => {
-  await recordUsage("test-device-unit-004", 50001);
+  await recordUsage("test-user-unit-004", 50001, 50000);
   let threw = false;
   try {
-    await checkLimit("test-device-unit-004");
+    await checkLimit("test-user-unit-004", 50000);
   } catch (e) {
     threw = e instanceof LimitExceededError;
   }
@@ -134,7 +134,7 @@ test("checkLimit — throws when limit exceeded", async () => {
 test("checkLimit — passes when under limit", async () => {
   let threw = false;
   try {
-    await checkLimit("test-device-unit-new");
+    await checkLimit("test-user-unit-new", 50000);
   } catch {
     threw = true;
   }
