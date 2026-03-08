@@ -10,7 +10,7 @@ const KEYRING_AI_MODE: &str = "ai-mode";
 const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
 
 const PLATFORM_AI_BASE_URL: &str = "/api/ai";
-pub const PLATFORM_BASE_URL: &str = "https://tokamak-platform.vercel.app";
+pub const PLATFORM_BASE_URL: &str = "https://tokamak-appchain.vercel.app";
 const DEFAULT_DAILY_TOKEN_LIMIT: u32 = 50_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

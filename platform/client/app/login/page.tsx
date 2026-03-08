@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
@@ -8,6 +8,18 @@ import { authApi } from "@/lib/api";
 import { NaverLoginButton, KakaoLoginButton, GoogleLoginButton } from "@/components/social-login-buttons";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-[80vh] flex items-center justify-center">
+        <div className="text-gray-400">Loading...</div>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
+  );
+}
+
+function LoginContent() {
   const { login } = useAuth();
   const searchParams = useSearchParams();
   const desktopCode = searchParams.get("desktop_code");
