@@ -1,191 +1,167 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
-import { t } from '../i18n'
+import type { DelegationLevel } from './wallet-constants'
+import { LEVEL_ORDER } from './wallet-constants'
+import DelegationLevelSelector from './DelegationLevelSelector'
+import FullDelegationSetup from './FullDelegationSetup'
+import PermissionsList from './PermissionsList'
 
-interface TokenBalance {
-  symbol: string
-  name: string
-  balance: string
-  icon: string
-  iconBg: string
-}
+// Mock: recent AI actions
+const MOCK_AI_ACTIONS = [
+  { time: '2분 전', action: 'L2 Node 자동 재시작', type: 'operate' as const },
+  { time: '15분 전', action: '블록 생산 지연 알림 발송', type: 'monitor' as const },
+  { time: '1시간 전', action: '가스비 조정 제안 → 승인 대기', type: 'suggest' as const },
+  { time: '3시간 전', action: 'Prover 헬스체크 이상 감지', type: 'monitor' as const },
+]
 
-interface AppchainBalance {
-  name: string
-  chainId: number
-  icon: string
-  tokens: { symbol: string; balance: string }[]
-}
-
-// Bridge-allowed tokens (would come from bridge contract in production)
-const bridgeTokens: TokenBalance[] = [
-  { symbol: 'TON', name: 'Tokamak Network', balance: '1,250.0', icon: 'T', iconBg: 'bg-blue-100' },
-  { symbol: 'WTON', name: 'Wrapped TON', balance: '500.0', icon: 'W', iconBg: 'bg-indigo-100' },
-  { symbol: 'TOS', name: 'TONStarter', balance: '3,000.0', icon: 'S', iconBg: 'bg-purple-100' },
-  { symbol: 'DOC', name: 'Door Open Close', balance: '10,000', icon: 'D', iconBg: 'bg-green-100' },
+const MOCK_AI_ACTIONS_EN = [
+  { time: '2m ago', action: 'Auto-restarted L2 Node', type: 'operate' as const },
+  { time: '15m ago', action: 'Sent block delay alert', type: 'monitor' as const },
+  { time: '1h ago', action: 'Suggested gas adjustment → awaiting approval', type: 'suggest' as const },
+  { time: '3h ago', action: 'Detected Prover health issue', type: 'monitor' as const },
 ]
 
 export default function WalletView() {
   const { lang } = useLang()
-  const [address, setAddress] = useState('0x1234...abcd')
-  const [isEditing, setIsEditing] = useState(false)
-  const [editAddress, setEditAddress] = useState('')
+  const ko = lang === 'ko'
+  const [savedLevel, setSavedLevel] = useState<DelegationLevel>('monitor')
+  const [pendingFull, setPendingFull] = useState(false)
+  const [walletAddress, setWalletAddress] = useState('')
+  const [walletInput, setWalletInput] = useState('')
+  const [spendingLimit, setSpendingLimit] = useState('1.0')
+  const [aiMode, setAiMode] = useState<string>('tokamak')
+  const [hasOwnKey, setHasOwnKey] = useState(false)
+  const [aiProvider, setAiProvider] = useState('claude')
+  const [aiApiKey, setAiApiKey] = useState('')
+  const [aiModel, setAiModel] = useState('claude-sonnet-4-6')
+  const [aiSaving, setAiSaving] = useState(false)
+  const [aiResult, setAiResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
-  // L1 balances
-  const l1Tokens: TokenBalance[] = [
-    { symbol: 'ETH', name: 'Ethereum', balance: '2.45', icon: '\u039E', iconBg: 'bg-slate-100' },
-    { symbol: 'TON', name: 'Tokamak Network', balance: '1,250.0', icon: 'T', iconBg: 'bg-blue-100' },
-    { symbol: 'WTON', name: 'Wrapped TON', balance: '500.0', icon: 'W', iconBg: 'bg-indigo-100' },
-  ]
+  const level = pendingFull ? 'full' as DelegationLevel : savedLevel
+  const levelIdx = LEVEL_ORDER.indexOf(level)
+  const canFullDelegate = aiMode !== 'tokamak' && hasOwnKey
+  const actions = ko ? MOCK_AI_ACTIONS : MOCK_AI_ACTIONS_EN
 
-  // Per-appchain balances
-  const appchainBalances: AppchainBalance[] = [
-    { name: 'DEX Chain', chainId: 17001, icon: '\uD83D\uDD04', tokens: [{ symbol: 'TON', balance: '50.0' }, { symbol: 'WTON', balance: '100.0' }] },
-    { name: 'NFT Chain', chainId: 17002, icon: '\uD83C\uDFA8', tokens: [{ symbol: 'TON', balance: '20.0' }] },
-    { name: 'Test Chain', chainId: 17003, icon: '\uD83E\uDDEA', tokens: [{ symbol: 'TON', balance: '5.0' }] },
-  ]
+  const loadAiStatus = () => {
+    invoke<{ mode: string }>('get_ai_mode').then(m => setAiMode(m.mode ?? 'tokamak')).catch(() => {})
+    invoke<boolean>('has_ai_key').then(ok => setHasOwnKey(ok)).catch(() => {})
+  }
 
-  const saveAddress = () => {
-    if (editAddress.trim()) setAddress(editAddress.trim())
-    setIsEditing(false)
-    setEditAddress('')
+  useEffect(() => { loadAiStatus() }, [])
+
+  const handleAiSave = async () => {
+    if (!aiApiKey.trim()) return
+    setAiSaving(true); setAiResult(null)
+    try {
+      await invoke('save_ai_config', { provider: aiProvider, apiKey: aiApiKey.trim(), model: aiModel })
+      await invoke<string>('test_ai_connection')
+      setAiResult({ ok: true, msg: ko ? 'AI 연결 성공!' : 'AI connected!' })
+      setAiApiKey('')
+      loadAiStatus()
+    } catch (e) {
+      setAiResult({ ok: false, msg: `${e}` })
+    } finally { setAiSaving(false) }
+  }
+
+  const handleSelectLevel = (lvl: DelegationLevel) => {
+    if (lvl === 'full') {
+      setPendingFull(true)
+    } else {
+      setSavedLevel(lvl)
+      setPendingFull(false)
+    }
+  }
+
+  const handleWalletRegister = () => {
+    if (walletInput.trim()) {
+      setWalletAddress(walletInput.trim())
+      setWalletInput('')
+    }
+  }
+
+  const actionTypeColor = (type: string) => {
+    if (type === 'monitor') return 'var(--color-success)'
+    if (type === 'suggest') return '#3b82f6'
+    if (type === 'operate') return 'var(--color-warning)'
+    return 'var(--color-error)'
   }
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
-        <h1 className="text-base font-semibold">{t('wallet.title', lang)}</h1>
+        <h1 className="text-base font-semibold">{ko ? 'AI 위임 관리' : 'AI Delegation'}</h1>
+        <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+          {ko ? 'AI에게 앱체인 운영을 어디까지 맡길지 설정합니다' : 'Configure how much control to delegate to AI'}
+        </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {/* Address Card */}
-        <div className="rounded-xl p-4 bg-[var(--color-accent)] text-[var(--color-accent-text)]">
-          {isEditing ? (
-            <div className="flex gap-2 mb-2">
-              <input
-                type="text"
-                value={editAddress}
-                onChange={e => setEditAddress(e.target.value)}
-                placeholder={t('wallet.addressPlaceholder', lang)}
-                autoFocus
-                onKeyDown={e => e.key === 'Enter' && saveAddress()}
-                className="flex-1 bg-black/10 rounded-lg px-2.5 py-1.5 text-[11px] font-mono outline-none placeholder-black/40"
-              />
-              <button onClick={saveAddress} className="bg-black/10 px-3 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer hover:bg-black/20">
-                {t('wallet.add', lang)}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => { setIsEditing(true); setEditAddress('') }}
-              className="text-[11px] font-mono opacity-70 hover:opacity-100 cursor-pointer mb-2 block"
-            >
-              {address} &#x270F;&#xFE0E;
-            </button>
-          )}
-          <div className="text-xl font-bold">$12,450.00</div>
-          <div className="text-[11px] opacity-60 mt-0.5">{t('wallet.totalBalance', lang)}</div>
-        </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
 
-        {/* Quick Actions */}
-        <div className="flex gap-2">
-          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
-              <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
-            </svg>
-            <span className="text-[11px]">{t('wallet.deposit', lang)}</span>
-          </button>
-          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
-              <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
-            </svg>
-            <span className="text-[11px]">{t('wallet.withdraw', lang)}</span>
-          </button>
-          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
-              <polyline points="7 17 2 12 7 7"/><polyline points="17 7 22 12 17 17"/><line x1="2" y1="12" x2="22" y2="12"/>
-            </svg>
-            <span className="text-[11px]">{t('wallet.bridge', lang)}</span>
-          </button>
-          <button className="flex-1 bg-[var(--color-bg-sidebar)] rounded-xl py-2.5 flex flex-col items-center gap-1 hover:bg-[var(--color-border)] transition-colors cursor-pointer border border-[var(--color-border)]">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
-              <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
-            </svg>
-            <span className="text-[11px]">{t('wallet.txHistory', lang)}</span>
-          </button>
-        </div>
+        <DelegationLevelSelector
+          ko={ko}
+          level={level}
+          levelIdx={levelIdx}
+          pendingFull={pendingFull}
+          savedLevel={savedLevel}
+          onSelectLevel={handleSelectLevel}
+        />
 
-        {/* L1 Balances */}
-        <div className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
-          {t('wallet.balanceBreakdown', lang)}
-        </div>
-        <div className="bg-[var(--color-bg-sidebar)] rounded-xl overflow-hidden border border-[var(--color-border)]">
-          {l1Tokens.map((token, i) => (
-            <div key={token.symbol} className={`flex items-center justify-between px-4 py-2.5 ${i < l1Tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
-              <div className="flex items-center gap-2.5">
-                <div className={`w-8 h-8 rounded-lg ${token.iconBg} flex items-center justify-center text-sm font-bold text-gray-700`}>
-                  {token.icon}
-                </div>
-                <div>
-                  <div className="text-[13px] font-medium">{token.symbol}</div>
-                  <div className="text-[10px] text-[var(--color-text-secondary)]">{token.name}</div>
+        {(pendingFull || savedLevel === 'full') && (
+          <FullDelegationSetup
+            ko={ko}
+            pendingFull={pendingFull}
+            canFullDelegate={canFullDelegate}
+            aiMode={aiMode}
+            walletAddress={walletAddress}
+            walletInput={walletInput}
+            spendingLimit={spendingLimit}
+            aiProvider={aiProvider}
+            aiApiKey={aiApiKey}
+            aiModel={aiModel}
+            aiSaving={aiSaving}
+            aiResult={aiResult}
+            onAiProviderChange={setAiProvider}
+            onAiApiKeyChange={setAiApiKey}
+            onAiModelChange={setAiModel}
+            onAiResultClear={() => setAiResult(null)}
+            onAiSave={handleAiSave}
+            onWalletInputChange={setWalletInput}
+            onWalletRegister={handleWalletRegister}
+            onWalletRemove={() => { setWalletAddress(''); setWalletInput('') }}
+            onSpendingLimitChange={setSpendingLimit}
+            onCancel={() => setPendingFull(false)}
+            onSave={() => { setSavedLevel('full'); setPendingFull(false) }}
+          />
+        )}
+
+        <PermissionsList
+          ko={ko}
+          savedLevel={savedLevel}
+          pendingFull={pendingFull}
+        />
+
+        {/* Recent AI Actions */}
+        <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+          <div className="pb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+              {ko ? 'AI 활동 기록' : 'AI Activity Log'}
+            </span>
+          </div>
+          <div className="mt-1 space-y-1">
+            {actions.map((a, i) => (
+              <div key={i} className="flex items-start gap-2 py-1.5 px-2 rounded-lg bg-[var(--color-bg-main)]">
+                <span className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: actionTypeColor(a.type) }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px]">{a.action}</div>
+                  <div className="text-[9px] text-[var(--color-text-secondary)]">{a.time}</div>
                 </div>
               </div>
-              <div className="text-[13px] font-semibold">{token.balance}</div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
-        {/* Bridge Allowed Tokens */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
-            {t('wallet.bridgeTokens', lang)}
-          </span>
-          <span className="text-[9px] bg-[var(--color-tag-bg)] text-[var(--color-tag-text)] px-1.5 py-0.5 rounded font-medium">
-            {bridgeTokens.length}
-          </span>
-        </div>
-        <div className="bg-[var(--color-bg-sidebar)] rounded-xl overflow-hidden border border-[var(--color-border)]">
-          {bridgeTokens.map((token, i) => (
-            <div key={token.symbol} className={`flex items-center justify-between px-4 py-2.5 ${i < bridgeTokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
-              <div className="flex items-center gap-2.5">
-                <div className={`w-8 h-8 rounded-lg ${token.iconBg} flex items-center justify-center text-sm font-bold text-gray-700`}>
-                  {token.icon}
-                </div>
-                <div>
-                  <div className="text-[13px] font-medium">{token.symbol}</div>
-                  <div className="text-[10px] text-[var(--color-text-secondary)]">{token.name}</div>
-                </div>
-              </div>
-              <div className="text-[13px] font-semibold">{token.balance}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Appchain Balances */}
-        <div className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
-          {t('wallet.appchainBalances', lang)}
-        </div>
-        <div className="space-y-2 pb-2">
-          {appchainBalances.map(chain => (
-            <div key={chain.chainId} className="bg-[var(--color-bg-sidebar)] rounded-xl overflow-hidden border border-[var(--color-border)]">
-              <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-[var(--color-border)]">
-                <span className="text-base">{chain.icon}</span>
-                <div>
-                  <div className="text-[12px] font-medium">{chain.name}</div>
-                  <div className="text-[10px] text-[var(--color-text-secondary)]">#{chain.chainId}</div>
-                </div>
-              </div>
-              {chain.tokens.map((token, i) => (
-                <div key={token.symbol} className={`flex items-center justify-between px-4 py-2 ${i < chain.tokens.length - 1 ? 'border-b border-[var(--color-border)]' : ''}`}>
-                  <span className="text-[12px] text-[var(--color-text-secondary)]">{token.symbol}</span>
-                  <span className="text-[13px] font-semibold">{token.balance}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )

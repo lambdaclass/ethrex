@@ -43,6 +43,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.dashboard': '대시보드',
     'nav.openl2': '오픈 앱체인',
     'nav.wallet': '토카막 지갑',
+    'nav.delegation': 'AI 위임',
     'nav.store': '프로그램 스토어',
     'nav.settings': '설정',
     // My Appchain
@@ -254,6 +255,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.dashboard': 'Dashboard',
     'nav.openl2': 'Open Appchain',
     'nav.wallet': 'Tokamak Wallet',
+    'nav.delegation': 'AI Delegation',
     'nav.store': 'Program Store',
     'nav.settings': 'Settings',
     // My Appchain

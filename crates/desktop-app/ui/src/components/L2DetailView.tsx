@@ -1,9 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import { platformAPI } from '../api/platform'
 import type { L2Config } from './MyL2View'
+import type { Comment } from '../types/comments'
+import CommentSection from './CommentSection'
+import { getMockChainMetrics, getMockEconomyMetrics, getMockProducts, L2_DETAIL_MOCK_COMMENTS } from './l2-detail-mock-data'
+import L2DetailOverviewTab from './L2DetailOverviewTab'
+import L2DetailEconomyTab from './L2DetailEconomyTab'
+import L2DetailServicesTab from './L2DetailServicesTab'
+import L2DetailLogsTab from './L2DetailLogsTab'
 
 interface Props {
   l2: L2Config
@@ -11,46 +18,103 @@ interface Props {
   onRefresh?: () => void
 }
 
-type DetailTab = 'control' | 'logs' | 'config' | 'dashboard'
+type DetailTab = 'overview' | 'economy' | 'services' | 'community' | 'logs'
 
-const statusColor = (status: string) => {
-  if (status === 'running') return 'var(--color-success)'
-  if (status === 'starting') return 'var(--color-warning)'
-  return 'var(--color-text-secondary)'
+export interface ContainerInfo {
+  name: string
+  service: string
+  state: string
+  status: string
+  ports: string
+}
+
+// --- Mock data (replace with real API later) ---
+export interface ChainMetrics {
+  l1BlockNumber: number
+  l2BlockNumber: number
+  l1ChainId: number
+  l2ChainId: number
+  l2Tps: number
+  l2BlockTime: number
+  totalTxCount: number
+  activeAccounts: number
+  lastCommittedBatch: number
+  lastVerifiedBatch: number
+  latestBatch: number
+}
+
+export interface EconomyMetrics {
+  tvl: string
+  tvlUsd: string
+  nativeToken: string
+  l1TokenAddress: string
+  l1GasPrice: string
+  l2GasPrice: string
+  gasRevenue: string
+  bridgeDeposits: number
+  bridgeWithdrawals: number
+}
+
+export interface Product {
+  name: string
+  type: string
+  status: 'active' | 'inactive'
+  description: string
 }
 
 export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   const { lang } = useLang()
-  const [activeTab, setActiveTab] = useState<DetailTab>('control')
-  const [isPublic, setIsPublic] = useState(l2.isPublic)
-  const [publishing, setPublishing] = useState(false)
-  const [publishError, setPublishError] = useState('')
+  const ko = lang === 'ko'
+  const [activeTab, setActiveTab] = useState<DetailTab>('overview')
+  const [containers, setContainers] = useState<ContainerInfo[]>([])
+  const [actionLoading, setActionLoading] = useState(false)
   const [platformLoggedIn, setPlatformLoggedIn] = useState(false)
+  const [tags, setTags] = useState<string[]>(l2.hashtags || [])
+  const [tagInput, setTagInput] = useState('')
+  const [comments, setComments] = useState<Comment[]>(() => [...L2_DETAIL_MOCK_COMMENTS])
+  const chain = useMemo(() => getMockChainMetrics(l2), [l2])
+  const econ = useMemo(() => getMockEconomyMetrics(l2), [l2])
+  const products = useMemo(() => getMockProducts(l2), [l2])
+
+  const fetchContainers = useCallback(async () => {
+    try {
+      const result = await invoke<ContainerInfo[]>('get_docker_containers', { id: l2.id })
+      setContainers(result)
+    } catch { /* local-server not reachable */ }
+  }, [l2.id])
 
   useEffect(() => {
     platformAPI.loadToken().then(ok => setPlatformLoggedIn(ok))
-  }, [])
+    fetchContainers()
+    const interval = setInterval(fetchContainers, 5000)
+    return () => clearInterval(interval)
+  }, [fetchContainers])
 
-  const handleStop = async () => {
+  const handleAction = async (action: 'start' | 'stop') => {
+    setActionLoading(true)
     try {
-      await invoke('stop_appchain', { id: l2.id })
+      await invoke(action === 'stop' ? 'stop_docker_deployment' : 'start_docker_deployment', { id: l2.id })
+      await fetchContainers()
       onRefresh?.()
-    } catch (e) {
-      console.error('Failed to stop appchain:', e)
-    }
+    } catch (e) { console.error(`Failed to ${action}:`, e) }
+    finally { setActionLoading(false) }
   }
 
-  const tabs: { id: DetailTab; labelKey: string }[] = [
-    { id: 'control', labelKey: 'myl2.detail.control' },
-    { id: 'logs', labelKey: 'myl2.detail.logs' },
-    { id: 'config', labelKey: 'myl2.detail.config' },
-    { id: 'dashboard', labelKey: 'myl2.detail.dashboard' },
-  ]
+  const health = useMemo(() => {
+    if (containers.length === 0) return { color: 'var(--color-text-secondary)', label: ko ? '오프라인' : 'Offline' }
+    const all = containers.every(c => c.state === 'running')
+    const any = containers.some(c => c.state === 'running')
+    if (all) return { color: 'var(--color-success)', label: ko ? '정상' : 'Healthy' }
+    if (any) return { color: 'var(--color-warning)', label: ko ? '부분 가동' : 'Partial' }
+    return { color: 'var(--color-error)', label: ko ? '중지됨' : 'Down' }
+  }, [containers, ko])
 
-  const processes = [
-    { name: t('myl2.sequencer', lang), status: l2.sequencerStatus },
-    { name: t('myl2.prover', lang), status: l2.proverStatus },
-    { name: 'L2 Client', status: l2.status === 'running' ? 'running' : 'stopped' },
+  const tabs: { id: DetailTab; label: string }[] = [
+    { id: 'overview', label: ko ? '개요' : 'Overview' },
+    { id: 'economy', label: ko ? '경제' : 'Economy' },
+    { id: 'services', label: ko ? '서비스' : 'Services' },
+    { id: 'community', label: ko ? '커뮤니티' : 'Community' },
+    { id: 'logs', label: ko ? '로그' : 'Logs' },
   ]
 
   return (
@@ -66,222 +130,100 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
           <div className="w-10 h-10 rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center text-xl border border-[var(--color-border)]">
             {l2.icon}
           </div>
-          <div>
-            <div className="text-[13px] font-semibold">{l2.name}</div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold truncate">{l2.name}</span>
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: health.color }} />
+              <span className="text-[11px] font-medium" style={{ color: health.color }}>{health.label}</span>
+            </div>
             <div className="text-[11px] text-[var(--color-text-secondary)]">
-              Chain #{l2.chainId} · {l2.nativeToken}
-              {l2.isPublic && <span className="ml-2 text-[var(--color-accent)]">{t('myl2.public', lang)}</span>}
+              {l2.programSlug} · {l2.phase}
+              {l2.isPublic && <span className="ml-2 text-[#3b82f6]">{t('myl2.public', lang)}</span>}
             </div>
           </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-[var(--color-border)] px-2">
+      <div className="flex border-b border-[var(--color-border)] px-1">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-2.5 text-[13px] transition-colors cursor-pointer border-b-2 ${
+            className={`px-2.5 py-2 text-[12px] transition-colors cursor-pointer border-b-2 ${
               activeTab === tab.id
                 ? 'border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-medium'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
             }`}
           >
-            {t(tab.labelKey, lang)}
+            {tab.label}
           </button>
         ))}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'control' && (
-          <div className="space-y-3">
-            {/* Quick Actions */}
-            <div className="grid grid-cols-3 gap-2">
-              <button className="bg-[var(--color-success)] text-black text-xs font-medium py-2.5 rounded-xl hover:opacity-80 transition-opacity cursor-pointer">
-                {t('myl2.detail.startAll', lang)}
-              </button>
-              <button
-                onClick={handleStop}
-                className="bg-[var(--color-error)] text-white text-xs font-medium py-2.5 rounded-xl hover:opacity-80 transition-opacity cursor-pointer"
-              >
-                {t('myl2.detail.stopAll', lang)}
-              </button>
-              <button className="bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] text-xs font-medium py-2.5 rounded-xl hover:bg-[var(--color-border)] transition-colors cursor-pointer">
-                {t('myl2.detail.restart', lang)}
-              </button>
-            </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
 
-            {/* Process List */}
-            {processes.map(proc => (
-              <div key={proc.name} className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 flex items-center justify-between border border-[var(--color-border)]">
-                <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: statusColor(proc.status) }} />
-                  <div>
-                    <div className="text-[13px] font-medium">{proc.name}</div>
-                    <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
-                      {t(`myl2.status.${proc.status}`, lang)}
-                    </div>
-                  </div>
+        {activeTab === 'overview' && (
+          <L2DetailOverviewTab
+            ko={ko} chain={chain}
+            tags={tags} setTags={setTags}
+            tagInput={tagInput} setTagInput={setTagInput}
+          />
+        )}
+
+        {activeTab === 'economy' && (
+          <L2DetailEconomyTab ko={ko} econ={econ} />
+        )}
+
+        {activeTab === 'services' && (
+          <L2DetailServicesTab
+            l2={l2} ko={ko} containers={containers} products={products}
+            actionLoading={actionLoading} handleAction={handleAction}
+            platformLoggedIn={platformLoggedIn}
+            onRefresh={onRefresh}
+          />
+        )}
+
+        {/* ═══ TAB 4: Community (소셜/댓글) — not yet extracted ═══ */}
+        {activeTab === 'community' && (<>
+          {/* Rating & Likes summary */}
+          <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {/* Rating */}
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <svg key={star} width="14" height="14" viewBox="0 0 24 24"
+                      fill={star <= 4 ? '#f59e0b' : 'none'}
+                      stroke={star <= 4 ? '#f59e0b' : 'currentColor'}
+                      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                      className={star <= 4 ? '' : 'text-[var(--color-text-secondary)] opacity-40'}
+                    >
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                    </svg>
+                  ))}
+                  <span className="text-[12px] font-semibold ml-0.5">4.2</span>
+                  <span className="text-[10px] text-[var(--color-text-secondary)]">(89)</span>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    disabled={proc.status === 'running'}
-                    className="bg-[var(--color-success)] text-black text-xs font-medium px-4 py-2 rounded-lg disabled:opacity-30 hover:opacity-80 transition-opacity cursor-pointer"
-                  >
-                    {t('nodes.start', lang)}
-                  </button>
-                  <button
-                    disabled={proc.status === 'stopped'}
-                    className="bg-[var(--color-error)] text-white text-xs font-medium px-4 py-2 rounded-lg disabled:opacity-30 hover:opacity-80 transition-opacity cursor-pointer"
-                  >
-                    {t('nodes.stop', lang)}
-                  </button>
+                {/* Likes */}
+                <div className="flex items-center gap-1 text-[var(--color-text-secondary)]">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                  </svg>
+                  <span className="text-[11px]">248</span>
                 </div>
               </div>
-            ))}
+            </div>
           </div>
-        )}
+
+          <CommentSection comments={comments} onCommentsChange={setComments} ko={ko} />
+        </>)}
 
         {activeTab === 'logs' && (
-          <div className="bg-black rounded-xl p-4 font-mono text-[11px] text-green-400 h-full min-h-[400px] overflow-auto border border-[var(--color-border)]">
-            <div className="text-[var(--color-text-secondary)]">[{l2.name}] {t('myl2.detail.logsPlaceholder', lang)}</div>
-            <div className="mt-2 text-gray-500">$ ethrex --chain-id {l2.chainId} --port {l2.rpcPort}</div>
-            <div className="text-gray-500">INFO: Starting sequencer...</div>
-            <div className="text-gray-500">INFO: Listening on 0.0.0.0:{l2.rpcPort}</div>
-            <div className="text-gray-500">INFO: Block #1 produced</div>
-            <div className="text-gray-500">INFO: Block #2 produced</div>
-            <div className="animate-pulse mt-1">▊</div>
-          </div>
+          <L2DetailLogsTab l2={l2} />
         )}
 
-        {activeTab === 'config' && (
-          <div className="space-y-3">
-            {[
-              { label: t('myl2.detail.configName', lang), value: l2.name },
-              { label: 'Chain ID', value: String(l2.chainId) },
-              { label: t('myl2.detail.configToken', lang), value: l2.nativeToken },
-              { label: 'L1 RPC', value: l2.l1Rpc },
-              { label: t('myl2.detail.configPort', lang), value: String(l2.rpcPort) },
-              { label: t('myl2.detail.configDesc', lang), value: l2.description },
-            ].map(({ label, value }) => (
-              <div key={label} className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
-                <label className="text-xs text-[var(--color-text-secondary)] block mb-1">{label}</label>
-                <input
-                  type="text"
-                  defaultValue={value}
-                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)]"
-                />
-              </div>
-            ))}
-            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
-              <label className="text-xs text-[var(--color-text-secondary)] block mb-1">{t('myl2.detail.configHashtags', lang)}</label>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {l2.hashtags.map(tag => (
-                  <span key={tag} className="text-[11px] bg-[var(--color-tag-bg)] px-2 py-0.5 rounded text-[var(--color-tag-text)]">
-                    #{tag} ×
-                  </span>
-                ))}
-                <input
-                  type="text"
-                  placeholder="+ tag"
-                  className="bg-transparent text-sm outline-none w-20"
-                />
-              </div>
-            </div>
-            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-[13px] font-medium">{t('myl2.detail.configPublic', lang)}</div>
-                  <div className="text-[11px] text-[var(--color-text-secondary)]">{t('myl2.detail.configPublicDesc', lang)}</div>
-                </div>
-                <button
-                  disabled={publishing || (l2.networkMode === 'local')}
-                  onClick={async () => {
-                    if (!isPublic) {
-                      if (!platformLoggedIn) {
-                        setPublishError(lang === 'ko' ? 'Platform 로그인이 필요합니다. 설정에서 로그인하세요.' : 'Platform login required. Please login in Settings.')
-                        return
-                      }
-                      setPublishing(true)
-                      setPublishError('')
-                      try {
-                        const result = await platformAPI.registerDeployment({
-                          programId: 'ethrex-appchain',
-                          name: l2.name,
-                          chainId: l2.chainId,
-                          rpcUrl: `http://localhost:${l2.rpcPort}`,
-                        })
-                        await platformAPI.activateDeployment(result.deployment.id)
-                        setIsPublic(true)
-                        await invoke('update_appchain_public', { id: l2.id, isPublic: true })
-                        onRefresh?.()
-                      } catch (e: unknown) {
-                        setPublishError(e instanceof Error ? e.message : String(e))
-                      } finally {
-                        setPublishing(false)
-                      }
-                    } else {
-                      setIsPublic(false)
-                      try {
-                        await invoke('update_appchain_public', { id: l2.id, isPublic: false })
-                        onRefresh?.()
-                      } catch { /* ignore */ }
-                    }
-                  }}
-                  className={`w-10 h-5 rounded-full flex items-center px-0.5 cursor-pointer transition-colors disabled:opacity-50 ${isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}
-                >
-                  <div className={`w-4 h-4 bg-white rounded-full transition-transform ${isPublic ? 'translate-x-5' : ''}`} />
-                </button>
-              </div>
-              {l2.networkMode === 'local' && (
-                <p className="text-[11px] text-[var(--color-warning)] mt-2">
-                  {lang === 'ko' ? '로컬 모드에서는 오픈 앱체인으로 공개할 수 없습니다.' : 'Cannot publish as open appchain in local mode.'}
-                </p>
-              )}
-              {publishError && (
-                <p className="text-[11px] text-[var(--color-error)] mt-2">{publishError}</p>
-              )}
-              {publishing && (
-                <p className="text-[11px] text-[var(--color-text-secondary)] mt-2">
-                  {lang === 'ko' ? 'Platform에 등록 중...' : 'Registering on Platform...'}
-                </p>
-              )}
-            </div>
-            <button className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-xl py-2.5 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]">
-              {t('settings.save', lang)}
-            </button>
-          </div>
-        )}
-
-        {activeTab === 'dashboard' && (
-          <div className="flex items-center justify-center h-full min-h-[300px]">
-            <div className="text-center space-y-3">
-              <div className="w-12 h-12 mx-auto rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center border border-[var(--color-border)]">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
-                  <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>
-                </svg>
-              </div>
-              <div className="text-sm font-medium">{l2.name} {t('dashboard.title', lang)}</div>
-              <div className="text-[11px] text-[var(--color-text-secondary)]">
-                <code className="bg-[var(--color-bg-sidebar)] px-2 py-0.5 rounded text-[11px] border border-[var(--color-border)]">http://localhost:{l2.rpcPort + 1000}</code>
-              </div>
-              <button
-                onClick={async () => {
-                  try { await invoke('open_deployment_ui') }
-                  catch (e) { console.error('Failed to open deployment UI:', e) }
-                }}
-                className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-text)] text-xs font-medium px-5 py-2.5 rounded-xl transition-colors cursor-pointer"
-              >
-                {lang === 'ko' ? 'Docker 배포 관리 열기' : 'Open Docker Deployment Manager'}
-              </button>
-              <p className="text-[11px] text-[var(--color-text-secondary)] whitespace-pre-line">
-                {t('dashboard.hint', lang)}
-              </p>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

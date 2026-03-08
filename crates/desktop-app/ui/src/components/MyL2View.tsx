@@ -26,16 +26,6 @@ interface DeploymentFromDB {
   created_at: number
 }
 
-interface ContainerInfo {
-  name: string
-  service: string
-  state: string
-  status: string
-  ports: string
-  image: string
-  id: string
-}
-
 export interface L2Config {
   id: string
   name: string
@@ -60,6 +50,8 @@ export interface L2Config {
   l2Port: number | null
   dockerProject: string | null
   errorMessage: string | null
+  bridgeAddress: string | null
+  proposerAddress: string | null
 }
 
 function deploymentToL2Config(d: DeploymentFromDB): L2Config {
@@ -90,6 +82,8 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     l2Port: d.l2_port,
     dockerProject: d.docker_project,
     errorMessage: d.error_message,
+    bridgeAddress: d.bridge_address,
+    proposerAddress: d.proposer_address,
   }
 }
 
@@ -98,13 +92,6 @@ const statusDot = (status: string) => {
   if (status === 'starting' || status === 'settingup' || status === 'deploying') return 'bg-[var(--color-warning)] animate-pulse'
   if (status === 'created' || status === 'configured') return 'bg-[var(--color-accent)]'
   if (status === 'error' || status === 'failed') return 'bg-[var(--color-error)]'
-  return 'bg-[var(--color-text-secondary)]'
-}
-
-const containerStateDot = (state: string) => {
-  if (state === 'running') return 'bg-[var(--color-success)]'
-  if (state === 'exited') return 'bg-[var(--color-text-secondary)]'
-  if (state === 'created' || state === 'restarting') return 'bg-[var(--color-warning)] animate-pulse'
   return 'bg-[var(--color-text-secondary)]'
 }
 
@@ -120,75 +107,89 @@ const statusLabel = (status: string, lang: string) => {
   return labels[status]?.[l] || status
 }
 
-const serviceFriendlyName = (service: string): string => {
-  const map: Record<string, string> = {
-    'tokamak-app-l1': 'L1',
-    'tokamak-app-l2': 'L2',
-    'tokamak-app-deployer': 'Deployer',
-    'tokamak-app-prover': 'Prover',
+const statusFilters = ['all', 'running', 'stopped', 'error'] as const
+type StatusFilter = typeof statusFilters[number]
+
+const statusFilterLabel = (filter: StatusFilter, lang: string) => {
+  const labels: Record<StatusFilter, Record<string, string>> = {
+    all: { ko: '전체', en: 'All' },
+    running: { ko: '실행 중', en: 'Running' },
+    stopped: { ko: '중지됨', en: 'Stopped' },
+    error: { ko: '오류', en: 'Error' },
   }
-  return map[service] || service
+  return labels[filter][lang === 'ko' ? 'ko' : 'en']
 }
 
-function formatPorts(ports: string): string {
-  if (!ports) return '-'
-  // Extract host:container port pairs, show concisely
-  const matches = ports.match(/(\d+)->\d+\/tcp/g)
-  if (matches) {
-    return matches.map(m => m.replace('->',':').replace('/tcp','')).join(', ')
-  }
-  return ports.length > 40 ? ports.substring(0, 37) + '...' : ports
+function timeAgo(isoDate: string, lang: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return lang === 'ko' ? '방금' : 'just now'
+  if (mins < 60) return `${mins}${lang === 'ko' ? '분 전' : 'm ago'}`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}${lang === 'ko' ? '시간 전' : 'h ago'}`
+  const days = Math.floor(hours / 24)
+  return `${days}${lang === 'ko' ? '일 전' : 'd ago'}`
 }
 
 export default function MyL2View() {
   const { lang } = useLang()
   const [l2s, setL2s] = useState<L2Config[]>([])
   const [selectedL2, setSelectedL2] = useState<L2Config | null>(null)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [containers, setContainers] = useState<Record<string, ContainerInfo[]>>({})
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
   const loadDeployments = useCallback(async () => {
     try {
       const rows = await invoke<DeploymentFromDB[]>('list_docker_deployments')
-      setL2s(rows.map(deploymentToL2Config))
+      const configs = rows.map(deploymentToL2Config)
+
+      // Reconcile live Docker status with stale SQLite status
+      const updated = await Promise.all(configs.map(async (l2) => {
+        try {
+          const containers = await invoke<{ name: string; service: string; state: string; status: string; ports: string; image: string; id: string }[]>(
+            'get_docker_containers', { id: l2.id }
+          )
+          if (containers.length === 0) {
+            // No containers → actually stopped (unless deploying)
+            if (l2.status === 'running') {
+              return { ...l2, status: 'stopped' as const }
+            }
+            return l2
+          }
+          const allRunning = containers.every(c => c.state === 'running')
+          const anyRunning = containers.some(c => c.state === 'running')
+          const anyError = containers.some(c => c.state === 'exited' || c.state === 'dead')
+
+          if (allRunning) {
+            return { ...l2, status: 'running' as const }
+          } else if (anyError && !anyRunning) {
+            return { ...l2, status: 'error' as const, errorMessage: l2.errorMessage || (lang === 'ko' ? '컨테이너 비정상 종료' : 'Container exited') }
+          } else if (anyRunning) {
+            // Partial — some running, some not
+            const downServices = containers.filter(c => c.state !== 'running').map(c => c.service).join(', ')
+            return { ...l2, status: 'running' as const, errorMessage: `${lang === 'ko' ? '일부 중지' : 'Partial'}: ${downServices}` }
+          } else {
+            return { ...l2, status: 'stopped' as const }
+          }
+        } catch {
+          // Can't reach local-server — keep DB status
+          return l2
+        }
+      }))
+
+      setL2s(updated)
     } catch (e) {
       console.error('Failed to load deployments:', e)
     }
-  }, [])
-
-  const loadContainers = useCallback(async (id: string) => {
-    try {
-      const result = await invoke<ContainerInfo[]>('get_docker_containers', { id })
-      setContainers(prev => ({ ...prev, [id]: result }))
-    } catch (e) {
-      console.error('Failed to load containers:', e)
-    }
-  }, [])
+  }, [lang])
 
   useEffect(() => {
     loadDeployments()
     const interval = setInterval(loadDeployments, 5000)
     return () => clearInterval(interval)
   }, [loadDeployments])
-
-  // Auto-refresh containers for expanded deployment
-  useEffect(() => {
-    if (!expandedId) return
-    loadContainers(expandedId)
-    const interval = setInterval(() => loadContainers(expandedId), 5000)
-    return () => clearInterval(interval)
-  }, [expandedId, loadContainers])
-
-  const toggleExpand = (id: string) => {
-    if (expandedId === id) {
-      setExpandedId(null)
-    } else {
-      setExpandedId(id)
-      loadContainers(id)
-    }
-  }
 
   const openDeployManager = async () => {
     try {
@@ -213,12 +214,12 @@ export default function MyL2View() {
     }
   }
 
-  const handleStop = async (id: string) => {
+  const handleStop = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
     setActionLoading(id)
     try {
       await invoke('stop_docker_deployment', { id })
       await loadDeployments()
-      if (expandedId === id) await loadContainers(id)
     } catch (e) {
       console.error('Failed to stop:', e)
     } finally {
@@ -226,12 +227,12 @@ export default function MyL2View() {
     }
   }
 
-  const handleStart = async (id: string) => {
+  const handleStart = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
     setActionLoading(id)
     try {
       await invoke('start_docker_deployment', { id })
       await loadDeployments()
-      if (expandedId === id) await loadContainers(id)
     } catch (e) {
       console.error('Failed to start:', e)
     } finally {
@@ -239,7 +240,8 @@ export default function MyL2View() {
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
     if (confirmDeleteId !== id) {
       setConfirmDeleteId(id)
       setTimeout(() => setConfirmDeleteId(prev => prev === id ? null : prev), 3000)
@@ -249,7 +251,6 @@ export default function MyL2View() {
     setActionLoading(id)
     try {
       await invoke('delete_docker_deployment', { id })
-      if (expandedId === id) setExpandedId(null)
       await loadDeployments()
     } catch (e) {
       console.error('Failed to delete:', e)
@@ -258,6 +259,18 @@ export default function MyL2View() {
     }
   }
 
+  const filtered = l2s.filter(l2 => {
+    const matchesSearch = searchQuery === '' ||
+      l2.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      l2.programSlug.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      l2.description.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesStatus = statusFilter === 'all' ||
+      (statusFilter === 'running' && l2.status === 'running') ||
+      (statusFilter === 'stopped' && (l2.status === 'stopped' || l2.status === 'created')) ||
+      (statusFilter === 'error' && (l2.status === 'error'))
+    return matchesSearch && matchesStatus
+  })
+
   if (selectedL2) {
     return <L2DetailView l2={selectedL2} onBack={() => { setSelectedL2(null); loadDeployments() }} onRefresh={loadDeployments} />
   }
@@ -265,16 +278,42 @@ export default function MyL2View() {
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)] flex items-center justify-between">
-        <h1 className="text-base font-semibold">
-          {t('myl2.title', lang)} <span className="text-[var(--color-text-secondary)] text-xs font-normal">{l2s.length}</span>
-        </h1>
-        <button
-          onClick={openDeployManager}
-          className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-xs font-medium px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-accent-text)]"
-        >
-          {lang === 'ko' ? 'L2 매니저' : 'L2 Manager'}
-        </button>
+      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
+        <div className="flex items-center justify-between">
+          <h1 className="text-base font-semibold">
+            {t('myl2.title', lang)} <span className="text-[var(--color-text-secondary)] text-xs font-normal">{l2s.length}</span>
+          </h1>
+          <button
+            onClick={openDeployManager}
+            className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-xs font-medium px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-accent-text)]"
+          >
+            {lang === 'ko' ? 'L2 매니저' : 'L2 Manager'}
+          </button>
+        </div>
+        {/* Search & Filter */}
+        <div className="flex items-center gap-2 mt-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder={lang === 'ko' ? '앱체인 이름으로 검색...' : 'Search by name...'}
+              className="w-full bg-[var(--color-bg-sidebar)] rounded-lg px-3 py-2 text-[13px] outline-none placeholder-[var(--color-text-secondary)] border border-[var(--color-border)] pl-8"
+            />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </div>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value as StatusFilter)}
+            className="bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-[13px] outline-none cursor-pointer"
+          >
+            {statusFilters.map(f => (
+              <option key={f} value={f}>{statusFilterLabel(f, lang)}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Empty state */}
@@ -293,67 +332,36 @@ export default function MyL2View() {
         </div>
       )}
 
-      {/* Table Header */}
+      {/* Card List */}
       {l2s.length > 0 && (
         <div className="flex-1 overflow-y-auto">
-          <div className="sticky top-0 z-10 bg-[var(--color-bg-sidebar)] border-b border-[var(--color-border)] px-4 py-2 flex items-center text-[10px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider">
-            <div className="w-7" />
-            <div className="w-6" />
-            <div className="flex-[2] min-w-0">Name</div>
-            <div className="flex-1">Status</div>
-            <div className="flex-1">{lang === 'ko' ? '포트' : 'Ports'}</div>
-            <div className="flex-1">{lang === 'ko' ? '단계' : 'Phase'}</div>
-            <div className="w-[120px] text-right">{lang === 'ko' ? '작업' : 'Actions'}</div>
-          </div>
+          {filtered.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-[var(--color-text-secondary)] text-[13px]">
+              {lang === 'ko' ? '검색 결과가 없습니다' : 'No results found'}
+            </div>
+          ) : (
+            filtered.map(l2 => (
+              <button
+                key={l2.id}
+                onClick={() => {
+                  if (l2.status === 'starting') {
+                    openDeployManager()
+                  } else {
+                    setSelectedL2(l2)
+                  }
+                }}
+                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-[var(--color-bg-sidebar)] transition-colors cursor-pointer border-b border-[var(--color-border)] text-left"
+              >
+                {/* Icon */}
+                <div className="w-10 h-10 rounded-xl bg-[var(--color-bg-sidebar)] flex items-center justify-center text-xl flex-shrink-0 border border-[var(--color-border)]">
+                  {l2.icon}
+                </div>
 
-          {l2s.map(l2 => {
-            const isExpanded = expandedId === l2.id
-            const l2Containers = containers[l2.id] || []
-
-            return (
-              <div key={l2.id}>
-                {/* Deployment Row */}
-                <div className={`flex items-center px-4 py-2.5 border-b border-[var(--color-border)] hover:bg-[var(--color-bg-sidebar)] transition-colors ${isExpanded ? 'bg-[var(--color-bg-sidebar)]' : ''}`}>
-                  {/* Expand toggle */}
-                  <button
-                    onClick={() => toggleExpand(l2.id)}
-                    className="w-7 flex items-center justify-center cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-transform"
-                  >
-                    <svg
-                      width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                      className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                    >
-                      <polyline points="9 18 15 12 9 6"/>
-                    </svg>
-                  </button>
-
-                  {/* Status dot */}
-                  <div className="w-6 flex items-center justify-center">
-                    <span className={`w-2.5 h-2.5 rounded-full ${statusDot(l2.status)}`} />
-                  </div>
-
-                  {/* Name - clickable for detail */}
-                  <button
-                    onClick={() => {
-                      if (l2.status === 'starting') {
-                        openDeployManager()
-                      } else {
-                        setSelectedL2(l2)
-                      }
-                    }}
-                    className="flex-[2] min-w-0 text-left cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium truncate">{l2.name}</span>
-                      <span className="text-[9px] bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] px-1.5 py-0.5 rounded font-medium text-[var(--color-text-secondary)] flex-shrink-0">
-                        {l2.programSlug}
-                      </span>
-                    </div>
-                  </button>
-
-                  {/* Status */}
-                  <div className="flex-1">
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium truncate">{l2.name}</span>
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(l2.status)}`} />
                     <span className={`text-[11px] font-medium ${
                       l2.status === 'running' ? 'text-[var(--color-success)]'
                       : l2.status === 'starting' ? 'text-[var(--color-warning)]'
@@ -363,129 +371,67 @@ export default function MyL2View() {
                       {statusLabel(l2.status, lang)}
                     </span>
                   </div>
-
-                  {/* Ports */}
-                  <div className="flex-1 text-[11px] text-[var(--color-text-secondary)]">
-                    {l2.l1Port && <span>L1:{l2.l1Port}</span>}
-                    {l2.l1Port && l2.l2Port && <span className="mx-1">·</span>}
-                    {l2.l2Port && <span>L2:{l2.l2Port}</span>}
-                    {!l2.l1Port && !l2.l2Port && '-'}
+                  <div className="text-[11px] text-[var(--color-text-secondary)] truncate mt-0.5">
+                    {l2.errorMessage
+                      ? <span className="text-[var(--color-error)]">{l2.errorMessage}</span>
+                      : <>Chain ID: {l2.chainId || '-'} · {l2.l1Port ? `L1:${l2.l1Port}` : ''}{l2.l1Port && l2.l2Port ? ' · ' : ''}{l2.l2Port ? `L2:${l2.l2Port}` : ''}</>
+                    }
                   </div>
-
-                  {/* Phase */}
-                  <div className="flex-1 text-[11px] text-[var(--color-text-secondary)]">
-                    {l2.phase}
+                  <div className="flex gap-1 mt-1">
+                    <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
+                      {l2.programSlug}
+                    </span>
+                    <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
+                      {l2.phase}
+                    </span>
+                    {l2.isPublic && (
+                      <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
+                        {t('myl2.public', lang)}
+                      </span>
+                    )}
                   </div>
+                </div>
 
-                  {/* Actions */}
-                  <div className="w-[120px] flex items-center justify-end gap-1.5">
+                {/* Right side: time + actions */}
+                <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                  <span className="text-[11px] text-[var(--color-text-secondary)]">
+                    {timeAgo(l2.createdAt, lang)}
+                  </span>
+                  <div className="flex items-center gap-1">
                     {l2.status === 'running' ? (
-                      <button
-                        onClick={() => handleStop(l2.id)}
-                        disabled={actionLoading === l2.id}
-                        className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-warning)] text-white hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-50"
+                      <span
+                        onClick={(e) => handleStop(e, l2.id)}
+                        className={`text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-warning)] text-white hover:opacity-80 transition-opacity cursor-pointer ${actionLoading === l2.id ? 'opacity-50' : ''}`}
                       >
                         {actionLoading === l2.id ? '...' : (lang === 'ko' ? '중지' : 'Stop')}
-                      </button>
+                      </span>
                     ) : l2.status === 'stopped' ? (
-                      <button
-                        onClick={() => handleStart(l2.id)}
-                        disabled={actionLoading === l2.id}
-                        className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-success)] text-white hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-50"
+                      <span
+                        onClick={(e) => handleStart(e, l2.id)}
+                        className={`text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-success)] text-white hover:opacity-80 transition-opacity cursor-pointer ${actionLoading === l2.id ? 'opacity-50' : ''}`}
                       >
                         {actionLoading === l2.id ? '...' : (lang === 'ko' ? '시작' : 'Start')}
-                      </button>
+                      </span>
                     ) : l2.status === 'starting' ? (
-                      <button
-                        onClick={openDeployManager}
-                        className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-warning)]/20 text-[var(--color-warning)] hover:opacity-80 transition-opacity cursor-pointer"
-                      >
-                        {lang === 'ko' ? '진행 보기' : 'View'}
-                      </button>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-warning)]/20 text-[var(--color-warning)]">
+                        {lang === 'ko' ? '배포 중' : 'Deploying'}
+                      </span>
                     ) : null}
-                    <button
-                      onClick={() => handleDelete(l2.id)}
-                      disabled={actionLoading === l2.id}
-                      className={`text-[10px] px-2 py-1 rounded-md text-white hover:opacity-80 transition-all cursor-pointer disabled:opacity-50 ${
+                    <span
+                      onClick={(e) => handleDelete(e, l2.id)}
+                      className={`text-[10px] px-2 py-0.5 rounded-md text-white hover:opacity-80 transition-all cursor-pointer ${
                         confirmDeleteId === l2.id ? 'bg-red-700 ring-1 ring-red-400' : 'bg-[var(--color-error)]'
-                      }`}
+                      } ${actionLoading === l2.id ? 'opacity-50' : ''}`}
                     >
                       {actionLoading === l2.id ? '...'
                         : confirmDeleteId === l2.id ? (lang === 'ko' ? '확인' : 'OK')
                         : (lang === 'ko' ? '삭제' : 'Del')}
-                    </button>
+                    </span>
                   </div>
                 </div>
-
-                {/* Expanded: Container List */}
-                {isExpanded && (
-                  <div className="bg-[var(--color-bg-main)]">
-                    {l2Containers.length === 0 ? (
-                      <div className="px-4 py-3 pl-14 text-[11px] text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
-                        {l2.status === 'starting'
-                          ? (lang === 'ko' ? '컨테이너 생성 중...' : 'Creating containers...')
-                          : (lang === 'ko' ? '컨테이너 없음' : 'No containers')}
-                      </div>
-                    ) : (
-                      l2Containers.map(c => (
-                        <div
-                          key={c.id || c.name}
-                          className="flex items-center px-4 py-2 pl-14 border-b border-[var(--color-border)]/50 hover:bg-[var(--color-bg-sidebar)]/50 transition-colors text-[11px]"
-                        >
-                          {/* Container status dot */}
-                          <div className="w-6 flex items-center justify-center">
-                            <span className={`w-2 h-2 rounded-full ${containerStateDot(c.state)}`} />
-                          </div>
-
-                          {/* Service name */}
-                          <div className="flex-[2] min-w-0 font-medium">
-                            {serviceFriendlyName(c.service)}
-                          </div>
-
-                          {/* State */}
-                          <div className="flex-1">
-                            <span className={`${
-                              c.state === 'running' ? 'text-[var(--color-success)]'
-                              : c.state === 'exited' ? 'text-[var(--color-text-secondary)]'
-                              : 'text-[var(--color-warning)]'
-                            }`}>
-                              {c.status || c.state}
-                            </span>
-                          </div>
-
-                          {/* Ports */}
-                          <div className="flex-1 text-[var(--color-text-secondary)] truncate">
-                            {formatPorts(c.ports)}
-                          </div>
-
-                          {/* Image */}
-                          <div className="flex-1 text-[var(--color-text-secondary)] truncate">
-                            {c.image ? c.image.split('/').pop()?.split(':')[0] || c.image : '-'}
-                          </div>
-
-                          {/* Container ID */}
-                          <div className="w-[120px] text-right text-[var(--color-text-secondary)] font-mono">
-                            {c.id ? c.id.substring(0, 12) : '-'}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Error messages */}
-      {l2s.some(l2 => l2.errorMessage) && (
-        <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-bg-sidebar)]">
-          {l2s.filter(l2 => l2.errorMessage).map(l2 => (
-            <div key={l2.id} className="text-[10px] text-[var(--color-error)] truncate">
-              {l2.name}: {l2.errorMessage}
-            </div>
-          ))}
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>
