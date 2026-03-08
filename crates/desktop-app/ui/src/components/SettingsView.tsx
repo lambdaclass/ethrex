@@ -55,15 +55,6 @@ export default function SettingsView() {
     }
   }
 
-  const refreshPlatformUser = async () => {
-    try {
-      const user = await invoke<PlatformUser>('get_platform_user')
-      setPlatformUser(user)
-    } catch {
-      setPlatformUser(null)
-    }
-  }
-
   const handlePlatformLogin = async () => {
     if (platformLogging) return
     setPlatformLogging(true)
@@ -78,7 +69,7 @@ export default function SettingsView() {
         codeVerifier: result.code_verifier,
       })
       if (token) {
-        await refreshPlatformUser()
+        await loadPlatformUser()
         setPlatformLoginUrl('')
       }
     } catch (e: unknown) {

@@ -112,20 +112,21 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
   // Refresh login/usage state when chat becomes visible
   // (e.g., after logging in/out from Settings)
   const prevVisible = useRef(false)
+  const platformUserRef = useRef(platformUser)
+  platformUserRef.current = platformUser
+
   useEffect(() => {
     if (isVisible && !prevVisible.current && aiMode === 'tokamak') {
-      // Became visible — refresh user & usage from AiProvider
       refreshTokamakState()
     }
     prevVisible.current = !!isVisible
-  }, [isVisible])
+  }, [isVisible, aiMode])
 
   const refreshTokamakState = async () => {
-    const wasLoggedIn = !!platformUser
+    const wasLoggedIn = !!platformUserRef.current
     try {
       const user = await invoke<{ name: string; email: string }>('get_platform_user')
-      if (!platformUser && user) {
-        // 설정에서 로그인됨 → 채팅에 알림
+      if (!platformUserRef.current && user) {
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: lang === 'ko'
@@ -138,7 +139,6 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
       setTokenUsage(usage)
     } catch {
       if (wasLoggedIn) {
-        // 설정에서 로그아웃됨 → 채팅에 알림
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: lang === 'ko'
@@ -173,17 +173,15 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
     }
   }
 
-  const loadTokamakUsage = async (skipUserLoad = false) => {
+  const loadTokamakUsage = async () => {
     try {
       const usage = await invoke<TokenUsage>('get_token_usage')
       setTokenUsage(usage)
-      if (!skipUserLoad) {
-        try {
-          const user = await invoke<{ name: string; email: string }>('get_platform_user')
-          setPlatformUser(user)
-        } catch {
-          setPlatformUser(null)
-        }
+      try {
+        const user = await invoke<{ name: string; email: string }>('get_platform_user')
+        setPlatformUser(user)
+      } catch {
+        setPlatformUser(null)
       }
       setMessages(prev => prev.length === 0
         ? [{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }]
@@ -192,7 +190,7 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
     } catch (e) {
       const errorStr = `${e}`
       if (errorStr.includes('login_required')) {
-        if (!skipUserLoad) setPlatformUser(null)
+        setPlatformUser(null)
         setMessages(prev => prev.length === 0
           ? [{ role: 'assistant', content: t('chat.loginRequired', lang) }]
           : prev

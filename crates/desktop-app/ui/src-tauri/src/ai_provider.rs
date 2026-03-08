@@ -9,7 +9,7 @@ const KEYRING_AI_CONFIG: &str = "ai-config";
 const KEYRING_AI_MODE: &str = "ai-mode";
 
 const PLATFORM_AI_BASE_URL: &str = "/api/ai";
-const PLATFORM_BASE_URL: &str = "https://tokamak-platform.vercel.app";
+pub const PLATFORM_BASE_URL: &str = "https://tokamak-appchain.vercel.app";
 const DEFAULT_DAILY_TOKEN_LIMIT: u32 = 50_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -607,6 +607,7 @@ pub struct ChatMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     /// Test-only constructor — no keyring/file I/O
     fn make_provider() -> AiProvider {
@@ -794,6 +795,4 @@ mod tests {
         // 원본은 변하지 않아야 함
         assert_eq!(ai.get_config().api_key, "sk-ant-api03-abcdef1234567890");
     }
-
-    use std::sync::Arc;
 }
