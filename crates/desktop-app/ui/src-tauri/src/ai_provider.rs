@@ -11,6 +11,7 @@ const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
 
 const PLATFORM_AI_BASE_URL: &str = "/api/ai";
 const PLATFORM_BASE_URL: &str = "https://tokamak-platform.vercel.app";
+const DEFAULT_DAILY_TOKEN_LIMIT: u32 = 50_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -113,19 +114,17 @@ impl AiProvider {
         self.last_usage.lock().unwrap().clone().unwrap_or(TokenUsage {
             date: chrono::Local::now().format("%Y-%m-%d").to_string(),
             used: 0,
-            limit: 50000,
+            limit: DEFAULT_DAILY_TOKEN_LIMIT,
         })
     }
 
     fn update_usage_from_server(&self, usage: &serde_json::Value) {
         if let (Some(used), Some(limit)) = (usage["used"].as_u64(), usage["limit"].as_u64()) {
-            let remaining = usage["remaining"].as_u64().unwrap_or(0);
             *self.last_usage.lock().unwrap() = Some(TokenUsage {
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-                used: used as u32,
-                limit: limit as u32,
+                used: u32::try_from(used).unwrap_or(u32::MAX),
+                limit: u32::try_from(limit).unwrap_or(u32::MAX),
             });
-            let _ = remaining; // used in response to client
         }
     }
 
@@ -142,7 +141,7 @@ impl AiProvider {
             .await
             .map_err(|e| format!("Failed to fetch usage: {e}"))?;
 
-        if response.status().as_u16() == 401 {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err("login_required".to_string());
         }
 
@@ -326,11 +325,11 @@ impl AiProvider {
             .await
             .map_err(|e| format!("Tokamak AI request failed: {e}"))?;
 
-        if response.status().as_u16() == 401 {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err("login_required".to_string());
         }
 
-        if response.status().as_u16() == 429 {
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err("daily_limit_exceeded".to_string());
         }
 

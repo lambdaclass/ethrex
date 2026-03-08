@@ -4,6 +4,7 @@ import {
   checkLimit,
   recordUsage,
   LimitExceededError,
+  getDefaultDailyLimit,
 } from "@/lib/token-limiter";
 import { chatCompletion, type ChatMessage } from "@/lib/ai-provider";
 
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "auth_error" }, { status: 401 });
   }
 
-  const dailyLimit = user.daily_ai_limit || 50000;
+  const dailyLimit = user.daily_ai_limit || getDefaultDailyLimit();
 
   // 2. Check daily token limit
   try {
