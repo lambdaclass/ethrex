@@ -185,4 +185,72 @@ impl DeploymentProxy {
 
         Ok(status.containers)
     }
+
+    /// Fetch logs for a specific service via local-server GET /api/deployments/:id/logs
+    pub async fn get_logs(
+        &self,
+        id: &str,
+        service: Option<&str>,
+        tail: usize,
+    ) -> Result<String, String> {
+        let mut url = format!(
+            "{}/api/deployments/{}/logs?tail={}",
+            self.base_url, id, tail
+        );
+        if let Some(svc) = service {
+            url.push_str(&format!("&service={}", svc));
+        }
+
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local-server: {e}"))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Logs fetch failed: {body}"));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse logs response: {e}"))?;
+
+        Ok(json["logs"].as_str().unwrap_or("").to_string())
+    }
+
+    /// Get RPC health monitoring via local-server GET /api/deployments/:id/monitoring
+    pub async fn get_monitoring(&self, id: &str) -> Result<MonitoringInfo, String> {
+        let url = format!("{}/api/deployments/{}/monitoring", self.base_url, id);
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local-server: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err("Monitoring endpoint unavailable".to_string());
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| format!("Failed to parse monitoring: {e}"))
+    }
+}
+
+/// RPC health info from local-server monitoring endpoint
+#[derive(Debug, Deserialize, Clone)]
+pub struct MonitoringInfo {
+    pub l1: Option<RpcHealth>,
+    pub l2: Option<RpcHealth>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcHealth {
+    pub healthy: bool,
+    pub block_number: Option<serde_json::Value>,
+    pub chain_id: Option<serde_json::Value>,
+    pub rpc_url: Option<String>,
 }

@@ -3,6 +3,7 @@ mod appchain_manager;
 mod commands;
 mod deployment_db;
 mod local_server;
+mod pilot_memory;
 mod process_manager;
 mod runner;
 mod telegram_bot;
@@ -68,14 +69,27 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Pilot memory (persistent chat/event storage)
+            let memory = Arc::new(pilot_memory::PilotMemory::new());
+
             // Telegram bot manager (dynamic start/stop from Settings)
             let ai = app.state::<Arc<ai_provider::AiProvider>>().inner().clone();
             let am = app.state::<Arc<appchain_manager::AppchainManager>>().inner().clone();
-            let tg_manager = Arc::new(telegram_bot::TelegramBotManager::new(ai, am));
+            let runner = app.state::<Arc<runner::ProcessRunner>>().inner().clone();
+            let tg_manager = Arc::new(telegram_bot::TelegramBotManager::new(
+                ai, am.clone(), runner.clone(), memory.clone(),
+            ));
             // Auto-start if configured
             if let Ok(()) = tg_manager.start() {
                 log::info!("Telegram bot auto-started");
             }
+            // Start background health monitor
+            let tg_monitor = tg_manager.clone();
+            tauri::async_runtime::spawn(
+                telegram_bot::TelegramBotManager::health_monitor(
+                    am, runner, memory, tg_monitor,
+                )
+            );
             app.manage(tg_manager);
 
             Ok(())

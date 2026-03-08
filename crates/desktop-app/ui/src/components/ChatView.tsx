@@ -104,6 +104,8 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
   const [fetchingModels, setFetchingModels] = useState(false)
   const [showDisconnect, setShowDisconnect] = useState(false)
   const [setupError, setSetupError] = useState('')
+  const [loggingIn, setLoggingIn] = useState(false)
+  const [platformUser, setPlatformUser] = useState<{ name: string; email: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -269,9 +271,6 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
       setSavingKey(false)
     }
   }
-
-  const [loggingIn, setLoggingIn] = useState(false)
-  const [platformUser, setPlatformUser] = useState<{ name: string; email: string } | null>(null)
 
   const handlePlatformLogin = async () => {
     if (loggingIn) return
@@ -656,7 +655,17 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
           <div className="w-9 h-9 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-sm">🤖</div>
           <div>
             <div className="text-sm font-semibold">{t('chat.title', lang)}</div>
-            <div className={`text-[11px] ${tokamakLoggedIn || aiMode === 'custom' ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>{headerSubtitle}</div>
+            {aiMode === 'tokamak' && !platformUser ? (
+              <button
+                onClick={handlePlatformLogin}
+                disabled={loggingIn}
+                className="text-[11px] text-[#e74c3c] hover:underline cursor-pointer bg-transparent border-none p-0"
+              >
+                {loggingIn ? (lang === 'ko' ? '로그인 중...' : 'Logging in...') : 'Tokamak AI 로그인 →'}
+              </button>
+            ) : (
+              <div className={`text-[11px] ${tokamakLoggedIn || aiMode === 'custom' ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>{headerSubtitle}</div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1.5">
