@@ -715,22 +715,30 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
                       : 'bg-[var(--color-bubble-ai)] text-[var(--color-text-primary)] rounded-bl-sm'
                   }`}
                 >
-                  {cleanText.split('\n').map((line, li) =>
-                    line.startsWith('__link__') ? (
-                      <span key={li}>
-                        {li > 0 && '\n'}
-                        <a
-                          href="#"
-                          onClick={e => { e.preventDefault(); open(line.replace('__link__', '')) }}
-                          className="text-[var(--color-accent)] underline cursor-pointer break-all"
-                        >
-                          {lang === 'ko' ? '🔗 로그인 페이지 열기' : '🔗 Open login page'}
-                        </a>
-                      </span>
-                    ) : (
-                      <span key={li}>{li > 0 && '\n'}{line}</span>
-                    )
-                  )}
+                  {cleanText.split('\n').map((line, li) => {
+                    if (line.startsWith('__link__')) {
+                      const url = line.replace('__link__', '')
+                      const isTrusted = url.startsWith('https://tokamak-appchain.vercel.app/')
+                        || url.startsWith('https://tokamak-platform.vercel.app/')
+                      return (
+                        <span key={li}>
+                          {li > 0 && '\n'}
+                          {isTrusted ? (
+                            <a
+                              href="#"
+                              onClick={e => { e.preventDefault(); open(url) }}
+                              className="text-[var(--color-accent)] underline cursor-pointer break-all"
+                            >
+                              {lang === 'ko' ? '🔗 로그인 페이지 열기' : '🔗 Open login page'}
+                            </a>
+                          ) : (
+                            <span className="text-[var(--color-text-secondary)]">[untrusted link blocked]</span>
+                          )}
+                        </span>
+                      )
+                    }
+                    return <span key={li}>{li > 0 && '\n'}{line}</span>
+                  })}
                 </div>
                 {actions.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">

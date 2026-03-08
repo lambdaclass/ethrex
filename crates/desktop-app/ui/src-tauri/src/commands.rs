@@ -417,7 +417,9 @@ fn platform_token_path() -> Result<std::path::PathBuf, String> {
 pub fn save_platform_token(token: String) -> Result<(), String> {
     let path = platform_token_path()?;
     let data = serde_json::json!({ "token": token });
-    std::fs::write(&path, serde_json::to_string_pretty(&data).unwrap())
+    let content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("Failed to serialize token: {e}"))?;
+    std::fs::write(&path, content)
         .map_err(|e| format!("Failed to save token: {e}"))
 }
 

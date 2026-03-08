@@ -166,7 +166,7 @@ console.log('\n=== 6. Rust 단위 테스트 ===');
 const { execSync } = await import('child_process');
 try {
   const rustOutput = execSync(
-    'cd /Users/zena/tokamak-projects/ethrex/crates/desktop-app/ui/src-tauri && cargo test --lib -- ai_provider::tests 2>&1',
+    `cd ${path.resolve(import.meta.dirname, '../src-tauri')} && cargo test --lib -- ai_provider::tests 2>&1`,
     { encoding: 'utf8', timeout: 60000 }
   );
   const rustPassMatch = rustOutput.match(/(\d+) passed/);

@@ -133,5 +133,12 @@ async function ensureUsageTable() {
       value INTEGER NOT NULL DEFAULT 0
     )
   `;
+  // Cleanup old records (keys older than 7 days)
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  await sql`
+    DELETE FROM ai_usage WHERE key < ${"ai:usage:0:" + cutoff}
+  `;
   usageTableReady = true;
 }

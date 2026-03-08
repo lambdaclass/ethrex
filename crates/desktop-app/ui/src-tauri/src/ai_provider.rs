@@ -83,10 +83,14 @@ impl AiProvider {
         if !path.exists() {
             return Err("login_required".to_string());
         }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|_| "login_required".to_string())?;
-        let data: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|_| "login_required".to_string())?;
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            log::warn!("Failed to read platform token file: {e}");
+            "login_required".to_string()
+        })?;
+        let data: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            log::warn!("Failed to parse platform token file: {e}");
+            "login_required".to_string()
+        })?;
         data.get("token")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
@@ -105,13 +109,13 @@ impl AiProvider {
 
     /// Set platform token in memory (called after login)
     pub fn set_platform_token(&self, token: String) {
-        *self.platform_token.lock().unwrap() = Some(token);
+        *self.platform_token.lock().expect("mutex poisoned") = Some(token);
     }
 
     /// Clear platform token and cached usage from memory (called on logout)
     pub fn clear_platform_token(&self) {
-        *self.platform_token.lock().unwrap() = None;
-        *self.last_usage.lock().unwrap() = None;
+        *self.platform_token.lock().expect("mutex poisoned") = None;
+        *self.last_usage.lock().expect("mutex poisoned") = None;
     }
 
     /// Public accessor for platform token
@@ -137,19 +141,19 @@ impl AiProvider {
     }
 
     pub fn get_mode(&self) -> AiMode {
-        self.mode.lock().unwrap().clone()
+        self.mode.lock().expect("mutex poisoned").clone()
     }
 
     pub fn set_mode(&self, mode: AiMode) -> Result<(), String> {
         Self::save_mode(&mode)?;
-        *self.mode.lock().unwrap() = mode;
+        *self.mode.lock().expect("mutex poisoned") = mode;
         Ok(())
     }
 
     // ---- Token Usage (server-tracked) ----
 
     pub fn get_token_usage(&self) -> TokenUsage {
-        self.last_usage.lock().unwrap().clone().unwrap_or(TokenUsage {
+        self.last_usage.lock().expect("mutex poisoned").clone().unwrap_or(TokenUsage {
             date: chrono::Local::now().format("%Y-%m-%d").to_string(),
             used: 0,
             limit: DEFAULT_DAILY_TOKEN_LIMIT,
@@ -158,7 +162,7 @@ impl AiProvider {
 
     fn update_usage_from_server(&self, usage: &serde_json::Value) {
         if let (Some(used), Some(limit)) = (usage["used"].as_u64(), usage["limit"].as_u64()) {
-            *self.last_usage.lock().unwrap() = Some(TokenUsage {
+            *self.last_usage.lock().expect("mutex poisoned") = Some(TokenUsage {
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 used: u32::try_from(used).unwrap_or(u32::MAX),
                 limit: u32::try_from(limit).unwrap_or(u32::MAX),
@@ -230,12 +234,12 @@ impl AiProvider {
     pub fn save_config(&self, config: AiConfig) -> Result<(), String> {
         Self::save_api_key(&config.api_key)?;
         Self::save_config_meta(&config)?;
-        *self.config.lock().unwrap() = config;
+        *self.config.lock().expect("mutex poisoned") = config;
         Ok(())
     }
 
     pub fn get_config(&self) -> AiConfig {
-        self.config.lock().unwrap().clone()
+        self.config.lock().expect("mutex poisoned").clone()
     }
 
     pub fn get_config_masked(&self) -> AiConfig {
@@ -251,7 +255,7 @@ impl AiProvider {
     }
 
     pub fn has_api_key(&self) -> bool {
-        !self.config.lock().unwrap().api_key.is_empty()
+        !self.config.lock().expect("mutex poisoned").api_key.is_empty()
     }
 
     pub fn clear_config(&self) -> Result<(), String> {
@@ -261,7 +265,7 @@ impl AiProvider {
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_AI_CONFIG) {
             let _ = entry.delete_credential();
         }
-        *self.config.lock().unwrap() = AiConfig::default();
+        *self.config.lock().expect("mutex poisoned") = AiConfig::default();
         Ok(())
     }
 
@@ -782,7 +786,7 @@ mod tests {
     #[test]
     fn test_config_masked() {
         let ai = make_provider();
-        *ai.config.lock().unwrap() = AiConfig {
+        *ai.config.lock().expect("mutex poisoned") = AiConfig {
             provider: "claude".to_string(),
             api_key: "sk-ant-api03-abcdef1234567890".to_string(),
             model: "claude-sonnet-4-6".to_string(),
