@@ -337,27 +337,7 @@ pub fn update_appchain_public(
 /// Returns current app state as context for AI chat
 #[tauri::command]
 pub fn get_chat_context(am: State<Arc<AppchainManager>>) -> serde_json::Value {
-    let chains = am.list_appchains();
-    let chain_summaries: Vec<serde_json::Value> = chains
-        .iter()
-        .map(|c| {
-            serde_json::json!({
-                "id": c.id,
-                "name": c.name,
-                "chain_id": c.chain_id,
-                "status": format!("{:?}", c.status),
-                "network_mode": format!("{:?}", c.network_mode),
-                "rpc_port": c.l2_rpc_port,
-                "is_public": c.is_public,
-                "native_token": c.native_token,
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "appchains": chain_summaries,
-        "total_count": chains.len(),
-    })
+    crate::telegram_bot::build_appchain_context(&am)
 }
 
 // ============================================================================
