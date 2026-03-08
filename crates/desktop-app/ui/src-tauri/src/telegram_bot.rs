@@ -3,7 +3,7 @@
 //!
 //! Env:
 //!   TELEGRAM_BOT_TOKEN — Bot token from @BotFather
-//!   TELEGRAM_ALLOWED_CHAT_IDS — Comma-separated allowed chat IDs (empty = allow all)
+//!   TELEGRAM_ALLOWED_CHAT_IDS — Comma-separated allowed chat IDs (empty = deny all)
 use crate::ai_provider::{AiProvider, ChatMessage};
 use crate::appchain_manager::AppchainManager;
 use reqwest::Client;
@@ -94,14 +94,11 @@ impl TelegramBot {
     fn load_from_file() -> Option<(String, String, bool)> {
         let path = dirs::data_dir()?.join("tokamak-appchain").join("telegram.json");
         let json = std::fs::read_to_string(path).ok()?;
-        let config: serde_json::Value = serde_json::from_str(&json).ok()?;
-        let token = config["bot_token"].as_str().unwrap_or("").to_string();
-        let ids = config["allowed_chat_ids"].as_str().unwrap_or("").to_string();
-        let enabled = config["enabled"].as_bool().unwrap_or(false);
-        if token.is_empty() {
+        let config: crate::commands::TelegramConfig = serde_json::from_str(&json).ok()?;
+        if config.bot_token.is_empty() {
             return None;
         }
-        Some((token, ids, enabled))
+        Some((config.bot_token, config.allowed_chat_ids, config.enabled))
     }
 
     fn load_from_env() -> (String, String, bool) {
@@ -142,12 +139,15 @@ impl TelegramBot {
             chat_id,
             text: text.to_string(),
         };
-        let _ = self
+        if let Err(e) = self
             .client
             .post(self.api_url("sendMessage"))
             .json(&body)
             .send()
-            .await;
+            .await
+        {
+            log::warn!("[TG] Failed to send message to {}: {}", chat_id, e);
+        }
     }
 
     async fn send_typing(&self, chat_id: i64) {
@@ -155,12 +155,15 @@ impl TelegramBot {
             chat_id,
             action: "typing".to_string(),
         };
-        let _ = self
+        if let Err(e) = self
             .client
             .post(self.api_url("sendChatAction"))
             .json(&body)
             .send()
-            .await;
+            .await
+        {
+            log::warn!("[TG] Failed to send typing to {}: {}", chat_id, e);
+        }
     }
 
     /// Start long-polling loop. Runs until shutdown signal is received.
@@ -182,8 +185,8 @@ impl TelegramBot {
 
             let resp = match self.client.get(&url).send().await {
                 Ok(r) => r,
-                Err(e) => {
-                    log::warn!("Telegram poll error: {e}");
+                Err(_e) => {
+                    log::warn!("[TG] poll error (token masked)");
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     continue;
                 }
@@ -191,8 +194,8 @@ impl TelegramBot {
 
             let updates: TelegramResponse<Vec<Update>> = match resp.json().await {
                 Ok(r) => r,
-                Err(e) => {
-                    log::warn!("Telegram parse error: {e}");
+                Err(_e) => {
+                    log::warn!("[TG] parse error (details masked)");
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     continue;
                 }
@@ -326,7 +329,7 @@ impl TelegramBot {
                 } else {
                     self.appchain_manager
                         .update_status(&c.id, crate::appchain_manager::AppchainStatus::Running);
-                    self.send_message(chat_id, &format!("🟢 {} started.", c.name))
+                    self.send_message(chat_id, &format!("⚠️ {} marked as Running (status only — use desktop app for actual process control)", c.name))
                         .await;
                 }
             }
@@ -362,7 +365,7 @@ impl TelegramBot {
                 } else {
                     self.appchain_manager
                         .update_status(&c.id, crate::appchain_manager::AppchainStatus::Stopped);
-                    self.send_message(chat_id, &format!("🔴 {} stopped.", c.name))
+                    self.send_message(chat_id, &format!("⚠️ {} marked as Stopped (status only — use desktop app for actual process control)", c.name))
                         .await;
                 }
             }
@@ -400,7 +403,7 @@ impl TelegramBot {
 
         // Trim history
         if history.len() > MAX_HISTORY {
-            *history = history[history.len() - MAX_HISTORY..].to_vec();
+            history.drain(..history.len() - MAX_HISTORY);
         }
 
         let messages = history.clone();
@@ -440,6 +443,13 @@ pub struct TelegramBotManager {
     shutdown_tx: std::sync::Mutex<Option<watch::Sender<bool>>>,
     ai: Arc<AiProvider>,
     appchain_manager: Arc<AppchainManager>,
+    notify_config: std::sync::Mutex<Option<NotifyConfig>>,
+}
+
+struct NotifyConfig {
+    token: String,
+    chat_ids: Vec<i64>,
+    client: Client,
 }
 
 impl TelegramBotManager {
@@ -448,6 +458,7 @@ impl TelegramBotManager {
             shutdown_tx: std::sync::Mutex::new(None),
             ai,
             appchain_manager,
+            notify_config: std::sync::Mutex::new(None),
         }
     }
 
@@ -463,6 +474,15 @@ impl TelegramBotManager {
         let bot = TelegramBot::new(self.ai.clone(), self.appchain_manager.clone())
             .ok_or("Telegram bot config not found or disabled")?;
 
+        // Cache config for notify()
+        let chat_ids = bot.allowed_chat_ids.clone();
+        let token = bot.token.clone();
+        *self.notify_config.lock().unwrap() = Some(NotifyConfig {
+            token,
+            chat_ids,
+            client: Client::new(),
+        });
+
         let bot = Arc::new(bot);
         let (tx, rx) = watch::channel(false);
         *self.shutdown_tx.lock().unwrap() = Some(tx);
@@ -477,6 +497,7 @@ impl TelegramBotManager {
             let _ = tx.send(true);
             log::info!("Telegram bot stopped via manager");
         }
+        *self.notify_config.lock().unwrap() = None;
     }
 
     /// Send a notification to all allowed chat IDs.
@@ -485,26 +506,23 @@ impl TelegramBotManager {
             return;
         }
 
-        let (token, ids_str, enabled) = TelegramBot::load_from_file()
-            .unwrap_or_else(|| TelegramBot::load_from_env());
+        let config = self.notify_config.lock().unwrap();
+        let config = match config.as_ref() {
+            Some(c) => c,
+            None => return,
+        };
 
-        if !enabled || token.is_empty() {
+        if config.chat_ids.is_empty() {
             return;
         }
 
-        let chat_ids: Vec<i64> = ids_str
-            .split(',')
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-
-        if chat_ids.is_empty() {
-            return;
-        }
-
-        let token = token.clone();
+        let token = config.token.clone();
+        let chat_ids = config.chat_ids.clone();
         let message = message.to_string();
+        let client = config.client.clone();
+        drop(config);
+
         tauri::async_runtime::spawn(async move {
-            let client = Client::new();
             for chat_id in chat_ids {
                 let body = SendMessageRequest {
                     chat_id,

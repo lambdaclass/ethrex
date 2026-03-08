@@ -311,11 +311,12 @@ pub async fn stop_appchain(
     runner: State<'_, Arc<ProcessRunner>>,
     tg_manager: State<'_, Arc<TelegramBotManager>>,
 ) -> Result<(), String> {
-    let name = am.get_appchain(&id).map(|c| c.name.clone()).unwrap_or_default();
+    let config = am.get_appchain(&id)
+        .ok_or_else(|| format!("Appchain with id '{id}' not found"))?;
     runner.stop_chain(&id).await?;
     am.update_status(&id, AppchainStatus::Stopped);
     am.add_log(&id, "Appchain stopped by user.".to_string());
-    tg_manager.notify(&format!("🔴 앱체인 '{name}' 이(가) 중지되었습니다."));
+    tg_manager.notify(&format!("🔴 앱체인 '{}' 이(가) 중지되었습니다.", config.name));
     Ok(())
 }
 
@@ -549,7 +550,7 @@ pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String
 }
 
 // ============================================================================
-// Telegram Bot Config (stored in OS Keychain)
+// Telegram Bot Config (stored in data dir)
 // ============================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -567,8 +568,14 @@ fn telegram_config_path() -> Result<std::path::PathBuf, String> {
     Ok(dir.join("telegram.json"))
 }
 
-#[tauri::command]
-pub fn get_telegram_config() -> Result<TelegramConfig, String> {
+fn mask_token(token: &str) -> String {
+    if token.is_empty() { return String::new(); }
+    if token.len() < 12 { return "***".to_string(); }
+    format!("{}...{}", &token[..8], &token[token.len()-4..])
+}
+
+/// Internal helper: reads telegram config from disk without masking.
+fn read_telegram_config() -> Result<TelegramConfig, String> {
     let path = telegram_config_path()?;
     match std::fs::read_to_string(&path) {
         Ok(json) => {
@@ -588,13 +595,21 @@ pub fn get_telegram_config() -> Result<TelegramConfig, String> {
 }
 
 #[tauri::command]
+pub fn get_telegram_config() -> Result<TelegramConfig, String> {
+    let mut config = read_telegram_config()?;
+    // Mask token before returning to frontend
+    config.bot_token = mask_token(&config.bot_token);
+    Ok(config)
+}
+
+#[tauri::command]
 pub fn save_telegram_config(
     bot_token: String,
     allowed_chat_ids: String,
     tg_manager: State<Arc<TelegramBotManager>>,
 ) -> Result<(), String> {
     log::info!("[TG] save_telegram_config: token={}, ids={}", if bot_token == "__keep__" { "__keep__" } else { "***" }, allowed_chat_ids);
-    let existing = get_telegram_config()?;
+    let existing = read_telegram_config()?;
 
     let final_token = if bot_token == "__keep__" {
         existing.bot_token
@@ -615,8 +630,11 @@ pub fn save_telegram_config(
     // Restart bot if running (to pick up new token/chat IDs)
     if existing.enabled && tg_manager.is_running() {
         tg_manager.stop();
-        let _ = tg_manager.start();
-        log::info!("[TG] bot restarted with new config");
+        if let Err(e) = tg_manager.start() {
+            log::warn!("[TG] bot failed to restart with new config: {e}");
+        } else {
+            log::info!("[TG] bot restarted with new config");
+        }
     }
 
     Ok(())
@@ -628,7 +646,7 @@ pub fn toggle_telegram_bot(
     tg_manager: State<Arc<TelegramBotManager>>,
 ) -> Result<bool, String> {
     // Update enabled in config file
-    let mut config = get_telegram_config()?;
+    let mut config = read_telegram_config()?;
     config.enabled = enabled;
     let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
     let path = telegram_config_path()?;
@@ -643,7 +661,6 @@ pub fn toggle_telegram_bot(
             Err(e) => {
                 log::warn!("[TG] failed to start bot: {e}");
                 // Revert enabled
-                let mut config = get_telegram_config()?;
                 config.enabled = false;
                 let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
                 std::fs::write(&path, &json).map_err(|e| format!("Failed to save: {e}"))?;

@@ -62,11 +62,7 @@ export default function SettingsView() {
   const loadTelegramConfig = async () => {
     try {
       const cfg = await invoke<{ bot_token: string; allowed_chat_ids: string; enabled: boolean }>('get_telegram_config')
-      if (cfg.bot_token) {
-        setTgMaskedToken(cfg.bot_token.slice(0, 8) + '...' + cfg.bot_token.slice(-4))
-      } else {
-        setTgMaskedToken('')
-      }
+      setTgMaskedToken(cfg.bot_token || '')
       setTgChatIds(cfg.allowed_chat_ids)
       setTgEnabled(cfg.enabled)
       const running = await invoke<boolean>('get_telegram_bot_status')
