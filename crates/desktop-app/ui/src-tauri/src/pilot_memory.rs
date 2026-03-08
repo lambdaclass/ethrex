@@ -92,6 +92,10 @@ impl PilotMemory {
             result: None,
         };
         self.append_jsonl(&self.sessions_path(), &record);
+        // Probabilistic cleanup: ~1% chance per message to avoid unbounded growth
+        if rand::random::<u8>() < 3 {
+            self.cleanup_sessions();
+        }
     }
 
     pub fn append_action(&self, chat_id: i64, action: &str, result: &str) {

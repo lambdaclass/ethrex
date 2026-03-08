@@ -29,6 +29,13 @@ const BRIEFING_GAP_SECS: i64 = 6 * 3600; // 6 hours
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 300; // 5 minutes
 const LOCAL_SERVER_URL: &str = "http://127.0.0.1:5002";
 
+/// Pending destructive action awaiting user confirmation
+#[derive(Debug, Clone)]
+struct PendingAction {
+    action: ParsedAction,
+    expires_at: chrono::DateTime<chrono::Utc>,
+}
+
 pub struct TelegramBot {
     token: String,
     allowed_chat_ids: Vec<i64>,
@@ -38,6 +45,8 @@ pub struct TelegramBot {
     runner: Arc<ProcessRunner>,
     memory: Arc<PilotMemory>,
     chat_history: Mutex<HashMap<i64, Vec<ChatMessage>>>,
+    /// Pending destructive actions per chat_id (backend-enforced confirmation)
+    pending_confirms: Mutex<HashMap<i64, PendingAction>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +125,7 @@ impl TelegramBot {
             runner,
             memory,
             chat_history: Mutex::new(HashMap::new()),
+            pending_confirms: Mutex::new(HashMap::new()),
         })
     }
 
@@ -154,6 +164,7 @@ impl TelegramBot {
             runner,
             memory,
             chat_history: Mutex::new(HashMap::new()),
+            pending_confirms: Mutex::new(HashMap::new()),
         }
     }
 
@@ -276,6 +287,31 @@ impl TelegramBot {
             }
         }
 
+        // Check for pending destructive action confirmation
+        {
+            let mut pending = self.pending_confirms.lock().await;
+            if let Some(pa) = pending.remove(&chat_id) {
+                let confirmed = text.contains("확인") || text.contains("삭제") || text.to_lowercase().contains("yes") || text.to_lowercase().contains("confirm");
+                if chrono::Utc::now() < pa.expires_at && confirmed {
+                    let result = self.execute_action_unchecked(chat_id, &pa.action).await;
+                    self.memory.append_action(
+                        chat_id,
+                        &format!("{}:{}", pa.action.name, format_params(&pa.action.params)),
+                        &result,
+                    );
+                    self.send_message(chat_id, &result).await;
+                    self.memory.append_message(chat_id, "user", &text);
+                    self.memory.append_message(chat_id, "assistant", &result);
+                    return;
+                } else {
+                    self.send_message(chat_id, "취소되었습니다.").await;
+                    self.memory.append_message(chat_id, "user", &text);
+                    self.memory.append_message(chat_id, "assistant", "취소되었습니다.");
+                    return;
+                }
+            }
+        }
+
         // /start and /help are handled directly, everything else goes through AI
         if text == "/start" {
             self.cmd_start(chat_id, &message.from).await;
@@ -373,9 +409,9 @@ impl TelegramBot {
         // Save user message to memory
         self.memory.append_message(chat_id, "user", text);
 
-        // Build context
+        // Build context (live = real Docker container state)
         let appchain_context = build_appchain_context(&self.appchain_manager);
-        let deployment_context = build_deployment_context();
+        let deployment_context = build_deployment_context_live().await;
         let pilot_context = self.memory.load_recent_context(chat_id, 20, 20);
 
         // Build chat history for AI
@@ -461,7 +497,32 @@ impl TelegramBot {
 
     // ── ACTION execution engine ──
 
+    /// Destructive actions that require backend-enforced confirmation
+    const DESTRUCTIVE_ACTIONS: &'static [&'static str] = &["delete_appchain", "delete_deployment"];
+
+    /// Execute action with confirmation gate for destructive operations
     async fn execute_action(&self, chat_id: i64, action: &ParsedAction) -> String {
+        if Self::DESTRUCTIVE_ACTIONS.contains(&action.name.as_str()) {
+            // Store pending action — user must confirm within 2 minutes
+            let pending = PendingAction {
+                action: action.clone(),
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(120),
+            };
+            self.pending_confirms.lock().await.insert(chat_id, pending);
+            let target = action.params.get("name")
+                .or_else(|| action.params.get("id"))
+                .cloned()
+                .unwrap_or_else(|| "대상".to_string());
+            return format!(
+                "⚠️ {}을(를) 정말 삭제하시겠습니까?\n2분 이내에 \"확인\" 또는 \"yes\"라고 답해주세요.",
+                target
+            );
+        }
+        self.execute_action_unchecked(chat_id, action).await
+    }
+
+    /// Execute action without confirmation (called after confirmation or for non-destructive ops)
+    async fn execute_action_unchecked(&self, chat_id: i64, action: &ParsedAction) -> String {
         match action.name.as_str() {
             "start_appchain" => self.action_start_appchain(chat_id, &action.params).await,
             "stop_appchain" => self.action_stop_appchain(chat_id, &action.params).await,
@@ -472,8 +533,14 @@ impl TelegramBot {
             "create_appchain" => self.action_create_appchain(chat_id, &action.params).await,
             "update_summary" => {
                 if let Some(content) = action.params.get("content") {
-                    self.memory.update_summary(content);
-                    "📝 요약 업데이트됨".to_string()
+                    // Sanitize: strip potential prompt injection patterns
+                    let sanitized = sanitize_summary(content);
+                    if sanitized.len() > 2000 {
+                        "❌ 요약이 너무 깁니다 (최대 2000자)".to_string()
+                    } else {
+                        self.memory.update_summary(&sanitized);
+                        "📝 요약 업데이트됨".to_string()
+                    }
                 } else {
                     "❌ content 파라미터 필요".to_string()
                 }
@@ -764,7 +831,10 @@ impl TelegramBot {
     async fn generate_briefing(&self, since: chrono::DateTime<chrono::Utc>) -> String {
         let events = self.memory.events_since(since);
         let chains = self.appchain_manager.list_appchains();
-        let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
+
+        // Use live deployment context for accurate status
+        let live_ctx = build_deployment_context_live().await;
+        let live_deployments = live_ctx["deployments"].as_array();
 
         let now = chrono::Utc::now();
         let gap = now.signed_duration_since(since);
@@ -803,21 +873,39 @@ impl TelegramBot {
         }
 
         // Current status
+        let has_deployments = live_deployments.map(|d| !d.is_empty()).unwrap_or(false);
         briefing.push_str("\n📊 현재 상태:\n");
-        if chains.is_empty() && deployments.is_empty() {
+        if chains.is_empty() && !has_deployments {
             briefing.push_str("  등록된 앱체인 없음\n");
         }
         for chain in &chains {
             let emoji = status_emoji(&chain.status);
             briefing.push_str(&format!("  {} {} — {:?}\n", emoji, chain.name, chain.status));
         }
-        for dep in &deployments {
-            let emoji = match dep.status.as_str() {
-                "running" => "🟢",
-                "stopped" => "🔴",
-                _ => "⚪",
-            };
-            briefing.push_str(&format!("  {} 🐳 {} — {}\n", emoji, dep.name, dep.status));
+        if let Some(deps) = live_deployments {
+            for dep in deps {
+                let status = dep["status"].as_str().unwrap_or("unknown");
+                let name = dep["name"].as_str().unwrap_or("?");
+                let emoji = match status {
+                    "running" => "🟢",
+                    "stopped" => "🔴",
+                    "partial" => "🟡",
+                    _ => "⚪",
+                };
+                // Show container breakdown for partial status
+                let containers = dep["containers"].as_array();
+                let detail = if status == "partial" {
+                    if let Some(cs) = containers {
+                        let running = cs.iter().filter(|c| c["state"] == "running").count();
+                        format!(" ({}/{} running)", running, cs.len())
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                briefing.push_str(&format!("  {} 🐳 {} — {}{}\n", emoji, name, status, detail));
+            }
         }
 
         // Activity statistics
@@ -911,6 +999,20 @@ fn format_params(params: &HashMap<String, String>) -> String {
         .join(",")
 }
 
+/// Sanitize AI-generated summary to prevent persistent prompt injection.
+/// Strips patterns that could manipulate future LLM behavior.
+fn sanitize_summary(content: &str) -> String {
+    let mut s = content.to_string();
+    // Remove instruction-like patterns
+    for pattern in &["[ACTION:", "[SYSTEM:", "```system", "## SYSTEM", "## Instructions", "IGNORE PREVIOUS", "ignore above"] {
+        while let Some(pos) = s.to_lowercase().find(&pattern.to_lowercase()) {
+            let end = s[pos..].find(']').or(s[pos..].find('\n')).unwrap_or(s[pos..].len());
+            s.replace_range(pos..pos + end, "[FILTERED]");
+        }
+    }
+    s
+}
+
 /// Truncate a string at a UTF-8 safe boundary
 fn truncate_utf8(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
@@ -979,6 +1081,58 @@ pub fn build_deployment_context() -> serde_json::Value {
             })
         })
         .collect();
+
+    serde_json::json!({
+        "deployments": summaries,
+        "total_count": deployments.len(),
+    })
+}
+
+/// Build deployment context with live container status from Docker.
+/// This is async because it queries the local-server for real-time container state.
+pub async fn build_deployment_context_live() -> serde_json::Value {
+    let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
+    let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
+
+    let mut summaries = Vec::new();
+    for d in &deployments {
+        // Fetch live container status
+        let containers = proxy.get_containers(&d.id).await.unwrap_or_default();
+        let container_info: Vec<serde_json::Value> = containers
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "service": c.service,
+                    "state": c.state,
+                    "status": c.status,
+                })
+            })
+            .collect();
+
+        // Determine live status from containers
+        let live_status = if containers.is_empty() {
+            d.status.clone()
+        } else if containers.iter().all(|c| c.state == "running") {
+            "running".to_string()
+        } else if containers.iter().all(|c| c.state == "exited" || c.state == "dead") {
+            "stopped".to_string()
+        } else {
+            "partial".to_string() // some running, some not
+        };
+
+        summaries.push(serde_json::json!({
+            "id": d.id,
+            "name": d.name,
+            "program": d.program_slug,
+            "status": live_status,
+            "chain_id": d.chain_id,
+            "l1_port": d.l1_port,
+            "l2_port": d.l2_port,
+            "phase": d.phase,
+            "error": d.error_message,
+            "containers": container_info,
+        }));
+    }
 
     serde_json::json!({
         "deployments": summaries,
@@ -1252,7 +1406,13 @@ impl TelegramBotManager {
                     if !errors.is_empty() {
                         // Use hash of error content to detect new vs stale errors
                         let sample = errors.last().unwrap_or(&"unknown error");
-                        let key = format!("log_error:{}:{}", dep.id, &sample[..sample.len().min(80)]);
+                        let hash = {
+                            use sha2::Digest;
+                            let mut h = sha2::Sha256::new();
+                            h.update(sample.as_bytes());
+                            hex::encode(&h.finalize()[..8])
+                        };
+                        let key = format!("log_error:{}:{}", dep.id, hash);
                         current_issues.insert(key.clone());
                         if !alerted.contains(&key) {
                             let truncated = truncate_utf8(sample, 200);
