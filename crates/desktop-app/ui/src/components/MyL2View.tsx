@@ -50,6 +50,8 @@ export interface L2Config {
   l2Port: number | null
   dockerProject: string | null
   errorMessage: string | null
+  bridgeAddress: string | null
+  proposerAddress: string | null
 }
 
 function deploymentToL2Config(d: DeploymentFromDB): L2Config {
@@ -80,6 +82,8 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     l2Port: d.l2_port,
     dockerProject: d.docker_project,
     errorMessage: d.error_message,
+    bridgeAddress: d.bridge_address,
+    proposerAddress: d.proposer_address,
   }
 }
 
