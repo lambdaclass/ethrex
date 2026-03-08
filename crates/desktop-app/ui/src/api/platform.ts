@@ -8,7 +8,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
-const DEFAULT_PLATFORM_URL = 'https://platform.tokamak.network'
+const DEFAULT_PLATFORM_URL = 'https://tokamak-appchain.vercel.app'
 
 // Keychain-backed token management
 export const platformAuth = {
@@ -112,7 +112,8 @@ class PlatformAPI {
   }
 
   async me() {
-    return this.fetch<{ user: PlatformUser }>('/api/auth/me')
+    const data = await this.fetch<PlatformUser>('/api/auth/me')
+    return { user: data }
   }
 
   async logout() {

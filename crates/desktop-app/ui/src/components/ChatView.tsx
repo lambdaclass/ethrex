@@ -68,6 +68,7 @@ function actionLabel(action: ChatAction, lang: Lang): string {
 interface ChatViewProps {
   onNavigate?: (view: ViewType) => void
   onCreateWithNetwork?: (network: NetworkMode) => void
+  isVisible?: boolean
 }
 
 interface AiConfig {
@@ -84,7 +85,7 @@ interface TokenUsage {
   limit: number
 }
 
-export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewProps) {
+export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }: ChatViewProps) {
   const { lang } = useLang()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -108,6 +109,48 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
   useEffect(() => {
     loadAiMode()
   }, [])
+
+  // Refresh login/usage state when chat becomes visible
+  // (e.g., after logging in/out from Settings)
+  const prevVisible = useRef(false)
+  const platformUserRef = useRef(platformUser)
+  platformUserRef.current = platformUser
+
+  useEffect(() => {
+    if (isVisible && !prevVisible.current && aiMode === 'tokamak') {
+      refreshTokamakState()
+    }
+    prevVisible.current = !!isVisible
+  }, [isVisible, aiMode])
+
+  const refreshTokamakState = async () => {
+    const wasLoggedIn = !!platformUserRef.current
+    try {
+      const user = await invoke<{ name: string; email: string }>('get_platform_user')
+      if (!platformUserRef.current && user) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: lang === 'ko'
+            ? `✅ ${user.name} (${user.email})으로 로그인되었습니다.`
+            : `✅ Logged in as ${user.name} (${user.email}).`
+        }])
+      }
+      setPlatformUser(user)
+      const usage = await invoke<TokenUsage>('get_token_usage')
+      setTokenUsage(usage)
+    } catch {
+      if (wasLoggedIn) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: lang === 'ko'
+            ? '🔒 로그아웃되었습니다. Tokamak AI를 사용하려면 다시 로그인하세요.'
+            : '🔒 Logged out. Please log in again to use Tokamak AI.'
+        }])
+      }
+      setPlatformUser(null)
+      setTokenUsage(null)
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -135,15 +178,24 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     try {
       const usage = await invoke<TokenUsage>('get_token_usage')
       setTokenUsage(usage)
-      if (messages.length === 0) {
-        setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
+      try {
+        const user = await invoke<{ name: string; email: string }>('get_platform_user')
+        setPlatformUser(user)
+      } catch {
+        setPlatformUser(null)
       }
+      setMessages(prev => prev.length === 0
+        ? [{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }]
+        : prev
+      )
     } catch (e) {
       const errorStr = `${e}`
       if (errorStr.includes('login_required')) {
-        if (messages.length === 0) {
-          setMessages([{ role: 'assistant', content: t('chat.loginRequired', lang) }])
-        }
+        setPlatformUser(null)
+        setMessages(prev => prev.length === 0
+          ? [{ role: 'assistant', content: t('chat.loginRequired', lang) }]
+          : prev
+        )
       }
     }
   }
@@ -219,15 +271,56 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
   }
 
   const [loggingIn, setLoggingIn] = useState(false)
+  const [platformUser, setPlatformUser] = useState<{ name: string; email: string } | null>(null)
 
   const handlePlatformLogin = async () => {
     if (loggingIn) return
     setLoggingIn(true)
-    setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loggingIn', lang) }])
     try {
-      await invoke<string>('login_with_platform')
-      setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loginSuccess', lang) }])
-      await loadTokamakUsage()
+      // Step 1: Get login URL
+      const result = await invoke<{ login_url: string; code: string; code_verifier: string }>('start_platform_login')
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: lang === 'ko'
+          ? `아래 링크를 클릭하여 로그인하세요:\n__link__${result.login_url}`
+          : `Click the link below to login:\n__link__${result.login_url}`
+      }])
+
+      // Step 2: Poll for token
+      const token = await invoke<string>('poll_platform_login', {
+        code: result.code,
+        codeVerifier: result.code_verifier,
+      })
+      if (token) {
+        // poll_platform_login already stored the token in AiProvider memory,
+        // so get_platform_user and get_token_usage will use the correct token.
+        let userName = ''
+        let userEmail = ''
+        try {
+          const user = await invoke<{ name: string; email: string }>('get_platform_user')
+          setPlatformUser(user)
+          userName = user.name
+          userEmail = user.email
+        } catch {
+          // user info fetch failed
+        }
+        let usageInfo = ''
+        try {
+          const usage = await invoke<TokenUsage>('get_token_usage')
+          setTokenUsage(usage)
+          usageInfo = lang === 'ko'
+            ? `\n📊 토큰 사용량: ${usage.used.toLocaleString()} / ${usage.limit.toLocaleString()}`
+            : `\n📊 Token usage: ${usage.used.toLocaleString()} / ${usage.limit.toLocaleString()}`
+        } catch {
+          // usage fetch failed
+        }
+        const loginMsg = userName
+          ? (lang === 'ko'
+              ? `✅ ${userName} (${userEmail})으로 로그인되었습니다.${usageInfo}`
+              : `✅ Logged in as ${userName} (${userEmail}).${usageInfo}`)
+          : t('chat.loginSuccess', lang)
+        setMessages(prev => [...prev, { role: 'assistant', content: loginMsg }])
+      }
     } catch (e) {
       const errorStr = `${e}`
       if (errorStr.includes('login_timeout')) {
@@ -548,8 +641,11 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
   }
 
   // Chat screen (both Tokamak AI and Custom connected)
+  const tokamakLoggedIn = aiMode === 'tokamak' && platformUser
   const headerSubtitle = aiMode === 'tokamak'
-    ? t('chat.tokamakConnected', lang)
+    ? (platformUser
+        ? `${platformUser.email}`
+        : (lang === 'ko' ? '로그인 필요' : 'Login required'))
     : `${config?.provider === 'claude' ? 'Claude' : config?.provider} · ${config?.model}`
 
   return (
@@ -560,13 +656,13 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
           <div className="w-9 h-9 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-sm">🤖</div>
           <div>
             <div className="text-sm font-semibold">{t('chat.title', lang)}</div>
-            <div className="text-[11px] text-[var(--color-success)]">{headerSubtitle}</div>
+            <div className={`text-[11px] ${tokamakLoggedIn || aiMode === 'custom' ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>{headerSubtitle}</div>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
           {aiMode === 'tokamak' && tokenUsage && (
             <span className="text-[10px] text-[var(--color-text-secondary)] mr-1">
-              {tokenUsage.used.toLocaleString()}/{tokenUsage.limit.toLocaleString()}
+              🔑 {tokenUsage.used.toLocaleString()}/{tokenUsage.limit.toLocaleString()}
             </span>
           )}
           {aiMode === 'custom' && !showDisconnect && (
@@ -623,7 +719,30 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
                       : 'bg-[var(--color-bubble-ai)] text-[var(--color-text-primary)] rounded-bl-sm'
                   }`}
                 >
-                  {cleanText}
+                  {cleanText.split('\n').map((line, li) => {
+                    if (line.startsWith('__link__')) {
+                      const url = line.replace('__link__', '')
+                      const isTrusted = url.startsWith('https://tokamak-appchain.vercel.app/')
+                        || url.startsWith('https://tokamak-platform.vercel.app/')
+                      return (
+                        <span key={li}>
+                          {li > 0 && '\n'}
+                          {isTrusted ? (
+                            <a
+                              href="#"
+                              onClick={e => { e.preventDefault(); open(url) }}
+                              className="text-[var(--color-accent)] underline cursor-pointer break-all"
+                            >
+                              {lang === 'ko' ? '🔗 로그인 페이지 열기' : '🔗 Open login page'}
+                            </a>
+                          ) : (
+                            <span className="text-[var(--color-text-secondary)]">[untrusted link blocked]</span>
+                          )}
+                        </span>
+                      )
+                    }
+                    return <span key={li}>{li > 0 && '\n'}{line}</span>
+                  })}
                 </div>
                 {actions.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">

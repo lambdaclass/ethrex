@@ -1,25 +1,23 @@
 /**
  * Daily token limiter for Tokamak AI proxy.
- * Tracks per-user usage using Upstash Redis.
- *
- * Key format: "ai:usage:{userId}:{YYYY-MM-DD}"
- * Value: cumulative token count (number)
- * TTL: 48 hours (auto-cleanup)
+ * Tracks per-user usage with persistent storage:
+ *   1. Upstash Redis (if configured)
+ *   2. Neon Postgres (fallback — always available on Vercel)
  *
  * Env:
- *   UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+ *   UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN — optional
+ *   DATABASE_URL — Postgres (required, already used by auth/db)
  *   TOKAMAK_AI_DAILY_LIMIT — default daily token limit (default: 50000)
  */
 
-const TTL_SECONDS = 48 * 60 * 60; // 48h (covers timezone edge cases)
+import { sql } from "./db";
 
 export function getDefaultDailyLimit(): number {
   return parseInt(process.env.TOKAMAK_AI_DAILY_LIMIT || "50000", 10);
 }
 
-function todayKey(userId: string): string {
-  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
-  return `ai:usage:${userId}:${date}`;
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
 }
 
 export interface TokenUsage {
@@ -28,9 +26,12 @@ export interface TokenUsage {
   remaining: number;
 }
 
-export async function getUsage(userId: string, limit: number): Promise<TokenUsage> {
+export async function getUsage(
+  userId: string,
+  limit: number
+): Promise<TokenUsage> {
   const kv = await getKV();
-  const key = todayKey(userId);
+  const key = `ai:usage:${userId}:${todayDate()}`;
   const used = ((await kv.get(key)) as number) || 0;
   return {
     used,
@@ -39,7 +40,10 @@ export async function getUsage(userId: string, limit: number): Promise<TokenUsag
   };
 }
 
-export async function checkLimit(userId: string, limit: number): Promise<void> {
+export async function checkLimit(
+  userId: string,
+  limit: number
+): Promise<void> {
   const usage = await getUsage(userId, limit);
   if (usage.remaining <= 0) {
     throw new LimitExceededError(usage);
@@ -52,9 +56,8 @@ export async function recordUsage(
   limit: number
 ): Promise<TokenUsage> {
   const kv = await getKV();
-  const key = todayKey(userId);
+  const key = `ai:usage:${userId}:${todayDate()}`;
   const newTotal = await kv.incrby(key, tokens);
-  await kv.expire(key, TTL_SECONDS);
   return {
     used: newTotal,
     limit,
@@ -70,22 +73,23 @@ export class LimitExceededError extends Error {
   }
 }
 
-// ---- Redis connection ----
+// ---- KV abstraction ----
 
 let kvInstance: KVLike | null = null;
 
 interface KVLike {
   get(key: string): Promise<unknown>;
-  set(key: string, value: unknown, opts?: { ex?: number }): Promise<unknown>;
   incrby(key: string, value: number): Promise<number>;
-  expire(key: string, seconds: number): Promise<unknown>;
 }
 
 async function getKV(): Promise<KVLike> {
   if (kvInstance) return kvInstance;
 
-  // Try Upstash Redis first
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  // Option 1: Upstash Redis (fastest)
+  if (
+    process.env.UPSTASH_REDIS_REST_URL &&
+    process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
     const { Redis } = await import("@upstash/redis");
     const redis = new Redis({
       url: process.env.UPSTASH_REDIS_REST_URL,
@@ -93,44 +97,48 @@ async function getKV(): Promise<KVLike> {
     });
     kvInstance = {
       get: (key) => redis.get(key),
-      set: (key, value, opts) => redis.set(key, value, opts?.ex ? { ex: opts.ex } : undefined),
       incrby: (key, value) => redis.incrby(key, value),
-      expire: (key, seconds) => redis.expire(key, seconds),
     };
     return kvInstance;
   }
 
-  // Fallback: in-memory store for local development
-  console.warn("[token-limiter] Upstash Redis not configured, using in-memory store");
-  const store = new Map<string, { value: unknown; expiry: number }>();
+  // Option 2: Postgres (always available on Vercel via Neon)
+  await ensureUsageTable();
   kvInstance = {
-    async get(key: string) {
-      const entry = store.get(key);
-      if (!entry) return null;
-      if (Date.now() > entry.expiry) {
-        store.delete(key);
-        return null;
-      }
-      return entry.value;
-    },
-    async set(key: string, value: unknown, opts?: { ex?: number }) {
-      const expiry = Date.now() + (opts?.ex || TTL_SECONDS) * 1000;
-      store.set(key, { value, expiry });
+    async get(key: string): Promise<unknown> {
+      const { rows } = await sql`
+        SELECT value FROM ai_usage WHERE key = ${key}
+      `;
+      return rows.length > 0 ? Number(rows[0].value) : null;
     },
     async incrby(key: string, value: number): Promise<number> {
-      const entry = store.get(key);
-      const current = (entry && Date.now() <= entry.expiry ? entry.value as number : 0);
-      const newTotal = current + value;
-      const expiry = entry?.expiry || Date.now() + TTL_SECONDS * 1000;
-      store.set(key, { value: newTotal, expiry });
-      return newTotal;
-    },
-    async expire(key: string, seconds: number) {
-      const entry = store.get(key);
-      if (entry) {
-        entry.expiry = Date.now() + seconds * 1000;
-      }
+      const { rows } = await sql`
+        INSERT INTO ai_usage (key, value) VALUES (${key}, ${value})
+        ON CONFLICT (key) DO UPDATE SET value = ai_usage.value + ${value}
+        RETURNING value
+      `;
+      return Number(rows[0].value);
     },
   };
   return kvInstance;
+}
+
+let usageTableReady = false;
+
+async function ensureUsageTable() {
+  if (usageTableReady) return;
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_usage (
+      key TEXT PRIMARY KEY,
+      value INTEGER NOT NULL DEFAULT 0
+    )
+  `;
+  // Cleanup old records (keys older than 7 days)
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  await sql`
+    DELETE FROM ai_usage WHERE key < ${"ai:usage:0:" + cutoff}
+  `;
+  usageTableReady = true;
 }

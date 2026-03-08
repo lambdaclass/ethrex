@@ -67,11 +67,13 @@ pub fn set_ai_mode(mode: AiMode, ai: State<Arc<AiProvider>>) -> Result<(), Strin
 #[tauri::command]
 pub async fn get_token_usage(ai: State<'_, Arc<AiProvider>>) -> Result<TokenUsage, String> {
     let ai = ai.inner().clone();
-    // Try to fetch from server; fall back to cached usage
     match ai.fetch_token_usage().await {
         Ok(usage) => Ok(usage),
         Err(e) if e == "login_required" => Err(e),
-        Err(_) => Ok(ai.get_token_usage()),
+        Err(e) => {
+            log::warn!("[AI] fetch_token_usage failed: {e}, using cache");
+            Ok(ai.get_token_usage())
+        }
     }
 }
 
@@ -418,41 +420,44 @@ pub async fn open_deployment_ui(
 }
 
 // ============================================================================
-// Platform Auth (token stored in OS Keychain)
+// Platform Auth (token stored in file — keychain unreliable in dev mode)
 // ============================================================================
 
-const KEYRING_SERVICE_PLATFORM: &str = "tokamak-appchain";
-const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
+fn platform_token_path() -> Result<std::path::PathBuf, String> {
+    let dir = dirs::data_dir()
+        .ok_or_else(|| "Cannot find data directory".to_string())?
+        .join("tokamak-appchain");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create dir: {e}"))?;
+    Ok(dir.join("platform-token.json"))
+}
 
 #[tauri::command]
 pub fn save_platform_token(token: String) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
-        .map_err(|e| format!("Keyring error: {e}"))?;
-    entry
-        .set_password(&token)
+    let path = platform_token_path()?;
+    let data = serde_json::json!({ "token": token });
+    let content = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("Failed to serialize token: {e}"))?;
+    std::fs::write(&path, content)
         .map_err(|e| format!("Failed to save token: {e}"))
 }
 
 #[tauri::command]
-pub fn get_platform_token() -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
-        .map_err(|e| format!("Keyring error: {e}"))?;
-    match entry.get_password() {
-        Ok(token) => Ok(Some(token)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Failed to get token: {e}")),
-    }
+pub fn get_platform_token(
+    ai: State<'_, Arc<crate::ai_provider::AiProvider>>,
+) -> Result<Option<String>, String> {
+    Ok(ai.get_platform_token_value())
 }
 
 #[tauri::command]
-pub fn delete_platform_token() -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE_PLATFORM, KEYRING_PLATFORM_TOKEN)
-        .map_err(|e| format!("Keyring error: {e}"))?;
-    match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Failed to delete token: {e}")),
+pub fn delete_platform_token(
+    ai: State<'_, Arc<crate::ai_provider::AiProvider>>,
+) -> Result<(), String> {
+    ai.clear_platform_token();
+    let path = platform_token_path()?;
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete token: {e}"))?;
     }
+    Ok(())
 }
 
 // Desktop login flow constants
@@ -481,18 +486,23 @@ struct DesktopTokenResponse {
     error: Option<String>,
 }
 
-/// Desktop login flow with PKCE: request code → open browser → poll for token
+#[derive(Serialize)]
+pub struct LoginStartResult {
+    login_url: String,
+    code: String,
+    code_verifier: String,
+}
+
+/// Step 1: Generate PKCE code and return login URL (also tries to open browser)
 #[tauri::command]
-pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn start_platform_login(app: tauri::AppHandle) -> Result<LoginStartResult, String> {
     use tauri_plugin_shell::ShellExt;
 
     let client = reqwest::Client::new();
     let base_url = crate::ai_provider::PLATFORM_BASE_URL;
 
-    // 1. Generate PKCE pair
     let (code_verifier, code_challenge) = generate_pkce();
 
-    // 2. Request a desktop auth code with code_challenge
     let resp = client
         .post(format!("{base_url}/api/auth/desktop-code"))
         .json(&serde_json::json!({ "code_challenge": code_challenge }))
@@ -506,30 +516,43 @@ pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String
         .map_err(|e| format!("Failed to parse response: {e}"))?;
 
     let code = result.code;
-
-    // 3. Open browser with login page
     let login_url = format!("{base_url}/login?desktop_code={code}");
-    app.shell()
-        .open(&login_url, None)
-        .map_err(|e| format!("Failed to open browser: {e}"))?;
 
-    // 4. Poll for token with code_verifier (PKCE proof)
+    // Try to open browser (best-effort)
+    let _ = app.shell().open(&login_url, None);
+
+    Ok(LoginStartResult {
+        login_url,
+        code,
+        code_verifier,
+    })
+}
+
+/// Step 2: Poll for token after user logs in via browser
+#[tauri::command]
+pub async fn poll_platform_login(
+    code: String,
+    code_verifier: String,
+    ai: State<'_, Arc<AiProvider>>,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let base_url = crate::ai_provider::PLATFORM_BASE_URL;
+
     for _ in 0..POLL_MAX_ATTEMPTS {
         tokio::time::sleep(tokio::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
 
-        let poll_resp = client
-            .get(format!(
-                "{base_url}/api/auth/desktop-token?code={code}&code_verifier={code_verifier}"
-            ))
-            .send()
-            .await;
-
-        let poll_resp = match poll_resp {
+        let url = format!("{base_url}/api/auth/desktop-token?code={code}&code_verifier={code_verifier}");
+        let poll_resp = match client.get(&url).send().await {
             Ok(r) => r,
             Err(_) => continue,
         };
 
-        let poll_result: DesktopTokenResponse = match poll_resp.json().await {
+        let body = match poll_resp.text().await {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let poll_result: DesktopTokenResponse = match serde_json::from_str(&body) {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -537,16 +560,51 @@ pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String
         if poll_result.status.as_deref() == Some("ready") {
             if let Some(token) = poll_result.token {
                 save_platform_token(token.clone())?;
+                ai.set_platform_token(token.clone());
                 return Ok(token);
             }
         }
 
-        if poll_result.error.as_deref().is_some_and(|e| e == "code_expired" || e == "invalid_code") {
+        if poll_result
+            .error
+            .as_deref()
+            .is_some_and(|e| e == "code_expired" || e == "invalid_code")
+        {
             return Err("login_timeout".to_string());
         }
     }
 
     Err("login_timeout".to_string())
+}
+
+/// Fetch current user info from Platform API using stored token
+#[tauri::command]
+pub async fn get_platform_user(
+    ai: State<'_, Arc<crate::ai_provider::AiProvider>>,
+) -> Result<serde_json::Value, String> {
+    let token = ai.get_platform_token_value()
+        .ok_or_else(|| "no_token".to_string())?;
+    fetch_platform_me(&token).await
+}
+
+async fn fetch_platform_me(token: &str) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::new();
+    let base_url = crate::ai_provider::PLATFORM_BASE_URL;
+
+    let resp = client
+        .get(format!("{base_url}/api/auth/me"))
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch user: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err("auth_failed".to_string());
+    }
+
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Failed to parse user: {e}"))
 }
 
 // ============================================================================

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-shell'
 import { useLang, useTheme } from '../App'
 import { t, langNames } from '../i18n'
-import { platformAPI, type PlatformUser } from '../api/platform'
+import type { PlatformUser } from '../api/platform'
 import type { Lang } from '../i18n'
 import type { Theme } from '../App'
 
@@ -24,10 +25,10 @@ export default function SettingsView() {
 
   // Platform account
   const [platformUser, setPlatformUser] = useState<PlatformUser | null>(null)
-  const [platformEmail, setPlatformEmail] = useState('')
-  const [platformPassword, setPlatformPassword] = useState('')
   const [platformLogging, setPlatformLogging] = useState(false)
   const [platformError, setPlatformError] = useState('')
+  const [platformLoginUrl, setPlatformLoginUrl] = useState('')
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
 
   useEffect(() => {
     loadConfig()
@@ -47,15 +48,11 @@ export default function SettingsView() {
   }
 
   const loadPlatformUser = async () => {
-    const hasToken = await platformAPI.loadToken()
-    if (hasToken) {
-      try {
-        const { user } = await platformAPI.me()
-        setPlatformUser(user)
-      } catch {
-        // Token expired or invalid
-        setPlatformUser(null)
-      }
+    try {
+      const user = await invoke<PlatformUser>('get_platform_user')
+      setPlatformUser(user)
+    } catch {
+      setPlatformUser(null)
     }
   }
 
@@ -110,24 +107,44 @@ export default function SettingsView() {
   }
 
   const handlePlatformLogin = async () => {
-    if (!platformEmail.trim() || !platformPassword.trim()) return
+    if (platformLogging) return
     setPlatformLogging(true)
     setPlatformError('')
+    setPlatformLoginUrl('')
     try {
-      const { user } = await platformAPI.login(platformEmail.trim(), platformPassword.trim())
-      setPlatformUser(user)
-      setPlatformEmail('')
-      setPlatformPassword('')
+      const result = await invoke<{ login_url: string; code: string; code_verifier: string }>('start_platform_login')
+      setPlatformLoginUrl(result.login_url)
+
+      const token = await invoke<string>('poll_platform_login', {
+        code: result.code,
+        codeVerifier: result.code_verifier,
+      })
+      if (token) {
+        await loadPlatformUser()
+        setPlatformLoginUrl('')
+      }
     } catch (e: unknown) {
-      setPlatformError(e instanceof Error ? e.message : String(e))
+      const errorStr = e instanceof Error ? e.message : String(e)
+      if (errorStr.includes('login_timeout')) {
+        setPlatformError(lang === 'ko' ? '로그인 시간이 초과되었습니다. 다시 시도하세요.' : 'Login timed out. Please try again.')
+      } else {
+        setPlatformError(errorStr)
+      }
+      setPlatformLoginUrl('')
     } finally {
       setPlatformLogging(false)
     }
   }
 
   const handlePlatformLogout = async () => {
-    await platformAPI.logout()
-    setPlatformUser(null)
+    try {
+      await invoke('delete_platform_token')
+      setPlatformUser(null)
+      setShowLogoutConfirm(false)
+    } catch (e) {
+      console.error('Logout failed:', e)
+      setPlatformError(`${e}`)
+    }
   }
 
   const handleSave = async () => {
@@ -267,64 +284,79 @@ export default function SettingsView() {
               </div>
               <p className="text-[11px] text-[var(--color-text-secondary)]">
                 {lang === 'ko'
-                  ? '오픈 앱체인 등록, 프로그램 스토어 등 Platform 기능을 사용할 수 있습니다.'
-                  : 'You can use Platform features like Open Appchain registration and Program Store.'}
+                  ? '앱체인을 공개 앱체인으로 퍼블리시할 수 있고, Tokamak AI(토큰 한도만큼)를 사용할 수 있습니다.'
+                  : 'You can publish appchains and use Tokamak AI (within token limits).'}
               </p>
-              <button
-                onClick={handlePlatformLogout}
-                className="w-full border border-[var(--color-error)] text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer"
-              >
-                {lang === 'ko' ? '로그아웃' : 'Logout'}
-              </button>
+              {!showLogoutConfirm ? (
+                <button
+                  onClick={() => setShowLogoutConfirm(true)}
+                  className="w-full border border-[var(--color-error)] text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer"
+                >
+                  {lang === 'ko' ? '로그아웃' : 'Logout'}
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-[var(--color-error)] font-medium">
+                    {lang === 'ko'
+                      ? '로그아웃하면 Tokamak AI 연결도 해제됩니다.'
+                      : 'Logging out will also disconnect Tokamak AI.'}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handlePlatformLogout}
+                      className="flex-1 bg-[var(--color-error)] text-white rounded-lg py-2 text-[13px] font-medium cursor-pointer"
+                    >
+                      {lang === 'ko' ? '로그아웃 확인' : 'Confirm Logout'}
+                    </button>
+                    <button
+                      onClick={() => setShowLogoutConfirm(false)}
+                      className="flex-1 border border-[var(--color-border)] rounded-lg py-2 text-[13px] cursor-pointer hover:bg-[var(--color-border)]"
+                    >
+                      {lang === 'ko' ? '취소' : 'Cancel'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-[11px] text-[var(--color-text-secondary)]">
                 {lang === 'ko'
-                  ? 'Platform 계정으로 로그인하면 오픈 앱체인 등록 등의 기능을 사용할 수 있습니다.'
-                  : 'Login with your Platform account to register Open Appchains and more.'}
+                  ? 'Platform 계정으로 로그인하면 앱체인을 공개 앱체인으로 퍼블리시할 수 있고, Tokamak AI(토큰 한도만큼)를 사용할 수 있습니다.'
+                  : 'Login with your Platform account to publish appchains and use Tokamak AI (within token limits).'}
               </p>
-              <div>
-                <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
-                  {lang === 'ko' ? '이메일' : 'Email'}
-                </label>
-                <input
-                  type="email"
-                  value={platformEmail}
-                  onChange={e => setPlatformEmail(e.target.value)}
-                  placeholder="email@example.com"
-                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
-                  {lang === 'ko' ? '비밀번호' : 'Password'}
-                </label>
-                <input
-                  type="password"
-                  value={platformPassword}
-                  onChange={e => setPlatformPassword(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handlePlatformLogin()}
-                  placeholder="••••••••"
-                  className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
-                />
-              </div>
               <button
                 onClick={handlePlatformLogin}
-                disabled={platformLogging || !platformEmail.trim() || !platformPassword.trim()}
+                disabled={platformLogging}
                 className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]"
               >
                 {platformLogging
-                  ? (lang === 'ko' ? '로그인 중...' : 'Logging in...')
-                  : (lang === 'ko' ? '로그인' : 'Login')}
+                  ? (lang === 'ko' ? '로그인 대기 중...' : 'Waiting for login...')
+                  : (lang === 'ko' ? '브라우저에서 로그인' : 'Login in Browser')}
               </button>
+              {platformLoginUrl && (
+                <div className="space-y-1">
+                  <p className="text-[11px] text-[var(--color-text-secondary)]">
+                    {lang === 'ko'
+                      ? '브라우저가 열리지 않으면 아래 링크를 클릭하세요:'
+                      : 'If browser did not open, click the link below:'}
+                  </p>
+                  <a
+                    href="#"
+                    onClick={e => { e.preventDefault(); open(platformLoginUrl) }}
+                    className="text-[12px] text-[var(--color-accent)] underline cursor-pointer break-all block"
+                  >
+                    {lang === 'ko' ? '🔗 로그인 페이지 열기' : '🔗 Open login page'}
+                  </a>
+                </div>
+              )}
               {platformError && (
                 <p className="text-[12px] text-[var(--color-error)]">{platformError}</p>
               )}
               <p className="text-[10px] text-[var(--color-text-secondary)]">
                 {lang === 'ko'
-                  ? '인증 토큰은 OS 키체인에 안전하게 저장됩니다.'
-                  : 'Auth token is securely stored in the OS keychain.'}
+                  ? '인증 토큰은 안전하게 저장됩니다.'
+                  : 'Auth token is stored securely.'}
               </p>
             </div>
           )}
