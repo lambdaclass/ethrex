@@ -139,11 +139,47 @@ export default function MyL2View() {
   const loadDeployments = useCallback(async () => {
     try {
       const rows = await invoke<DeploymentFromDB[]>('list_docker_deployments')
-      setL2s(rows.map(deploymentToL2Config))
+      const configs = rows.map(deploymentToL2Config)
+
+      // Reconcile live Docker status with stale SQLite status
+      const updated = await Promise.all(configs.map(async (l2) => {
+        try {
+          const containers = await invoke<{ name: string; service: string; state: string; status: string; ports: string; image: string; id: string }[]>(
+            'get_docker_containers', { id: l2.id }
+          )
+          if (containers.length === 0) {
+            // No containers → actually stopped (unless deploying)
+            if (l2.status === 'running') {
+              return { ...l2, status: 'stopped' as const }
+            }
+            return l2
+          }
+          const allRunning = containers.every(c => c.state === 'running')
+          const anyRunning = containers.some(c => c.state === 'running')
+          const anyError = containers.some(c => c.state === 'exited' || c.state === 'dead')
+
+          if (allRunning) {
+            return { ...l2, status: 'running' as const }
+          } else if (anyError && !anyRunning) {
+            return { ...l2, status: 'error' as const, errorMessage: l2.errorMessage || (lang === 'ko' ? '컨테이너 비정상 종료' : 'Container exited') }
+          } else if (anyRunning) {
+            // Partial — some running, some not
+            const downServices = containers.filter(c => c.state !== 'running').map(c => c.service).join(', ')
+            return { ...l2, status: 'running' as const, errorMessage: `${lang === 'ko' ? '일부 중지' : 'Partial'}: ${downServices}` }
+          } else {
+            return { ...l2, status: 'stopped' as const }
+          }
+        } catch {
+          // Can't reach local-server — keep DB status
+          return l2
+        }
+      }))
+
+      setL2s(updated)
     } catch (e) {
       console.error('Failed to load deployments:', e)
     }
-  }, [])
+  }, [lang])
 
   useEffect(() => {
     loadDeployments()
