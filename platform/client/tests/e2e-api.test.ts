@@ -275,6 +275,67 @@
     assert(res.status === 401, `expected 401, got ${res.status}`);
   });
 
+  // ---- Desktop Auth Flow ----
+  console.log("\n=== Desktop Auth ===");
+
+  let desktopCode = "";
+
+  await test("POST /api/auth/desktop-code — generates code", async () => {
+    const { status, data } = await api("/api/auth/desktop-code", { method: "POST" });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.code.startsWith("dc_"), `code should start with dc_, got ${data.code}`);
+    assert(data.expires_in === 300, `expires_in should be 300, got ${data.expires_in}`);
+    desktopCode = data.code;
+  });
+
+  await test("GET /api/auth/desktop-token — pending before login", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.status === "pending", `should be pending, got ${data.status}`);
+  });
+
+  await test("PUT /api/auth/desktop-code — links token to code", async () => {
+    // First login to get a fresh token
+    const loginRes = await api("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail, password: testPassword }),
+    });
+    const freshToken = loginRes.data.token;
+    sessionToken = freshToken;
+
+    const { status, data } = await api("/api/auth/desktop-code", {
+      method: "PUT",
+      body: JSON.stringify({ code: desktopCode, token: freshToken }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.ok === true, "should return ok");
+  });
+
+  await test("GET /api/auth/desktop-token — ready after link", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.status === "ready", `should be ready, got ${data.status}`);
+    assert(data.token.startsWith("ps_"), `token should start with ps_, got ${data.token}`);
+  });
+
+  await test("GET /api/auth/desktop-token — code consumed after retrieval", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}`);
+    assert(status === 404, `expected 404 after consumption, got ${status}`);
+    assert(data.error === "invalid_code", `should be invalid_code, got ${data.error}`);
+  });
+
+  await test("GET /api/auth/desktop-token — invalid code returns 404", async () => {
+    const { status, data } = await api("/api/auth/desktop-token?code=dc_invalid");
+    assert(status === 404, `expected 404, got ${status}`);
+    assert(data.error === "invalid_code", `should be invalid_code, got ${data.error}`);
+  });
+
+  await test("GET /api/auth/desktop-token — missing code returns 400", async () => {
+    const { status, data } = await api("/api/auth/desktop-token");
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "code_required", `should be code_required, got ${data.error}`);
+  });
+
   // ---- Cleanup ----
   console.log("\n=== Cleanup ===");
 

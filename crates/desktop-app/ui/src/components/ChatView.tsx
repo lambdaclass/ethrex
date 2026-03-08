@@ -40,6 +40,7 @@ const actionLabels: Record<string, Record<Lang, string>> = {
   create_appchain: { ko: '앱체인 만들기', en: 'Create Appchain' },
   stop_appchain: { ko: '앱체인 중지', en: 'Stop Appchain' },
   open_appchain: { ko: '앱체인 보기', en: 'View Appchain' },
+  login: { ko: '로그인', en: 'Log in' },
 }
 
 const viewLabels: Record<string, Record<Lang, string>> = {
@@ -217,6 +218,28 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
     }
   }
 
+  const [loggingIn, setLoggingIn] = useState(false)
+
+  const handlePlatformLogin = async () => {
+    if (loggingIn) return
+    setLoggingIn(true)
+    setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loggingIn', lang) }])
+    try {
+      await invoke<string>('login_with_platform')
+      setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loginSuccess', lang) }])
+      await loadTokamakUsage()
+    } catch (e) {
+      const errorStr = `${e}`
+      if (errorStr.includes('login_timeout')) {
+        setMessages(prev => [...prev, { role: 'assistant', content: t('chat.loginTimeout', lang) }])
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: `Login error: ${e}` }])
+      }
+    } finally {
+      setLoggingIn(false)
+    }
+  }
+
   const executeAction = useCallback((action: ChatAction) => {
     switch (action.action) {
       case 'navigate':
@@ -238,6 +261,9 @@ export default function ChatView({ onNavigate, onCreateWithNetwork }: ChatViewPr
         if (action.params.id && onNavigate) {
           onNavigate('myl2')
         }
+        break
+      case 'login':
+        handlePlatformLogin()
         break
     }
   }, [onNavigate, onCreateWithNetwork])

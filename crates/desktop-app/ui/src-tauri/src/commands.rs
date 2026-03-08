@@ -437,6 +437,75 @@ pub fn delete_platform_token() -> Result<(), String> {
     }
 }
 
+/// Desktop login flow: request code → open browser → poll for token
+#[tauri::command]
+pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let client = reqwest::Client::new();
+    let base_url = "https://tokamak-platform.vercel.app";
+
+    // 1. Request a desktop auth code
+    let resp = client
+        .post(format!("{base_url}/api/auth/desktop-code"))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to request code: {e}"))?;
+
+    let result: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    let code = result["code"]
+        .as_str()
+        .ok_or("No code in response")?
+        .to_string();
+
+    // 2. Open browser with login page
+    let login_url = format!("{base_url}/login?desktop_code={code}");
+    app.shell()
+        .open(&login_url, None)
+        .map_err(|e| format!("Failed to open browser: {e}"))?;
+
+    // 3. Poll for token (every 2s, up to 5 min)
+    let max_attempts = 150;
+    for _ in 0..max_attempts {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        let poll_resp = client
+            .get(format!("{base_url}/api/auth/desktop-token?code={code}"))
+            .send()
+            .await;
+
+        let poll_resp = match poll_resp {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let poll_result: serde_json::Value = match poll_resp.json().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let status = poll_result["status"].as_str().unwrap_or("");
+
+        if status == "ready" {
+            if let Some(token) = poll_result["token"].as_str() {
+                // Save token to keychain
+                save_platform_token(token.to_string())?;
+                return Ok(token.to_string());
+            }
+        }
+
+        if poll_result["error"].as_str().is_some_and(|e| e == "code_expired" || e == "invalid_code") {
+            return Err("login_timeout".to_string());
+        }
+    }
+
+    Err("login_timeout".to_string())
+}
+
 // ============================================================================
 // Deployment DB (read-only) + Docker lifecycle (proxied to local-server)
 // ============================================================================
