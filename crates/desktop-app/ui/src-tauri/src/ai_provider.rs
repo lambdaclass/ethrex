@@ -7,7 +7,6 @@ const KEYRING_SERVICE: &str = "tokamak-appchain";
 const KEYRING_API_KEY: &str = "ai-api-key";
 const KEYRING_AI_CONFIG: &str = "ai-config";
 const KEYRING_AI_MODE: &str = "ai-mode";
-const KEYRING_PLATFORM_TOKEN: &str = "platform-token";
 
 const PLATFORM_AI_BASE_URL: &str = "/api/ai";
 const PLATFORM_BASE_URL: &str = "https://tokamak-platform.vercel.app";
@@ -49,6 +48,7 @@ pub struct AiProvider {
     config: Mutex<AiConfig>,
     mode: Mutex<AiMode>,
     last_usage: Mutex<Option<TokenUsage>>,
+    platform_token: Mutex<Option<String>>,
     client: Client,
 }
 
@@ -58,10 +58,14 @@ impl AiProvider {
         config.api_key = Self::load_api_key().unwrap_or_default();
         let mode = Self::load_mode().unwrap_or(AiMode::Tokamak);
 
+        // Try to load platform token from file
+        let cached_token = Self::read_stored_token().ok();
+
         Self {
             config: Mutex::new(config),
             mode: Mutex::new(mode),
             last_usage: Mutex::new(None),
+            platform_token: Mutex::new(cached_token),
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
@@ -71,14 +75,48 @@ impl AiProvider {
 
     // ---- Platform Session Token ----
 
-    fn get_platform_token() -> Result<String, String> {
-        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_PLATFORM_TOKEN)
-            .map_err(|e| format!("Keyring error: {e}"))?;
-        match entry.get_password() {
-            Ok(token) => Ok(token),
-            Err(keyring::Error::NoEntry) => Err("login_required".to_string()),
-            Err(e) => Err(format!("Failed to get token: {e}")),
+    fn read_stored_token() -> Result<String, String> {
+        let dir = dirs::data_dir()
+            .ok_or_else(|| "login_required".to_string())?
+            .join("tokamak-appchain");
+        let path = dir.join("platform-token.json");
+        if !path.exists() {
+            return Err("login_required".to_string());
         }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|_| "login_required".to_string())?;
+        let data: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|_| "login_required".to_string())?;
+        data.get("token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "login_required".to_string())
+    }
+
+    fn get_platform_token(&self) -> Result<String, String> {
+        // Memory is the single source of truth.
+        // File is only read once during AiProvider::new().
+        self.platform_token
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| "login_required".to_string())
+    }
+
+    /// Set platform token in memory (called after login)
+    pub fn set_platform_token(&self, token: String) {
+        *self.platform_token.lock().unwrap() = Some(token);
+    }
+
+    /// Clear platform token and cached usage from memory (called on logout)
+    pub fn clear_platform_token(&self) {
+        *self.platform_token.lock().unwrap() = None;
+        *self.last_usage.lock().unwrap() = None;
+    }
+
+    /// Public accessor for platform token
+    pub fn get_platform_token_value(&self) -> Option<String> {
+        self.get_platform_token().ok()
     }
 
     // ---- AI Mode ----
@@ -128,9 +166,14 @@ impl AiProvider {
         }
     }
 
-    /// Fetch current usage from server
+    /// Fetch current usage from server (uses stored platform token)
     pub async fn fetch_token_usage(&self) -> Result<TokenUsage, String> {
-        let token = Self::get_platform_token()?;
+        let token = self.get_platform_token()?;
+        self.fetch_usage_internal(&token).await
+    }
+
+    /// Fetch current usage from server using the stored platform token
+    async fn fetch_usage_internal(&self, token: &str) -> Result<TokenUsage, String> {
         let url = format!("{}{}/usage", PLATFORM_BASE_URL, PLATFORM_AI_BASE_URL);
 
         let response = self
@@ -294,7 +337,7 @@ impl AiProvider {
         messages: Vec<ChatMessage>,
         context_json: Option<&str>,
     ) -> Result<String, String> {
-        let token = Self::get_platform_token()?;
+        let token = self.get_platform_token()?;
         let system_prompt = Self::build_system_prompt(context_json);
 
         let mut api_messages = vec![serde_json::json!({
@@ -559,4 +602,198 @@ Only include actions when they directly help the user accomplish their request. 
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test-only constructor — no keyring/file I/O
+    fn make_provider() -> AiProvider {
+        AiProvider {
+            config: Mutex::new(AiConfig::default()),
+            mode: Mutex::new(AiMode::Tokamak),
+            last_usage: Mutex::new(None),
+            platform_token: Mutex::new(None),
+            client: Client::new(),
+        }
+    }
+
+    // ================================================================
+    // 1. Platform Token — single source of truth
+    // ================================================================
+
+    #[test]
+    fn test_token_set_get_clear() {
+        let ai = make_provider();
+
+        // 초기 상태: 토큰 없음
+        assert!(ai.get_platform_token_value().is_none());
+        assert!(ai.get_platform_token().is_err());
+
+        // 토큰 설정
+        ai.set_platform_token("token_abc".to_string());
+        assert_eq!(ai.get_platform_token_value(), Some("token_abc".to_string()));
+        assert_eq!(ai.get_platform_token().unwrap(), "token_abc");
+
+        // 토큰 삭제
+        ai.clear_platform_token();
+        assert!(ai.get_platform_token_value().is_none());
+        assert!(ai.get_platform_token().is_err());
+    }
+
+    #[test]
+    fn test_token_overwrite_returns_latest() {
+        let ai = make_provider();
+
+        ai.set_platform_token("old_token".to_string());
+        assert_eq!(ai.get_platform_token().unwrap(), "old_token");
+
+        // 새 토큰으로 교체
+        ai.set_platform_token("new_token".to_string());
+        assert_eq!(ai.get_platform_token().unwrap(), "new_token");
+    }
+
+    #[test]
+    fn test_concurrent_reads_return_same_token() {
+        let ai = Arc::new(make_provider());
+        ai.set_platform_token("shared_token".to_string());
+
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let ai_clone = ai.clone();
+            handles.push(std::thread::spawn(move || {
+                ai_clone.get_platform_token().unwrap()
+            }));
+        }
+
+        let results: Vec<String> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        // 모든 스레드가 동일한 토큰을 읽어야 함
+        assert!(results.iter().all(|t| t == "shared_token"));
+    }
+
+    // ================================================================
+    // 2. Token Usage — update_usage_from_server
+    // ================================================================
+
+    #[test]
+    fn test_usage_default_when_empty() {
+        let ai = make_provider();
+        let usage = ai.get_token_usage();
+        assert_eq!(usage.used, 0);
+        assert_eq!(usage.limit, 50_000);
+    }
+
+    #[test]
+    fn test_usage_update_from_server() {
+        let ai = make_provider();
+
+        let server_response = serde_json::json!({
+            "used": 9208,
+            "limit": 50000,
+            "remaining": 40792
+        });
+        ai.update_usage_from_server(&server_response);
+
+        let usage = ai.get_token_usage();
+        assert_eq!(usage.used, 9208);
+        assert_eq!(usage.limit, 50000);
+    }
+
+    #[test]
+    fn test_usage_server_value_always_wins() {
+        let ai = make_provider();
+
+        // 서버 값: 9208
+        ai.update_usage_from_server(&serde_json::json!({"used": 9208, "limit": 50000}));
+        assert_eq!(ai.get_token_usage().used, 9208);
+
+        // 서버 값: 854 (작은 값이라도 서버가 진실) — 꼼수 없음
+        ai.update_usage_from_server(&serde_json::json!({"used": 854, "limit": 50000}));
+        assert_eq!(ai.get_token_usage().used, 854);
+
+        // 서버 값: 9500 (증가)
+        ai.update_usage_from_server(&serde_json::json!({"used": 9500, "limit": 50000}));
+        assert_eq!(ai.get_token_usage().used, 9500);
+    }
+
+    #[test]
+    fn test_usage_ignores_invalid_response() {
+        let ai = make_provider();
+        ai.update_usage_from_server(&serde_json::json!({"used": 100, "limit": 50000}));
+
+        // 잘못된 응답은 기존 값 유지
+        ai.update_usage_from_server(&serde_json::json!({"error": "bad"}));
+        assert_eq!(ai.get_token_usage().used, 100);
+    }
+
+    // ================================================================
+    // 3. Logout — 토큰 + 사용량 동시 초기화
+    // ================================================================
+
+    #[test]
+    fn test_clear_token_also_clears_usage() {
+        let ai = make_provider();
+
+        ai.set_platform_token("tok_123".to_string());
+        ai.update_usage_from_server(&serde_json::json!({"used": 5000, "limit": 50000}));
+        assert_eq!(ai.get_token_usage().used, 5000);
+
+        // 로그아웃 (clear_platform_token)
+        ai.clear_platform_token();
+        assert!(ai.get_platform_token_value().is_none());
+        // 사용량도 초기화되어야 함
+        assert_eq!(ai.get_token_usage().used, 0);
+    }
+
+    #[test]
+    fn test_logout_then_login_preserves_server_usage() {
+        let ai = make_provider();
+
+        // 로그인 → 사용
+        ai.set_platform_token("tok_session1".to_string());
+        ai.update_usage_from_server(&serde_json::json!({"used": 9208, "limit": 50000}));
+
+        // 로그아웃
+        ai.clear_platform_token();
+        assert_eq!(ai.get_token_usage().used, 0); // 로컬 캐시 초기화됨
+
+        // 재로그인 → 서버에서 기존 사용량 조회
+        ai.set_platform_token("tok_session2".to_string());
+        ai.update_usage_from_server(&serde_json::json!({"used": 9208, "limit": 50000}));
+        assert_eq!(ai.get_token_usage().used, 9208); // 서버 값 보존
+    }
+
+    // ================================================================
+    // 4. AI Mode
+    // ================================================================
+
+    #[test]
+    fn test_mode_default_tokamak() {
+        let ai = make_provider();
+        assert_eq!(ai.get_mode(), AiMode::Tokamak);
+    }
+
+    // ================================================================
+    // 5. Config masking
+    // ================================================================
+
+    #[test]
+    fn test_config_masked() {
+        let ai = make_provider();
+        *ai.config.lock().unwrap() = AiConfig {
+            provider: "claude".to_string(),
+            api_key: "sk-ant-api03-abcdef1234567890".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+        };
+
+        let masked = ai.get_config_masked();
+        assert!(masked.api_key.starts_with("sk-a"));
+        assert!(masked.api_key.ends_with("7890"));
+        assert!(masked.api_key.contains("..."));
+        // 원본은 변하지 않아야 함
+        assert_eq!(ai.get_config().api_key, "sk-ant-api03-abcdef1234567890");
+    }
+
+    use std::sync::Arc;
 }

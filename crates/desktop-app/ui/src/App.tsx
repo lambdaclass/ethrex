@@ -28,7 +28,7 @@ export const useTheme = () => useContext(AppContext)
 
 function App() {
   const [activeView, setActiveView] = useState<ViewType>('home')
-  const [createNetwork, setCreateNetwork] = useState<NetworkMode | undefined>()
+  const [_createNetwork, setCreateNetwork] = useState<NetworkMode | undefined>()
   const [lang, setLang] = useState<Lang>(() => {
     return (localStorage.getItem('tokamak-lang') as Lang) || 'ko'
   })
@@ -64,13 +64,13 @@ function App() {
     switch (activeView) {
       case 'home': return <HomeView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} />
       case 'myl2': return <MyL2View />
-      case 'chat': return <ChatView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} />
       case 'nodes': return <NodeControlView />
       case 'dashboard': return <DashboardView />
       case 'openl2': return <OpenL2View />
       case 'wallet': return <WalletView />
       case 'store': return <ProgramStoreView />
       case 'settings': return <SettingsView />
+      default: return null
     }
   }
 
@@ -79,7 +79,11 @@ function App() {
       <div className="flex h-screen w-screen">
         <Sidebar activeView={activeView} onNavigate={navigateTo} />
         <main className="flex-1 flex flex-col overflow-hidden">
-          {renderView()}
+          {/* ChatView is always mounted to preserve chat history and state */}
+          <div className={activeView === 'chat' ? 'flex flex-col h-full' : 'hidden'}>
+            <ChatView onNavigate={navigateTo} onCreateWithNetwork={navigateToCreate} isVisible={activeView === 'chat'} />
+          </div>
+          {activeView !== 'chat' && renderView()}
         </main>
       </div>
     </AppContext.Provider>
