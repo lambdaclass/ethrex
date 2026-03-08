@@ -32,6 +32,7 @@ export default function SettingsView() {
   useEffect(() => {
     loadConfig()
     loadPlatformUser()
+    loadTelegramConfig()
   }, [])
 
   const loadConfig = async () => {
@@ -55,6 +56,56 @@ export default function SettingsView() {
         // Token expired or invalid
         setPlatformUser(null)
       }
+    }
+  }
+
+  const loadTelegramConfig = async () => {
+    try {
+      const cfg = await invoke<{ bot_token: string; allowed_chat_ids: string; enabled: boolean }>('get_telegram_config')
+      setTgMaskedToken(cfg.bot_token || '')
+      setTgChatIds(cfg.allowed_chat_ids)
+      setTgEnabled(cfg.enabled)
+      const running = await invoke<boolean>('get_telegram_bot_status')
+      setTgBotRunning(running)
+    } catch {
+      // defaults
+    }
+  }
+
+  const handleTelegramToggle = async (enabled: boolean) => {
+    setTgToggling(true)
+    setTgResult(null)
+    try {
+      await invoke<boolean>('toggle_telegram_bot', { enabled })
+      setTgEnabled(enabled)
+      setTgBotRunning(enabled)
+      setTgResult({ ok: true, msg: enabled
+        ? (lang === 'ko' ? 'Telegram Bot이 시작되었습니다.' : 'Telegram Bot started.')
+        : (lang === 'ko' ? 'Telegram Bot이 중지되었습니다.' : 'Telegram Bot stopped.')
+      })
+    } catch (e) {
+      setTgResult({ ok: false, msg: `${e}` })
+    } finally {
+      setTgToggling(false)
+    }
+  }
+
+  const handleTelegramSave = async () => {
+    setTgSaving(true)
+    setTgResult(null)
+    try {
+      const tokenToSend = tgToken.trim() ? tgToken.trim() : (tgMaskedToken ? '__keep__' : '')
+      await invoke('save_telegram_config', {
+        botToken: tokenToSend,
+        allowedChatIds: tgChatIds.trim(),
+      })
+      setTgResult({ ok: true, msg: t('settings.telegramSaved', lang) })
+      setTgToken('')
+      await loadTelegramConfig()
+    } catch (e) {
+      setTgResult({ ok: false, msg: `${e}` })
+    } finally {
+      setTgSaving(false)
     }
   }
 
@@ -102,6 +153,16 @@ export default function SettingsView() {
       setSaving(false)
     }
   }
+
+  // Telegram Bot
+  const [tgToken, setTgToken] = useState('')
+  const [tgMaskedToken, setTgMaskedToken] = useState('')
+  const [tgChatIds, setTgChatIds] = useState('')
+  const [tgEnabled, setTgEnabled] = useState(false)
+  const [tgBotRunning, setTgBotRunning] = useState(false)
+  const [tgToggling, setTgToggling] = useState(false)
+  const [tgSaving, setTgSaving] = useState(false)
+  const [tgResult, setTgResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -343,6 +404,70 @@ export default function SettingsView() {
           {saveResult && (
             <p className={`text-[12px] ${saveResult.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
               {saveResult.msg}
+            </p>
+          )}
+        </section>
+
+        {/* Telegram Bot */}
+        <section className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 space-y-3 border border-[var(--color-border)]">
+          <h2 className="text-[13px] font-medium">{t('settings.telegram', lang)}</h2>
+          <p className="text-[11px] text-[var(--color-text-secondary)]">
+            {t('settings.telegramDesc', lang)}
+          </p>
+          <div className="flex items-center gap-3">
+            <label className={`relative inline-flex items-center ${tgToggling ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+              <input
+                type="checkbox"
+                checked={tgEnabled}
+                onChange={e => handleTelegramToggle(e.target.checked)}
+                disabled={tgToggling || (!tgMaskedToken && !tgToken.trim())}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:bg-[var(--color-accent)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+            </label>
+            <span className="text-[12px]">{t('settings.telegramEnabled', lang)}</span>
+            <span className={`text-[11px] font-medium ${tgBotRunning ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>
+              {tgBotRunning
+                ? (lang === 'ko' ? '● 실행 중' : '● Running')
+                : (lang === 'ko' ? '○ 중지됨' : '○ Stopped')}
+            </span>
+          </div>
+          <div>
+            <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
+              {t('settings.telegramToken', lang)}
+              {tgMaskedToken && <span className="ml-2 text-[var(--color-success)]">({tgMaskedToken})</span>}
+            </label>
+            <input
+              type="password"
+              value={tgToken}
+              onChange={e => setTgToken(e.target.value)}
+              placeholder={tgMaskedToken ? (lang === 'ko' ? '변경하려면 새 토큰을 입력하세요...' : 'Enter new token to change...') : t('settings.telegramTokenPlaceholder', lang)}
+              className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
+            />
+            <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">{t('settings.telegramHowTo', lang)}</p>
+          </div>
+          <div>
+            <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
+              {t('settings.telegramChatIds', lang)}
+            </label>
+            <input
+              type="text"
+              value={tgChatIds}
+              onChange={e => setTgChatIds(e.target.value)}
+              placeholder={t('settings.telegramChatIdsPlaceholder', lang)}
+              className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
+            />
+          </div>
+          <button
+            onClick={handleTelegramSave}
+            disabled={tgSaving}
+            className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]"
+          >
+            {tgSaving ? '...' : t('settings.telegramSave', lang)}
+          </button>
+          {tgResult && (
+            <p className={`text-[12px] ${tgResult.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
+              {tgResult.msg}
             </p>
           )}
         </section>
