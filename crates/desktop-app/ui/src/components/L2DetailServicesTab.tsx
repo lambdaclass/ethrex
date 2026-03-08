@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import { platformAPI } from '../api/platform'
@@ -5,6 +6,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { SectionHeader, KV } from './ui-atoms'
 import type { L2Config } from './MyL2View'
 import type { ContainerInfo, Product } from './L2DetailView'
+
+const SERVICE_NAME_PREFIXES = ['tokamak-app-', 'zk-dex-tools-'] as const
 
 const CORE_SERVICES = [
   { label: 'L1 Node', service: 'tokamak-app-l1', portKey: 'l1Port' as const },
@@ -25,35 +28,31 @@ interface Props {
   products: Product[]
   actionLoading: boolean
   handleAction: (action: 'start' | 'stop') => void
-  isPublic: boolean
-  setIsPublic: (v: boolean) => void
-  publishing: boolean
-  setPublishing: (v: boolean) => void
-  publishError: string
-  setPublishError: (v: string) => void
   platformLoggedIn: boolean
-  publishDesc: string
-  setPublishDesc: (v: string) => void
-  publishScreenshots: string[]
-  setPublishScreenshots: (v: string[]) => void
   onRefresh?: () => void
 }
 
 export default function L2DetailServicesTab({
   l2, ko, containers, products, actionLoading, handleAction,
-  isPublic, setIsPublic, publishing, setPublishing, publishError, setPublishError,
-  platformLoggedIn, publishDesc, setPublishDesc, publishScreenshots, setPublishScreenshots,
-  onRefresh,
+  platformLoggedIn, onRefresh,
 }: Props) {
   const { lang } = useLang()
+  const [isPublic, setIsPublic] = useState(l2.isPublic)
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  const [publishDesc, setPublishDesc] = useState('')
+  const [publishScreenshots, setPublishScreenshots] = useState<string[]>([])
+
+  const stripPrefixes = (s: string) =>
+    SERVICE_NAME_PREFIXES.reduce((acc, p) => acc.replace(p, ''), s)
 
   const svcState = (svc: string): string => {
-    const c = containers.find(c => c.service === svc || c.name?.includes(svc.replace('tokamak-app-', '').replace('zk-dex-tools-', '')))
+    const c = containers.find(c => c.service === svc || c.name?.includes(stripPrefixes(svc)))
     return c ? (c.state || 'stopped') : 'stopped'
   }
 
   const svcPort = (svc: string): string | null => {
-    const c = containers.find(c => c.service === svc || c.name?.includes(svc.replace('tokamak-app-', '').replace('zk-dex-tools-', '')))
+    const c = containers.find(c => c.service === svc || c.name?.includes(stripPrefixes(svc)))
     if (!c?.ports) return null
     const m = c.ports.match(/0\.0\.0\.0:(\d+)/)
     return m ? `:${m[1]}` : null
