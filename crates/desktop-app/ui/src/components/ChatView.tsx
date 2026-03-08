@@ -40,6 +40,7 @@ const actionLabels: Record<string, Record<Lang, string>> = {
   create_appchain: { ko: '앱체인 만들기', en: 'Create Appchain' },
   stop_appchain: { ko: '앱체인 중지', en: 'Stop Appchain' },
   open_appchain: { ko: '앱체인 보기', en: 'View Appchain' },
+  login: { ko: '로그인', en: 'Log in' },
 }
 
 const viewLabels: Record<string, Record<Lang, string>> = {
@@ -354,6 +355,9 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
         if (action.params.id && onNavigate) {
           onNavigate('myl2')
         }
+        break
+      case 'login':
+        handlePlatformLogin()
         break
     }
   }, [onNavigate, onCreateWithNetwork])

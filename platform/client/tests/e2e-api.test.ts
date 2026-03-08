@@ -275,6 +275,100 @@
     assert(res.status === 401, `expected 401, got ${res.status}`);
   });
 
+  // ---- Desktop Auth Flow (PKCE) ----
+  console.log("\n=== Desktop Auth (PKCE) ===");
+
+  let desktopCode = "";
+  const codeVerifier = "test_verifier_" + Date.now();
+
+  // Compute SHA-256 hex of verifier for code_challenge
+  async function sha256hex(input: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  const codeChallenge = await sha256hex(codeVerifier);
+
+  await test("POST /api/auth/desktop-code — generates code with PKCE", async () => {
+    const { status, data } = await api("/api/auth/desktop-code", {
+      method: "POST",
+      body: JSON.stringify({ code_challenge: codeChallenge }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.code.startsWith("dc_"), `code should start with dc_, got ${data.code}`);
+    assert(data.expires_in === 300, `expires_in should be 300, got ${data.expires_in}`);
+    desktopCode = data.code;
+  });
+
+  await test("POST /api/auth/desktop-code — rejects without code_challenge", async () => {
+    const { status, data } = await api("/api/auth/desktop-code", { method: "POST", body: "{}" });
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "code_challenge_required", `should be code_challenge_required, got ${data.error}`);
+  });
+
+  await test("GET /api/auth/desktop-token — pending before login", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=${codeVerifier}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.status === "pending", `should be pending, got ${data.status}`);
+  });
+
+  await test("GET /api/auth/desktop-token — rejects wrong verifier", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=wrong_verifier`);
+    assert(status === 403, `expected 403, got ${status}`);
+    assert(data.error === "invalid_verifier", `should be invalid_verifier, got ${data.error}`);
+  });
+
+  await test("PUT /api/auth/desktop-code — links token (authenticated)", async () => {
+    // Login to get a fresh token
+    const loginRes = await api("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail, password: testPassword }),
+    });
+    const freshToken = loginRes.data.token;
+    sessionToken = freshToken;
+
+    const { status, data } = await api("/api/auth/desktop-code", {
+      method: "PUT",
+      body: JSON.stringify({ code: desktopCode }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.ok === true, "should return ok");
+  });
+
+  await test("PUT /api/auth/desktop-code — rejects without auth", async () => {
+    const saved = sessionToken;
+    sessionToken = "";
+    const { status } = await api("/api/auth/desktop-code", {
+      method: "PUT",
+      body: JSON.stringify({ code: desktopCode }),
+    });
+    sessionToken = saved;
+    assert(status === 401, `expected 401, got ${status}`);
+  });
+
+  await test("GET /api/auth/desktop-token — ready with correct verifier", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=${codeVerifier}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.status === "ready", `should be ready, got ${data.status}`);
+    assert(data.token.startsWith("ps_"), `token should start with ps_, got ${data.token}`);
+  });
+
+  await test("GET /api/auth/desktop-token — code consumed after retrieval", async () => {
+    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=${codeVerifier}`);
+    assert(status === 404, `expected 404 after consumption, got ${status}`);
+    assert(data.error === "invalid_code", `should be invalid_code, got ${data.error}`);
+  });
+
+  await test("GET /api/auth/desktop-token — missing verifier returns 400", async () => {
+    const { status, data } = await api("/api/auth/desktop-token?code=dc_test");
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "code_and_verifier_required", `should be code_and_verifier_required, got ${data.error}`);
+  });
+
   // ---- Cleanup ----
   console.log("\n=== Cleanup ===");
 
