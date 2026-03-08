@@ -1,20 +1,25 @@
 /**
  * Daily token limiter for Tokamak AI proxy.
- * Tracks per-device usage using Upstash Redis.
+ * Tracks per-user usage using Upstash Redis.
  *
- * Key format: "ai:usage:{deviceId}:{YYYY-MM-DD}"
+ * Key format: "ai:usage:{userId}:{YYYY-MM-DD}"
  * Value: cumulative token count (number)
  * TTL: 48 hours (auto-cleanup)
  *
- * Env: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+ * Env:
+ *   UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+ *   TOKAMAK_AI_DAILY_LIMIT — default daily token limit (default: 50000)
  */
 
-const DAILY_TOKEN_LIMIT = 50_000;
 const TTL_SECONDS = 48 * 60 * 60; // 48h (covers timezone edge cases)
 
-function todayKey(deviceId: string): string {
+export function getDefaultDailyLimit(): number {
+  return parseInt(process.env.TOKAMAK_AI_DAILY_LIMIT || "50000", 10);
+}
+
+function todayKey(userId: string): string {
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
-  return `ai:usage:${deviceId}:${date}`;
+  return `ai:usage:${userId}:${date}`;
 }
 
 export interface TokenUsage {
@@ -23,37 +28,37 @@ export interface TokenUsage {
   remaining: number;
 }
 
-export async function getUsage(deviceId: string): Promise<TokenUsage> {
+export async function getUsage(userId: string, limit: number): Promise<TokenUsage> {
   const kv = await getKV();
-  const key = todayKey(deviceId);
+  const key = todayKey(userId);
   const used = ((await kv.get(key)) as number) || 0;
   return {
     used,
-    limit: DAILY_TOKEN_LIMIT,
-    remaining: Math.max(0, DAILY_TOKEN_LIMIT - used),
+    limit,
+    remaining: Math.max(0, limit - used),
   };
 }
 
-export async function checkLimit(deviceId: string): Promise<void> {
-  const usage = await getUsage(deviceId);
+export async function checkLimit(userId: string, limit: number): Promise<void> {
+  const usage = await getUsage(userId, limit);
   if (usage.remaining <= 0) {
     throw new LimitExceededError(usage);
   }
 }
 
 export async function recordUsage(
-  deviceId: string,
-  tokens: number
+  userId: string,
+  tokens: number,
+  limit: number
 ): Promise<TokenUsage> {
   const kv = await getKV();
-  const key = todayKey(deviceId);
-  const current = ((await kv.get(key)) as number) || 0;
-  const newTotal = current + tokens;
-  await kv.set(key, newTotal, { ex: TTL_SECONDS });
+  const key = todayKey(userId);
+  const newTotal = await kv.incrby(key, tokens);
+  await kv.expire(key, TTL_SECONDS);
   return {
     used: newTotal,
-    limit: DAILY_TOKEN_LIMIT,
-    remaining: Math.max(0, DAILY_TOKEN_LIMIT - newTotal),
+    limit,
+    remaining: Math.max(0, limit - newTotal),
   };
 }
 
@@ -72,6 +77,8 @@ let kvInstance: KVLike | null = null;
 interface KVLike {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown, opts?: { ex?: number }): Promise<unknown>;
+  incrby(key: string, value: number): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
 }
 
 async function getKV(): Promise<KVLike> {
@@ -80,10 +87,16 @@ async function getKV(): Promise<KVLike> {
   // Try Upstash Redis first
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
     const { Redis } = await import("@upstash/redis");
-    kvInstance = new Redis({
+    const redis = new Redis({
       url: process.env.UPSTASH_REDIS_REST_URL,
       token: process.env.UPSTASH_REDIS_REST_TOKEN,
     });
+    kvInstance = {
+      get: (key) => redis.get(key),
+      set: (key, value, opts) => redis.set(key, value, opts?.ex ? { ex: opts.ex } : undefined),
+      incrby: (key, value) => redis.incrby(key, value),
+      expire: (key, seconds) => redis.expire(key, seconds),
+    };
     return kvInstance;
   }
 
@@ -103,6 +116,20 @@ async function getKV(): Promise<KVLike> {
     async set(key: string, value: unknown, opts?: { ex?: number }) {
       const expiry = Date.now() + (opts?.ex || TTL_SECONDS) * 1000;
       store.set(key, { value, expiry });
+    },
+    async incrby(key: string, value: number): Promise<number> {
+      const entry = store.get(key);
+      const current = (entry && Date.now() <= entry.expiry ? entry.value as number : 0);
+      const newTotal = current + value;
+      const expiry = entry?.expiry || Date.now() + TTL_SECONDS * 1000;
+      store.set(key, { value: newTotal, expiry });
+      return newTotal;
+    },
+    async expire(key: string, seconds: number) {
+      const entry = store.get(key);
+      if (entry) {
+        entry.expiry = Date.now() + seconds * 1000;
+      }
     },
   };
   return kvInstance;

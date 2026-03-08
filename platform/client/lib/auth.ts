@@ -15,6 +15,7 @@ export interface SessionUser {
   picture: string | null;
   auth_provider: string;
   status: string;
+  daily_ai_limit: number;
 }
 
 export async function createSession(userId: string): Promise<string> {

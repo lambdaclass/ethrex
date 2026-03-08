@@ -254,22 +254,25 @@
   // ---- AI Proxy ----
   console.log("\n=== AI Proxy ===");
 
-  await test("GET /api/ai/usage — returns usage for device", async () => {
-    const res = await fetch(`${BASE}/api/ai/usage`, {
-      headers: { "X-Device-Id": "e2e-test-device-1234567890" },
-    });
-    const data = await res.json();
-    assert(res.status === 200, `expected 200, got ${res.status}: ${JSON.stringify(data)}`);
+  await test("GET /api/ai/usage — returns usage for logged-in user", async () => {
+    const { status, data } = await api("/api/ai/usage");
+    assert(status === 200, `expected 200, got ${status}: ${JSON.stringify(data)}`);
     assert(typeof data.used === "number", "used should be number");
-    assert(data.limit === 50000, `limit should be 50000, got ${data.limit}`);
+    assert(typeof data.limit === "number", "limit should be number");
   });
 
-  await test("POST /api/ai/chat — 400 without device id", async () => {
-    const { status } = await api("/api/ai/chat", {
+  await test("GET /api/ai/usage — 401 without auth", async () => {
+    const res = await fetch(`${BASE}/api/ai/usage`);
+    assert(res.status === 401, `expected 401, got ${res.status}`);
+  });
+
+  await test("POST /api/ai/chat — 401 without auth", async () => {
+    const res = await fetch(`${BASE}/api/ai/chat`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
     });
-    assert(status === 400, `expected 400, got ${status}`);
+    assert(res.status === 401, `expected 401, got ${res.status}`);
   });
 
   // ---- Cleanup ----
