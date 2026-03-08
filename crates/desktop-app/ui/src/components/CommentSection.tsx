@@ -12,6 +12,17 @@ export default function CommentSection({ comments, onCommentsChange, ko }: Comme
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
   const [replyInput, setReplyInput] = useState('')
 
+  const submitReply = (commentId: string) => {
+    if (!replyInput.trim()) return
+    const newReply: Comment = {
+      id: `reply-${Date.now()}`, author: 'me', avatar: 'Me', text: replyInput.trim(),
+      time: ko ? '방금' : 'Just now', likes: 0, liked: false, replies: [],
+    }
+    onCommentsChange(comments.map(c => c.id === commentId ? { ...c, replies: [...c.replies, newReply] } : c))
+    setReplyInput('')
+    setReplyingTo(null)
+  }
+
   return (
     <>
       {/* Comments header */}
@@ -107,30 +118,18 @@ export default function CommentSection({ comments, onCommentsChange, ko }: Comme
                     Me
                   </div>
                   <div className="flex-1">
-                    {(() => {
-                      const submitReply = () => {
-                        if (!replyInput.trim()) return
-                        const newReply: Comment = {
-                          id: `reply-${Date.now()}`, author: 'me', avatar: 'Me', text: replyInput.trim(),
-                          time: ko ? '방금' : 'Just now', likes: 0, liked: false, replies: [],
-                        }
-                        onCommentsChange(comments.map(c => c.id === comment.id ? { ...c, replies: [...c.replies, newReply] } : c))
-                        setReplyInput('')
-                        setReplyingTo(null)
-                      }
-                      return (<>
                     <input
                       type="text"
                       value={replyInput}
                       onChange={e => setReplyInput(e.target.value)}
                       placeholder={ko ? '답글을 입력하세요...' : 'Write a reply...'}
-                      onKeyDown={e => { if (e.key === 'Enter') submitReply() }}
+                      onKeyDown={e => { if (e.key === 'Enter') submitReply(comment.id) }}
                       className="w-full bg-[var(--color-bg-sidebar)] rounded-lg px-2.5 py-1.5 text-[11px] outline-none border border-[var(--color-border)]"
                       autoFocus
                     />
                     <div className="flex items-center gap-2 mt-1.5">
                       <button
-                        onClick={submitReply}
+                        onClick={() => submitReply(comment.id)}
                         disabled={!replyInput.trim()}
                         className="bg-[#3b82f6] text-white text-[10px] font-medium px-3 py-1 rounded-lg hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-40"
                       >
@@ -143,8 +142,6 @@ export default function CommentSection({ comments, onCommentsChange, ko }: Comme
                         {ko ? '취소' : 'Cancel'}
                       </button>
                     </div>
-                      </>)
-                    })()}
                   </div>
                 </div>
               </div>
