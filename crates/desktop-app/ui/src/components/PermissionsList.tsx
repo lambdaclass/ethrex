@@ -1,4 +1,5 @@
-import { DelegationLevel, DELEGATION_LEVELS, PERMISSIONS, LEVEL_ORDER } from './wallet-constants'
+import type { DelegationLevel } from './wallet-constants'
+import { DELEGATION_LEVELS, PERMISSIONS, LEVEL_ORDER } from './wallet-constants'
 
 export interface PermissionsListProps {
   ko: boolean

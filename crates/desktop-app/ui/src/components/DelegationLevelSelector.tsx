@@ -1,4 +1,5 @@
-import { DelegationLevel, DELEGATION_LEVELS } from './wallet-constants'
+import type { DelegationLevel } from './wallet-constants'
+import { DELEGATION_LEVELS } from './wallet-constants'
 
 export interface DelegationLevelSelectorProps {
   ko: boolean
