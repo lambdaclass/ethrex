@@ -48,9 +48,9 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   ]
 
   const processes = [
-    { name: t('myl2.sequencer', lang), status: l2.sequencerStatus },
-    { name: t('myl2.prover', lang), status: l2.proverStatus },
-    { name: 'L2 Client', status: l2.status === 'running' ? 'running' : 'stopped' },
+    { name: 'L1 Node', status: l2.sequencerStatus },
+    { name: 'L2 Node', status: l2.status === 'running' ? 'running' : 'stopped' },
+    { name: 'Prover', status: l2.proverStatus },
   ]
 
   return (
