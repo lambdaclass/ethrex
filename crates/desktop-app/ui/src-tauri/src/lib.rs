@@ -5,6 +5,7 @@ mod deployment_db;
 mod local_server;
 mod process_manager;
 mod runner;
+mod telegram_bot;
 
 use commands::*;
 use std::sync::Arc;
@@ -18,6 +19,10 @@ use tauri::{
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(process_manager::ProcessManager::new())
+        .manage(Arc::new(appchain_manager::AppchainManager::new()))
+        .manage(Arc::new(runner::ProcessRunner::new()))
+        .manage(Arc::new(ai_provider::AiProvider::new()))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -63,6 +68,16 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Telegram bot manager (dynamic start/stop from Settings)
+            let ai = app.state::<Arc<ai_provider::AiProvider>>().inner().clone();
+            let am = app.state::<Arc<appchain_manager::AppchainManager>>().inner().clone();
+            let tg_manager = Arc::new(telegram_bot::TelegramBotManager::new(ai, am));
+            // Auto-start if configured
+            if let Ok(()) = tg_manager.start() {
+                log::info!("Telegram bot auto-started");
+            }
+            app.manage(tg_manager);
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -72,11 +87,6 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .manage(process_manager::ProcessManager::new())
-        .manage(Arc::new(appchain_manager::AppchainManager::new()))
-        .manage(Arc::new(runner::ProcessRunner::new()))
-        .manage(Arc::new(ai_provider::AiProvider::new()))
-        // LocalServer is managed in setup() above
         .invoke_handler(tauri::generate_handler![
             get_ai_config,
             save_ai_config,
@@ -115,6 +125,11 @@ pub fn run() {
             stop_docker_deployment,
             start_docker_deployment,
             get_docker_containers,
+            get_telegram_config,
+            save_telegram_config,
+            toggle_telegram_bot,
+            get_telegram_bot_status,
+            send_telegram_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,6 +6,7 @@ use crate::deployment_db::{self, ContainerInfo, DeploymentProxy, DeploymentRow};
 use crate::local_server::LocalServer;
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
 use crate::runner::ProcessRunner;
+use crate::telegram_bot::TelegramBotManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -236,10 +237,12 @@ pub async fn start_appchain_setup(
     id: String,
     am: State<'_, Arc<AppchainManager>>,
     runner: State<'_, Arc<ProcessRunner>>,
+    tg_manager: State<'_, Arc<TelegramBotManager>>,
 ) -> Result<(), String> {
     let config = am
         .get_appchain(&id)
         .ok_or(format!("Appchain not found: {id}"))?;
+    tg_manager.notify(&format!("🟡 앱체인 '{}' 생성을 시작합니다.", config.name));
 
     let has_prover = config.prover_type != "none";
     am.init_setup_progress(&id, &config.network_mode, has_prover);
@@ -258,11 +261,22 @@ pub async fn start_appchain_setup(
             // Clone Arc handles for the background task
             let am_clone = am.inner().clone();
             let runner_clone = runner.inner().clone();
+            let tg_clone = tg_manager.inner().clone();
             let chain_id = id.clone();
+            let chain_name = config.name.clone();
 
             // Spawn the actual process in background
             tokio::spawn(async move {
-                ProcessRunner::start_local_dev(runner_clone, am_clone, chain_id).await;
+                ProcessRunner::start_local_dev(runner_clone, am_clone.clone(), chain_id.clone()).await;
+                // Notify after setup completes
+                let status = am_clone.get_appchain(&chain_id)
+                    .map(|c| format!("{:?}", c.status))
+                    .unwrap_or_default();
+                match status.as_str() {
+                    "Running" => tg_clone.notify(&format!("🟢 앱체인 '{chain_name}' 이(가) 시작되었습니다.")),
+                    "Error" => tg_clone.notify(&format!("❌ 앱체인 '{chain_name}' 생성 중 오류가 발생했습니다.")),
+                    _ => {}
+                }
             });
         }
         _ => {
@@ -295,10 +309,13 @@ pub async fn stop_appchain(
     id: String,
     am: State<'_, Arc<AppchainManager>>,
     runner: State<'_, Arc<ProcessRunner>>,
+    tg_manager: State<'_, Arc<TelegramBotManager>>,
 ) -> Result<(), String> {
+    let name = am.get_appchain(&id).map(|c| c.name.clone()).unwrap_or_default();
     runner.stop_chain(&id).await?;
     am.update_status(&id, AppchainStatus::Stopped);
     am.add_log(&id, "Appchain stopped by user.".to_string());
+    tg_manager.notify(&format!("🔴 앱체인 '{name}' 이(가) 중지되었습니다."));
     Ok(())
 }
 
@@ -529,6 +546,131 @@ pub async fn login_with_platform(app: tauri::AppHandle) -> Result<String, String
     }
 
     Err("login_timeout".to_string())
+}
+
+// ============================================================================
+// Telegram Bot Config (stored in OS Keychain)
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    pub bot_token: String,
+    pub allowed_chat_ids: String,
+    pub enabled: bool,
+}
+
+fn telegram_config_path() -> Result<std::path::PathBuf, String> {
+    let dir = dirs::data_dir()
+        .ok_or("Cannot find app data directory")?
+        .join("tokamak-appchain");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create dir: {e}"))?;
+    Ok(dir.join("telegram.json"))
+}
+
+#[tauri::command]
+pub fn get_telegram_config() -> Result<TelegramConfig, String> {
+    let path = telegram_config_path()?;
+    match std::fs::read_to_string(&path) {
+        Ok(json) => {
+            log::info!("[TG] loaded config from {}", path.display());
+            serde_json::from_str(&json).map_err(|e| format!("Parse error: {e}"))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::info!("[TG] no config file yet");
+            Ok(TelegramConfig {
+                bot_token: String::new(),
+                allowed_chat_ids: String::new(),
+                enabled: false,
+            })
+        }
+        Err(e) => Err(format!("Failed to read config: {e}")),
+    }
+}
+
+#[tauri::command]
+pub fn save_telegram_config(
+    bot_token: String,
+    allowed_chat_ids: String,
+    tg_manager: State<Arc<TelegramBotManager>>,
+) -> Result<(), String> {
+    log::info!("[TG] save_telegram_config: token={}, ids={}", if bot_token == "__keep__" { "__keep__" } else { "***" }, allowed_chat_ids);
+    let existing = get_telegram_config()?;
+
+    let final_token = if bot_token == "__keep__" {
+        existing.bot_token
+    } else {
+        bot_token
+    };
+
+    let config = TelegramConfig {
+        bot_token: final_token,
+        allowed_chat_ids,
+        enabled: existing.enabled,
+    };
+    let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
+    let path = telegram_config_path()?;
+    std::fs::write(&path, &json).map_err(|e| format!("Failed to save config: {e}"))?;
+    log::info!("[TG] config saved to {}", path.display());
+
+    // Restart bot if running (to pick up new token/chat IDs)
+    if existing.enabled && tg_manager.is_running() {
+        tg_manager.stop();
+        let _ = tg_manager.start();
+        log::info!("[TG] bot restarted with new config");
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_telegram_bot(
+    enabled: bool,
+    tg_manager: State<Arc<TelegramBotManager>>,
+) -> Result<bool, String> {
+    // Update enabled in config file
+    let mut config = get_telegram_config()?;
+    config.enabled = enabled;
+    let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
+    let path = telegram_config_path()?;
+    std::fs::write(&path, &json).map_err(|e| format!("Failed to save: {e}"))?;
+
+    if enabled {
+        match tg_manager.start() {
+            Ok(()) => {
+                log::info!("[TG] bot started via toggle");
+                Ok(true)
+            }
+            Err(e) => {
+                log::warn!("[TG] failed to start bot: {e}");
+                // Revert enabled
+                let mut config = get_telegram_config()?;
+                config.enabled = false;
+                let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
+                std::fs::write(&path, &json).map_err(|e| format!("Failed to save: {e}"))?;
+                Err(e)
+            }
+        }
+    } else {
+        tg_manager.stop();
+        log::info!("[TG] bot stopped via toggle");
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub fn send_telegram_notification(
+    message: String,
+    tg_manager: State<Arc<TelegramBotManager>>,
+) -> Result<(), String> {
+    tg_manager.notify(&message);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_telegram_bot_status(
+    tg_manager: State<Arc<TelegramBotManager>>,
+) -> bool {
+    tg_manager.is_running()
 }
 
 // ============================================================================

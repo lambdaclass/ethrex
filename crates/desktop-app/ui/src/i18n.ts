@@ -201,6 +201,16 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.theme': '테마',
     'settings.themeLight': '라이트',
     'settings.themeDark': '다크',
+    'settings.telegram': 'Telegram Bot',
+    'settings.telegramDesc': '텔레그램 봇을 연결하면 모바일에서 앱체인 관리 및 AI 대화를 할 수 있습니다.',
+    'settings.telegramToken': 'Bot Token',
+    'settings.telegramTokenPlaceholder': '@BotFather에서 받은 토큰을 입력하세요',
+    'settings.telegramChatIds': '허용된 Chat ID',
+    'settings.telegramChatIdsPlaceholder': '쉼표로 구분 (필수)',
+    'settings.telegramEnabled': 'Telegram Bot 활성화',
+    'settings.telegramSave': '텔레그램 설정 저장',
+    'settings.telegramSaved': '텔레그램 설정이 저장되었습니다.',
+    'settings.telegramHowTo': '@BotFather에게 /newbot 명령으로 봇을 만들고 토큰을 받으세요.',
   },
   en: {
     // Home
@@ -402,6 +412,16 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.theme': 'Theme',
     'settings.themeLight': 'Light',
     'settings.themeDark': 'Dark',
+    'settings.telegram': 'Telegram Bot',
+    'settings.telegramDesc': 'Connect a Telegram bot to manage appchains and chat with AI from your phone.',
+    'settings.telegramToken': 'Bot Token',
+    'settings.telegramTokenPlaceholder': 'Enter token from @BotFather',
+    'settings.telegramChatIds': 'Allowed Chat IDs',
+    'settings.telegramChatIdsPlaceholder': 'Comma-separated (required)',
+    'settings.telegramEnabled': 'Enable Telegram Bot',
+    'settings.telegramSave': 'Save Telegram Settings',
+    'settings.telegramSaved': 'Telegram settings saved.',
+    'settings.telegramHowTo': 'Create a bot with /newbot command to @BotFather and get your token.',
   },
 }
 
