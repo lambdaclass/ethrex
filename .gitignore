@@ -171,3 +171,4 @@ platform/server/db/platform.sqlite
 
 # ZK-DEX deployed contract addresses (local deployment state)
 crates/l2/.zk-dex-deployed.env
+.vercel
