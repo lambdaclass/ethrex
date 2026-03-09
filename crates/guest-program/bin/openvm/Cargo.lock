@@ -911,8 +911,18 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
- "kzg-rs",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
+ "ethereum-types",
+ "ff",
+ "hex-literal 0.4.1",
+ "malachite",
  "openvm-kzg",
+ "p256",
+ "ripemd",
+ "sha2",
  "thiserror",
  "tiny-keccak",
 ]
@@ -937,6 +947,7 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
@@ -975,28 +986,19 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff",
  "bitvec",
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
  "datatest-stable",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "lambdaworks-math",
  "lazy_static",
  "malachite",
- "p256",
  "rayon",
- "ripemd",
  "rustc-hash",
  "serde",
  "serde_json",
- "sha2",
  "sha3",
  "strum",
  "thiserror",
@@ -1617,7 +1619,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand",
- "rayon",
  "serde",
  "serde_json",
 ]
