@@ -580,7 +580,7 @@ impl Blockchain {
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let mut workers_tx = Vec::with_capacity(16);
 
-        let result = self.merkle_pool.scope(|s| -> Result<_, StoreError> {
+        self.merkle_pool.scope(|s| -> Result<_, StoreError> {
             for i in 0..16 {
                 let (tx, worker_rx) = channel();
 
@@ -758,9 +758,7 @@ impl Blockchain {
             },
             accumulated_updates,
         ))
-        });
-
-        result
+        })
     }
 
     /// BAL-specific merkleization handler.
