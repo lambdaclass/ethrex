@@ -1,6 +1,6 @@
 import type { StoredCredential, SignResult } from './passkey';
 
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = '/api';
 
 export interface FrameReceipt {
   mode: string;

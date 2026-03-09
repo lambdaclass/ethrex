@@ -1,7 +1,7 @@
 import { createPublicClient, http, formatEther } from 'viem';
 
 const client = createPublicClient({
-  transport: http('http://localhost:8545'),
+  transport: http('/rpc'),
 });
 
 export async function getBalance(address: string): Promise<string> {
