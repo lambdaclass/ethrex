@@ -138,11 +138,16 @@ const TESTNET_STEPS = [
   { phase: 'running', label: 'Running' },
 ];
 
+const TESTNET_L1_VALUES = new Set(['sepolia', 'holesky', 'custom-l1']);
 const TESTNET_NETWORKS = {
   sepolia: { chainId: 11155111, name: 'Sepolia', rpcPlaceholder: 'https://sepolia.infura.io/v3/YOUR_KEY' },
   holesky: { chainId: 17000, name: 'Holesky', rpcPlaceholder: 'https://holesky.infura.io/v3/YOUR_KEY' },
-  custom: { chainId: null, name: 'Custom', rpcPlaceholder: 'https://your-l1-rpc-endpoint' },
+  'custom-l1': { chainId: null, name: 'Custom', rpcPlaceholder: 'https://your-l1-rpc-endpoint' },
 };
+
+function isTestnetL1() {
+  return TESTNET_L1_VALUES.has(document.getElementById('launch-l1-image')?.value || '');
+}
 
 const PHASE_ESTIMATES = {
   checking_docker: { min: 1, max: 5 },
@@ -294,26 +299,28 @@ function setLaunchMode(mode) {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
   document.getElementById('remote-host-area').style.display = mode === 'remote' ? 'block' : 'none';
-  document.getElementById('docker-status-area').style.display = (mode === 'local' || mode === 'testnet') ? 'block' : 'none';
+  document.getElementById('docker-status-area').style.display = mode === 'local' ? 'block' : 'none';
   document.getElementById('manual-rpc-area').style.display = mode === 'manual' ? 'block' : 'none';
-  document.getElementById('testnet-area').style.display = mode === 'testnet' ? 'block' : 'none';
   document.getElementById('l1-node-area').style.display = mode === 'local' ? 'block' : 'none';
   document.getElementById('deploy-dir-area').style.display = mode === 'manual' ? 'none' : 'block';
 
   const btn = document.getElementById('launch-deploy-btn');
   btn.textContent = mode === 'manual' ? 'Create L2 Config' : 'Deploy L2';
 
-  if (mode === 'local' || mode === 'testnet') checkDocker();
+  if (mode === 'local') checkDocker();
   if (mode === 'remote') loadHostsForLaunch();
 }
 
-function onTestnetNetworkChange() {
-  const net = document.getElementById('launch-testnet-network').value;
-  const info = TESTNET_NETWORKS[net];
-  document.getElementById('launch-testnet-rpc').placeholder = info.rpcPlaceholder;
-  document.getElementById('testnet-custom-chainid').style.display = net === 'custom' ? 'block' : 'none';
-  // Clear balance check
-  document.getElementById('testnet-balance-check').innerHTML = '';
+function onL1NodeChange() {
+  const val = document.getElementById('launch-l1-image').value;
+  const isTestnet = TESTNET_L1_VALUES.has(val);
+  document.getElementById('testnet-fields').style.display = isTestnet ? 'block' : 'none';
+  if (isTestnet) {
+    const info = TESTNET_NETWORKS[val];
+    document.getElementById('launch-testnet-rpc').placeholder = info.rpcPlaceholder;
+    document.getElementById('testnet-custom-chainid').style.display = val === 'custom-l1' ? 'block' : 'none';
+    document.getElementById('testnet-balance-check').innerHTML = '';
+  }
 }
 
 async function checkTestnetBalance() {
@@ -397,18 +404,19 @@ async function handleLaunchDeploy() {
         deployDir: (document.getElementById('launch-deploy-dir')?.value || '').trim() || undefined,
       },
     };
-    if (launchMode === 'testnet') {
+    if (isTestnetL1()) {
       const testnetRpc = (document.getElementById('launch-testnet-rpc')?.value || '').trim();
       const deployerPk = (document.getElementById('launch-testnet-deployer-pk')?.value || '').trim();
-      const network = document.getElementById('launch-testnet-network').value;
+      const network = document.getElementById('launch-l1-image').value;
       if (!testnetRpc) { showLaunchError('L1 RPC URL is required for testnet'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
       if (!deployerPk) { showLaunchError('Deployer private key is required for testnet'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
       const netInfo = TESTNET_NETWORKS[network];
+      body.config.mode = 'testnet';
       body.config.testnet = {
         l1RpcUrl: testnetRpc,
         deployerPrivateKey: deployerPk,
         l1ChainId: netInfo.chainId || (parseInt(document.getElementById('launch-testnet-l1-chainid')?.value) || undefined),
-        network: network,
+        network: network === 'custom-l1' ? 'custom' : network,
       };
       body.rpcUrl = testnetRpc;
     }
@@ -538,7 +546,7 @@ function startDeployProgress(id) {
 
 function renderProgressSteps() {
   const container = document.getElementById('deploy-progress-steps');
-  const steps = launchMode === 'remote' ? REMOTE_STEPS : (launchMode === 'testnet' ? TESTNET_STEPS : LOCAL_STEPS);
+  const steps = launchMode === 'remote' ? REMOTE_STEPS : (isTestnetL1() ? TESTNET_STEPS : LOCAL_STEPS);
   const currentIdx = steps.findIndex(s => s.phase === currentPhase);
   const hasError = document.getElementById('deploy-error-msg').style.display !== 'none';
   const isTerminal = currentPhase === 'running' || hasError;
