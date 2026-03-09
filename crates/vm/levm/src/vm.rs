@@ -540,6 +540,14 @@ impl<'a> VM<'a> {
             // Safe: from_reservoir <= gas
             let spill = gas - from_reservoir;
             if spill > 0 {
+                eprintln!(
+                    "[STATE_GAS] depth={} spill={} reservoir={} gas_remaining={} state_gas_used={}",
+                    self.current_call_frame.depth,
+                    spill,
+                    self.state_gas_reservoir,
+                    self.current_call_frame.gas_remaining,
+                    self.state_gas_used
+                );
                 // Charge spill from gas_remaining first — if OOG, return early
                 // without mutating reservoir or state_gas_used (matches EELS behavior)
                 self.current_call_frame.increase_consumed_gas(spill)?;
