@@ -179,13 +179,13 @@ testAsync("isHealthy returns false for unreachable host", async () => {
   // ============================================================
   console.log("\n=== Port Allocation Tests ===");
 
-  test("getNextAvailablePorts returns valid ports", () => {
-    const ports = deploymentsDb.getNextAvailablePorts();
+  return testAsync("getNextAvailablePorts returns valid ports", async () => {
+    const ports = await deploymentsDb.getNextAvailablePorts();
     assert.ok(ports.l1Port > 0);
     assert.ok(ports.l2Port > 0);
     assert.ok(ports.proofCoordPort > 0);
   });
-
+}).then(() => {
   // ============================================================
   // Express App Smoke Test
   // ============================================================
@@ -428,6 +428,125 @@ testAsync("isHealthy returns false for unreachable host", async () => {
         assert.equal(anyRunning, true, "Should show Stop All");
       });
 
+      // -- Contract reuse logic --
+      test("contract reuse: skip deploy when bridge+proposer already saved", () => {
+        const d = deploymentsDb.createDeployment({ programId: "evm-l2", name: "Contract Reuse Test" });
+        deploymentsDb.updateDeployment(d.id, {
+          bridge_address: "0x1234567890abcdef",
+          proposer_address: "0xabcdef1234567890",
+        });
+        const updated = deploymentsDb.getDeploymentById(d.id);
+        // When both addresses exist, provisionTestnet should skip contract deployment
+        assert.ok(updated.bridge_address && updated.proposer_address, "Both addresses should exist");
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      test("contract reuse: deploy when bridge is missing", () => {
+        const d = deploymentsDb.createDeployment({ programId: "evm-l2", name: "No Contract Test" });
+        const updated = deploymentsDb.getDeploymentById(d.id);
+        // When addresses are null, provisionTestnet should deploy contracts
+        assert.equal(updated.bridge_address, null, "Bridge should be null for fresh deployment");
+        assert.equal(updated.proposer_address, null, "Proposer should be null for fresh deployment");
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      // -- PUT config update --
+      test("updateDeployment allows config field", () => {
+        const d = deploymentsDb.createDeployment({ programId: "evm-l2", name: "Config Update Test" });
+        const config = { mode: "testnet", testnet: { l1RpcUrl: "https://sepolia.example.com", keychainKeyName: "mykey" } };
+        deploymentsDb.updateDeployment(d.id, { config: JSON.stringify(config) });
+        const updated = deploymentsDb.getDeploymentById(d.id);
+        const parsed = JSON.parse(updated.config);
+        assert.equal(parsed.mode, "testnet");
+        assert.equal(parsed.testnet.keychainKeyName, "mykey");
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      // -- findImage function --
+      test("docker findImage returns null for nonexistent image", () => {
+        const docker = require("./lib/docker-local");
+        const result = docker.findImage("nonexistent-slug-12345");
+        assert.equal(result, null);
+      });
+
+      // -- parseContractAddressesFromLogs --
+      const { parseContractAddressesFromLogs } = require("./lib/deployment-engine");
+
+      test("parseContractAddressesFromLogs extracts addresses from deployer output", () => {
+        const logs = [
+          "tokamak-app-deployer  | CommonBridge deployed:",
+          "tokamak-app-deployer  |   Proxy -> address=0x2f6cf9ec2beed1b8169330994242e97398ce3352, tx_hash=0xabc",
+          "tokamak-app-deployer  |   Impl  -> address=0x1111111111111111111111111111111111111111, tx_hash=0xdef",
+          "tokamak-app-deployer  | OnChainProposer deployed:",
+          "tokamak-app-deployer  |   Proxy -> address=0xa59bdbd3bd6764b04f182973bceb51da127114d2, tx_hash=0xdef",
+          "tokamak-app-deployer  |   Impl  -> address=0x2222222222222222222222222222222222222222, tx_hash=0xghi",
+          "tokamak-app-deployer  | Timelock deployed:",
+          "tokamak-app-deployer  |   Proxy -> address=0x1234567890abcdef1234567890abcdef12345678, tx_hash=0x111",
+          "tokamak-app-deployer  |   Impl  -> address=0x3333333333333333333333333333333333333333, tx_hash=0x222",
+          "tokamak-app-deployer  | SP1Verifier deployed address=0xb3b14127c950afb3e15d8c27bb4f707986495cc9",
+        ];
+        const result = parseContractAddressesFromLogs(logs);
+        assert.equal(result.bridge, "0x2f6cf9ec2beed1b8169330994242e97398ce3352");
+        assert.equal(result.proposer, "0xa59bdbd3bd6764b04f182973bceb51da127114d2");
+        assert.equal(result.timelock, "0x1234567890abcdef1234567890abcdef12345678");
+        assert.equal(result.sp1Verifier, "0xb3b14127c950afb3e15d8c27bb4f707986495cc9");
+      });
+
+      test("parseContractAddressesFromLogs returns nulls for empty logs", () => {
+        const result = parseContractAddressesFromLogs([]);
+        assert.equal(result.bridge, null);
+        assert.equal(result.proposer, null);
+      });
+
+      test("parseContractAddressesFromLogs handles partial output", () => {
+        const logs = [
+          "CommonBridge deployed:  Proxy -> address=0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, tx_hash=0x1",
+        ];
+        const result = parseContractAddressesFromLogs(logs);
+        assert.equal(result.bridge, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert.equal(result.proposer, null);
+      });
+
+      // -- 4-key testnet compose generation --
+      const { generateTestnetComposeFile } = require("./lib/compose-generator");
+      const { ethers } = require("ethers");
+
+      test("generateTestnetComposeFile uses deployer key for all roles by default", () => {
+        const deployerPk = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
+        const deployerAddr = new ethers.Wallet(deployerPk).address;
+        const yaml = generateTestnetComposeFile({
+          programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900, metricsPort: 3702,
+          projectName: "tokamak-test", l1RpcUrl: "http://l1:8545", deployerPrivateKey: deployerPk,
+        });
+        // All owner addresses should be deployer
+        assert.ok(yaml.includes(`ETHREX_BRIDGE_OWNER=${deployerAddr}`), "bridge owner should be deployer");
+        assert.ok(yaml.includes(`ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${deployerAddr}`), "committer should be deployer");
+        assert.ok(yaml.includes(`ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${deployerAddr}`), "proof sender should be deployer");
+        assert.ok(yaml.includes(`--committer.l1-private-key ${deployerPk}`), "committer pk should be deployer");
+        assert.ok(yaml.includes(`--proof-coordinator.l1-private-key ${deployerPk}`), "proof coord pk should be deployer");
+      });
+
+      test("generateTestnetComposeFile uses separate keys when provided", () => {
+        const deployerPk = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
+        const committerPk = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d";
+        const proofPk = "0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e";
+        const bridgePk = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        const committerAddr = new ethers.Wallet(committerPk).address;
+        const proofAddr = new ethers.Wallet(proofPk).address;
+        const bridgeAddr = new ethers.Wallet(bridgePk).address;
+        const yaml = generateTestnetComposeFile({
+          programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900, metricsPort: 3702,
+          projectName: "tokamak-test", l1RpcUrl: "http://l1:8545", deployerPrivateKey: deployerPk,
+          committerPk, proofCoordinatorPk: proofPk, bridgeOwnerPk: bridgePk,
+        });
+        assert.ok(yaml.includes(`ETHREX_BRIDGE_OWNER=${bridgeAddr}`), `bridge owner should be ${bridgeAddr}`);
+        assert.ok(yaml.includes(`ETHREX_BRIDGE_OWNER_PK=${bridgePk}`), "bridge owner pk");
+        assert.ok(yaml.includes(`ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${committerAddr}`), `committer addr should be ${committerAddr}`);
+        assert.ok(yaml.includes(`ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${proofAddr}`), `proof sender addr should be ${proofAddr}`);
+        assert.ok(yaml.includes(`--committer.l1-private-key ${committerPk}`), "committer runtime pk");
+        assert.ok(yaml.includes(`--proof-coordinator.l1-private-key ${proofPk}`), "proof coord runtime pk");
+      });
+
       // -- API route tests for start/stop --
       return testAsync("POST /api/deployments/:id/start rejects unprovisioned deployment", async () => {
         const app = require("./server");
@@ -456,7 +575,7 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       });
     })
     .then(() =>
-      testAsync("POST /api/deployments/:id/stop rejects unprovisioned deployment", async () => {
+      testAsync("POST /api/deployments/:id/stop cancels unprovisioned deployment gracefully", async () => {
         const app = require("./server");
         const server = http.createServer(app);
         await new Promise((resolve) => server.listen(0, resolve));
@@ -472,8 +591,8 @@ testAsync("isHealthy returns false for unreachable host", async () => {
         try {
           const res = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/stop`, { method: "POST" });
           const data = await res.json();
-          assert.equal(res.status, 400);
-          assert.ok(data.error.includes("Not provisioned"));
+          assert.equal(res.status, 200);
+          assert.equal(data.deployment.phase, "configured");
         } finally {
           await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, { method: "DELETE" });
           server.close();
@@ -531,6 +650,38 @@ testAsync("isHealthy returns false for unreachable host", async () => {
           const getRes = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`);
           assert.equal(getRes.status, 404);
         } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      testAsync("PUT /api/deployments/:id updates config", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+
+        const createRes = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "Config API Test", programSlug: "evm-l2" }),
+        });
+        const { deployment } = await createRes.json();
+
+        try {
+          const config = { mode: "testnet", testnet: { l1RpcUrl: "https://rpc.example.com" } };
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Updated Name", config }),
+          });
+          const data = await res.json();
+          assert.equal(res.status, 200);
+          assert.equal(data.deployment.name, "Updated Name");
+          const parsed = JSON.parse(data.deployment.config);
+          assert.equal(parsed.mode, "testnet");
+        } finally {
+          await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, { method: "DELETE" });
           server.close();
         }
       })

@@ -38,8 +38,8 @@ export default function L2DetailOverviewTab({ ko, l2, chain, tags, setTags, onRe
       <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
         <SectionHeader title={ko ? '체인 현황' : 'Chain Status'} />
         <div className="grid grid-cols-2 gap-2 mt-1">
-          <StatCard label={ko ? 'L1 블록' : 'L1 Block'} value={chain.l1BlockNumber.toLocaleString()} sub={`Chain ID: ${chain.l1ChainId}`} />
-          <StatCard label={ko ? 'L2 블록' : 'L2 Block'} value={chain.l2BlockNumber.toLocaleString()} sub={`Chain ID: ${chain.l2ChainId}`} />
+          <StatCard label={ko ? 'L1 블록' : 'L1 Block'} value={chain.l1BlockNumber.toLocaleString()} sub={`Chain ID: ${chain.l1ChainId}${chain.l1ChainId === 11155111 ? ' (Sepolia)' : chain.l1ChainId === 17000 ? ' (Holesky)' : chain.l1ChainId === 1 ? ' (Mainnet)' : ''}`} />
+          <StatCard label={ko ? 'L2 블록' : 'L2 Block'} value={chain.l2BlockNumber.toLocaleString()} sub={`Chain ID: ${l2.chainId || chain.l2ChainId}`} />
         </div>
         <div className="grid grid-cols-3 gap-2 mt-2">
           <StatCard label="TPS" value={chain.l2Tps} sub={`${chain.l2BlockTime}s / block`} />

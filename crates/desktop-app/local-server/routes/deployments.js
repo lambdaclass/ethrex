@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const {
   provision,
+  provisionTestnet,
   provisionRemote,
   stopDeployment,
   startDeployment,
@@ -69,6 +70,101 @@ router.get("/docker/status", (req, res) => {
   }
 });
 
+// Estimated gas per role:
+// Deployer: ~5 contracts × 2 txs (impl + proxy) + timelock init = ~25M gas (one-time)
+// Committer: batch commit ~200K gas per tx (recurring, estimate first month ~100 txs)
+// Proof Coordinator: proof submission ~300K gas per tx (recurring, estimate first month ~100 txs)
+// Bridge Owner: VK registration + accept ownership ~500K gas (one-time setup)
+const ROLE_GAS_ESTIMATES = {
+  deployer: {
+    gas: 25_000_000,
+    label: "Contract deployment (one-time)",
+    detail: "5 contracts (Bridge, Proposer, Timelock, SP1Verifier, SequencerRegistry) × 2 txs (impl + proxy) ≈ 2.5M gas/pair × 5 = ~25M gas",
+  },
+  committer: {
+    gas: 8_640_000_000,
+    label: "Batch commits (1 month, 60s interval)",
+    detail: "commit_batch() ≈ 200K gas/tx. Commits every 60s including empty blocks. 1,440/day × 30 days = 43,200 tx/month. 200K × 43,200 = ~8.64B gas/month.",
+    interval: "60s",
+  },
+  "proof-coordinator": {
+    gas: 12_960_000_000,
+    label: "Proof submissions (1 month, 1:1 with commits)",
+    detail: "verify() ≈ 300K gas/tx (ZK proof on-chain). 1 proof per committed batch. 43,200 tx/month. 300K × 43,200 = ~12.96B gas/month.",
+    interval: "60s (1:1 with commits)",
+  },
+  "bridge-owner": {
+    gas: 500_000,
+    label: "VK registration + ownership (one-time)",
+    detail: "setVerificationKey() ≈ 200K gas + acceptOwnership() × 2 contracts ≈ 100K each + register() ≈ 100K = ~500K gas total",
+  },
+};
+
+// POST /api/deployments/testnet/check-balance — check account balance on testnet
+router.post("/testnet/check-balance", async (req, res) => {
+  try {
+    const { rpcUrl, address, role } = req.body;
+    if (!rpcUrl || !address) {
+      return res.status(400).json({ error: "rpcUrl and address are required" });
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return res.status(400).json({ error: "Invalid Ethereum address format" });
+    }
+
+    const rpcCall = async (method, params = []) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const r = await globalThis.fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          signal: controller.signal,
+        });
+        const data = await r.json();
+        if (data.error) throw new Error(data.error.message || "RPC error");
+        return data.result;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+
+    const [balanceHex, chainIdHex, gasPriceHex] = await Promise.all([
+      rpcCall("eth_getBalance", [address, "latest"]),
+      rpcCall("eth_chainId"),
+      rpcCall("eth_gasPrice"),
+    ]);
+
+    const balanceWei = BigInt(balanceHex || "0x0");
+    const balanceEth = Number(balanceWei) / 1e18;
+    const chainId = parseInt(chainIdHex || "0x0", 16);
+    const gasPriceWei = BigInt(gasPriceHex || "0x0");
+    const gasPriceGwei = Number(gasPriceWei) / 1e9;
+
+    const roleInfo = ROLE_GAS_ESTIMATES[role] || ROLE_GAS_ESTIMATES.deployer;
+    const estimatedGas = roleInfo.gas;
+    const estimatedCostWei = gasPriceWei * BigInt(estimatedGas);
+    const estimatedCostEth = Number(estimatedCostWei) / 1e18;
+    const sufficient = balanceWei >= estimatedCostWei;
+
+    res.json({
+      address,
+      role: role || "deployer",
+      balanceEth: balanceEth.toFixed(6),
+      chainId,
+      gasPriceGwei: gasPriceGwei < 0.0001 ? gasPriceGwei.toPrecision(4) : gasPriceGwei.toFixed(4),
+      estimatedGas,
+      gasLabel: roleInfo.label,
+      gasDetail: roleInfo.detail,
+      interval: roleInfo.interval || null,
+      estimatedCostEth: estimatedCostEth.toFixed(6),
+      sufficient,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/deployments/:id — get deployment detail
 router.get("/:id", (req, res) => {
   try {
@@ -90,14 +186,14 @@ router.put("/:id", (req, res) => {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
-    const allowedFields = ["name", "chain_id", "rpc_url", "is_public", "hashtags"];
+    const allowedFields = ["name", "chain_id", "rpc_url", "config", "is_public", "hashtags"];
     const updates = [];
     const values = [];
 
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
         updates.push(`${field} = ?`);
-        values.push(req.body[field]);
+        values.push(field === 'config' && typeof req.body[field] === 'object' ? JSON.stringify(req.body[field]) : req.body[field]);
       }
     }
 
@@ -178,11 +274,18 @@ router.post("/:id/provision", async (req, res) => {
     }
 
     const { hostId } = req.body;
-    res.json({ ok: true, message: "Provisioning started", remote: !!hostId });
+    // Determine mode from deployment config
+    let deployMode = 'local';
+    try {
+      const config = deployment.config ? JSON.parse(deployment.config) : {};
+      deployMode = config.mode || 'local';
+    } catch {}
+
+    res.json({ ok: true, message: "Provisioning started", remote: !!hostId, mode: deployMode });
 
     const provisionFn = hostId
       ? () => provisionRemote(deployment, hostId)
-      : () => provision(deployment);
+      : (deployMode === 'testnet' ? () => provisionTestnet(deployment) : () => provision(deployment));
 
     provisionFn().catch((err) => {
       console.error(`Provision failed for ${deployment.id}:`, err.message);
@@ -211,10 +314,30 @@ router.post("/:id/stop", async (req, res) => {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
-    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
 
-    const updated = await stopDeployment(deployment);
-    res.json({ deployment: updated });
+    // Cancel active provision first (removes from registry)
+    cancelProvision(req.params.id);
+
+    if (deployment.docker_project) {
+      // Stop all containers including deployer
+      try {
+        const path = require("path");
+        const { getDeploymentDir } = require("../lib/compose-generator");
+        const composeFile = path.join(getDeploymentDir(deployment.id), "docker-compose.yaml");
+        const docker = require("../lib/docker-local");
+        await docker.stop(deployment.docker_project, composeFile);
+      } catch (e) {
+        console.log(`[stop] docker stop failed: ${e.message}`);
+      }
+      const { updateDeployment: updateDep } = require("../db/deployments");
+      const updated = updateDep(deployment.id, { phase: "stopped", error_message: "Cancelled by user" });
+      res.json({ deployment: updated });
+    } else {
+      // No docker project yet — just mark as configured
+      const { updateDeployment: updateDep } = require("../db/deployments");
+      const updated = updateDep(deployment.id, { phase: "configured", error_message: "Cancelled by user" });
+      res.json({ deployment: updated });
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -335,6 +458,7 @@ router.post("/:id/restart-tools", async (req, res) => {
       if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
     }
 
+    const depConfig = deployment.config ? JSON.parse(deployment.config) : {};
     const toolsPorts = {
       toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
       toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
@@ -343,6 +467,7 @@ router.post("/:id/restart-tools", async (req, res) => {
       toolsMetricsPort: deployment.tools_metrics_port,
       l1Port: deployment.l1_port,
       l2Port: deployment.l2_port,
+      skipL1Explorer: depConfig.mode === 'testnet',
     };
 
     await docker.restartTools(envVars, toolsPorts);
@@ -522,7 +647,7 @@ router.get("/:id/monitoring", async (req, res) => {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
-    if (!deployment.l1_port || !deployment.l2_port) {
+    if (!deployment.l2_port) {
       return res.json({ l1: null, l2: null });
     }
 
@@ -532,27 +657,32 @@ router.get("/:id/monitoring", async (req, res) => {
       if (host) rpcHost = host.hostname;
     }
 
-    const l1Url = `http://${rpcHost}:${deployment.l1_port}`;
+    // Testnet: no local L1 port, use external rpc_url instead
+    const l1Url = deployment.l1_port
+      ? `http://${rpcHost}:${deployment.l1_port}`
+      : deployment.rpc_url || null;
     const l2Url = `http://${rpcHost}:${deployment.l2_port}`;
     const prefundedAddress = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b";
 
+    const reject = Promise.reject(new Error("no url"));
+    reject.catch(() => {}); // suppress unhandled rejection
     const [l1Block, l2Block, l1Chain, l2Chain, l1Balance, l2Balance] = await Promise.allSettled([
-      rpc.getBlockNumber(l1Url),
+      l1Url ? rpc.getBlockNumber(l1Url) : reject,
       rpc.getBlockNumber(l2Url),
-      rpc.getChainId(l1Url),
+      l1Url ? rpc.getChainId(l1Url) : reject,
       rpc.getChainId(l2Url),
-      rpc.getBalance(l1Url, prefundedAddress),
+      l1Url ? rpc.getBalance(l1Url, prefundedAddress) : reject,
       rpc.getBalance(l2Url, prefundedAddress),
     ]);
 
     res.json({
-      l1: {
+      l1: l1Url ? {
         healthy: l1Block.status === "fulfilled",
         blockNumber: l1Block.status === "fulfilled" ? l1Block.value : null,
         chainId: l1Chain.status === "fulfilled" ? l1Chain.value : null,
         balance: l1Balance.status === "fulfilled" ? l1Balance.value : null,
         rpcUrl: l1Url,
-      },
+      } : null,
       l2: {
         healthy: l2Block.status === "fulfilled",
         blockNumber: l2Block.status === "fulfilled" ? l2Block.value : null,
@@ -563,6 +693,16 @@ router.get("/:id/monitoring", async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/deployments/check-image/:slug — check if Docker image exists for a program
+router.get("/check-image/:slug", (req, res) => {
+  try {
+    const image = docker.findImage(req.params.slug);
+    res.json({ exists: !!image, image: image || null });
+  } catch (e) {
+    res.json({ exists: false, image: null });
   }
 });
 

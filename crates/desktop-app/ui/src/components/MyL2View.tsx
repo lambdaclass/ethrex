@@ -24,6 +24,7 @@ interface DeploymentFromDB {
   timelock_address: string | null
   sp1_verifier_address: string | null
   error_message: string | null
+  config: string | null
   is_public: number
   created_at: number
   tools_l1_explorer_port: number | null
@@ -65,6 +66,9 @@ export interface L2Config {
   toolsBridgeUIPort: number | null
   l1ChainId: number | null
   l2ChainId: number | null
+  // Testnet fields
+  testnetNetwork: string | null  // 'sepolia' | 'holesky' | null
+  testnetL1RpcUrl: string | null
 }
 
 function deploymentToL2Config(d: DeploymentFromDB): L2Config {
@@ -72,6 +76,11 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     running: 'running', active: 'running', stopped: 'stopped', deploying: 'starting',
     configured: 'created', failed: 'error', error: 'error', destroyed: 'stopped',
   }
+  // Parse config JSON for testnet info
+  let config: Record<string, unknown> = {}
+  try { config = d.config ? JSON.parse(d.config as string) : {} } catch { /* ignore */ }
+  const isTestnet = config.mode === 'testnet'
+  const testnet = (config.testnet || {}) as Record<string, unknown>
   return {
     id: d.id,
     name: d.name,
@@ -87,7 +96,7 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     hashtags: (() => { try { return d.hashtags ? JSON.parse(d.hashtags) : [] } catch { return [] } })(),
     isPublic: d.is_public === 1,
     createdAt: new Date(d.created_at).toISOString(),
-    networkMode: 'local',
+    networkMode: isTestnet ? 'testnet' : 'local',
     source: 'docker',
     programSlug: d.program_slug,
     phase: d.phase,
@@ -102,8 +111,10 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     toolsL1ExplorerPort: d.tools_l1_explorer_port,
     toolsL2ExplorerPort: d.tools_l2_explorer_port,
     toolsBridgeUIPort: d.tools_bridge_ui_port,
-    l1ChainId: null,
+    l1ChainId: isTestnet ? (testnet.l1ChainId as number ?? null) : null,
     l2ChainId: null,
+    testnetNetwork: isTestnet ? (testnet.network as string ?? null) : null,
+    testnetL1RpcUrl: isTestnet ? (testnet.l1RpcUrl as string ?? null) : null,
   }
 }
 
@@ -184,14 +195,14 @@ export default function MyL2View() {
           const anyError = containers.some(c => c.state === 'exited' || c.state === 'dead')
 
           // Fetch real chain IDs from monitoring API if running
-          let l1ChainId: number | null = null
-          let l2ChainId: number | null = null
+          let l1ChainId: number | null = l2.l1ChainId  // keep config-based value as fallback
+          let l2ChainId: number | null = l2.l2ChainId
           if (anyRunning) {
             try {
               const base = `http://127.0.0.1:${import.meta.env.VITE_LOCAL_SERVER_PORT || 5002}`
               const mon = await fetch(`${base}/api/deployments/${l2.id}/monitoring`).then(r => r.json())
-              l1ChainId = mon.l1?.chainId ?? null
-              l2ChainId = mon.l2?.chainId ?? null
+              l1ChainId = mon.l1?.chainId ?? l1ChainId
+              l2ChainId = mon.l2?.chainId ?? l2ChainId
             } catch (e) { console.error(`Failed to fetch monitoring data for ${l2.id}:`, e) }
           }
 
@@ -223,11 +234,22 @@ export default function MyL2View() {
     return () => clearInterval(interval)
   }, [loadDeployments])
 
-  const openDeployManager = async () => {
+  const openDeployManager = async (view?: string, editId?: string) => {
     try {
-      const url = await invoke<string>('open_deployment_ui')
+      const baseUrl = await invoke<string>('open_deployment_ui')
+      const params = new URLSearchParams()
+      if (view) params.set('view', view)
+      if (editId) params.set('edit', editId)
+      const qs = params.toString()
+      const url = qs ? `${baseUrl}?${qs}` : baseUrl
       const existing = await WebviewWindow.getByLabel('deploy-manager')
       if (existing) {
+        if (editId) {
+          try { await (existing as any).eval(`editConfiguredDeploy('${editId}')`) } catch {}
+        } else if (view) {
+          try { await existing.emit('navigate-view', view) } catch {}
+          try { await (existing as any).eval(`showView('${view}')`) } catch {}
+        }
         await existing.show()
         await existing.setFocus()
       } else {
@@ -316,7 +338,7 @@ export default function MyL2View() {
             {t('myl2.title', lang)} <span className="text-[var(--color-text-secondary)] text-xs font-normal">{l2s.length}</span>
           </h1>
           <button
-            onClick={openDeployManager}
+            onClick={() => openDeployManager()}
             className="bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-xs font-medium px-3 py-1.5 rounded-lg transition-colors cursor-pointer text-[var(--color-accent-text)]"
           >
             {lang === 'ko' ? 'L2 매니저' : 'L2 Manager'}
@@ -356,7 +378,7 @@ export default function MyL2View() {
             {lang === 'ko' ? '아직 배포된 앱체인이 없습니다' : 'No deployed appchains yet'}
           </p>
           <button
-            onClick={openDeployManager}
+            onClick={() => openDeployManager()}
             className="mt-3 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-xs font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer text-[var(--color-accent-text)]"
           >
             {lang === 'ko' ? 'L2 매니저 열기' : 'Open L2 Manager'}
@@ -378,6 +400,8 @@ export default function MyL2View() {
                 onClick={() => {
                   if (l2.status === 'starting') {
                     openDeployManager()
+                  } else if (l2.status === 'created') {
+                    openDeployManager(undefined, l2.id)
                   } else {
                     setSelectedL2(l2)
                   }
@@ -406,15 +430,19 @@ export default function MyL2View() {
                   <div className="text-[11px] text-[var(--color-text-secondary)] truncate mt-0.5">
                     {l2.errorMessage
                       ? <span className="text-[var(--color-error)]">{l2.errorMessage}</span>
-                      : <><div>L1 Chain ID: {l2.l1ChainId || '-'}</div><div>L2 Chain ID: {l2.l2ChainId || l2.chainId || '-'}</div></>
+                      : <><div>L1 Chain ID: {l2.l1ChainId || '-'}{l2.l1ChainId === 11155111 ? ' (Sepolia)' : l2.l1ChainId === 17000 ? ' (Holesky)' : l2.l1ChainId === 1 ? ' (Mainnet)' : ''}</div><div>L2 Chain ID: {l2.chainId || l2.l2ChainId || '-'}</div></>
                     }
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
-                    {l2.networkMode === 'local' && (
+                    {l2.networkMode === 'testnet' ? (
+                      <span className="text-[10px] text-black bg-[var(--color-warning)] px-1.5 py-0.5 rounded font-medium">
+                        Testnet
+                      </span>
+                    ) : l2.networkMode === 'local' ? (
                       <span className="text-[10px] text-white bg-[#6366f1] px-1.5 py-0.5 rounded font-medium">
                         Local
                       </span>
-                    )}
+                    ) : null}
                     <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
                       {l2.programSlug}
                     </span>
@@ -444,7 +472,14 @@ export default function MyL2View() {
                       >
                         {actionLoading === l2.id ? '...' : (lang === 'ko' ? '중지' : 'Stop')}
                       </span>
-                    ) : (l2.status === 'stopped' || l2.status === 'error' || l2.status === 'created') ? (
+                    ) : l2.status === 'created' ? (
+                      <span
+                        onClick={(e) => { e.stopPropagation(); openDeployManager(undefined, l2.id) }}
+                        className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-80 transition-opacity cursor-pointer"
+                      >
+                        {lang === 'ko' ? '설정' : 'Settings'}
+                      </span>
+                    ) : (l2.status === 'stopped' || l2.status === 'error') ? (
                       <span
                         onClick={(e) => handleStart(e, l2.id)}
                         className={`text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-success)] text-white hover:opacity-80 transition-opacity cursor-pointer ${actionLoading === l2.id ? 'opacity-50' : ''}`}

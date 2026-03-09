@@ -16,14 +16,14 @@ function composeCmd(projectName, composeFile, args) {
 }
 
 function runCompose(projectName, composeFile, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const [cmd, ...cmdArgs] = composeCmd(projectName, composeFile, args);
-    const proc = spawn(cmd, cmdArgs, {
-      cwd: ETHREX_ROOT,
-      env: { ...process.env, ...(opts.env || {}) },
-      stdio: opts.stdio || "pipe",
-    });
+  const [cmd, ...cmdArgs] = composeCmd(projectName, composeFile, args);
+  const proc = spawn(cmd, cmdArgs, {
+    cwd: ETHREX_ROOT,
+    env: { ...process.env, ...(opts.env || {}) },
+    stdio: opts.stdio || "pipe",
+  });
 
+  const promise = new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     if (proc.stdout) proc.stdout.on("data", (d) => {
@@ -52,6 +52,10 @@ function runCompose(projectName, composeFile, args, opts = {}) {
       }, opts.timeout);
     }
   });
+
+  // Expose the child process so callers can track/kill it
+  promise.process = proc;
+  return promise;
 }
 
 /** Build Docker images for the deployment */
@@ -75,13 +79,14 @@ async function buildImages(projectName, composeFile, env = {}, onLog) {
 
 /** Start L1 service */
 async function startL1(projectName, composeFile, env = {}) {
-  return runCompose(projectName, composeFile, ["up", "-d", "tokamak-app-l1"], { env });
+  return runCompose(projectName, composeFile, ["up", "-d", "--no-build", "tokamak-app-l1"], { env });
 }
 
 /** Run contract deployer (waits for completion) */
-async function deployContracts(projectName, composeFile, env = {}) {
-  return runCompose(projectName, composeFile, ["up", "tokamak-app-deployer"], {
+async function deployContracts(projectName, composeFile, env = {}, onLog) {
+  return runCompose(projectName, composeFile, ["up", "--no-build", "tokamak-app-deployer"], {
     env,
+    onLog,
     timeout: 600000, // 10 minutes max
   });
 }
@@ -121,14 +126,42 @@ async function extractEnv(projectName, composeFile) {
   }
 }
 
+/**
+ * Write environment variables to the deployer env volume.
+ * Used when addresses are recovered from logs but the .env file wasn't written.
+ */
+function writeEnvToVolume(projectName, envVars) {
+  const volumeName = `${projectName}_env`;
+  const tempDir = path.join(require("os").tmpdir(), `ethrex-write-${projectName}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  try {
+    // Build .env content
+    const envContent = Object.entries(envVars)
+      .filter(([, v]) => v != null && v !== "")
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n") + "\n";
+
+    fs.writeFileSync(path.join(tempDir, ".env"), envContent);
+    console.log(`[writeEnvToVolume] Writing to volume ${volumeName}:\n${envContent}`);
+
+    execSync(
+      `docker run --rm -v ${volumeName}:/env -v ${tempDir}:/in alpine cp /in/.env /env/.env`,
+      { cwd: ETHREX_ROOT, timeout: 30000 }
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 /** Start L2 service (--no-deps: don't restart deployer) */
 async function startL2(projectName, composeFile, env = {}) {
-  return runCompose(projectName, composeFile, ["up", "-d", "--no-deps", "tokamak-app-l2"], { env });
+  return runCompose(projectName, composeFile, ["up", "-d", "--no-deps", "--no-build", "tokamak-app-l2"], { env });
 }
 
 /** Start prover service (--no-deps: don't restart deployer or L2) */
 async function startProver(projectName, composeFile, env = {}) {
-  return runCompose(projectName, composeFile, ["up", "-d", "--no-deps", "tokamak-app-prover"], { env });
+  return runCompose(projectName, composeFile, ["up", "-d", "--no-deps", "--no-build", "tokamak-app-prover"], { env });
 }
 
 /** Stop a single service */
@@ -245,9 +278,14 @@ async function startTools(envVars, toolsPorts = {}) {
     proc.on("error", reject);
   });
 
-  // Start all tools
+  // Start tools (optionally skip L1 explorer for testnet — use Etherscan instead)
+  const upArgs = ["compose", "-f", toolsCompose, "up", "-d"];
+  if (toolsPorts.skipL1Explorer) {
+    // Exclude L1 explorer services — specify only the services we want
+    upArgs.push("frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui");
+  }
   await new Promise((resolve, reject) => {
-    const proc = spawn("docker", ["compose", "-f", toolsCompose, "up", "-d"], {
+    const proc = spawn("docker", upArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -335,8 +373,12 @@ async function restartTools(envVars, toolsPorts = {}) {
   });
 
   // Start without build
+  const restartUpArgs = ["compose", "-f", toolsCompose, "up", "-d"];
+  if (toolsPorts.skipL1Explorer) {
+    restartUpArgs.push("frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui");
+  }
   await new Promise((resolve, reject) => {
-    const proc = spawn("docker", ["compose", "-f", toolsCompose, "up", "-d"], {
+    const proc = spawn("docker", restartUpArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -443,11 +485,29 @@ function hasNvidiaGpu() {
   }
 }
 
+/** Find an existing Docker image for a programSlug (e.g. evm-l2, zk-dex) */
+function findImage(programSlug) {
+  try {
+    // First check shared name: tokamak-appchain:{slug}
+    const shared = execSync(`docker image inspect "tokamak-appchain:${programSlug}" --format "{{.Id}}"`, { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (shared.toString().trim()) return `tokamak-appchain:${programSlug}`;
+  } catch {}
+  try {
+    // Then check any project-specific name: tokamak-appchain:{slug}-*
+    const result = execSync(`docker images --filter "reference=tokamak-appchain:${programSlug}-*" --format "{{.Repository}}:{{.Tag}}"`, { timeout: 10000 });
+    const first = result.toString().trim().split("\n").filter(Boolean)[0];
+    if (first) return first;
+  } catch {}
+  return null;
+}
+
 module.exports = {
+  findImage,
   buildImages,
   startL1,
   deployContracts,
   extractEnv,
+  writeEnvToVolume,
   stopService,
   startService,
   startL2,
