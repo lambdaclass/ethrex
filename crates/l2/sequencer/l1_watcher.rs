@@ -500,6 +500,7 @@ impl L1Watcher {
                 from: tx.from,
                 inner_hash: Default::default(),
                 sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             };
 
             let privileged_tx = Transaction::PrivilegedL2Transaction(mint_transaction);
