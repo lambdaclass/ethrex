@@ -56,7 +56,7 @@ export interface L2Config {
 
 function deploymentToL2Config(d: DeploymentFromDB): L2Config {
   const statusMap: Record<string, L2Config['status']> = {
-    running: 'running', stopped: 'stopped', deploying: 'starting',
+    running: 'running', active: 'running', stopped: 'stopped', deploying: 'starting',
     configured: 'created', failed: 'error', error: 'error', destroyed: 'stopped',
   }
   return {
@@ -152,9 +152,10 @@ export default function MyL2View() {
             'get_docker_containers', { id: l2.id }
           )
           if (containers.length === 0) {
-            // No containers → actually stopped (unless deploying)
-            if (l2.status === 'running') {
-              return { ...l2, status: 'stopped' as const }
+            // No containers → actually stopped
+            // Also fix 'created' status for provisioned deployments (recovery set status=configured)
+            if (l2.status === 'running' || l2.status === 'error' || (l2.status === 'created' && l2.dockerProject)) {
+              return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
             }
             return l2
           }
@@ -163,15 +164,14 @@ export default function MyL2View() {
           const anyError = containers.some(c => c.state === 'exited' || c.state === 'dead')
 
           if (allRunning) {
-            return { ...l2, status: 'running' as const }
+            return { ...l2, status: 'running' as const, phase: 'running', description: `${l2.programSlug} · running`, sequencerStatus: 'running' as const, errorMessage: null }
           } else if (anyError && !anyRunning) {
-            return { ...l2, status: 'error' as const, errorMessage: l2.errorMessage || (lang === 'ko' ? '컨테이너 비정상 종료' : 'Container exited') }
+            return { ...l2, status: 'error' as const, phase: 'error', description: `${l2.programSlug} · error`, sequencerStatus: 'stopped' as const, errorMessage: l2.errorMessage || (lang === 'ko' ? '컨테이너 비정상 종료' : 'Container exited') }
           } else if (anyRunning) {
-            // Partial — some running, some not
             const downServices = containers.filter(c => c.state !== 'running').map(c => c.service).join(', ')
-            return { ...l2, status: 'running' as const, errorMessage: `${lang === 'ko' ? '일부 중지' : 'Partial'}: ${downServices}` }
+            return { ...l2, status: 'running' as const, phase: 'running', description: `${l2.programSlug} · running`, sequencerStatus: 'running' as const, errorMessage: `${lang === 'ko' ? '일부 중지' : 'Partial'}: ${downServices}` }
           } else {
-            return { ...l2, status: 'stopped' as const }
+            return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
           }
         } catch {
           // Can't reach local-server — keep DB status
@@ -405,7 +405,7 @@ export default function MyL2View() {
                       >
                         {actionLoading === l2.id ? '...' : (lang === 'ko' ? '중지' : 'Stop')}
                       </span>
-                    ) : l2.status === 'stopped' ? (
+                    ) : (l2.status === 'stopped' || l2.status === 'error' || l2.status === 'created') ? (
                       <span
                         onClick={(e) => handleStart(e, l2.id)}
                         className={`text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-success)] text-white hover:opacity-80 transition-opacity cursor-pointer ${actionLoading === l2.id ? 'opacity-50' : ''}`}
@@ -417,16 +417,6 @@ export default function MyL2View() {
                         {lang === 'ko' ? '배포 중' : 'Deploying'}
                       </span>
                     ) : null}
-                    <span
-                      onClick={(e) => handleDelete(e, l2.id)}
-                      className={`text-[10px] px-2 py-0.5 rounded-md text-white hover:opacity-80 transition-all cursor-pointer ${
-                        confirmDeleteId === l2.id ? 'bg-red-700 ring-1 ring-red-400' : 'bg-[var(--color-error)]'
-                      } ${actionLoading === l2.id ? 'opacity-50' : ''}`}
-                    >
-                      {actionLoading === l2.id ? '...'
-                        : confirmDeleteId === l2.id ? (lang === 'ko' ? '확인' : 'OK')
-                        : (lang === 'ko' ? '삭제' : 'Del')}
-                    </span>
                   </div>
                 </div>
               </button>

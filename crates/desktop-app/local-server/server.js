@@ -54,7 +54,7 @@ app.get("/api/store/programs", async (req, res) => {
 
 // Recovery: detect stuck deployments on server start
 const { recoverStuckDeployments } = require("./lib/deployment-engine");
-recoverStuckDeployments();
+recoverStuckDeployments().catch(e => console.error("[recovery] Error:", e.message));
 
 // Open URL in system browser (for Tauri WebviewWindow where window.open is blocked)
 app.post("/api/open-url", (req, res) => {

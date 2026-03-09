@@ -1040,10 +1040,15 @@ function renderOverviewTab() {
   const d = detailDeployment;
   if (!d) return;
   const isProvisioned = !!d.docker_project;
-  const isRunning = d.phase === 'running';
-  const isStopped = d.phase === 'stopped';
-  const isError = d.phase === 'error';
   const isDeploying = ['checking_docker','building','l1_starting','deploying_contracts','l2_starting','starting_prover','starting_tools'].includes(d.phase);
+  // Reconcile: use live container state instead of stale DB phase
+  const liveContainers = detailStatus?.containers || [];
+  const hasContainers = liveContainers.length > 0;
+  const allContainersRunning = hasContainers && liveContainers.every(c => (c.State || c.state) === 'running');
+  const anyContainerRunning = hasContainers && liveContainers.some(c => (c.State || c.state) === 'running');
+  const isRunning = isDeploying ? false : (hasContainers ? anyContainerRunning : d.phase === 'running');
+  const isStopped = !isDeploying && !isRunning && d.phase !== 'error';
+  const isError = d.phase === 'error' || (isProvisioned && !hasContainers && d.phase === 'running');
 
   document.getElementById('container-cards').innerHTML = '';
   document.getElementById('detail-endpoints').style.display = 'none';

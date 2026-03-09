@@ -437,7 +437,23 @@ async function startDeployment(deployment) {
     return await startDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
+  // Start core services (L1, L2, Prover)
   await docker.start(deployment.docker_project, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+  // Also start tools (Explorer, Bridge UI, Dashboard) if they were provisioned
+  try {
+    const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
+    await docker.startTools(envVars, {
+      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
+      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
+      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
+      toolsDbPort: deployment.tools_db_port,
+      l1Port: deployment.l1_port,
+      l2Port: deployment.l2_port,
+      toolsMetricsPort: deployment.tools_metrics_port,
+    });
+  } catch (e) {
+    console.log(`[start] Tools start skipped: ${e.message}`);
+  }
   return updateDeployment(deployment.id, { phase: "running", status: "active" });
 }
 
@@ -509,15 +525,31 @@ async function destroyDeploymentRemote(deployment) {
  * (building, l1_starting, etc.) with no running provision.
  * Marks them as error since the build process was lost.
  */
-function recoverStuckDeployments() {
+async function recoverStuckDeployments() {
   try {
     const deployments = getAllDeployments();
     for (const dep of deployments) {
+      // Mark stuck active-phase deployments as error
       if (ACTIVE_PHASES.includes(dep.phase) && !activeProvisions.has(dep.id)) {
         console.log(`[recovery] Deployment ${dep.id} (${dep.name}) stuck in phase "${dep.phase}" -- marking as error`);
         const errMsg = `Server restarted while deployment was in "${dep.phase}" phase. The build process was lost. Please retry.`;
         updateDeployment(dep.id, { phase: "error", error_message: errMsg });
         insertDeployEvent(dep.id, "error", dep.phase, errMsg, null);
+        continue;
+      }
+      // Reconcile: phase says "running" but Docker containers are actually stopped
+      if (dep.phase === "running" && dep.docker_project) {
+        try {
+          const composeFile = require("path").join(getDeploymentDir(dep.id), "docker-compose.yaml");
+          const containers = await docker.getStatus(dep.docker_project, composeFile);
+          const anyRunning = containers.some(c => (c.State || "").toLowerCase() === "running");
+          if (!anyRunning) {
+            console.log(`[recovery] Deployment ${dep.id} (${dep.name}) phase="running" but no containers running -- marking as stopped`);
+            updateDeployment(dep.id, { phase: "stopped", status: "configured" });
+          }
+        } catch (e) {
+          console.log(`[recovery] Could not check containers for ${dep.id}: ${e.message}`);
+        }
       }
     }
   } catch (e) {

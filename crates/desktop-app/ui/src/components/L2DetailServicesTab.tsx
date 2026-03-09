@@ -113,17 +113,26 @@ export default function L2DetailServicesTab({
         })}
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        <button disabled={actionLoading} onClick={() => handleAction('start')}
-          className="flex-1 bg-[var(--color-success)] text-black text-xs font-medium py-2 rounded-xl hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-50">
-          {actionLoading ? '...' : (ko ? '전체 시작' : 'Start All')}
-        </button>
-        <button disabled={actionLoading} onClick={() => handleAction('stop')}
-          className="flex-1 bg-[var(--color-error)] text-white text-xs font-medium py-2 rounded-xl hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-50">
-          {actionLoading ? '...' : (ko ? '전체 중지' : 'Stop All')}
-        </button>
-      </div>
+      {/* Actions — show contextual button based on container state */}
+      {(() => {
+        const allStopped = [...CORE_SERVICES, ...TOOLS_SERVICES].every(svc => svcState(svc.service) !== 'running')
+        const anyRunning = [...CORE_SERVICES, ...TOOLS_SERVICES].some(svc => svcState(svc.service) === 'running')
+        return (
+          <div className="flex gap-2">
+            {allStopped ? (
+              <button disabled={actionLoading} onClick={() => handleAction('start')}
+                className="flex-1 bg-[var(--color-success)] text-black text-xs font-medium py-2 rounded-xl hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-50">
+                {actionLoading ? '...' : (ko ? '전체 시작' : 'Start All')}
+              </button>
+            ) : anyRunning ? (
+              <button disabled={actionLoading} onClick={() => handleAction('stop')}
+                className="flex-1 bg-[var(--color-error)] text-white text-xs font-medium py-2 rounded-xl hover:opacity-80 transition-opacity cursor-pointer disabled:opacity-50">
+                {actionLoading ? '...' : (ko ? '전체 중지' : 'Stop All')}
+              </button>
+            ) : null}
+          </div>
+        )
+      })()}
 
       {/* Products */}
       <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">

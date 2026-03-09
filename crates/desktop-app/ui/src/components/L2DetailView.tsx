@@ -62,26 +62,45 @@ export interface Product {
   description: string
 }
 
-export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
+export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
   const { lang } = useLang()
   const ko = lang === 'ko'
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
-  const [containers, setContainers] = useState<ContainerInfo[]>([])
+  const [containers, setContainers] = useState<ContainerInfo[] | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [platformLoggedIn, setPlatformLoggedIn] = useState(false)
-  const [tags, setTags] = useState<string[]>(l2.hashtags || [])
+  const [tags, setTags] = useState<string[]>(l2Prop.hashtags || [])
   const [tagInput, setTagInput] = useState('')
   const [comments, setComments] = useState<Comment[]>(() => [...L2_DETAIL_MOCK_COMMENTS])
+
+  // Derive live status from containers, overriding stale prop
+  // null = not yet fetched (use prop as-is), [] = fetched but empty (truly stopped)
+  const l2 = useMemo((): L2Config => {
+    if (containers === null) return l2Prop // First render — not yet fetched
+    if (containers.length === 0 && (l2Prop.status === 'running' || l2Prop.status === 'error')) {
+      return { ...l2Prop, status: 'stopped', phase: 'stopped', description: `${l2Prop.programSlug} · stopped`, sequencerStatus: 'stopped', proverStatus: 'stopped' }
+    }
+    if (containers.length === 0) return l2Prop
+    const allRunning = containers.every(c => c.state === 'running')
+    const anyRunning = containers.some(c => c.state === 'running')
+    if (allRunning) return { ...l2Prop, status: 'running', phase: 'running', description: `${l2Prop.programSlug} · running`, sequencerStatus: 'running', errorMessage: null }
+    if (anyRunning) {
+      const down = containers.filter(c => c.state !== 'running').map(c => c.service).join(', ')
+      return { ...l2Prop, status: 'running', phase: 'running', sequencerStatus: 'running', errorMessage: `${ko ? '일부 중지' : 'Partial'}: ${down}` }
+    }
+    return { ...l2Prop, status: 'stopped', phase: 'stopped', description: `${l2Prop.programSlug} · stopped`, sequencerStatus: 'stopped', proverStatus: 'stopped' }
+  }, [l2Prop, containers, ko])
+
   const chain = useMemo(() => getMockChainMetrics(l2), [l2])
   const econ = useMemo(() => getMockEconomyMetrics(l2), [l2])
   const products = useMemo(() => getMockProducts(l2), [l2])
 
   const fetchContainers = useCallback(async () => {
     try {
-      const result = await invoke<ContainerInfo[]>('get_docker_containers', { id: l2.id })
+      const result = await invoke<ContainerInfo[]>('get_docker_containers', { id: l2Prop.id })
       setContainers(result)
     } catch { /* local-server not reachable */ }
-  }, [l2.id])
+  }, [l2Prop.id])
 
   useEffect(() => {
     platformAPI.loadToken().then(ok => setPlatformLoggedIn(ok))
@@ -93,7 +112,7 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   const handleAction = async (action: 'start' | 'stop') => {
     setActionLoading(true)
     try {
-      await invoke(action === 'stop' ? 'stop_docker_deployment' : 'start_docker_deployment', { id: l2.id })
+      await invoke(action === 'stop' ? 'stop_docker_deployment' : 'start_docker_deployment', { id: l2Prop.id })
       await fetchContainers()
       onRefresh?.()
     } catch (e) { console.error(`Failed to ${action}:`, e) }
@@ -101,7 +120,7 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   }
 
   const health = useMemo(() => {
-    if (containers.length === 0) return { color: 'var(--color-text-secondary)', label: ko ? '오프라인' : 'Offline' }
+    if (!containers || containers.length === 0) return { color: 'var(--color-text-secondary)', label: ko ? '오프라인' : 'Offline' }
     const all = containers.every(c => c.state === 'running')
     const any = containers.some(c => c.state === 'running')
     if (all) return { color: 'var(--color-success)', label: ko ? '정상' : 'Healthy' }
@@ -178,7 +197,7 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
 
         {activeTab === 'services' && (
           <L2DetailServicesTab
-            l2={l2} ko={ko} containers={containers} products={products}
+            l2={l2} ko={ko} containers={containers ?? []} products={products}
             actionLoading={actionLoading} handleAction={handleAction}
             platformLoggedIn={platformLoggedIn}
             onRefresh={onRefresh}
