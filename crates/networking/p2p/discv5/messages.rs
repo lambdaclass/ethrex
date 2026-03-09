@@ -1,5 +1,5 @@
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
-use aes_gcm::{aead::AeadMutInPlace, Aes128Gcm, KeyInit};
+use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
 use bytes::{BufMut, Bytes};
 use ethrex_common::H256;
 use ethrex_rlp::{
@@ -816,7 +816,7 @@ mod tests {
         types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
-    use aes_gcm::{aead::AeadMutInPlace, Aes128Gcm, KeyInit};
+    use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
     use bytes::BytesMut;
     use ethrex_common::{H264, H512};
     use hex_literal::hex;
