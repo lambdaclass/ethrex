@@ -12,10 +12,12 @@ export const ACCOUNT_ADDRESS =
   "0x1000000000000000000000000000000000000003";
 export const VERIFIER_ADDRESS =
   "0x1000000000000000000000000000000000000004";
+export const DEPLOYER_PROXY_ADDRESS =
+  "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
 export interface Frame {
   mode: number; // 0=DEFAULT, 1=VERIFY, 2=SENDER
-  target: Uint8Array; // 20-byte address, empty for null (CREATE)
+  target: Uint8Array; // 20-byte address, empty for null (calls tx.sender per spec)
   gasLimit: bigint;
   data: Uint8Array;
 }

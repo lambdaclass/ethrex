@@ -139,7 +139,7 @@ Add multiple operations (address + value + calldata), submit them all atomically
 
 ### 5. Deploy + Execute
 
-Deploy a contract and call it in the same transaction. Three frames: VERIFY + DEFAULT (deploy) + SENDER (execute).
+Deploy a contract and call it in the same transaction using the [deterministic deployment proxy](https://github.com/Arachnid/deterministic-deployment-proxy) (CREATE2 factory). Three frames: VERIFY + DEFAULT (deploy via proxy) + SENDER (execute on deployed contract).
 
 ### Transaction History
 
@@ -155,6 +155,7 @@ These contracts are injected into `genesis.json` at fixed addresses:
 | MockERC20 | `0x1000000000000000000000000000000000000002` | Minimal ERC20 token ("DEMO"). No access control on `mint()`. |
 | WebAuthnP256Account | `0x1000000000000000000000000000000000000003` | Smart account with passkey auth. Verifies WebAuthn P256 signatures, has `execute(address,uint256,bytes)` for arbitrary calls. |
 | WebAuthnVerifier | `0x1000000000000000000000000000000000000004` | Helper that wraps the WebAuthn verification logic for Yul contracts. |
+| Deterministic Deployment Proxy | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | CREATE2 factory ([Arachnid](https://github.com/Arachnid/deterministic-deployment-proxy)). Used by deploy-execute to deploy contracts from frame transactions. |
 
 The GasSponsor and WebAuthnP256Account are compiled from **Yul** (`contracts/yul/`) because they use `verbatim` for EIP-8141 custom opcodes (APPROVE `0xAA`, TXPARAMLOAD `0xB0`). MockERC20 and WebAuthnVerifier are standard Solidity compiled with `--via-ir`.
 

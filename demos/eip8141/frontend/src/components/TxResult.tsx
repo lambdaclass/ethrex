@@ -68,6 +68,13 @@ export default function TxResult({ result }: { result: TxResultType }) {
         </div>
       )}
 
+      {result.deployedAddress && (
+        <div className="mt-1">
+          <span className="text-xs text-zinc-500">Deployed at: </span>
+          <code className="text-xs text-violet-400 font-mono">{result.deployedAddress}</code>
+        </div>
+      )}
+
       {result.frameReceipts && result.frameReceipts.length > 0 && (
         <div className="mt-3 space-y-1">
           <span className="text-xs text-zinc-500 font-medium">Frame Results:</span>

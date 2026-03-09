@@ -3,7 +3,7 @@ import { bytesToHex, hexToBytes } from "../frame-tx.js";
 import { encodeVerifyAndPayCalldata } from "../webauthn.js";
 import { sendRawTransaction, waitForReceipt, buildTxResponse } from "../rpc.js";
 import { credentials } from "./register.js";
-import { pendingSkeletons } from "./sig-hash.js";
+import { pendingSkeletons, pendingDeployedAddresses } from "./sig-hash.js";
 import type { DeployExecuteRequest } from "../types.js";
 
 const app = new Hono();
@@ -52,7 +52,13 @@ app.post("/deploy-execute", async (c) => {
     );
 
     // Frame modes: [VERIFY, DEFAULT (deploy), SENDER (execute)]
-    return c.json(buildTxResponse(receipt, submittedHash, [1, 0, 2]));
+    const deployedAddress = pendingDeployedAddresses.get(address);
+    pendingDeployedAddresses.delete(address);
+
+    return c.json({
+      ...buildTxResponse(receipt, submittedHash, [1, 0, 2]),
+      deployedAddress,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[deploy-execute] Error: ${msg}`);

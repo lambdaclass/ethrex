@@ -7,6 +7,7 @@ import {
   FRAME_MODE_DEFAULT,
   SPONSOR_ADDRESS,
   MOCK_ERC20_ADDRESS,
+  DEPLOYER_PROXY_ADDRESS,
 } from "../types.js";
 import type {
   SigHashRequest,
@@ -16,7 +17,13 @@ import type {
   DeployExecuteParams,
   Frame,
 } from "../types.js";
-import { encodeAbiParameters, parseAbiParameters, parseEther } from "viem";
+import {
+  encodeAbiParameters,
+  parseAbiParameters,
+  parseEther,
+  getCreate2Address,
+  numberToHex,
+} from "viem";
 
 // Default gas limit per frame
 const DEFAULT_FRAME_GAS = 200_000n;
@@ -134,9 +141,36 @@ async function buildSkeleton(
 
     case "deploy-execute": {
       const p = params as unknown as DeployExecuteParams;
+      const initCodeHex = (
+        p.bytecode.startsWith("0x") ? p.bytecode : `0x${p.bytecode}`
+      ) as `0x${string}`;
+      const initCode = hexToBytes(initCodeHex);
+
+      // Use nonce as CREATE2 salt (unique per sender transaction)
+      const saltHex = numberToHex(nonce, { size: 32 });
+      const salt = hexToBytes(saltHex);
+
+      // Calldata for deployer proxy: 32-byte salt + init code
+      const deployData = new Uint8Array(32 + initCode.length);
+      deployData.set(salt, 0);
+      deployData.set(initCode, 32);
+
+      // Compute deterministic CREATE2 deployed address
+      const deployedAddress = getCreate2Address({
+        from: DEPLOYER_PROXY_ADDRESS as `0x${string}`,
+        salt: saltHex,
+        bytecode: initCodeHex,
+      });
+
       // Frame 0: VERIFY
-      // Frame 1: DEFAULT (mode=0, null target = CREATE) with bytecode
-      // Frame 2: SENDER (CALL the deployed contract - address TBD by caller)
+      // Frame 1: DEFAULT — calls deployer proxy with salt + init code
+      // Frame 2: SENDER — account.execute(deployedAddress, 0, calldata)
+      const executeCalldata = encodeExecuteCalldata(
+        deployedAddress,
+        "0",
+        p.calldata || "0x"
+      );
+
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
@@ -146,17 +180,20 @@ async function buildSkeleton(
         },
         {
           mode: FRAME_MODE_DEFAULT,
-          target: new Uint8Array(0), // null target = CREATE
+          target: hexToBytes(DEPLOYER_PROXY_ADDRESS),
           gasLimit: 1_000_000n,
-          data: hexToBytes(p.bytecode),
+          data: deployData,
         },
         {
           mode: FRAME_MODE_SENDER,
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
-          data: hexToBytes(p.calldata),
+          data: executeCalldata,
         },
       ];
+
+      // Store deployed address for the response
+      pendingDeployedAddresses.set(from, deployedAddress);
       break;
     }
 
@@ -256,6 +293,9 @@ app.post("/sig-hash", async (c) => {
 // Cache skeletons by address so submit endpoints reuse the exact same tx
 // (avoids nonce/baseFee drift between sig-hash and submit calls).
 export const pendingSkeletons = new Map<string, FrameTransaction>();
+
+// Cache deployed addresses for deploy-execute responses.
+export const pendingDeployedAddresses = new Map<string, string>();
 
 export { buildSkeleton, serializeTxSkeleton };
 export default app;

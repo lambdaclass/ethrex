@@ -13,6 +13,7 @@ export interface TxResult {
   txHash?: string;
   gasUsed?: string;
   frameReceipts?: FrameReceipt[];
+  deployedAddress?: string;
   error?: string;
 }
 
