@@ -31,6 +31,25 @@ pub enum CryptoError {
 ///
 /// Methods take `&self` to support `&dyn Crypto` (dynamic dispatch).
 /// Implementations are typically zero-sized structs.
+///
+/// # zkVM implementors
+///
+/// The following methods **must** be overridden for zkVM targets, as their
+/// default implementations use native C libraries (secp256k1, ark-bn254, etc.)
+/// that cannot run inside a zkVM guest:
+///
+/// - [`secp256k1_ecrecover`](Crypto::secp256k1_ecrecover) — uses `libsecp256k1` C library
+/// - [`recover_signer`](Crypto::recover_signer) — uses `libsecp256k1` C library
+/// - [`bn254_g1_add`](Crypto::bn254_g1_add), [`bn254_g1_mul`](Crypto::bn254_g1_mul),
+///   [`bn254_pairing_check`](Crypto::bn254_pairing_check) — use `ark-bn254`
+/// - [`bls12_381_g1_add`](Crypto::bls12_381_g1_add), [`bls12_381_g2_add`](Crypto::bls12_381_g2_add),
+///   [`bls12_381_g1_msm`](Crypto::bls12_381_g1_msm), [`bls12_381_g2_msm`](Crypto::bls12_381_g2_msm),
+///   [`bls12_381_pairing_check`](Crypto::bls12_381_pairing_check) — use `bls12_381` crate
+///   [`bls12_381_map_fp_to_g1`](Crypto::bls12_381_map_fp_to_g1),
+///   [`bls12_381_map_fp2_to_g2`](Crypto::bls12_381_map_fp2_to_g2) — use `bls12_381` crate
+///
+/// Non-overridden methods will silently use the native default, which will
+/// fail to compile or panic at runtime inside a zkVM guest.
 pub trait Crypto: Send + Sync + core::fmt::Debug {
     // ── ECDSA (secp256k1) ──────────────────────────────────────────────
 
