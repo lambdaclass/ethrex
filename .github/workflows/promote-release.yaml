@@ -1,0 +1,118 @@
+# Promote Release Candidate to Final Release
+#
+# Triggered automatically when the "Release Testing" workflow completes successfully
+# for a release candidate tag (e.g., v8.1.0-rc.1).
+#
+# This workflow:
+#   1. Extracts the rc tag from the triggering workflow run
+#   2. Derives the final version by stripping the -rc.N suffix
+#   3. Creates a final vX.Y.Z tag on the same commit
+#   4. Edits the GitHub release: updates tag, title, removes pre-release flag, marks as latest
+#   5. Creates a PR to merge the release branch back to main (not auto-merged)
+#
+# The release edit triggers tag_latest.yaml (via release: types: [edited]) which handles
+# Docker retagging, apt publishing, and Homebrew formula updates.
+
+name: Promote Release
+
+on:
+  workflow_run:
+    workflows: ["Release Testing"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    # Only promote when tests passed and the triggering ref is an rc tag
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      contains(github.event.workflow_run.head_branch, '-rc.')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract RC tag and derive final version
+        id: version
+        env:
+          # Use env var to avoid direct interpolation of workflow_run input in run: block
+          RC_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          # Validate the RC tag matches expected pattern (vX.Y.Z-rc.N)
+          if ! echo "$RC_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'; then
+            echo "::error::Invalid RC tag format: $RC_TAG"
+            exit 1
+          fi
+
+          echo "rc_tag=$RC_TAG" >> "$GITHUB_OUTPUT"
+
+          # Strip the -rc.N suffix to get the final version tag (e.g., v8.1.0-rc.1 -> v8.1.0)
+          FINAL_TAG=$(echo "$RC_TAG" | sed 's/-rc\.[0-9]*$//')
+          echo "final_tag=$FINAL_TAG" >> "$GITHUB_OUTPUT"
+
+          # Version without the leading 'v' for display purposes
+          VERSION="${FINAL_TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "RC tag: $RC_TAG"
+          echo "Final tag: $FINAL_TAG"
+          echo "Version: $VERSION"
+
+      - name: Get commit SHA for RC tag
+        env:
+          RC_TAG: ${{ steps.version.outputs.rc_tag }}
+        run: |
+          COMMIT_SHA=$(git rev-parse "$RC_TAG")
+          echo "sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Commit SHA: $COMMIT_SHA"
+        id: commit
+
+      - name: Create final version tag
+        env:
+          FINAL_TAG: ${{ steps.version.outputs.final_tag }}
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          git tag "$FINAL_TAG" "$COMMIT_SHA"
+          git push origin "$FINAL_TAG"
+
+      - name: Edit GitHub release
+        # Updates the existing pre-release:
+        #   --tag: changes the release tag from rc to final
+        #   --title: updates the release title
+        #   --latest: marks this as the latest release
+        #   --prerelease=false: removes the pre-release flag
+        # This edit triggers tag_latest.yaml (release: types: [edited])
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RC_TAG: ${{ steps.version.outputs.rc_tag }}
+          FINAL_TAG: ${{ steps.version.outputs.final_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release edit "$RC_TAG" \
+            --tag "$FINAL_TAG" \
+            --title "ethrex: v$VERSION" \
+            --latest \
+            --prerelease=false
+
+      - name: Create merge PR
+        # Creates a PR to merge the release branch back to main.
+        # This is NOT auto-merged — a human must review and merge it.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          FINAL_TAG: ${{ steps.version.outputs.final_tag }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "release/v$VERSION" \
+            --title "release: merge v$VERSION to main" \
+            --body "Merges release branch for v$VERSION back to main.
+
+          Release: https://github.com/${{ github.repository }}/releases/tag/$FINAL_TAG"

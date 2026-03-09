@@ -1,0 +1,466 @@
+# Release Test — runs after a release candidate is published by the "Ethrex Release" workflow.
+#
+# Trigger: workflow_run on "Ethrex Release" (tag_release.yaml), filtered to rc tags only.
+#
+# Jobs:
+#   1. extract-info  — parse the rc tag, derive version/rc number
+#   2. snap-sync     — matrix of binary + docker sync tests (L1/L2, x86_64)
+#   3. l2-integration — matrix of L2 integration tests (Validium, Vanilla, etc.)
+#   4. aggregate     — summarize results, comment on release, Slack notify on failure
+
+name: Release Test
+
+on:
+  workflow_run:
+    workflows: ["Ethrex Release"]
+    types: [completed]
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 1: Extract tag/version information from the triggering workflow run
+  # --------------------------------------------------------------------------
+  extract-info:
+    runs-on: ubuntu-latest
+    # Skip if the release workflow failed or wasn't triggered by an rc tag
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      tag: ${{ steps.parse.outputs.tag }}
+      version: ${{ steps.parse.outputs.version }}
+      rc_number: ${{ steps.parse.outputs.rc_number }}
+    steps:
+      - name: Parse tag from triggering workflow
+        id: parse
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          TAG="${HEAD_BRANCH}"
+          echo "Raw tag: ${TAG}"
+
+          # Only proceed for rc tags (e.g., v8.1.0-rc.1)
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "Tag '${TAG}' is not an rc tag — skipping."
+            echo "is_rc=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Strip leading 'v' for version (e.g., 8.1.0-rc.1)
+          VERSION="${TAG#v}"
+          # Extract rc number
+          RC_NUMBER="${TAG##*-rc.}"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "rc_number=${RC_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "is_rc=true" >> "$GITHUB_OUTPUT"
+
+          echo "Tag: ${TAG}, Version: ${VERSION}, RC: ${RC_NUMBER}"
+
+      - name: Skip if not rc
+        if: steps.parse.outputs.is_rc != 'true'
+        run: |
+          echo "Not an RC tag — this workflow will skip all downstream jobs."
+
+  # --------------------------------------------------------------------------
+  # Job 2: Snap sync tests (binary and docker modes)
+  # --------------------------------------------------------------------------
+  snap-sync:
+    needs: extract-info
+    if: needs.extract-info.outputs.tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: binary-l1-x86_64
+            mode: binary
+            artifact: ethrex-linux-x86_64
+            runner: ethrex-sync
+          - name: binary-l2-x86_64
+            mode: binary
+            artifact: ethrex-l2-linux-x86_64
+            runner: ethrex-sync
+          - name: docker-l1-x86_64
+            mode: docker
+            image_suffix: ""
+            runner: ethrex-sync
+          - name: docker-l2-x86_64
+            mode: docker
+            image_suffix: "-l2"
+            runner: ethrex-sync
+          # Future: add arm64 entries when runners are available
+          # - name: binary-l1-aarch64
+          #   mode: binary
+          #   artifact: ethrex-linux-aarch64
+          #   runner: ethrex-sync-arm64
+          # Future: add macOS entries
+          # - name: binary-l1-macos
+          #   mode: binary
+          #   artifact: ethrex-macos-aarch64
+          #   runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    concurrency:
+      group: snap-sync-${{ matrix.runner }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- Binary mode ---
+      - name: "[binary] Download release binary"
+        if: matrix.mode == 'binary'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.extract-info.outputs.tag }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          mkdir -p /tmp/release-binaries
+          gh release download "$TAG" \
+            -p "$ARTIFACT" \
+            -D /tmp/release-binaries \
+            --repo "$GITHUB_REPOSITORY"
+          chmod +x "/tmp/release-binaries/${ARTIFACT}"
+
+      - name: "[binary] Run snap sync test"
+        if: matrix.mode == 'binary'
+        uses: ./.github/actions/snap-sync-test
+        with:
+          mode: binary
+          binary_path: /tmp/release-binaries/${{ matrix.artifact }}
+          network: hoodi
+          timeout: 3h
+
+      # --- Docker mode ---
+      - name: "[docker] Run snap sync test"
+        if: matrix.mode == 'docker'
+        uses: ./.github/actions/snap-sync-test
+        with:
+          mode: docker
+          image_tag: ${{ needs.extract-info.outputs.version }}${{ matrix.image_suffix }}
+          network: hoodi
+          timeout: 3h
+
+  # --------------------------------------------------------------------------
+  # Job 3: L2 integration tests using release Docker images from GHCR
+  # --------------------------------------------------------------------------
+  l2-integration:
+    needs: extract-info
+    if: needs.extract-info.outputs.tag != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Validium
+            validium: true
+            web3signer: false
+            based: false
+            compose_targets: [docker-compose.yaml]
+          - name: Vanilla
+            validium: false
+            web3signer: false
+            based: false
+            compose_targets: [docker-compose.yaml]
+          - name: "Vanilla with Web3signer"
+            validium: false
+            web3signer: true
+            based: false
+            compose_targets: [docker-compose.yaml, docker-compose-l2-web3signer.yaml]
+          - name: Based
+            validium: false
+            web3signer: false
+            based: true
+            compose_targets: [docker-compose.yaml]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      # Pull release images from GHCR and tag them as the L2 docker-compose expects
+      - name: Pull and tag release images
+        env:
+          VERSION: ${{ needs.extract-info.outputs.version }}
+          FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          echo "Pulling L1 image: ${FULL_IMAGE}:${VERSION}"
+          docker pull "${FULL_IMAGE}:${VERSION}"
+          docker tag "${FULL_IMAGE}:${VERSION}" ethrex:main
+
+          echo "Pulling L2 image: ${FULL_IMAGE}:${VERSION}-l2"
+          docker pull "${FULL_IMAGE}:${VERSION}-l2"
+          docker tag "${FULL_IMAGE}:${VERSION}-l2" ethrex:main-l2
+
+          echo "Tagged images:"
+          docker images | grep ethrex
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          make build-prover-exec
+          mkdir -p ../guest-program/bin/sp1/out \
+            && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 \
+            && touch ../guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32
+
+      - name: Build test
+        run: |
+          cargo test -p ethrex-test l2:: --no-run --release
+
+      - name: Start Web3Signer
+        if: matrix.web3signer
+        run: |
+          cd crates/l2
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach web3signer
+
+      - name: Start L1
+        run: |
+          cd crates/l2
+          ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
+
+      - name: Install rex
+        run: |
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
+
+      - name: Deploy contracts
+        env:
+          BASED: ${{ matrix.based }}
+          VALIDIUM: ${{ matrix.validium }}
+        run: |
+          touch cmd/.env
+          cd crates/l2
+          if [ "$BASED" = "true" ]; then
+            export ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=true
+            export COMPILE_CONTRACTS=true
+          fi
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_L2_VALIDIUM="$VALIDIUM" \
+          docker compose up contract_deployer
+
+          DEPLOYER_EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' contract_deployer)
+          if [ "$DEPLOYER_EXIT_CODE" != "0" ]; then
+            echo "Contract deployer failed"
+            docker logs contract_deployer
+            exit 1
+          fi
+
+      - name: Copy env to host
+        run: |
+          docker cp contract_deployer:/env/.env cmd/.env
+          cat cmd/.env
+
+      - name: Register sequencer
+        if: matrix.based
+        run: |
+          cd cmd
+          SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+          export SEQUENCER_REGISTRY
+
+          if [ -z "$SEQUENCER_REGISTRY" ]; then
+            echo "Failed to get SEQUENCER_REGISTRY from .env file"
+            exit 1
+          fi
+          rex send "$SEQUENCER_REGISTRY" "register(address)" 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b --value 1000000000000000000 -k 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+          rex call "$SEQUENCER_REGISTRY" "leaderSequencer()"
+
+      - name: Start Sequencer
+        env:
+          BASED: ${{ matrix.based }}
+          VALIDIUM: ${{ matrix.validium }}
+        run: |
+          if [ "$BASED" = "true" ]; then
+            cd cmd
+            ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY=$(grep ETHREX_DEPLOYER_SEQUENCER_REGISTRY .env | cut -d= -f2)
+            export ETHREX_STATE_UPDATER_SEQUENCER_REGISTRY
+            export ETHREX_BASED=true
+            cd ..
+          else
+            export ETHREX_BLOCK_PRODUCER_BASE_FEE_VAULT_ADDRESS=0x000c0d6b7c4516a5b274c51ea331a9410fe69127
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_VAULT_ADDRESS=0xd5d2a85751b6F158e5b9B8cD509206A865672362
+            export ETHREX_BLOCK_PRODUCER_OPERATOR_FEE_PER_GAS=1000000000
+            export ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=0x45681AE1768a8936FB87aB11453B4755e322ceec
+          fi
+          cd crates/l2
+          DOCKER_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_L2_VALIDIUM="$VALIDIUM" \
+          ETHREX_WATCHER_BLOCK_DELAY=0 \
+          ETHREX_COMMITTER_COMMIT_TIME=15000 \
+          ETHREX_WATCHER_WATCH_INTERVAL=1000 \
+          ETHREX_LOG_LEVEL=debug \
+          docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach --no-deps ethrex_l2
+
+      - name: Wait for L2 deposits to be processed
+        run: |
+          FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
+          RICH_ADDRESS=$(rex address --from-private-key "$FIRST_TEST_PK")
+          echo "Waiting for test account $RICH_ADDRESS deposits on L2..."
+          MAX_TRIES=300
+          SLEEP_SECS=2
+          for i in $(seq 1 $MAX_TRIES); do
+            if balance_output=$(rex balance "$RICH_ADDRESS" http://localhost:1729 2>/dev/null); then
+              balance_wei=$(echo "${balance_output}" | grep -Eo '[0-9]+' | tail -n1 || echo "0")
+              if [[ "${balance_wei}" =~ ^[0-9]+$ ]] && (( balance_wei > 0 )); then
+                echo "Rich account has balance on L2: ${balance_wei} wei"
+                exit 0
+              fi
+            fi
+            sleep "${SLEEP_SECS}"
+          done
+          echo "Timed out waiting for L2 deposits to be processed"
+          exit 1
+
+      - name: Start prover and run tests
+        run: |
+          sudo chmod -R a+rw crates/l2
+          cd crates/l2
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
+          docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
+          docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
+            cargo test -p ethrex-test l2_integration_test --release --features l2 \
+            -- --nocapture --test-threads=1
+          killall ethrex -s SIGINT || true
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "===== ethrex L2 logs ====="
+          docker logs ethrex_l2 2>&1 | tail -n 200 || true
+          echo ""
+          echo "===== ethrex L1 logs ====="
+          docker logs ethrex_l1 2>&1 | tail -n 200 || true
+
+  # --------------------------------------------------------------------------
+  # Job 4: Aggregate results, comment on release, notify Slack
+  # --------------------------------------------------------------------------
+  aggregate:
+    needs: [extract-info, snap-sync, l2-integration]
+    if: always() && needs.extract-info.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build results summary
+        id: summary
+        env:
+          TAG: ${{ needs.extract-info.outputs.tag }}
+          SNAP_SYNC_RESULT: ${{ needs.snap-sync.result }}
+          L2_INTEGRATION_RESULT: ${{ needs.l2-integration.result }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          result_label() {
+            case "$1" in
+              success) echo "pass" ;;
+              failure) echo "FAIL" ;;
+              cancelled) echo "cancelled" ;;
+              skipped) echo "skipped" ;;
+              *) echo "unknown" ;;
+            esac
+          }
+
+          {
+            echo "### Release Test Results for \`${TAG}\`"
+            echo ""
+            echo "| Test Suite | Result |"
+            echo "|------------|--------|"
+            echo "| snap-sync (all matrix entries) | $(result_label "$SNAP_SYNC_RESULT") |"
+            echo "| l2-integration (all matrix entries) | $(result_label "$L2_INTEGRATION_RESULT") |"
+            echo ""
+            echo "Full run: ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
+          } > /tmp/summary.md
+
+          cat /tmp/summary.md
+          cat /tmp/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$SNAP_SYNC_RESULT" == "success" && "$L2_INTEGRATION_RESULT" == "success" ]]; then
+            echo "all_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "all_passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.extract-info.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          SUMMARY=$(cat /tmp/summary.md)
+
+          # Get existing release body
+          EXISTING_BODY=$(gh release view "$TAG" --repo "$REPO" --json body -q '.body' 2>/dev/null || echo "")
+
+          # Append test results (separated by a horizontal rule)
+          NEW_BODY="${EXISTING_BODY}
+
+          ---
+
+          ${SUMMARY}"
+
+          gh release edit "$TAG" \
+            --repo "$REPO" \
+            --notes "$NEW_BODY" || echo "Warning: could not update release notes"
+
+      - name: Notify Slack on failure
+        if: steps.summary.outputs.all_passed != 'true'
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          TAG: ${{ needs.extract-info.outputs.tag }}
+          SNAP_SYNC_RESULT: ${{ needs.snap-sync.result }}
+          L2_INTEGRATION_RESULT: ${{ needs.l2-integration.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ -z "$SLACK_WEBHOOK" ]]; then
+            echo "Slack webhook not configured — skipping notification."
+            exit 0
+          fi
+
+          # Build list of failed suites
+          FAILED=""
+          [[ "$SNAP_SYNC_RESULT" != "success" ]] && FAILED="${FAILED}\n- snap-sync: ${SNAP_SYNC_RESULT}"
+          [[ "$L2_INTEGRATION_RESULT" != "success" ]] && FAILED="${FAILED}\n- l2-integration: ${L2_INTEGRATION_RESULT}"
+
+          PAYLOAD=$(jq -n \
+            --arg tag "$TAG" \
+            --arg failed "$FAILED" \
+            --arg url "$RUN_URL" \
+            '{
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: ":rotating_light: *Release test failed for \($tag)*"
+                  }
+                },
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: "*Failed suites:*\($failed)\n\n<\($url)|View run>"
+                  }
+                }
+              ]
+            }')
+
+          curl -sS --fail -X POST \
+            -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_WEBHOOK" || echo "Failed to send Slack notification" >&2
