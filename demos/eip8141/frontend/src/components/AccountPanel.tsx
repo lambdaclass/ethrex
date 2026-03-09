@@ -73,6 +73,12 @@ export default function AccountPanel({ credential, onCredentialChange }: Props) 
   };
 
   const handleDisconnect = () => {
+    onCredentialChange(null);
+    setBalance(null);
+    setTokenBalance(null);
+  };
+
+  const handleDeleteAccount = () => {
     clearCredential();
     onCredentialChange(null);
     setBalance(null);
@@ -102,7 +108,13 @@ export default function AccountPanel({ credential, onCredentialChange }: Props) 
           onClick={handleDisconnect}
           className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
         >
-          Disconnect
+          Lock
+        </button>
+        <button
+          onClick={handleDeleteAccount}
+          className="text-xs text-red-500/60 hover:text-red-400 transition-colors cursor-pointer"
+        >
+          Delete
         </button>
       </div>
     );
