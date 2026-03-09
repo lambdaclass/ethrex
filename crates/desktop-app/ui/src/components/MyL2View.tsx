@@ -21,9 +21,15 @@ interface DeploymentFromDB {
   phase: string
   bridge_address: string | null
   proposer_address: string | null
+  timelock_address: string | null
+  sp1_verifier_address: string | null
   error_message: string | null
   is_public: number
   created_at: number
+  tools_l1_explorer_port: number | null
+  tools_l2_explorer_port: number | null
+  tools_bridge_ui_port: number | null
+  hashtags: string | null
 }
 
 export interface L2Config {
@@ -52,11 +58,18 @@ export interface L2Config {
   errorMessage: string | null
   bridgeAddress: string | null
   proposerAddress: string | null
+  timelockAddress: string | null
+  sp1VerifierAddress: string | null
+  toolsL1ExplorerPort: number | null
+  toolsL2ExplorerPort: number | null
+  toolsBridgeUIPort: number | null
+  l1ChainId: number | null
+  l2ChainId: number | null
 }
 
 function deploymentToL2Config(d: DeploymentFromDB): L2Config {
   const statusMap: Record<string, L2Config['status']> = {
-    running: 'running', stopped: 'stopped', deploying: 'starting',
+    running: 'running', active: 'running', stopped: 'stopped', deploying: 'starting',
     configured: 'created', failed: 'error', error: 'error', destroyed: 'stopped',
   }
   return {
@@ -71,7 +84,7 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     rpcPort: d.l2_port || 0,
     sequencerStatus: d.status === 'running' ? 'running' : 'stopped',
     proverStatus: 'stopped',
-    hashtags: [],
+    hashtags: (() => { try { return d.hashtags ? JSON.parse(d.hashtags) : [] } catch { return [] } })(),
     isPublic: d.is_public === 1,
     createdAt: new Date(d.created_at).toISOString(),
     networkMode: 'local',
@@ -84,6 +97,13 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     errorMessage: d.error_message,
     bridgeAddress: d.bridge_address,
     proposerAddress: d.proposer_address,
+    timelockAddress: d.timelock_address,
+    sp1VerifierAddress: d.sp1_verifier_address,
+    toolsL1ExplorerPort: d.tools_l1_explorer_port,
+    toolsL2ExplorerPort: d.tools_l2_explorer_port,
+    toolsBridgeUIPort: d.tools_bridge_ui_port,
+    l1ChainId: null,
+    l2ChainId: null,
   }
 }
 
@@ -152,9 +172,10 @@ export default function MyL2View() {
             'get_docker_containers', { id: l2.id }
           )
           if (containers.length === 0) {
-            // No containers → actually stopped (unless deploying)
-            if (l2.status === 'running') {
-              return { ...l2, status: 'stopped' as const }
+            // No containers → actually stopped
+            // Also fix 'created' status for provisioned deployments (recovery set status=configured)
+            if (l2.status === 'running' || l2.status === 'error' || (l2.status === 'created' && l2.dockerProject)) {
+              return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
             }
             return l2
           }
@@ -162,16 +183,27 @@ export default function MyL2View() {
           const anyRunning = containers.some(c => c.state === 'running')
           const anyError = containers.some(c => c.state === 'exited' || c.state === 'dead')
 
+          // Fetch real chain IDs from monitoring API if running
+          let l1ChainId: number | null = null
+          let l2ChainId: number | null = null
+          if (anyRunning) {
+            try {
+              const base = `http://127.0.0.1:${import.meta.env.VITE_LOCAL_SERVER_PORT || 5002}`
+              const mon = await fetch(`${base}/api/deployments/${l2.id}/monitoring`).then(r => r.json())
+              l1ChainId = mon.l1?.chainId ?? null
+              l2ChainId = mon.l2?.chainId ?? null
+            } catch (e) { console.error(`Failed to fetch monitoring data for ${l2.id}:`, e) }
+          }
+
           if (allRunning) {
-            return { ...l2, status: 'running' as const }
+            return { ...l2, status: 'running' as const, phase: 'running', description: `${l2.programSlug} · running`, sequencerStatus: 'running' as const, errorMessage: null, l1ChainId, l2ChainId }
           } else if (anyError && !anyRunning) {
-            return { ...l2, status: 'error' as const, errorMessage: l2.errorMessage || (lang === 'ko' ? '컨테이너 비정상 종료' : 'Container exited') }
+            return { ...l2, status: 'error' as const, phase: 'error', description: `${l2.programSlug} · error`, sequencerStatus: 'stopped' as const, errorMessage: l2.errorMessage || (lang === 'ko' ? '컨테이너 비정상 종료' : 'Container exited') }
           } else if (anyRunning) {
-            // Partial — some running, some not
             const downServices = containers.filter(c => c.state !== 'running').map(c => c.service).join(', ')
-            return { ...l2, status: 'running' as const, errorMessage: `${lang === 'ko' ? '일부 중지' : 'Partial'}: ${downServices}` }
+            return { ...l2, status: 'running' as const, phase: 'running', description: `${l2.programSlug} · running`, sequencerStatus: 'running' as const, errorMessage: `${lang === 'ko' ? '일부 중지' : 'Partial'}: ${downServices}`, l1ChainId, l2ChainId }
           } else {
-            return { ...l2, status: 'stopped' as const }
+            return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
           }
         } catch {
           // Can't reach local-server — keep DB status
@@ -374,21 +406,28 @@ export default function MyL2View() {
                   <div className="text-[11px] text-[var(--color-text-secondary)] truncate mt-0.5">
                     {l2.errorMessage
                       ? <span className="text-[var(--color-error)]">{l2.errorMessage}</span>
-                      : <>Chain ID: {l2.chainId || '-'} · {l2.l1Port ? `L1:${l2.l1Port}` : ''}{l2.l1Port && l2.l2Port ? ' · ' : ''}{l2.l2Port ? `L2:${l2.l2Port}` : ''}</>
+                      : <><div>L1 Chain ID: {l2.l1ChainId || '-'}</div><div>L2 Chain ID: {l2.l2ChainId || l2.chainId || '-'}</div></>
                     }
                   </div>
-                  <div className="flex gap-1 mt-1">
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {l2.networkMode === 'local' && (
+                      <span className="text-[10px] text-white bg-[#6366f1] px-1.5 py-0.5 rounded font-medium">
+                        Local
+                      </span>
+                    )}
                     <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
                       {l2.programSlug}
-                    </span>
-                    <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
-                      {l2.phase}
                     </span>
                     {l2.isPublic && (
                       <span className="text-[10px] text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1.5 py-0.5 rounded">
                         {t('myl2.public', lang)}
                       </span>
                     )}
+                    {l2.hashtags.map(tag => (
+                      <span key={tag} className="text-[10px] text-[#3b82f6] bg-[#3b82f6]/10 px-1.5 py-0.5 rounded">
+                        #{tag}
+                      </span>
+                    ))}
                   </div>
                 </div>
 
@@ -405,7 +444,7 @@ export default function MyL2View() {
                       >
                         {actionLoading === l2.id ? '...' : (lang === 'ko' ? '중지' : 'Stop')}
                       </span>
-                    ) : l2.status === 'stopped' ? (
+                    ) : (l2.status === 'stopped' || l2.status === 'error' || l2.status === 'created') ? (
                       <span
                         onClick={(e) => handleStart(e, l2.id)}
                         className={`text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-success)] text-white hover:opacity-80 transition-opacity cursor-pointer ${actionLoading === l2.id ? 'opacity-50' : ''}`}
@@ -417,16 +456,6 @@ export default function MyL2View() {
                         {lang === 'ko' ? '배포 중' : 'Deploying'}
                       </span>
                     ) : null}
-                    <span
-                      onClick={(e) => handleDelete(e, l2.id)}
-                      className={`text-[10px] px-2 py-0.5 rounded-md text-white hover:opacity-80 transition-all cursor-pointer ${
-                        confirmDeleteId === l2.id ? 'bg-red-700 ring-1 ring-red-400' : 'bg-[var(--color-error)]'
-                      } ${actionLoading === l2.id ? 'opacity-50' : ''}`}
-                    >
-                      {actionLoading === l2.id ? '...'
-                        : confirmDeleteId === l2.id ? (lang === 'ko' ? '확인' : 'OK')
-                        : (lang === 'ko' ? '삭제' : 'Del')}
-                    </span>
                   </div>
                 </div>
               </button>

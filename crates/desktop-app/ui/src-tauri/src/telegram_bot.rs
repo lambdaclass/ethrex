@@ -348,13 +348,13 @@ impl TelegramBot {
             status_lines.push(format!("  {} {} — {:?}", emoji, chain.name, chain.status));
         }
         for dep in &deployments {
-            let emoji = match dep.status.as_str() {
+            let emoji = match dep.phase.as_str() {
                 "running" => "🟢",
                 "stopped" => "🔴",
-                "deploying" => "🟡",
-                _ => "⚪",
+                "error" => "💥",
+                _ => "🟡",
             };
-            status_lines.push(format!("  {} 🐳 {} — {}", emoji, dep.name, dep.status));
+            status_lines.push(format!("  {} 🐳 {} — {} ({})", emoji, dep.name, dep.phase, dep.program_slug));
         }
 
         let status_block = if status_lines.is_empty() {
@@ -409,8 +409,7 @@ impl TelegramBot {
         // Save user message to memory
         self.memory.append_message(chat_id, "user", text);
 
-        // Build context (live = real Docker container state)
-        let appchain_context = build_appchain_context(&self.appchain_manager);
+        // Build context (live = real Docker container state + monitoring + contracts)
         let deployment_context = build_deployment_context_live().await;
         let pilot_context = self.memory.load_recent_context(chat_id, 20, 20);
 
@@ -428,6 +427,7 @@ impl TelegramBot {
         drop(history_lock);
 
         // Build telegram system prompt and call AI
+        let appchain_context = build_appchain_context(&self.appchain_manager);
         let system_prompt = AiProvider::build_telegram_prompt(
             &appchain_context,
             &deployment_context,
@@ -830,9 +830,8 @@ impl TelegramBot {
 
     async fn generate_briefing(&self, since: chrono::DateTime<chrono::Utc>) -> String {
         let events = self.memory.events_since(since);
-        let chains = self.appchain_manager.list_appchains();
 
-        // Use live deployment context for accurate status
+        // Use live deployment context (Docker + monitoring) for accurate status
         let live_ctx = build_deployment_context_live().await;
         let live_deployments = live_ctx["deployments"].as_array();
 
@@ -872,15 +871,11 @@ impl TelegramBot {
             }
         }
 
-        // Current status
+        // Current status — Docker deployments only (single source of truth)
         let has_deployments = live_deployments.map(|d| !d.is_empty()).unwrap_or(false);
         briefing.push_str("\n📊 현재 상태:\n");
-        if chains.is_empty() && !has_deployments {
+        if !has_deployments {
             briefing.push_str("  등록된 앱체인 없음\n");
-        }
-        for chain in &chains {
-            let emoji = status_emoji(&chain.status);
-            briefing.push_str(&format!("  {} {} — {:?}\n", emoji, chain.name, chain.status));
         }
         if let Some(deps) = live_deployments {
             for dep in deps {
@@ -933,11 +928,16 @@ impl TelegramBot {
             }
         }
 
-        // Alerts
+        // Alerts — from Docker deployments
         let mut alerts = Vec::new();
-        for chain in &chains {
-            if matches!(chain.status, AppchainStatus::Error) {
-                alerts.push(format!("  • {} 에러 상태 — \"상태 확인해줘\"", chain.name));
+        if let Some(deps) = live_deployments {
+            for dep in deps {
+                let phase = dep["phase"].as_str().unwrap_or("");
+                let name = dep["name"].as_str().unwrap_or("?");
+                if phase == "error" {
+                    let err = dep["error"].as_str().unwrap_or("");
+                    alerts.push(format!("  • {} 에러 상태{} — \"상태 확인해줘\"", name, if err.is_empty() { String::new() } else { format!(": {}", err) }));
+                }
             }
         }
         if !alerts.is_empty() {
@@ -1063,33 +1063,8 @@ pub fn build_appchain_context(am: &AppchainManager) -> serde_json::Value {
     })
 }
 
-pub fn build_deployment_context() -> serde_json::Value {
-    let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
-    let summaries: Vec<serde_json::Value> = deployments
-        .iter()
-        .map(|d| {
-            serde_json::json!({
-                "id": d.id,
-                "name": d.name,
-                "program": d.program_slug,
-                "status": d.status,
-                "chain_id": d.chain_id,
-                "l1_port": d.l1_port,
-                "l2_port": d.l2_port,
-                "phase": d.phase,
-                "error": d.error_message,
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "deployments": summaries,
-        "total_count": deployments.len(),
-    })
-}
-
-/// Build deployment context with live container status from Docker.
-/// This is async because it queries the local-server for real-time container state.
+/// Build deployment context with live container status, monitoring, and contract data.
+/// This is async because it queries the local-server for real-time state.
 pub async fn build_deployment_context_live() -> serde_json::Value {
     let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
     let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
@@ -1109,9 +1084,14 @@ pub async fn build_deployment_context_live() -> serde_json::Value {
             })
             .collect();
 
-        // Determine live status from containers
+        // Determine live status from containers (reconcile like Manager/Messenger)
         let live_status = if containers.is_empty() {
-            d.status.clone()
+            // No containers but DB says running → actually stopped
+            if d.status == "running" || d.status == "active" {
+                "stopped".to_string()
+            } else {
+                d.status.clone()
+            }
         } else if containers.iter().all(|c| c.state == "running") {
             "running".to_string()
         } else if containers.iter().all(|c| c.state == "exited" || c.state == "dead") {
@@ -1119,6 +1099,32 @@ pub async fn build_deployment_context_live() -> serde_json::Value {
         } else {
             "partial".to_string() // some running, some not
         };
+
+        // Fetch monitoring data (chain IDs, block numbers)
+        let monitoring = proxy.get_monitoring(&d.id).await.ok();
+        let monitoring_json = if let Some(ref mon) = monitoring {
+            serde_json::json!({
+                "l1": mon.l1.as_ref().map(|l| serde_json::json!({
+                    "healthy": l.healthy,
+                    "chainId": l.chain_id,
+                    "blockNumber": l.block_number,
+                })),
+                "l2": mon.l2.as_ref().map(|l| serde_json::json!({
+                    "healthy": l.healthy,
+                    "chainId": l.chain_id,
+                    "blockNumber": l.block_number,
+                })),
+            })
+        } else {
+            serde_json::Value::Null
+        };
+
+        // Contract addresses
+        let mut contracts = serde_json::json!({});
+        if let Some(ref addr) = d.bridge_address { contracts["bridge"] = serde_json::json!(addr); }
+        if let Some(ref addr) = d.proposer_address { contracts["proposer"] = serde_json::json!(addr); }
+        if let Some(ref addr) = d.timelock_address { contracts["timelock"] = serde_json::json!(addr); }
+        if let Some(ref addr) = d.sp1_verifier_address { contracts["sp1_verifier"] = serde_json::json!(addr); }
 
         summaries.push(serde_json::json!({
             "id": d.id,
@@ -1131,6 +1137,8 @@ pub async fn build_deployment_context_live() -> serde_json::Value {
             "phase": d.phase,
             "error": d.error_message,
             "containers": container_info,
+            "monitoring": monitoring_json,
+            "contracts": contracts,
         }));
     }
 

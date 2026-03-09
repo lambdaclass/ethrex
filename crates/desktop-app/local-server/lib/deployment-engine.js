@@ -209,8 +209,10 @@ async function provision(deployment) {
 
     const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
     const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
-    emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}` });
+    const timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+    const sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+    console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}`);
+    emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}` });
 
     if (!bridgeAddress || !proposerAddress) {
       throw new Error(
@@ -222,6 +224,8 @@ async function provision(deployment) {
     updateDeployment(id, {
       bridge_address: bridgeAddress,
       proposer_address: proposerAddress,
+      timelock_address: timelockAddress,
+      sp1_verifier_address: sp1VerifierAddress,
       env_project_id: projectName,
       env_updated_at: Date.now(),
     });
@@ -437,7 +441,23 @@ async function startDeployment(deployment) {
     return await startDeploymentRemote(deployment);
   }
   const composeFile = require("path").join(getDeploymentDir(deployment.id), "docker-compose.yaml");
+  // Start core services (L1, L2, Prover)
   await docker.start(deployment.docker_project, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+  // Also start tools (Explorer, Bridge UI, Dashboard) if they were provisioned
+  try {
+    const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
+    await docker.startTools(envVars, {
+      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
+      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
+      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
+      toolsDbPort: deployment.tools_db_port,
+      l1Port: deployment.l1_port,
+      l2Port: deployment.l2_port,
+      toolsMetricsPort: deployment.tools_metrics_port,
+    });
+  } catch (e) {
+    console.log(`[start] Tools start skipped: ${e.message}`);
+  }
   return updateDeployment(deployment.id, { phase: "running", status: "active" });
 }
 
@@ -455,7 +475,8 @@ async function destroyDeployment(deployment) {
   return updateDeployment(deployment.id, {
     phase: "configured", status: "configured",
     docker_project: null, l1_port: null, l2_port: null, proof_coord_port: null,
-    bridge_address: null, proposer_address: null, error_message: null, host_id: null,
+    bridge_address: null, proposer_address: null, timelock_address: null, sp1_verifier_address: null,
+    error_message: null, host_id: null,
     tools_l1_explorer_port: null, tools_l2_explorer_port: null,
     tools_bridge_ui_port: null, tools_db_port: null, tools_metrics_port: null,
     env_project_id: null, env_updated_at: null,
@@ -493,7 +514,8 @@ async function destroyDeploymentRemote(deployment) {
   return updateDeployment(deployment.id, {
     phase: "configured", status: "configured",
     docker_project: null, l1_port: null, l2_port: null, proof_coord_port: null,
-    bridge_address: null, proposer_address: null, error_message: null, host_id: null,
+    bridge_address: null, proposer_address: null, timelock_address: null, sp1_verifier_address: null,
+    error_message: null, host_id: null,
     tools_l1_explorer_port: null, tools_l2_explorer_port: null,
     tools_bridge_ui_port: null, tools_db_port: null, tools_metrics_port: null,
     env_project_id: null, env_updated_at: null,
@@ -509,15 +531,47 @@ async function destroyDeploymentRemote(deployment) {
  * (building, l1_starting, etc.) with no running provision.
  * Marks them as error since the build process was lost.
  */
-function recoverStuckDeployments() {
+async function recoverStuckDeployments() {
   try {
     const deployments = getAllDeployments();
     for (const dep of deployments) {
+      // Mark stuck active-phase deployments as error
       if (ACTIVE_PHASES.includes(dep.phase) && !activeProvisions.has(dep.id)) {
         console.log(`[recovery] Deployment ${dep.id} (${dep.name}) stuck in phase "${dep.phase}" -- marking as error`);
         const errMsg = `Server restarted while deployment was in "${dep.phase}" phase. The build process was lost. Please retry.`;
         updateDeployment(dep.id, { phase: "error", error_message: errMsg });
         insertDeployEvent(dep.id, "error", dep.phase, errMsg, null);
+        continue;
+      }
+      // Backfill missing contract addresses from Docker env volume
+      if (dep.bridge_address && (!dep.timelock_address || !dep.sp1_verifier_address) && dep.docker_project) {
+        try {
+          const composeFile = require("path").join(getDeploymentDir(dep.id), "docker-compose.yaml");
+          const envVars = await docker.extractEnv(dep.docker_project, composeFile);
+          const updates = {};
+          if (!dep.timelock_address && envVars.ETHREX_TIMELOCK_ADDRESS) updates.timelock_address = envVars.ETHREX_TIMELOCK_ADDRESS;
+          if (!dep.sp1_verifier_address && envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS) updates.sp1_verifier_address = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS;
+          if (Object.keys(updates).length > 0) {
+            updateDeployment(dep.id, updates);
+            console.log(`[recovery] Backfilled contract addresses for ${dep.id}: ${JSON.stringify(updates)}`);
+          }
+        } catch (e) {
+          console.log(`[recovery] Could not backfill contracts for ${dep.id}: ${e.message}`);
+        }
+      }
+      // Reconcile: phase says "running" but Docker containers are actually stopped
+      if (dep.phase === "running" && dep.docker_project) {
+        try {
+          const composeFile = require("path").join(getDeploymentDir(dep.id), "docker-compose.yaml");
+          const containers = await docker.getStatus(dep.docker_project, composeFile);
+          const anyRunning = containers.some(c => (c.State || "").toLowerCase() === "running");
+          if (!anyRunning) {
+            console.log(`[recovery] Deployment ${dep.id} (${dep.name}) phase="running" but no containers running -- marking as stopped`);
+            updateDeployment(dep.id, { phase: "stopped", status: "configured" });
+          }
+        } catch (e) {
+          console.log(`[recovery] Could not check containers for ${dep.id}: ${e.message}`);
+        }
       }
     }
   } catch (e) {

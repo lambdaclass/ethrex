@@ -6,11 +6,12 @@ import { platformAPI } from '../api/platform'
 import type { L2Config } from './MyL2View'
 import type { Comment } from '../types/comments'
 import CommentSection from './CommentSection'
-import { getMockChainMetrics, getMockEconomyMetrics, getMockProducts, L2_DETAIL_MOCK_COMMENTS } from './l2-detail-mock-data'
+import { getMockEconomyMetrics, getMockProducts, L2_DETAIL_MOCK_COMMENTS } from './l2-detail-mock-data'
 import L2DetailOverviewTab from './L2DetailOverviewTab'
 import L2DetailEconomyTab from './L2DetailEconomyTab'
 import L2DetailServicesTab from './L2DetailServicesTab'
 import L2DetailLogsTab from './L2DetailLogsTab'
+import L2DetailPublishTab from './L2DetailPublishTab'
 
 interface Props {
   l2: L2Config
@@ -18,7 +19,7 @@ interface Props {
   onRefresh?: () => void
 }
 
-type DetailTab = 'overview' | 'economy' | 'services' | 'community' | 'logs'
+type DetailTab = 'overview' | 'economy' | 'services' | 'publish' | 'community' | 'logs'
 
 export interface ContainerInfo {
   name: string
@@ -62,38 +63,75 @@ export interface Product {
   description: string
 }
 
-export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
+export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
   const { lang } = useLang()
   const ko = lang === 'ko'
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
-  const [containers, setContainers] = useState<ContainerInfo[]>([])
+  const [containers, setContainers] = useState<ContainerInfo[] | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [platformLoggedIn, setPlatformLoggedIn] = useState(false)
-  const [tags, setTags] = useState<string[]>(l2.hashtags || [])
-  const [tagInput, setTagInput] = useState('')
+  const [tags, setTags] = useState<string[]>(l2Prop.hashtags || [])
   const [comments, setComments] = useState<Comment[]>(() => [...L2_DETAIL_MOCK_COMMENTS])
-  const chain = useMemo(() => getMockChainMetrics(l2), [l2])
+
+  // Derive live status from containers, overriding stale prop
+  // null = not yet fetched (use prop as-is), [] = fetched but empty (truly stopped)
+  const l2 = useMemo((): L2Config => {
+    if (containers === null) return l2Prop // First render — not yet fetched
+    if (containers.length === 0 && (l2Prop.status === 'running' || l2Prop.status === 'error')) {
+      return { ...l2Prop, status: 'stopped', phase: 'stopped', description: `${l2Prop.programSlug} · stopped`, sequencerStatus: 'stopped', proverStatus: 'stopped' }
+    }
+    if (containers.length === 0) return l2Prop
+    const allRunning = containers.every(c => c.state === 'running')
+    const anyRunning = containers.some(c => c.state === 'running')
+    if (allRunning) return { ...l2Prop, status: 'running', phase: 'running', description: `${l2Prop.programSlug} · running`, sequencerStatus: 'running', errorMessage: null }
+    if (anyRunning) {
+      const down = containers.filter(c => c.state !== 'running').map(c => c.service).join(', ')
+      return { ...l2Prop, status: 'running', phase: 'running', sequencerStatus: 'running', errorMessage: `${ko ? '일부 중지' : 'Partial'}: ${down}` }
+    }
+    return { ...l2Prop, status: 'stopped', phase: 'stopped', description: `${l2Prop.programSlug} · stopped`, sequencerStatus: 'stopped', proverStatus: 'stopped' }
+  }, [l2Prop, containers, ko])
+
+  const [chain, setChain] = useState<ChainMetrics>({
+    l1BlockNumber: 0, l2BlockNumber: 0, l1ChainId: 0, l2ChainId: 0,
+    l2Tps: 0, l2BlockTime: 2, totalTxCount: 0, activeAccounts: 0,
+    lastCommittedBatch: 0, lastVerifiedBatch: 0, latestBatch: 0,
+  })
   const econ = useMemo(() => getMockEconomyMetrics(l2), [l2])
   const products = useMemo(() => getMockProducts(l2), [l2])
 
   const fetchContainers = useCallback(async () => {
     try {
-      const result = await invoke<ContainerInfo[]>('get_docker_containers', { id: l2.id })
+      const result = await invoke<ContainerInfo[]>('get_docker_containers', { id: l2Prop.id })
       setContainers(result)
     } catch { /* local-server not reachable */ }
-  }, [l2.id])
+  }, [l2Prop.id])
+
+  const fetchMonitoring = useCallback(async () => {
+    try {
+      const base = `http://127.0.0.1:${import.meta.env.VITE_LOCAL_SERVER_PORT || 5002}`
+      const data = await fetch(`${base}/api/deployments/${l2Prop.id}/monitoring`).then(r => r.json())
+      setChain(prev => ({
+        ...prev,
+        l1BlockNumber: data.l1?.blockNumber ?? 0,
+        l2BlockNumber: data.l2?.blockNumber ?? 0,
+        l1ChainId: data.l1?.chainId ?? 0,
+        l2ChainId: data.l2?.chainId ?? 0,
+      }))
+    } catch { /* ignore */ }
+  }, [l2Prop.id])
 
   useEffect(() => {
     platformAPI.loadToken().then(ok => setPlatformLoggedIn(ok))
     fetchContainers()
-    const interval = setInterval(fetchContainers, 5000)
+    fetchMonitoring()
+    const interval = setInterval(() => { fetchContainers(); fetchMonitoring() }, 5000)
     return () => clearInterval(interval)
-  }, [fetchContainers])
+  }, [fetchContainers, fetchMonitoring])
 
   const handleAction = async (action: 'start' | 'stop') => {
     setActionLoading(true)
     try {
-      await invoke(action === 'stop' ? 'stop_docker_deployment' : 'start_docker_deployment', { id: l2.id })
+      await invoke(action === 'stop' ? 'stop_docker_deployment' : 'start_docker_deployment', { id: l2Prop.id })
       await fetchContainers()
       onRefresh?.()
     } catch (e) { console.error(`Failed to ${action}:`, e) }
@@ -101,7 +139,7 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
   }
 
   const health = useMemo(() => {
-    if (containers.length === 0) return { color: 'var(--color-text-secondary)', label: ko ? '오프라인' : 'Offline' }
+    if (!containers || containers.length === 0) return { color: 'var(--color-text-secondary)', label: ko ? '오프라인' : 'Offline' }
     const all = containers.every(c => c.state === 'running')
     const any = containers.some(c => c.state === 'running')
     if (all) return { color: 'var(--color-success)', label: ko ? '정상' : 'Healthy' }
@@ -113,6 +151,7 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
     { id: 'overview', label: ko ? '개요' : 'Overview' },
     { id: 'economy', label: ko ? '경제' : 'Economy' },
     { id: 'services', label: ko ? '서비스' : 'Services' },
+    { id: 'publish', label: ko ? '공개' : 'Publish' },
     { id: 'community', label: ko ? '커뮤니티' : 'Community' },
     { id: 'logs', label: ko ? '로그' : 'Logs' },
   ]
@@ -136,9 +175,10 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
               <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: health.color }} />
               <span className="text-[11px] font-medium" style={{ color: health.color }}>{health.label}</span>
             </div>
-            <div className="text-[11px] text-[var(--color-text-secondary)]">
-              {l2.programSlug} · {l2.phase}
-              {l2.isPublic && <span className="ml-2 text-[#3b82f6]">{t('myl2.public', lang)}</span>}
+            <div className="text-[11px] text-[var(--color-text-secondary)] flex items-center gap-1.5">
+              {l2.networkMode === 'local' && <span className="text-[9px] text-white bg-[#6366f1] px-1.5 py-0.5 rounded font-medium">Local</span>}
+              <span>{l2.programSlug} · {l2.phase}</span>
+              {l2.isPublic && <span className="text-[#3b82f6]">{t('myl2.public', lang)}</span>}
             </div>
           </div>
         </div>
@@ -166,9 +206,9 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
 
         {activeTab === 'overview' && (
           <L2DetailOverviewTab
-            ko={ko} chain={chain}
+            ko={ko} l2={l2} chain={chain}
             tags={tags} setTags={setTags}
-            tagInput={tagInput} setTagInput={setTagInput}
+            onRefresh={onRefresh}
           />
         )}
 
@@ -178,14 +218,21 @@ export default function L2DetailView({ l2, onBack, onRefresh }: Props) {
 
         {activeTab === 'services' && (
           <L2DetailServicesTab
-            l2={l2} ko={ko} containers={containers} products={products}
+            l2={l2} ko={ko} containers={containers ?? []} products={products}
             actionLoading={actionLoading} handleAction={handleAction}
+            onRefresh={onRefresh}
+          />
+        )}
+
+        {activeTab === 'publish' && (
+          <L2DetailPublishTab
+            l2={l2} ko={ko}
             platformLoggedIn={platformLoggedIn}
             onRefresh={onRefresh}
           />
         )}
 
-        {/* ═══ TAB 4: Community (소셜/댓글) — not yet extracted ═══ */}
+        {/* ═══ Community (소셜/댓글) ═══ */}
         {activeTab === 'community' && (<>
           {/* Rating & Likes summary */}
           <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">

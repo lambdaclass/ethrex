@@ -288,12 +288,13 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         authrpc_socket_addr = get_authrpc_socket_addr(opts)
     );
 
+    const DEV_NETWORK_BLOCK_TIME_MS: u64 = 12000;
     let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
         url,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         head_block_hash,
         max_tries,
-        1000,
+        DEV_NETWORK_BLOCK_TIME_MS,
         ethrex_common::Address::default(),
     );
     tracker.spawn(block_producer_engine);

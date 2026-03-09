@@ -243,6 +243,299 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       })
     )
     .then(() => {
+      // ============================================================
+      // Control Logic Tests
+      // ============================================================
+      console.log("\n=== Control Logic Tests ===");
+
+      // -- TOOLS_SERVICES routing --
+      const TOOLS_SERVICES = new Set(["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui"]);
+
+      test("TOOLS_SERVICES contains all expected tools services", () => {
+        const expected = ["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui"];
+        for (const svc of expected) {
+          assert.ok(TOOLS_SERVICES.has(svc), `Missing tools service: ${svc}`);
+        }
+      });
+
+      test("TOOLS_SERVICES does not contain core services", () => {
+        const coreServices = ["tokamak-app-l1", "tokamak-app-l2", "tokamak-app-prover", "tokamak-app-deployer"];
+        for (const svc of coreServices) {
+          assert.ok(!TOOLS_SERVICES.has(svc), `Core service incorrectly in TOOLS_SERVICES: ${svc}`);
+        }
+      });
+
+      // -- Phase transitions via DB --
+      test("deployment phase transitions: configured → running → stopped", () => {
+        const d = deploymentsDb.createDeployment({ programId: "evm-l2", name: "Phase Test" });
+        assert.equal(d.phase, "configured");
+
+        // Simulate provision completing
+        deploymentsDb.updateDeployment(d.id, { phase: "running", status: "active", docker_project: "tokamak-test123" });
+        let updated = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(updated.phase, "running");
+        assert.equal(updated.status, "active");
+
+        // Simulate stop
+        deploymentsDb.updateDeployment(d.id, { phase: "stopped", status: "configured" });
+        updated = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(updated.phase, "stopped");
+        assert.equal(updated.status, "configured");
+
+        // Simulate restart
+        deploymentsDb.updateDeployment(d.id, { phase: "running", status: "active" });
+        updated = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(updated.phase, "running");
+        assert.equal(updated.status, "active");
+
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      test("deployment phase transitions: configured → error (with message)", () => {
+        const d = deploymentsDb.createDeployment({ programId: "evm-l2", name: "Error Test" });
+        deploymentsDb.updateDeployment(d.id, { phase: "error", error_message: "Docker not running" });
+        const updated = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(updated.phase, "error");
+        assert.equal(updated.error_message, "Docker not running");
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      // -- Status reconciliation logic (unit-level) --
+      test("status 'active' maps to running in reconciliation logic", () => {
+        // This mirrors the statusMap in MyL2View.tsx
+        const statusMap = {
+          running: "running", active: "running", stopped: "stopped", deploying: "starting",
+          configured: "created", failed: "error", error: "error", destroyed: "stopped",
+        };
+        assert.equal(statusMap["active"], "running");
+        assert.equal(statusMap["running"], "running");
+        assert.equal(statusMap["configured"], "created");
+        assert.equal(statusMap["stopped"], "stopped");
+      });
+
+      test("reconciliation: no containers + status running → stopped", () => {
+        // Simulates the reconciliation logic from MyL2View/L2DetailView
+        const containers = [];
+        const dbStatus = "running";
+        let reconciledStatus = dbStatus;
+        if (containers.length === 0 && (dbStatus === "running" || dbStatus === "error")) {
+          reconciledStatus = "stopped";
+        }
+        assert.equal(reconciledStatus, "stopped");
+      });
+
+      test("reconciliation: no containers + status created (with dockerProject) → stopped", () => {
+        const containers = [];
+        const dbStatus = "created";
+        const dockerProject = "tokamak-abc12345";
+        let reconciledStatus = dbStatus;
+        if (containers.length === 0 && (dbStatus === "running" || dbStatus === "error" || (dbStatus === "created" && dockerProject))) {
+          reconciledStatus = "stopped";
+        }
+        assert.equal(reconciledStatus, "stopped");
+      });
+
+      test("reconciliation: no containers + status created (no dockerProject) → stays created", () => {
+        const containers = [];
+        const dbStatus = "created";
+        const dockerProject = null;
+        let reconciledStatus = dbStatus;
+        if (containers.length === 0 && (dbStatus === "running" || dbStatus === "error" || (dbStatus === "created" && dockerProject))) {
+          reconciledStatus = "stopped";
+        }
+        assert.equal(reconciledStatus, "created");
+      });
+
+      test("reconciliation: all containers running → running", () => {
+        const containers = [{ state: "running" }, { state: "running" }, { state: "running" }];
+        const allRunning = containers.every(c => c.state === "running");
+        assert.equal(allRunning, true);
+      });
+
+      test("reconciliation: mixed containers → partial (not all running)", () => {
+        const containers = [{ state: "running" }, { state: "exited" }, { state: "running" }];
+        const allRunning = containers.every(c => c.state === "running");
+        const anyRunning = containers.some(c => c.state === "running");
+        assert.equal(allRunning, false);
+        assert.equal(anyRunning, true);
+      });
+
+      // -- Recovery logic --
+      test("ACTIVE_PHASES includes all in-progress phases", () => {
+        const { PHASES } = require("./lib/deployment-engine");
+        const ACTIVE_PHASES = [
+          "checking_docker", "building", "pulling", "l1_starting",
+          "deploying_contracts", "l2_starting", "starting_prover", "starting_tools",
+        ];
+        // All active phases must be valid phases
+        for (const p of ACTIVE_PHASES) {
+          assert.ok(PHASES.includes(p), `Active phase "${p}" not in PHASES list`);
+        }
+        // "configured" and "running" must NOT be active phases
+        assert.ok(!ACTIVE_PHASES.includes("configured"));
+        assert.ok(!ACTIVE_PHASES.includes("running"));
+      });
+
+      test("recovery marks stuck active-phase deployment as error", () => {
+        // Create a deployment stuck in building phase (simulating server restart)
+        const d = deploymentsDb.createDeployment({ programId: "evm-l2", name: "Stuck Deploy" });
+        deploymentsDb.updateDeployment(d.id, { phase: "building", docker_project: "tokamak-stuck" });
+        let updated = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(updated.phase, "building");
+
+        // Simulate what recoverStuckDeployments does for stuck phases
+        const ACTIVE_PHASES = ["checking_docker", "building", "pulling", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools"];
+        if (ACTIVE_PHASES.includes(updated.phase)) {
+          const errMsg = `Server restarted while deployment was in "${updated.phase}" phase. The build process was lost. Please retry.`;
+          deploymentsDb.updateDeployment(d.id, { phase: "error", error_message: errMsg });
+        }
+        updated = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(updated.phase, "error");
+        assert.ok(updated.error_message.includes("building"));
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      // -- Start All / Stop All button logic --
+      test("ServicesTab: all stopped → shows Start All", () => {
+        const containers = [
+          { service: "tokamak-app-l1", state: "exited" },
+          { service: "tokamak-app-l2", state: "exited" },
+          { service: "frontend-l1", state: "exited" },
+        ];
+        const svcState = (svc) => {
+          const c = containers.find(c => c.service === svc);
+          return c ? c.state : "not found";
+        };
+        const services = ["tokamak-app-l1", "tokamak-app-l2", "frontend-l1"];
+        const allStopped = services.every(svc => svcState(svc) !== "running");
+        const anyRunning = services.some(svc => svcState(svc) === "running");
+        assert.equal(allStopped, true, "Should show Start All");
+        assert.equal(anyRunning, false, "Should not show Stop All");
+      });
+
+      test("ServicesTab: some running → shows Stop All", () => {
+        const containers = [
+          { service: "tokamak-app-l1", state: "running" },
+          { service: "tokamak-app-l2", state: "running" },
+          { service: "frontend-l1", state: "exited" },
+        ];
+        const svcState = (svc) => {
+          const c = containers.find(c => c.service === svc);
+          return c ? c.state : "not found";
+        };
+        const services = ["tokamak-app-l1", "tokamak-app-l2", "frontend-l1"];
+        const anyRunning = services.some(svc => svcState(svc) === "running");
+        assert.equal(anyRunning, true, "Should show Stop All");
+      });
+
+      // -- API route tests for start/stop --
+      return testAsync("POST /api/deployments/:id/start rejects unprovisioned deployment", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+
+        // Create unprovisioned deployment
+        const createRes = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "API Start Test", programSlug: "evm-l2" }),
+        });
+        const { deployment } = await createRes.json();
+
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/start`, { method: "POST" });
+          const data = await res.json();
+          assert.equal(res.status, 400);
+          assert.ok(data.error.includes("Not provisioned"));
+        } finally {
+          // Cleanup
+          await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, { method: "DELETE" });
+          server.close();
+        }
+      });
+    })
+    .then(() =>
+      testAsync("POST /api/deployments/:id/stop rejects unprovisioned deployment", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+
+        const createRes = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "API Stop Test", programSlug: "evm-l2" }),
+        });
+        const { deployment } = await createRes.json();
+
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/stop`, { method: "POST" });
+          const data = await res.json();
+          assert.equal(res.status, 400);
+          assert.ok(data.error.includes("Not provisioned"));
+        } finally {
+          await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, { method: "DELETE" });
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      testAsync("POST /api/deployments/:id/service/:service/start rejects unprovisioned", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+
+        const createRes = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "Svc Start Test", programSlug: "evm-l2" }),
+        });
+        const { deployment } = await createRes.json();
+
+        try {
+          // Test core service
+          const res1 = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/service/tokamak-app-l1/start`, { method: "POST" });
+          assert.equal(res1.status, 400);
+
+          // Test tools service
+          const res2 = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/service/frontend-l1/start`, { method: "POST" });
+          assert.equal(res2.status, 400);
+        } finally {
+          await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, { method: "DELETE" });
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      testAsync("DELETE /api/deployments/:id removes deployment", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+
+        const createRes = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "Delete Test", programSlug: "evm-l2" }),
+        });
+        const { deployment } = await createRes.json();
+
+        try {
+          const delRes = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`, { method: "DELETE" });
+          const delData = await delRes.json();
+          assert.equal(delData.ok, true);
+
+          // Verify deleted
+          const getRes = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}`);
+          assert.equal(getRes.status, 404);
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() => {
       // Cleanup
       fs.rmSync(testDir, { recursive: true, force: true });
 

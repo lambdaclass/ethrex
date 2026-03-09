@@ -19,9 +19,15 @@ pub struct DeploymentRow {
     pub phase: String,
     pub bridge_address: Option<String>,
     pub proposer_address: Option<String>,
+    pub timelock_address: Option<String>,
+    pub sp1_verifier_address: Option<String>,
     pub error_message: Option<String>,
     pub is_public: i64,
     pub created_at: i64,
+    pub tools_l1_explorer_port: Option<i64>,
+    pub tools_l2_explorer_port: Option<i64>,
+    pub tools_bridge_ui_port: Option<i64>,
+    pub hashtags: Option<String>,
 }
 
 /// Container info returned by local-server status endpoint.
@@ -68,7 +74,10 @@ pub fn list_deployments_from_db() -> Result<Vec<DeploymentRow>, String> {
         .prepare(
             "SELECT id, program_slug, name, chain_id, rpc_url, status, deploy_method,
                     docker_project, l1_port, l2_port, proof_coord_port, phase,
-                    bridge_address, proposer_address, error_message, is_public, created_at
+                    bridge_address, proposer_address, timelock_address, sp1_verifier_address,
+                    error_message, is_public, created_at,
+                    tools_l1_explorer_port, tools_l2_explorer_port, tools_bridge_ui_port,
+                    hashtags
              FROM deployments ORDER BY created_at DESC",
         )
         .map_err(|e| format!("SQL prepare error: {e}"))?;
@@ -90,9 +99,15 @@ pub fn list_deployments_from_db() -> Result<Vec<DeploymentRow>, String> {
                 phase: row.get(11)?,
                 bridge_address: row.get(12)?,
                 proposer_address: row.get(13)?,
-                error_message: row.get(14)?,
-                is_public: row.get(15)?,
-                created_at: row.get(16)?,
+                timelock_address: row.get(14)?,
+                sp1_verifier_address: row.get(15)?,
+                error_message: row.get(16)?,
+                is_public: row.get(17)?,
+                created_at: row.get(18)?,
+                tools_l1_explorer_port: row.get(19)?,
+                tools_l2_explorer_port: row.get(20)?,
+                tools_bridge_ui_port: row.get(21)?,
+                hashtags: row.get(22)?,
             })
         })
         .map_err(|e| format!("SQL query error: {e}"))?;

@@ -90,7 +90,7 @@ router.put("/:id", (req, res) => {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
-    const allowedFields = ["name", "chain_id", "rpc_url", "is_public"];
+    const allowedFields = ["name", "chain_id", "rpc_url", "is_public", "hashtags"];
     const updates = [];
     const values = [];
 
@@ -243,12 +243,20 @@ router.post("/:id/destroy", async (req, res) => {
   }
 });
 
+// Tools services live in a separate compose file
+const TOOLS_SERVICES = new Set(["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui"]);
+
 // POST /api/deployments/:id/service/:service/stop — stop a single service
 router.post("/:id/service/:service/stop", async (req, res) => {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
     if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+    if (TOOLS_SERVICES.has(req.params.service)) {
+      // Tools use separate compose — stop via tools compose
+      await docker.stopTools();
+      return res.json({ ok: true, message: `Tools stopped` });
+    }
     const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
     await docker.stopService(deployment.docker_project, composeFile, req.params.service);
     res.json({ ok: true, message: `Service ${req.params.service} stopped` });
@@ -263,6 +271,21 @@ router.post("/:id/service/:service/start", async (req, res) => {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
     if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+    if (TOOLS_SERVICES.has(req.params.service)) {
+      // Tools use separate compose — start all tools together (they depend on each other)
+      const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
+      const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
+      await docker.startTools(envVars, {
+        toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
+        toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
+        toolsBridgeUIPort: deployment.tools_bridge_ui_port,
+        toolsDbPort: deployment.tools_db_port,
+        l1Port: deployment.l1_port,
+        l2Port: deployment.l2_port,
+        toolsMetricsPort: deployment.tools_metrics_port,
+      });
+      return res.json({ ok: true, message: `Tools started` });
+    }
     const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
     await docker.startService(deployment.docker_project, composeFile, req.params.service, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
     res.json({ ok: true, message: `Service ${req.params.service} started` });
