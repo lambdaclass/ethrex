@@ -1036,6 +1036,7 @@ async fn handle_incoming_message(
             first_block_receipt_index,
             block_hashes,
         }) if peer_supports_eth => {
+            let block_hashes = &block_hashes[..block_hashes.len().min(256)];
             let mut all_receipts: Vec<Vec<Receipt>> = Vec::new();
             let mut total_size: usize = 0;
             let mut last_block_incomplete = false;
