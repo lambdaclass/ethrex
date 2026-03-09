@@ -257,7 +257,11 @@ pub fn refund_sender(
         // State gas from reverted children is added back to the reservoir
         // (matching EELS incorporate_child_on_error), so gas_used_pre_refund
         // already excludes it after the reservoir subtraction at line 184.
-        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
+        // EIP-8037: Collision-escrowed gas is consumed (user pays) but not counted
+        // as regular gas for block accounting. Per EELS, collision returns gas_used=0.
+        let regular_gas = gas_used_pre_refund
+            .saturating_sub(state_gas)
+            .saturating_sub(vm.collision_escrowed_gas);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)

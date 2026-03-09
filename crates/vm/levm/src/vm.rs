@@ -444,6 +444,10 @@ pub struct VM<'a> {
     /// are found during set_delegation. Tracked separately because state_gas_used
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
+    /// EIP-8037: Gas consumed by CREATE/CREATE2 collisions that should not count
+    /// as regular gas for block accounting (user still pays for it).
+    /// Per EELS, collision returns gas_used=0, so block accounting excludes it.
+    pub collision_escrowed_gas: u64,
 
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
@@ -480,6 +484,7 @@ impl<'a> VM<'a> {
             state_gas_used: 0,
             state_gas_reservoir: 0,
             intrinsic_state_gas_refund: 0,
+            collision_escrowed_gas: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,

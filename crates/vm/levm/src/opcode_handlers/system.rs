@@ -780,6 +780,12 @@ impl<'a> VM<'a> {
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
+            // EIP-8037: The consumed child gas_limit should not count as regular gas
+            // for block accounting. Per EELS, collision returns gas_used=0, so the
+            // block doesn't see this gas. The user still pays for it (gas_spent).
+            if self.env.config.fork >= Fork::Amsterdam {
+                self.collision_escrowed_gas = self.collision_escrowed_gas.saturating_add(gas_limit);
+            }
             // Note: state gas (above) is NOT refunded on early failure.
             return Ok(OpcodeResult::Continue);
         }
