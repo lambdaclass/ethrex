@@ -51,7 +51,7 @@ export default function L2DetailServicesTab({
     fetch(`http://localhost:${l2.toolsBridgeUIPort}/config.json`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setBridgeConfig(data) })
-      .catch(() => {})
+      .catch((e) => { console.error('Failed to fetch bridge UI config:', e) })
   }, [l2.toolsBridgeUIPort, bridgeUIRunning])
 
   const stripPrefixes = (s: string) =>

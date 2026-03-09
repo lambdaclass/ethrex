@@ -1134,7 +1134,8 @@ function renderOverviewTab() {
     if (sp1Verifier) contracts.push({ label: 'SP1 Verifier', addr: sp1Verifier });
     if (contracts.length > 0) {
       const explorerBase = d.tools_l1_explorer_port ? `http://localhost:${d.tools_l1_explorer_port}` : null;
-      const etherscanBase = detailMonitoring?.l1?.chainId === 1 ? 'https://etherscan.io' : detailMonitoring?.l1?.chainId === 11155111 ? 'https://sepolia.etherscan.io' : null;
+      const etherscanBaseUrls = { 1: 'https://etherscan.io', 11155111: 'https://sepolia.etherscan.io' };
+      const etherscanBase = etherscanBaseUrls[detailMonitoring?.l1?.chainId] || null;
       const linkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
       html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">L1 Deployed Contracts</h3>';
       for (const c of contracts) {
@@ -1236,7 +1237,7 @@ async function fetchDetailStatus() {
       try {
         const cRes = await fetch(`http://localhost:${detailDeployment.tools_bridge_ui_port}/config.json`);
         if (cRes.ok) detailContracts = await cRes.json();
-      } catch {}
+      } catch (e) { console.error('Failed to fetch bridge UI config:', e); }
     }
     if (detailTab === 'overview') renderOverviewTab();
   } catch {}

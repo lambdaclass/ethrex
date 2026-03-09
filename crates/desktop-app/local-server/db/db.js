@@ -29,7 +29,7 @@ const migrations = [
   "ALTER TABLE deployments ADD COLUMN sp1_verifier_address TEXT",
 ];
 for (const sql of migrations) {
-  try { db.exec(sql); } catch { /* column already exists */ }
+  try { db.exec(sql); } catch (e) { if (!e.message.includes('duplicate column name')) { console.error(`Migration failed for "${sql}":`, e); } }
 }
 
 module.exports = db;

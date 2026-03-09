@@ -192,7 +192,7 @@ export default function MyL2View() {
               const mon = await fetch(`${base}/api/deployments/${l2.id}/monitoring`).then(r => r.json())
               l1ChainId = mon.l1?.chainId ?? null
               l2ChainId = mon.l2?.chainId ?? null
-            } catch { /* ignore */ }
+            } catch (e) { console.error(`Failed to fetch monitoring data for ${l2.id}:`, e) }
           }
 
           if (allRunning) {
