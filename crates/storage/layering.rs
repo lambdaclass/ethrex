@@ -69,7 +69,7 @@ impl Default for TrieLayerCache {
             bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
-            // TODO: this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
+            // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
             commit_threshold: 128,
         }
     }
@@ -139,21 +139,16 @@ impl TrieLayerCache {
     }
 
     /// Walks the layer chain starting from `state_root` toward older ancestors, counting
-    /// layers. When the count reaches `threshold`, returns `Some(state_root)` — the root
-    /// of the threshold-th layer, which is guaranteed to be a key in `self.layers`.
-    ///
-    /// The caller then passes the returned root to [`commit`](Self::commit), which removes
-    /// that layer **and all older ancestors below it**, flushing them to disk. This leaves
-    /// `threshold - 1` layers in the cache.
+    /// layers. When the count reaches `threshold`, returns the state root of that ancestor layer.
     ///
     /// Returns `None` if the chain has fewer than `threshold` layers (nothing to commit yet).
     ///
-    /// # Why return the threshold-th layer (not the oldest)?
+    /// This function is used to determine when to trigger a disk commit. We consider a layer "committable"
+    /// when it has at least `threshold` newer layers on top of it, ensuring that we only commit sufficiently
+    /// old layers and keep recent ones in memory for fast access.
     ///
-    /// Returning the threshold-th layer lets `commit` batch-remove all layers from that point
-    /// down to the oldest in a single call. If we instead returned the oldest layer, `commit`
-    /// would only remove one layer per call, requiring more frequent commits and bloom filter
-    /// rebuilds.
+    /// Having a threshold allows both customizing the commit frequency (e.g. full sync vs regular block execution)
+    /// and avoiding edge cases where there could, theoretically, be a cycle in the layer change.
     pub(crate) fn get_commitable_with_threshold(
         &self,
         mut state_root: H256,
