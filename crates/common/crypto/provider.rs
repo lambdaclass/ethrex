@@ -523,6 +523,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
     ) -> Result<[u8; 192], CryptoError> {
         use bls12_381::{G2Affine, G2Projective};
+        use ff::Field as _;
 
         let mut result = G2Projective::identity();
 
@@ -533,7 +534,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             }
             let scalar = parse_bls12_scalar(scalar_bytes);
 
-            if scalar != bls12_381::Scalar::zero() {
+            if !bool::from(scalar.is_zero()) {
                 #[allow(clippy::arithmetic_side_effects)]
                 let scaled: G2Projective = G2Projective::from(point) * scalar;
                 #[allow(clippy::arithmetic_side_effects)]
