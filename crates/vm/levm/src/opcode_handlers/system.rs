@@ -774,10 +774,9 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
-            // EIP-8037: The reserved child gas (gas_limit) is consumed on collision
-            // but per EELS escrow mechanism it doesn't count as regular gas.
-            self.reverted_child_state_spill =
-                self.reverted_child_state_spill.saturating_add(gas_limit);
+            // Per EELS: on collision, gas stays consumed (not returned) and
+            // the state gas reservoir is returned to the parent.
+            // In our model, the reservoir is shared and already at snapshot value.
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
@@ -1138,19 +1137,19 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
-                // EIP-8037: Track state gas that spilled into gas_left during
-                // this child's execution. The child consumed it (halted), but
-                // state_gas_used is about to be restored, so the spill becomes
-                // "orphaned" — in gas_used but in neither regular nor state
-                // counters. We track it to exclude from the regular dimension.
+                // EIP-8037: On child revert, all state gas (from reservoir and
+                // spilled into gas_left) is returned to the parent's reservoir.
+                // Per EELS incorporate_child_on_error:
+                //   evm.state_gas_left += child.state_gas_used + child.state_gas_left
                 let child_state_gas = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
                 let child_reservoir_consumed =
                     reservoir_snapshot.saturating_sub(self.state_gas_reservoir);
                 let child_spill = child_state_gas.saturating_sub(child_reservoir_consumed);
-                self.reverted_child_state_spill =
-                    self.reverted_child_state_spill.saturating_add(child_spill);
 
-                self.state_gas_reservoir = reservoir_snapshot;
+                // Restore reservoir to pre-child snapshot plus any spill that
+                // went into gas_remaining. This makes the spill available as
+                // state gas budget again, matching EELS behavior.
+                self.state_gas_reservoir = reservoir_snapshot.saturating_add(child_spill);
                 self.state_gas_used = state_gas_used_snapshot;
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1201,15 +1200,14 @@ impl<'a> VM<'a> {
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
             }
             TxResult::Revert(err) => {
-                // EIP-8037: Track orphaned spill (same logic as handle_return_call)
+                // EIP-8037: On child revert, all state gas is returned to the
+                // parent's reservoir (same logic as handle_return_call).
                 let child_state_gas = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
                 let child_reservoir_consumed =
                     reservoir_snapshot.saturating_sub(self.state_gas_reservoir);
                 let child_spill = child_state_gas.saturating_sub(child_reservoir_consumed);
-                self.reverted_child_state_spill =
-                    self.reverted_child_state_spill.saturating_add(child_spill);
 
-                self.state_gas_reservoir = reservoir_snapshot;
+                self.state_gas_reservoir = reservoir_snapshot.saturating_add(child_spill);
                 self.state_gas_used = state_gas_used_snapshot;
 
                 // If revert we have to copy the return_data

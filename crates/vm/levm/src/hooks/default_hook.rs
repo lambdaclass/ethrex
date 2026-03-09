@@ -244,14 +244,10 @@ pub fn refund_sender(
         let state_gas = vm
             .state_gas_used
             .saturating_sub(vm.intrinsic_state_gas_refund);
-        // Exclude state gas that was spilled into gas_left in child frames
-        // that then reverted. This gas is consumed (user pays for it) but
-        // is NOT regular gas — it was charged via charge_state_gas and the
-        // child's state_gas_used was restored on revert.
-        let orphaned_spill = vm.reverted_child_state_spill;
-        let regular_gas = gas_used_pre_refund
-            .saturating_sub(state_gas)
-            .saturating_sub(orphaned_spill);
+        // State gas from reverted children is added back to the reservoir
+        // (matching EELS incorporate_child_on_error), so gas_used_pre_refund
+        // already excludes it after the reservoir subtraction at line 184.
+        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)
