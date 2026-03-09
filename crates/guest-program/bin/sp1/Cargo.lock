@@ -349,7 +349,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381-patch/?branch=expose-fp-struct#f2242f78b2b5fc10d9168a810c04ab8728ac6804"
+source = "git+https://github.com/lambdaclass/bls12_381-patch/?branch=expose-affine-constructors#bee25ae519c601d94400a90e7662d9f9c3526d03"
 dependencies = [
  "cfg-if",
  "digest",

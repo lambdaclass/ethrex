@@ -3610,7 +3610,6 @@ dependencies = [
  "serde_json",
  "sha3",
  "strum 0.27.2",
- "subtle",
  "thiserror 2.0.18",
  "walkdir",
 ]
