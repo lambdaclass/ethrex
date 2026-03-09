@@ -2,6 +2,7 @@ use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_vm::Evm;
 
 use crate::common::{BatchExecutionResult, ExecutionError, execute_blocks};
+use crate::crypto::get_crypto_provider;
 use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
@@ -14,6 +15,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
         blocks,
         execution_witness,
     } = input;
+
+    let crypto = get_crypto_provider();
 
     let BatchExecutionResult {
         receipts: _,
@@ -28,7 +31,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
         ELASTICITY_MULTIPLIER,
         |db, _| {
             // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone()))
+            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
         },
     )?;
 
