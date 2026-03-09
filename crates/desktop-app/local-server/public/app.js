@@ -51,6 +51,30 @@ document.querySelectorAll('.nav-link').forEach(btn => {
   btn.addEventListener('click', () => showView(btn.dataset.view));
 });
 
+function resetLaunchForm() {
+  const db = document.getElementById('launch-deploy-btn'); if (db) db.textContent = 'Deploy L2';
+  document.getElementById('launch-name').value = '';
+  document.getElementById('launch-chain-id').value = '';
+  document.getElementById('launch-deploy-dir').value = '';
+  document.getElementById('launch-l1-image').value = 'ethrex';
+  onL1NodeChange();
+  const rpcEl = document.getElementById('launch-testnet-rpc'); if (rpcEl) { rpcEl.value = ''; rpcEl.style.borderColor = '#f87171'; }
+  const keyEl = document.getElementById('launch-testnet-keychain-key'); if (keyEl) keyEl.value = '';
+  const addrEl = document.getElementById('launch-testnet-deployer-addr'); if (addrEl) addrEl.value = '';
+  const chainIdEl = document.getElementById('launch-testnet-l1-chainid'); if (chainIdEl) chainIdEl.value = '';
+  const balEl = document.getElementById('testnet-balance-check'); if (balEl) balEl.innerHTML = '';
+  const saveEl = document.getElementById('testnet-save-status'); if (saveEl) saveEl.innerHTML = '';
+  // Reset role key selectors
+  for (const id of ['launch-testnet-committer-key', 'launch-testnet-proof-coordinator-key', 'launch-testnet-bridge-owner-key']) {
+    const el = document.getElementById(id); if (el) el.value = '';
+  }
+  for (const id of ['launch-testnet-committer-addr', 'launch-testnet-proof-coordinator-addr', 'launch-testnet-bridge-owner-addr']) {
+    const el = document.getElementById(id); if (el) el.value = '';
+  }
+  const cfgSummary = document.getElementById('deploy-config-summary'); if (cfgSummary) cfgSummary.style.display = 'none';
+  selectedProgram = null;
+}
+
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
@@ -69,28 +93,7 @@ function showView(name) {
   if (name === 'hosts') loadHosts();
   if (name === 'launch') {
     loadPrograms(); launchGoStep(1); launchDeploymentId = null;
-    const db = document.getElementById('launch-deploy-btn'); if (db) db.textContent = 'Deploy L2';
-    // Reset form fields for fresh deployment
-    document.getElementById('launch-name').value = '';
-    document.getElementById('launch-chain-id').value = '';
-    document.getElementById('launch-deploy-dir').value = '';
-    document.getElementById('launch-l1-image').value = 'ethrex';
-    onL1NodeChange();
-    const rpcEl = document.getElementById('launch-testnet-rpc'); if (rpcEl) { rpcEl.value = ''; rpcEl.style.borderColor = '#f87171'; }
-    const keyEl = document.getElementById('launch-testnet-keychain-key'); if (keyEl) keyEl.value = '';
-    const addrEl = document.getElementById('launch-testnet-deployer-addr'); if (addrEl) addrEl.value = '';
-    const chainIdEl = document.getElementById('launch-testnet-l1-chainid'); if (chainIdEl) chainIdEl.value = '';
-    const balEl = document.getElementById('testnet-balance-check'); if (balEl) balEl.innerHTML = '';
-    const saveEl = document.getElementById('testnet-save-status'); if (saveEl) saveEl.innerHTML = '';
-    // Reset role key selectors
-    for (const id of ['launch-testnet-committer-key', 'launch-testnet-proof-coordinator-key', 'launch-testnet-bridge-owner-key']) {
-      const el = document.getElementById(id); if (el) el.value = '';
-    }
-    for (const id of ['launch-testnet-committer-addr', 'launch-testnet-proof-coordinator-addr', 'launch-testnet-bridge-owner-addr']) {
-      const el = document.getElementById(id); if (el) el.value = '';
-    }
-    const cfgSummary = document.getElementById('deploy-config-summary'); if (cfgSummary) cfgSummary.style.display = 'none';
-    selectedProgram = null;
+    resetLaunchForm();
   }
 }
 

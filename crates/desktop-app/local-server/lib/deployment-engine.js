@@ -473,20 +473,25 @@ async function provisionTestnet(deployment) {
   emit(id, "log", { message: `L1 Network: ${testnetConfig.network || 'custom'}` });
   emit(id, "log", { message: `L1 Chain ID: ${testnetConfig.l1ChainId || 'auto'}` });
 
-  // Resolve deployer private key: prefer keychain, fallback to raw value
-  let deployerPrivateKey = testnetConfig.deployerPrivateKey;
-  if (testnetConfig.keychainKeyName) {
-    emit(id, "log", { message: `Loading deployer key from Keychain: "${testnetConfig.keychainKeyName}"...` });
-    const resolved = keychain.getSecret(testnetConfig.keychainKeyName);
+  // Helper to resolve a private key from Keychain
+  function resolveKeychainKey(keychainKeyName, roleLabel) {
+    emit(id, "log", { message: `Loading ${roleLabel} key from Keychain: "${keychainKeyName}"...` });
+    const resolved = keychain.getSecret(keychainKeyName);
     if (!resolved) {
-      const errMsg = `Deployer key "${testnetConfig.keychainKeyName}" not found in Keychain. Please re-register the key.`;
+      const errMsg = `${roleLabel} key "${keychainKeyName}" not found in Keychain. Please re-register the key.`;
       emit(id, "error", { message: errMsg });
       updateDeployment(id, { phase: "error", error_message: errMsg });
       activeProvisions.delete(id);
       throw new Error(errMsg);
     }
-    deployerPrivateKey = resolved;
-    emit(id, "log", { message: `Deployer key loaded from Keychain: "${testnetConfig.keychainKeyName}" (${deployerPrivateKey.length} chars)` });
+    emit(id, "log", { message: `${roleLabel} key loaded from Keychain: "${keychainKeyName}"` });
+    return resolved;
+  }
+
+  // Resolve deployer private key: prefer keychain, fallback to raw value
+  let deployerPrivateKey = testnetConfig.deployerPrivateKey;
+  if (testnetConfig.keychainKeyName) {
+    deployerPrivateKey = resolveKeychainKey(testnetConfig.keychainKeyName, 'Deployer');
   }
 
   // Resolve role-specific keys (fallback to deployer key)
@@ -499,17 +504,7 @@ async function provisionTestnet(deployment) {
   for (const { configKey, resultKey, label } of roleKeyMap) {
     const keychainName = testnetConfig[configKey];
     if (keychainName) {
-      emit(id, "log", { message: `Loading ${label} key from Keychain: "${keychainName}"...` });
-      const resolved = keychain.getSecret(keychainName);
-      if (!resolved) {
-        const errMsg = `${label} key "${keychainName}" not found in Keychain. Please re-register the key.`;
-        emit(id, "error", { message: errMsg });
-        updateDeployment(id, { phase: "error", error_message: errMsg });
-        activeProvisions.delete(id);
-        throw new Error(errMsg);
-      }
-      roleKeys[resultKey] = resolved;
-      emit(id, "log", { message: `${label} key loaded from Keychain: "${keychainName}"` });
+      roleKeys[resultKey] = resolveKeychainKey(keychainName, label);
     }
   }
 
