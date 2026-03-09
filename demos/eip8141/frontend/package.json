@@ -9,14 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tailwindcss/vite": "^4.1.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.8",
     "viem": "^2.23.11",
-    "webauthn-p256": "^0.0.10",
-    "@tailwindcss/vite": "^4.1.8",
-    "tailwindcss": "^4.1.8"
+    "webauthn-p256": "^0.0.10"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-basic-ssl": "^2.0.0",

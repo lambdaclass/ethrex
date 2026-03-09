@@ -90,15 +90,41 @@ VITE_BLOCKSCOUT_URL=http://localhost:8082
 ### Terminal 4: Blockscout (optional)
 
 ```bash
-# Clone the patched Blockscout repo (one-time setup)
+# Clone the patched Blockscout backend (one-time setup)
 git clone -b eip-8141-support git@github.com:lambdaclass/ethrex-blockscout.git
 
-# Start all services
+# Clone the upstream Blockscout frontend as a sibling directory (one-time setup)
+git clone https://github.com/blockscout/frontend.git blockscout-frontend
+cd blockscout-frontend && git checkout 3cb3c3122 && cd ..
+
+# Apply the custom EIP-8141 Frames tab overlay
+cp ethrex-blockscout/frontend/ui/pages/Transaction.tsx blockscout-frontend/ui/pages/Transaction.tsx
+cp ethrex-blockscout/frontend/ui/tx/TxFrames.tsx blockscout-frontend/ui/tx/TxFrames.tsx
+mkdir -p blockscout-frontend/ui/tx/frames
+cp ethrex-blockscout/frontend/ui/tx/frames/*.tsx blockscout-frontend/ui/tx/frames/
+```
+
+Then patch `blockscout-frontend/types/api/transaction.ts`:
+1. Add `frame_details?: Array<TxFrame>;` inside the `Transaction` type (after `has_error_in_internal_transactions`)
+2. Add the `TxFrame` interface at the end of the file:
+```typescript
+export interface TxFrame {
+  index: number;
+  mode: string;
+  mode_id: number;
+  to: string | null;
+  gas_limit: string;
+  data: string;
+}
+```
+
+Start all services:
+```bash
 cd ethrex-blockscout
 docker compose -f docker-compose/docker-compose.yml up -d --build
 ```
 
-First run pulls images and builds the backend (~5 min). Subsequent starts are fast. Open **http://localhost:8082** once the containers are up.
+First run pulls images and builds backend + frontend (~10 min). Subsequent starts are fast. Open **http://localhost:8082** once the containers are up. Frame transactions show a **Frames** tab on the transaction detail page.
 
 To check status:
 ```bash
