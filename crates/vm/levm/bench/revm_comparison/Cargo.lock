@@ -1172,6 +1172,7 @@ dependencies = [
  "sha2",
  "sha3",
  "strum",
+ "subtle",
  "thiserror",
  "walkdir",
 ]
