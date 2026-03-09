@@ -86,6 +86,8 @@ The three L2 GenServer actors run as concurrent tasks:
 - Rust toolchain (stable)
 - `solc` (Solidity compiler) — needed to compile the contracts during build
 - [`rex`](https://github.com/lambdaclass/rex/tree/feat/claim-native-withdraw) — run `make cli` in that branch to install the required version
+- Docker — needed for the Blockscout block explorer (Step 6)
+- Python 3 — needed for the contract verification script (Step 6)
 
 > [!NOTE]
 > **Rex CLI syntax quirks:**
@@ -306,6 +308,76 @@ rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 > ```shell
 > cargo test -p ethrex-test --features native-rollup -- l2::native_rollup --nocapture
 > ```
+
+### Step 6: Verify precompile usage with Blockscout
+
+Run a [Blockscout](https://github.com/blockscout/blockscout) block explorer against the L1 to visually confirm that each `advance()` transaction triggers an internal CALL to the EXECUTE precompile at `0x0000...0101`.
+
+Requires Docker and a local clone of [Blockscout](https://github.com/blockscout/blockscout).
+
+#### Set up Blockscout
+
+Clone Blockscout and enable the smart contract verifier (needed to decode method names):
+
+```shell
+git clone https://github.com/blockscout/blockscout.git ~/Documents/blockscout
+cd ~/Documents/blockscout/docker-compose
+```
+
+Add the `smart-contract-verifier` service to `geth.yml` (after the `sig-provider` service):
+
+```yaml
+  smart-contract-verifier:
+    extends:
+      file: ./services/smart-contract-verifier.yml
+      service: smart-contract-verifier
+```
+
+Enable it in `envs/common-blockscout.env` — find the commented-out verifier lines and replace them with:
+
+```
+MICROSERVICE_SC_VERIFIER_ENABLED=true
+MICROSERVICE_SC_VERIFIER_URL=http://smart-contract-verifier:8050/
+MICROSERVICE_SC_VERIFIER_TYPE=sc_verifier
+```
+
+#### Start Blockscout
+
+With L1 and L2 already running:
+
+```shell
+cd ~/Documents/blockscout/docker-compose
+docker compose -f geth.yml up -d
+```
+
+Wait ~30 seconds for indexing, then open http://localhost.
+
+#### Verify the NativeRollup contract
+
+Verifying the contract in Blockscout lets it decode function selectors (like `0x069c7eee`) into human-readable method names (like `advance`). This uses Blockscout's built-in verification API — it's completely local and free.
+
+From the ethrex repo root, run:
+
+```shell
+python3 scripts/blockscout_verify_native_rollup.py $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS
+```
+
+You should see `Contract verified successfully!`. Now Blockscout will show decoded method names, event names, and parameter values for all interactions with the contract.
+
+#### What to look for
+
+On the homepage you should see `advance` transactions from the advancer to the NativeRollup contract. Click any of them and check:
+
+- **Internal txns** tab: shows `Call | Success | 0xC5...7600 → 0x00...0101` — the NativeRollup contract calling the EXECUTE precompile.
+- **Logs** tab: shows the `StateAdvanced` event with the new L2 block number and state root.
+
+#### Stop Blockscout
+
+```shell
+cd ~/Documents/blockscout/docker-compose
+docker compose -f geth.yml down -v
+rm -rf services/blockscout-db-data services/stats-db-data
+```
 
 ### Cleaning up
 

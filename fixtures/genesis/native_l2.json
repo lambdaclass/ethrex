@@ -98,7 +98,7 @@
     "londonBlock": 0,
     "petersburgBlock": 0,
     "shanghaiTime": 0,
-    "terminalTotalDifficulty": 0,
+    "terminalTotalDifficulty": "0x0",
     "terminalTotalDifficultyPassed": true
   },
   "difficulty": "0x0",
