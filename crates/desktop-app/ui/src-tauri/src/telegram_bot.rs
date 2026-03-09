@@ -1084,9 +1084,14 @@ pub async fn build_deployment_context_live() -> serde_json::Value {
             })
             .collect();
 
-        // Determine live status from containers
+        // Determine live status from containers (reconcile like Manager/Messenger)
         let live_status = if containers.is_empty() {
-            d.status.clone()
+            // No containers but DB says running → actually stopped
+            if d.status == "running" || d.status == "active" {
+                "stopped".to_string()
+            } else {
+                d.status.clone()
+            }
         } else if containers.iter().all(|c| c.state == "running") {
             "running".to_string()
         } else if containers.iter().all(|c| c.state == "exited" || c.state == "dead") {

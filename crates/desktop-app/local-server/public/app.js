@@ -1046,7 +1046,6 @@ function renderOverviewTab() {
   // Reconcile: use live container state instead of stale DB phase
   const liveContainers = detailStatus?.containers || [];
   const hasContainers = liveContainers.length > 0;
-  const allContainersRunning = hasContainers && liveContainers.every(c => (c.State || c.state) === 'running');
   const anyContainerRunning = hasContainers && liveContainers.some(c => (c.State || c.state) === 'running');
   const isRunning = isDeploying ? false : (hasContainers ? anyContainerRunning : d.phase === 'running');
   const isStopped = !isDeploying && !isRunning && d.phase !== 'error';
@@ -1232,8 +1231,8 @@ async function fetchDetailStatus() {
     ]);
     if (sRes.ok) detailStatus = await sRes.json();
     if (mRes.ok) detailMonitoring = await mRes.json();
-    // Fetch contract addresses from bridge-ui config.json
-    if (detailDeployment?.tools_bridge_ui_port && !detailContracts) {
+    // Fetch contract addresses from bridge-ui config.json (retry until available)
+    if (detailDeployment?.tools_bridge_ui_port) {
       try {
         const cRes = await fetch(`http://localhost:${detailDeployment.tools_bridge_ui_port}/config.json`);
         if (cRes.ok) detailContracts = await cRes.json();

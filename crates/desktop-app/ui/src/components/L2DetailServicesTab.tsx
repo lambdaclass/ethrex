@@ -42,13 +42,17 @@ export default function L2DetailServicesTab({
   const [toolsLoading, setToolsLoading] = useState(false)
   const [bridgeConfig, setBridgeConfig] = useState<BridgeUIConfig | null>(null)
 
+  // Re-fetch config.json when bridge-ui container becomes running
+  const bridgeUIRunning = containers.some(c =>
+    (c.service === 'bridge-ui' || c.name?.includes('bridge-ui')) && c.state === 'running'
+  )
   useEffect(() => {
     if (!l2.toolsBridgeUIPort) return
     fetch(`http://localhost:${l2.toolsBridgeUIPort}/config.json`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setBridgeConfig(data) })
       .catch(() => {})
-  }, [l2.toolsBridgeUIPort])
+  }, [l2.toolsBridgeUIPort, bridgeUIRunning])
 
   const stripPrefixes = (s: string) =>
     SERVICE_NAME_PREFIXES.reduce((acc, p) => acc.replace(p, ''), s)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
@@ -20,6 +20,9 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
   const [publishError, setPublishError] = useState('')
   const [publishDesc, setPublishDesc] = useState('')
   const [publishScreenshots, setPublishScreenshots] = useState<string[]>([])
+
+  // Sync isPublic when parent re-fetches
+  useEffect(() => { setIsPublic(l2.isPublic) }, [l2.isPublic])
 
   return (
     <>

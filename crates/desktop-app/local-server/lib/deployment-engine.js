@@ -475,7 +475,8 @@ async function destroyDeployment(deployment) {
   return updateDeployment(deployment.id, {
     phase: "configured", status: "configured",
     docker_project: null, l1_port: null, l2_port: null, proof_coord_port: null,
-    bridge_address: null, proposer_address: null, error_message: null, host_id: null,
+    bridge_address: null, proposer_address: null, timelock_address: null, sp1_verifier_address: null,
+    error_message: null, host_id: null,
     tools_l1_explorer_port: null, tools_l2_explorer_port: null,
     tools_bridge_ui_port: null, tools_db_port: null, tools_metrics_port: null,
     env_project_id: null, env_updated_at: null,
@@ -513,7 +514,8 @@ async function destroyDeploymentRemote(deployment) {
   return updateDeployment(deployment.id, {
     phase: "configured", status: "configured",
     docker_project: null, l1_port: null, l2_port: null, proof_coord_port: null,
-    bridge_address: null, proposer_address: null, error_message: null, host_id: null,
+    bridge_address: null, proposer_address: null, timelock_address: null, sp1_verifier_address: null,
+    error_message: null, host_id: null,
     tools_l1_explorer_port: null, tools_l2_explorer_port: null,
     tools_bridge_ui_port: null, tools_db_port: null, tools_metrics_port: null,
     env_project_id: null, env_updated_at: null,
