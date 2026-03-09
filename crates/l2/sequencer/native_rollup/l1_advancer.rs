@@ -15,6 +15,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, BlockHeader, TxType};
 use ethrex_common::{Address, H256, U256};
+use ethrex_crypto::NativeCrypto;
 use ethrex_l2_common::calldata::Value;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
@@ -147,7 +148,7 @@ impl NativeL1Advancer {
         let l1_messages_count: u64 = block_body
             .transactions
             .iter()
-            .filter(|tx| tx.sender().ok() == Some(self.relayer_address))
+            .filter(|tx| tx.sender(&NativeCrypto).ok() == Some(self.relayer_address))
             .count()
             .try_into()
             .map_err(|_| NativeL1AdvancerError::Encoding("l1 messages count overflow".into()))?;
