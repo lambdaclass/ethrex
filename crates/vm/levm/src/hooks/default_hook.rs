@@ -181,16 +181,6 @@ impl Hook for DefaultHook {
         // Per EELS, state_gas_left is preserved even on exceptional halt — only
         // regular gas_left is burned.  The user does NOT pay for unspent reservoir.
         if vm.env.config.fork >= Fork::Amsterdam {
-            eprintln!(
-                "[DBG] tx_gas_limit={} gas_used_before_reservoir={} reservoir={} state_gas_used={} state_gas_refund={} gas_remaining={} result={:?}",
-                vm.env.gas_limit,
-                ctx_result.gas_used,
-                vm.state_gas_reservoir,
-                vm.state_gas_used,
-                vm.intrinsic_state_gas_refund,
-                vm.current_call_frame.gas_remaining,
-                ctx_result.result
-            );
             ctx_result.gas_used = ctx_result.gas_used.saturating_sub(vm.state_gas_reservoir);
         }
 
