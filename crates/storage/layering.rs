@@ -1,17 +1,28 @@
 use ethrex_common::H256;
+use ethrex_trie::{Nibbles, Node, TrieCommitEntry, TrieDB, TrieError};
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{fmt, sync::Arc};
 
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
-
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
+/// A cached trie node entry holding both the decoded node and its RLP encoding.
+#[derive(Clone, Debug)]
+pub struct CachedTrieEntry {
+    pub node: Arc<Node>,
+    pub encoded: Vec<u8>,
+}
+
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// Account (state) trie nodes, keyed by unprefixed nibble path.
+    account_nodes: FxHashMap<Vec<u8>, CachedTrieEntry>,
+    /// Storage trie nodes, keyed by prefixed nibble path (account_nibbles ++ 0x11 ++ path).
+    storage_nodes: FxHashMap<Vec<u8>, CachedTrieEntry>,
+    /// FKV leaf values (both account and storage), keyed by (possibly prefixed) nibble path.
+    leaf_values: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
 }
@@ -24,11 +35,8 @@ struct TrieLayer {
 /// newest_root -> parent_1 -> parent_2 -> ... -> oldest_root -> (on-disk state)
 /// ```
 ///
-/// Each layer stores the trie node diffs produced by one block (regular sync) or one batch
-/// of ~1024 blocks (full sync). When the chain reaches `commit_threshold` layers,
-/// [`get_commitable`](Self::get_commitable) identifies the layer to flush, and
-/// [`commit`](Self::commit) removes it (plus all ancestors) and returns the merged key-values
-/// for writing to RocksDB.
+/// Each layer stores decoded `Arc<Node>` for trie nodes (eliminating `Node::decode()` on
+/// cache hits) in separate account/storage maps, plus raw leaf values for the FKV shortcut.
 ///
 /// Two commit thresholds are used in practice:
 /// - **128** — regular block-by-block execution (one layer ≈ one block's trie diff).
@@ -94,34 +102,63 @@ impl TrieLayerCache {
             .expected_items(expected_items.max(BLOOM_SIZE))
     }
 
-    /// Looks up a trie node `key` starting from the layer identified by `state_root`,
+    /// Looks up a decoded account trie node starting from the layer identified by `state_root`,
     /// walking the parent chain toward older layers.
-    ///
-    /// Returns `Some(value)` from the first (newest) layer that contains the key, or `None`
-    /// if no layer has it. A bloom filter is checked first to skip the walk entirely when the
-    /// key is guaranteed absent from all layers (callers then fall through to the on-disk trie).
-    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
-        // Fast check to know if any layer may contain the given key.
-        // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
+    pub fn get_account_node(&self, state_root: H256, key: &[u8]) -> Option<Arc<Node>> {
         if !self.bloom.contains(key) {
-            // TrieWrapper goes to db when returning None.
             return None;
         }
 
         let mut current_state_root = state_root;
 
         while let Some(layer) = self.layers.get(&current_state_root) {
-            if let Some(value) = layer.nodes.get(key) {
+            if let Some(entry) = layer.account_nodes.get(key) {
+                return Some(entry.node.clone());
+            }
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                panic!("State cycle found");
+            }
+        }
+        None
+    }
+
+    /// Looks up a decoded storage trie node starting from the layer identified by `state_root`,
+    /// walking the parent chain toward older layers.
+    /// `key` must be the prefixed nibble path (account_nibbles ++ 0x11 ++ trie_path).
+    pub fn get_storage_node(&self, state_root: H256, key: &[u8]) -> Option<Arc<Node>> {
+        if !self.bloom.contains(key) {
+            return None;
+        }
+
+        let mut current_state_root = state_root;
+
+        while let Some(layer) = self.layers.get(&current_state_root) {
+            if let Some(entry) = layer.storage_nodes.get(key) {
+                return Some(entry.node.clone());
+            }
+            current_state_root = layer.parent;
+            if current_state_root == state_root {
+                panic!("State cycle found");
+            }
+        }
+        None
+    }
+
+    /// Looks up a FKV leaf value starting from the layer identified by `state_root`.
+    pub fn get_leaf_value(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
+        if !self.bloom.contains(key) {
+            return None;
+        }
+
+        let mut current_state_root = state_root;
+
+        while let Some(layer) = self.layers.get(&current_state_root) {
+            if let Some(value) = layer.leaf_values.get(key) {
                 return Some(value.clone());
             }
             current_state_root = layer.parent;
             if current_state_root == state_root {
-                // TODO: check if this is possible in practice
-                // This can't happen in L1, due to system contracts irreversibly modifying state
-                // at each block.
-                // On L2, if no transactions are included in a block, the state root remains the same,
-                // but we handle that case in put_batch. It may happen, however, if someone modifies
-                // state with a privileged tx and later reverts it (since it doesn't update nonce).
                 panic!("State cycle found");
             }
         }
@@ -142,13 +179,6 @@ impl TrieLayerCache {
     /// layers. When the count reaches `threshold`, returns the state root of that ancestor layer.
     ///
     /// Returns `None` if the chain has fewer than `threshold` layers (nothing to commit yet).
-    ///
-    /// This function is used to determine when to trigger a disk commit. We consider a layer "committable"
-    /// when it has at least `threshold` newer layers on top of it, ensuring that we only commit sufficiently
-    /// old layers and keep recent ones in memory for fast access.
-    ///
-    /// Having a threshold allows both customizing the commit frequency (e.g. full sync vs regular block execution)
-    /// and avoiding edge cases where there could, theoretically, be a cycle in the layer change.
     pub(crate) fn get_commitable_with_threshold(
         &self,
         mut state_root: H256,
@@ -165,26 +195,21 @@ impl TrieLayerCache {
         None
     }
 
-    /// Inserts a new diff-layer into the cache, keyed by `state_root` and pointing to `parent`.
+    /// Inserts a new diff-layer into the cache from structured `TrieCommitEntry` entries.
     ///
-    /// In regular sync each call adds one block's trie diffs. In full sync (batch mode), each
-    /// call adds diffs for an entire batch of ~1024 blocks.
-    ///
-    /// No-ops if `parent == state_root` (empty block with no state change), or if `state_root`
-    /// is already present (duplicate insertion guard).
+    /// Account entries are inserted directly. Storage entries are prefixed with the
+    /// account hash (nibble-encoded with 0x11 separator) before insertion.
     pub fn put_batch(
         &mut self,
         parent: H256,
         state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
+        account_entries: Vec<TrieCommitEntry>,
+        storage_entries: Vec<(H256, Vec<TrieCommitEntry>)>,
     ) {
-        if parent == state_root && key_values.is_empty() {
+        if parent == state_root && account_entries.is_empty() && storage_entries.is_empty() {
             return;
         } else if parent == state_root {
-            // L1 always changes the state root (system contracts run even on empty blocks), so
-            // this should not happen there. L2 can legitimately keep the same root on empty blocks
-            // because it has no system contract calls.
-            tracing::trace!("parent == state_root but key_values not empty");
+            tracing::trace!("parent == state_root but entries not empty");
             return;
         }
         if self.layers.contains_key(&state_root) {
@@ -192,19 +217,57 @@ impl TrieLayerCache {
             return;
         }
 
-        // Add keys to the global bloom filter
-        for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref());
+        let mut account_nodes = FxHashMap::default();
+        let mut storage_nodes = FxHashMap::default();
+        let mut leaf_values = FxHashMap::default();
+
+        for entry in account_entries {
+            match entry {
+                TrieCommitEntry::Node {
+                    path,
+                    node,
+                    encoded,
+                } => {
+                    let key = path.into_vec();
+                    self.bloom.insert(&key);
+                    account_nodes.insert(key, CachedTrieEntry { node, encoded });
+                }
+                TrieCommitEntry::LeafValue { path, value } => {
+                    let key = path.into_vec();
+                    self.bloom.insert(&key);
+                    leaf_values.insert(key, value);
+                }
+            }
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
+        for (account_hash, entries) in storage_entries {
+            for entry in entries {
+                match entry {
+                    TrieCommitEntry::Node {
+                        path,
+                        node,
+                        encoded,
+                    } => {
+                        let prefixed = apply_prefix(Some(account_hash), path);
+                        let key = prefixed.into_vec();
+                        self.bloom.insert(&key);
+                        storage_nodes.insert(key, CachedTrieEntry { node, encoded });
+                    }
+                    TrieCommitEntry::LeafValue { path, value } => {
+                        let prefixed = apply_prefix(Some(account_hash), path);
+                        let key = prefixed.into_vec();
+                        self.bloom.insert(&key);
+                        leaf_values.insert(key, value);
+                    }
+                }
+            }
+        }
 
         self.last_id += 1;
         let entry = TrieLayer {
-            nodes,
+            account_nodes,
+            storage_nodes,
+            leaf_values,
             parent,
             id: self.last_id,
         };
@@ -216,14 +279,25 @@ impl TrieLayerCache {
     /// Called after [`commit`](Self::commit) removes layers, since the old filter may contain
     /// keys from the removed layers (producing unnecessary false positives).
     pub fn rebuild_bloom(&mut self) {
-        // Pre-compute total keys for optimal filter sizing
-        let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
+        let total_keys: usize = self
+            .layers
+            .values()
+            .map(|layer| {
+                layer.account_nodes.len() + layer.storage_nodes.len() + layer.leaf_values.len()
+            })
+            .sum();
 
         let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
 
         // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
         self.layers.par_iter().for_each(|(_, layer)| {
-            for path in layer.nodes.keys() {
+            for path in layer.account_nodes.keys() {
+                filter.insert(path);
+            }
+            for path in layer.storage_nodes.keys() {
+                filter.insert(path);
+            }
+            for path in layer.leaf_values.keys() {
                 filter.insert(path);
             }
         });
@@ -234,13 +308,8 @@ impl TrieLayerCache {
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
     /// their merged trie node diffs in oldest-first order (suitable for sequential disk write).
     ///
-    /// `state_root` must be a key in `self.layers` (as returned by
-    /// [`get_commitable`](Self::get_commitable) /
-    /// [`get_commitable_with_threshold`](Self::get_commitable_with_threshold)).
-    /// If it isn't, the walk exits immediately and returns `None`.
-    ///
-    /// After removal, any orphaned layers (older than the committed ones) are pruned, and
-    /// the bloom filter is rebuilt to remove stale entries.
+    /// Returns the merged key-value pairs in the same flat `(Vec<u8>, Vec<u8>)` format
+    /// as before, suitable for dispatch by key length in `apply_trie_updates`.
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
@@ -256,7 +325,19 @@ impl TrieLayerCache {
         let nodes_to_commit = layers_to_commit
             .into_iter()
             .rev()
-            .flat_map(|layer| layer.nodes)
+            .flat_map(|layer| {
+                layer
+                    .account_nodes
+                    .into_iter()
+                    .map(|(key, entry)| (key, entry.encoded))
+                    .chain(
+                        layer
+                            .storage_nodes
+                            .into_iter()
+                            .map(|(key, entry)| (key, entry.encoded)),
+                    )
+                    .chain(layer.leaf_values)
+            })
             .collect();
         Some(nodes_to_commit)
     }
@@ -307,6 +388,20 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
+    fn get_node(&self, key: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        let cached = if let Some(prefix) = &self.prefix_nibbles {
+            // Storage trie — look in storage_nodes with prefixed key
+            let prefixed = prefix.concat(&key);
+            self.inner
+                .get_storage_node(self.state_root, prefixed.as_ref())
+        } else {
+            // Account trie — look in account_nodes
+            self.inner
+                .get_account_node(self.state_root, key.as_ref())
+        };
+        Ok(cached)
+    }
+
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.
@@ -322,7 +417,8 @@ impl TrieDB for TrieWrapper {
             Some(prefix) => prefix.concat(&key),
             None => key,
         };
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
+        // Check leaf value cache (FKV entries)
+        if let Some(value) = self.inner.get_leaf_value(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)

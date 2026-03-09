@@ -16,7 +16,7 @@ use rkyv::{
     with::Skip,
 };
 
-use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
+use crate::{NodeRLP, TrieCommitEntry, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
 
@@ -58,11 +58,17 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(_) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
-                .transpose(),
+            NodeRef::Hash(_) => {
+                // Try decoded cache first
+                if let Some(node) = db.get_node(path.clone())? {
+                    return Ok(Some(node));
+                }
+                // Fall back to raw bytes + decode
+                db.get(path)?
+                    .filter(|rlp| !rlp.is_empty())
+                    .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
+                    .transpose()
+            }
         }
     }
 
@@ -78,14 +84,19 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
-                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                })
-                .transpose(),
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                // Try decoded cache first (cache contents are trusted)
+                if let Some(node) = db.get_node(path.clone())? {
+                    return Ok(Some(node));
+                }
+                db.get(path)?
+                    .filter(|rlp| !rlp.is_empty())
+                    .and_then(|rlp| match Node::decode(&rlp) {
+                        Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
+                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                    })
+                    .transpose()
+            }
         }
     }
 
@@ -108,6 +119,11 @@ impl NodeRef {
                 self.get_node_mut(db, path)
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                // Try decoded cache first
+                if let Some(node) = db.get_node(path.clone())? {
+                    *self = NodeRef::Node(node, OnceLock::from(*hash));
+                    return self.get_node_mut(db, path);
+                }
                 let Some(node) = db
                     .get(path.clone())?
                     .filter(|rlp| !rlp.is_empty())
@@ -129,20 +145,20 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
+    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<TrieCommitEntry>) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 if let Some(hash) = hash.get() {
                     return *hash;
                 }
                 match Arc::make_mut(node) {
-                    Node::Branch(node) => {
-                        for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc);
+                    Node::Branch(n) => {
+                        for (choice, child) in &mut n.choices.iter_mut().enumerate() {
+                            child.commit(path.append_new(choice as u8), acc);
                         }
                     }
-                    Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc);
+                    Node::Extension(n) => {
+                        n.child.commit(path.concat(&n.prefix), acc);
                     }
                     Node::Leaf(_) => {}
                 }
@@ -150,9 +166,16 @@ impl NodeRef {
                 node.encode(&mut buf);
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
                 if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+                    acc.push(TrieCommitEntry::LeafValue {
+                        path: path.concat(&leaf.partial),
+                        value: leaf.value.clone(),
+                    });
                 }
-                acc.push((path, buf));
+                acc.push(TrieCommitEntry::Node {
+                    path,
+                    node: node.clone(),
+                    encoded: buf,
+                });
 
                 hash
             }

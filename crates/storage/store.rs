@@ -36,8 +36,9 @@ use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
 };
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
-use ethrex_trie::{Node, NodeRLP};
+use ethrex_trie::{
+    EMPTY_TRIE_HASH, Nibbles, Node, NodeRLP, Trie, TrieCommitEntry, TrieLogger, TrieWitness,
+};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
@@ -207,7 +208,7 @@ impl Drop for ThreadList {
 ///
 /// Each entry contains the hashed account address and the trie nodes
 /// for that account's storage trie.
-pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+pub type StorageTrieNodes = Vec<(H256, Vec<TrieCommitEntry>)>;
 type StorageTries = HashMap<Address, (TrieWitness, Trie)>;
 
 /// Storage backend type selection.
@@ -228,9 +229,9 @@ pub enum EngineType {
 /// committing them to the database in a single transaction.
 pub struct UpdateBatch {
     /// New nodes to add to the state trie.
-    pub account_updates: Vec<TrieNode>,
+    pub account_updates: Vec<TrieCommitEntry>,
     /// Storage trie updates per account (keyed by hashed address).
-    pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
+    pub storage_updates: Vec<(H256, Vec<TrieCommitEntry>)>,
     /// Blocks to store.
     pub blocks: Vec<Block>,
     /// Receipts to store, grouped by block hash.
@@ -244,7 +245,7 @@ pub struct UpdateBatch {
 }
 
 /// Storage trie updates grouped by account address hash.
-pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+pub type StorageUpdates = Vec<(H256, Vec<TrieCommitEntry>)>;
 
 /// Collection of account state changes from block execution.
 ///
@@ -253,8 +254,8 @@ pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 pub struct AccountUpdatesList {
     /// Root hash of the state trie after applying these updates.
     pub state_trie_hash: H256,
-    /// State trie node updates (path -> RLP-encoded node).
-    pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    /// State trie commit entries (nodes + leaf values).
+    pub state_updates: Vec<TrieCommitEntry>,
     /// Storage trie updates per account.
     pub storage_updates: StorageUpdates,
     /// New contract bytecode deployments.
@@ -1170,8 +1171,9 @@ impl Store {
     ) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
         tokio::task::spawn_blocking(move || {
-            for (address_hash, nodes) in storage_trie_nodes {
-                for (node_path, node_data) in nodes {
+            for (address_hash, entries) in storage_trie_nodes {
+                for entry in entries {
+                    let (node_path, node_data) = entry.into_rlp_pair();
                     let key = apply_prefix(Some(address_hash), node_path);
                     if node_data.is_empty() {
                         txn.delete(STORAGE_TRIE_NODES, key.as_ref())?;
@@ -1886,11 +1888,13 @@ impl Store {
 
             let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
 
-            storage_trie_nodes.extend(
-                storage_nodes
-                    .into_iter()
-                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).into_vec(), n)),
-            );
+            storage_trie_nodes.extend(storage_nodes.into_iter().map(|entry| {
+                let (path, data) = entry.into_rlp_pair();
+                (
+                    apply_prefix(Some(h256_hashed_address), path).into_vec(),
+                    data,
+                )
+            }));
 
             // Add account to trie
             let account_state = AccountState {
@@ -1905,7 +1909,10 @@ impl Store {
         let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
         let account_trie_nodes = account_trie_nodes
             .into_iter()
-            .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
+            .map(|entry| {
+                let (path, data) = entry.into_rlp_pair();
+                (apply_prefix(None, path).into_vec(), data)
+            })
             .collect::<Vec<_>>();
 
         let mut tx = self.backend.begin_write()?;
@@ -2798,14 +2805,12 @@ impl Store {
     }
 }
 
-type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
-
 struct TrieUpdate {
     result_sender: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
     parent_state_root: H256,
     child_state_root: H256,
-    account_updates: TrieNodesUpdate,
-    storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    account_updates: Vec<TrieCommitEntry>,
+    storage_updates: Vec<(H256, Vec<TrieCommitEntry>)>,
     is_batch: bool,
 }
 
@@ -2827,22 +2832,18 @@ fn apply_trie_updates(
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
-    let new_layer = storage_updates
-        .into_iter()
-        .flat_map(|(account_hash, nodes)| {
-            nodes
-                .into_iter()
-                .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-        })
-        .chain(account_updates)
-        .collect();
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
-    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+    trie_mut.put_batch(
+        parent_state_root,
+        child_state_root,
+        account_updates,
+        storage_updates,
+    );
     let trie = Arc::new(trie_mut);
     *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.

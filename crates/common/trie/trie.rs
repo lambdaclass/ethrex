@@ -52,6 +52,42 @@ pub type NodeRLP = Vec<u8>;
 /// Represents a node in the Merkle Patricia Trie.
 pub type TrieNode = (Nibbles, NodeRLP);
 
+/// A structured entry produced by `NodeRef::commit()`.
+///
+/// Separates trie nodes (which can be cached as decoded `Arc<Node>`) from
+/// leaf values (FKV entries) which remain as raw bytes.
+#[derive(Debug, Clone)]
+pub enum TrieCommitEntry {
+    /// A trie node (branch/extension/leaf) with both decoded and encoded forms.
+    Node {
+        path: Nibbles,
+        node: Arc<Node>,
+        encoded: Vec<u8>,
+    },
+    /// A leaf's application-level value (for FlatKeyValue table), or a deletion marker.
+    LeafValue {
+        path: Nibbles,
+        value: Vec<u8>,
+    },
+}
+
+impl TrieCommitEntry {
+    pub fn path(&self) -> &Nibbles {
+        match self {
+            TrieCommitEntry::Node { path, .. } => path,
+            TrieCommitEntry::LeafValue { path, .. } => path,
+        }
+    }
+
+    /// Convert to the old (Nibbles, Vec<u8>) format for backward compatibility.
+    pub fn into_rlp_pair(self) -> (Nibbles, Vec<u8>) {
+        match self {
+            TrieCommitEntry::Node { path, encoded, .. } => (path, encoded),
+            TrieCommitEntry::LeafValue { path, value } => (path, value),
+        }
+    }
+}
+
 /// Ethereum-compatible Merkle Patricia Trie
 pub struct Trie {
     db: Box<dyn TrieDB>,
@@ -207,12 +243,12 @@ impl Trie {
             })
     }
 
-    /// Returns a list of changes in a TrieNode format since last root hash processed.
+    /// Returns a list of changes in a TrieCommitEntry format since last root hash processed.
     ///
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
-    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
+    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieCommitEntry>) {
         let updates = self.commit_without_storing();
         let ret_hash = self.hash_no_commit();
         (ret_hash, updates)
@@ -224,7 +260,8 @@ impl Trie {
     /// the cached nodes.
     pub fn commit(&mut self) -> Result<(), TrieError> {
         let acc = self.commit_without_storing();
-        self.db.put_batch(acc)?;
+        self.db
+            .put_batch(acc.into_iter().map(|e| e.into_rlp_pair()).collect())?;
 
         // Commit the underlying transaction
         self.db.commit()?;
@@ -234,15 +271,25 @@ impl Trie {
 
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
-    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+    pub fn commit_without_storing(&mut self) -> Vec<TrieCommitEntry> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc);
         }
         if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
-            acc.push((Nibbles::default(), vec![RLP_NULL]))
+            acc.push(TrieCommitEntry::LeafValue {
+                path: Nibbles::default(),
+                value: vec![RLP_NULL],
+            })
         }
-        acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
+        acc.extend(
+            self.pending_removal
+                .drain()
+                .map(|nib| TrieCommitEntry::LeafValue {
+                    path: nib,
+                    value: vec![],
+                }),
+        );
 
         acc
     }
