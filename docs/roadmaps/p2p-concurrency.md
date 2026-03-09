@@ -30,7 +30,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P0 | ~~Merge rate limit WHOAREYOU packets (discv5)~~ | [#5909](https://github.com/lambdaclass/ethrex/pull/5909) | **Merged** (Feb 9) |
 | P0 | Bound whoareyou_rate_limit map with LRU cache | [#6125](https://github.com/lambdaclass/ethrex/issues/6125) | Open issue |
 | P0 | ~~Merge dual discovery protocol support (discv4+discv5)~~ | [#5962](https://github.com/lambdaclass/ethrex/pull/5962) | **Merged** (Feb 25) |
-| P0 | Remove experimental-discv5 feature flag | [#6015](https://github.com/lambdaclass/ethrex/pull/6015), [#5971](https://github.com/lambdaclass/ethrex/issues/5971) | Open |
+| P0 | ~~Remove experimental-discv5 feature flag~~ | [#6015](https://github.com/lambdaclass/ethrex/pull/6015), [#5971](https://github.com/lambdaclass/ethrex/issues/5971) | **Merged** (Mar 4) |
 | P1 | Unify discovery GenServers into single DiscoveryServer | [#5990](https://github.com/lambdaclass/ethrex/issues/5990) | Open issue |
 | P2 | Move discovery tests to dedicated folders | [#5992](https://github.com/lambdaclass/ethrex/issues/5992) | Open issue |
 
@@ -204,7 +204,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 5. ~~[#6079](https://github.com/lambdaclass/ethrex/pull/6079) - Parallel storage merkelization~~ **Merged**
 
 ### Short-term (Next 2-4 weeks)
-1. Complete Phase 1 of P2P (~~dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962)~~ **Merged**, remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))
+1. ~~Complete Phase 1 of P2P (dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962), remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))~~ **Merged**
 2. Complete remaining Concurrency Phase 1 (async disk I/O [#6113](https://github.com/lambdaclass/ethrex/pull/6113))
 3. Address LRU cache for rate limiting [#6125](https://github.com/lambdaclass/ethrex/issues/6125)
 4. ~~Complete remaining discv5 security (ENR from handshake [#6109](https://github.com/lambdaclass/ethrex/pull/6109), external IP [#5914](https://github.com/lambdaclass/ethrex/pull/5914))~~ **Merged**
@@ -242,7 +242,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Category | Open Issues | Open PRs | Draft PRs | Merged |
 |----------|-------------|----------|-----------|--------|
-| Discovery Protocol | 8 | 4 | 1 | 2 (#5909, #5962) |
+| Discovery Protocol | 8 | 3 | 1 | 3 (#5909, #5962, #6015) |
 | Discovery Security | 2 | 0 | 0 | 6 (#6055, #5910, #6172, #6109, #5914, #6200) |
 | Peer Management | 5 | 0 | 0 | 1 (#6272) |
 | RLPx/Protocol | 4 | 0 | 0 | 4 (#5531, #5811, #6256, #6253) |
@@ -251,7 +251,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Parallel Operations | 2 | 3 | 1 | 2 (#6079, #6191) |
 | GenServer Migration | 5 | 1 | 0 | 0 |
 | Blocking/Performance | 3 | 1 | 1 | 0 |
-| **Total** | **34** | **13** | **4** | **16** |
+| **Total** | **34** | **12** | **4** | **17** |
 
 ---
 
