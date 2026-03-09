@@ -210,9 +210,9 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Input: pairs of (G1 64 bytes, G2 128 bytes) as raw byte slices.
     /// Returns true if the pairing equation holds.
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
-        use ark_bn254::{Bn254, G1Affine, G2Affine};
+        use ark_bn254::{Bn254, Fq, G1Affine, G2Affine};
         use ark_ec::pairing::Pairing;
-        use ark_ff::{Fp, One, PrimeField as _, QuadExtField};
+        use ark_ff::{One, PrimeField as _, QuadExtField, Zero};
 
         let mut g1_points = Vec::with_capacity(pairs.len());
         let mut g2_points = Vec::with_capacity(pairs.len());
@@ -221,18 +221,10 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             if g1_bytes.len() < 64 {
                 return Err(CryptoError::InvalidInput("G1 must be 64 bytes"));
             }
-            let g1x = Fp::from_le_bytes_mod_order(&{
-                let mut b = g1_bytes[..32].to_vec();
-                b.reverse();
-                b
-            });
-            let g1y = Fp::from_le_bytes_mod_order(&{
-                let mut b = g1_bytes[32..64].to_vec();
-                b.reverse();
-                b
-            });
+            let g1x = Fq::from_be_bytes_mod_order(&g1_bytes[..32]);
+            let g1y = Fq::from_be_bytes_mod_order(&g1_bytes[32..64]);
 
-            let g1 = if g1x == ark_ff::Zero::zero() && g1y == ark_ff::Zero::zero() {
+            let g1 = if g1x.is_zero() && g1y.is_zero() {
                 G1Affine::identity()
             } else {
                 let p = G1Affine::new_unchecked(g1x, g1y);
@@ -247,43 +239,25 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                 return Err(CryptoError::InvalidInput("G2 must be 128 bytes"));
             }
 
-            let g2_x_im = Fp::from_le_bytes_mod_order(&{
-                let mut b = g2_bytes[..32].to_vec();
-                b.reverse();
-                b
-            });
-            let g2_x_re = Fp::from_le_bytes_mod_order(&{
-                let mut b = g2_bytes[32..64].to_vec();
-                b.reverse();
-                b
-            });
-            let g2_y_im = Fp::from_le_bytes_mod_order(&{
-                let mut b = g2_bytes[64..96].to_vec();
-                b.reverse();
-                b
-            });
-            let g2_y_re = Fp::from_le_bytes_mod_order(&{
-                let mut b = g2_bytes[96..128].to_vec();
-                b.reverse();
-                b
-            });
+            let g2_x_im = Fq::from_be_bytes_mod_order(&g2_bytes[..32]);
+            let g2_x_re = Fq::from_be_bytes_mod_order(&g2_bytes[32..64]);
+            let g2_y_im = Fq::from_be_bytes_mod_order(&g2_bytes[64..96]);
+            let g2_y_re = Fq::from_be_bytes_mod_order(&g2_bytes[96..128]);
 
-            let g2 = if g2_x_im == ark_ff::Zero::zero()
-                && g2_x_re == ark_ff::Zero::zero()
-                && g2_y_im == ark_ff::Zero::zero()
-                && g2_y_re == ark_ff::Zero::zero()
-            {
-                G2Affine::identity()
-            } else {
-                let p = G2Affine::new_unchecked(
-                    QuadExtField::new(g2_x_re, g2_x_im),
-                    QuadExtField::new(g2_y_re, g2_y_im),
-                );
-                if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(CryptoError::InvalidPoint("G2 not on BN254 curve"));
-                }
-                p
-            };
+            let g2 =
+                if g2_x_im.is_zero() && g2_x_re.is_zero() && g2_y_im.is_zero() && g2_y_re.is_zero()
+                {
+                    G2Affine::identity()
+                } else {
+                    let p = G2Affine::new_unchecked(
+                        QuadExtField::new(g2_x_re, g2_x_im),
+                        QuadExtField::new(g2_y_re, g2_y_im),
+                    );
+                    if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                        return Err(CryptoError::InvalidPoint("G2 not on BN254 curve"));
+                    }
+                    p
+                };
             g2_points.push(g2);
         }
 
