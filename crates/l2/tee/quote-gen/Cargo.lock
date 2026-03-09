@@ -1421,6 +1421,7 @@ dependencies = [
  "rayon",
  "rkyv",
  "rustc-hash",
+ "secp256k1",
  "serde 1.0.228",
  "serde_json",
  "sha2",
@@ -1435,8 +1436,19 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bls12_381 0.8.0",
  "c-kzg",
- "kzg-rs",
+ "ethereum-types",
+ "ff 0.13.1",
+ "hex-literal",
+ "malachite",
+ "p256",
+ "ripemd",
+ "secp256k1",
+ "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
 ]
@@ -1446,6 +1458,7 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
@@ -1473,6 +1486,7 @@ dependencies = [
  "k256",
  "lambdaworks-crypto",
  "rkyv",
+ "secp256k1",
  "serde 1.0.228",
  "serde_with",
  "sha3",
@@ -1484,28 +1498,19 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
  "bitvec",
- "bls12_381 0.8.0",
  "bytes",
  "datatest-stable",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256",
- "lambdaworks-math",
  "lazy_static",
  "malachite",
- "p256",
  "rayon",
- "ripemd",
  "rustc-hash",
  "serde 1.0.228",
  "serde_json",
- "sha2",
  "sha3",
  "strum",
  "subtle",
@@ -2681,7 +2686,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.5",
- "rayon",
  "serde 1.0.228",
  "serde_json",
 ]
