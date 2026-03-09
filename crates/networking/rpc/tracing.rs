@@ -150,7 +150,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 BlockIdentifier::Tag(_) => {
                     return Err(RpcErr::BadParams(
                         "Block tags not supported for debug_traceBlockByNumber".to_owned(),
-                    ))
+                    ));
                 }
             },
             Err(_) => serde_json::from_value(params[0].clone())?,

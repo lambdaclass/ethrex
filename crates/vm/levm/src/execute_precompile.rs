@@ -26,6 +26,7 @@ use ethrex_common::{
         calculate_base_fee_per_gas,
     },
 };
+use ethrex_crypto::Crypto;
 use ethrex_rlp::decode::RLPDecode;
 use std::cmp::min;
 use std::sync::Arc;
@@ -108,11 +109,12 @@ pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     increase_precompile_consumed_gas(EXECUTE_GAS_COST, gas_remaining)?;
 
     let input = parse_abi_calldata(calldata)?;
-    execute_inner(input)
+    execute_inner(input, crypto)
 }
 
 /// Core logic, separated so tests can call it directly with a structured input.
@@ -124,7 +126,7 @@ pub fn execute_precompile(
 /// `base_fee_per_gas * block_gas_used` (EIP-1559 base fees are constant per
 /// block). The base fee per gas is returned so the L1 contract can track it
 /// on-chain for the next block.
-pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
+pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Result<Bytes, VMError> {
     let ExecutePrecompileInput {
         chain_id,
         pre_state_root,
@@ -235,7 +237,7 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
             initial.storage.entry(H256::zero()).or_insert(U256::zero());
         }
 
-        let (logs, gas_used) = execute_block(&block, &mut gen_db)?;
+        let (logs, gas_used) = execute_block(&block, &mut gen_db, crypto)?;
 
         // Apply state transitions back to the GuestProgramState
         let account_updates = gen_db
@@ -292,7 +294,11 @@ pub fn execute_inner(input: ExecutePrecompileInput) -> Result<Bytes, VMError> {
 ///
 /// Builds receipts for every transaction (including reverted ones) and validates
 /// the receipts root against the block header.
-fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log>, u64), VMError> {
+fn execute_block(
+    block: &Block,
+    db: &mut GeneralizedDatabase,
+    crypto: &dyn Crypto,
+) -> Result<(Vec<Log>, u64), VMError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
 
@@ -321,11 +327,15 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log
         }
     }
 
-    let transactions_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
-        VMError::Internal(InternalError::Custom(format!(
-            "Couldn't recover addresses: {error}"
-        )))
-    })?;
+    let transactions_with_sender =
+        block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|error| {
+                VMError::Internal(InternalError::Custom(format!(
+                    "Couldn't recover addresses: {error}"
+                )))
+            })?;
 
     let mut all_logs = Vec::new();
     let mut receipts: Vec<Receipt> = Vec::new();
@@ -338,9 +348,9 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log
             origin: *tx_sender,
             gas_limit: tx.gas_limit(),
             config,
-            block_number: block.header.number.into(),
+            block_number: block.header.number,
             coinbase: block.header.coinbase,
-            timestamp: block.header.timestamp.into(),
+            timestamp: block.header.timestamp,
             prev_randao: Some(block.header.prev_randao),
             slot_number: block
                 .header
@@ -365,7 +375,7 @@ fn execute_block(block: &Block, db: &mut GeneralizedDatabase) -> Result<(Vec<Log
             disable_balance_check: false,
         };
 
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), VMType::L1)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), VMType::L1, crypto)?;
         let report = vm.execute()?;
 
         cumulative_gas_used = cumulative_gas_used

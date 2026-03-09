@@ -907,7 +907,17 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
- "kzg-rs",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff",
+ "bls12_381",
+ "ethereum-types",
+ "ff",
+ "hex-literal",
+ "malachite",
+ "p256",
+ "ripemd",
+ "sha2",
  "thiserror",
  "tiny-keccak",
 ]
@@ -917,6 +927,7 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
@@ -966,33 +977,23 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff",
  "bitvec",
- "bls12_381",
  "bytes",
  "datatest-stable",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256",
- "lambdaworks-math",
  "lazy_static",
  "malachite",
- "p256",
- "ripemd",
+ "rayon",
  "rustc-hash",
  "serde",
  "serde_json",
- "sha2",
  "sha3",
  "strum",
- "substrate-bn",
  "thiserror",
  "walkdir",
- "ziskos",
 ]
 
 [[package]]
@@ -1526,7 +1527,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand",
- "rayon",
  "serde",
  "serde_json",
 ]
@@ -1536,9 +1536,6 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-dependencies = [
- "spin",
-]
 
 [[package]]
 name = "lib-c"
@@ -2494,18 +2491,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "substrate-bn"
-version = "0.6.0"
-source = "git+https://github.com/0xPolygonHermez/zisk-patch-bn.git?tag=patch-0.6.0-zisk-0.15.0#7d408643bf033c427826124436fc1b3141ef7425"
-dependencies = [
- "byteorder",
- "crunchy",
- "lazy_static",
- "rand",
- "rustc-hex",
-]
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3105,3 +3090,8 @@ name = "zmij"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02aae0f83f69aafc94776e879363e9771d7ecbffe2c7fbb6c14c5e00dfe88439"
+
+[[patch.unused]]
+name = "substrate-bn"
+version = "0.6.0"
+source = "git+https://github.com/0xPolygonHermez/zisk-patch-bn.git?tag=patch-0.6.0-zisk-0.15.0#7d408643bf033c427826124436fc1b3141ef7425"

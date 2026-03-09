@@ -1597,15 +1597,14 @@ async fn estimate_blob_gas(
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
     let blob_gas = fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
-        U256::from(total_blob_gas),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        total_blob_gas.into(),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
 
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
-    // Check if we have an overflow when we take the headroom into account.
     let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;

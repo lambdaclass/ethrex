@@ -71,9 +71,10 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block, validate_block_access_list_hash, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
+    validate_gas_used, validate_receipts_root, validate_requests_hash,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
@@ -118,9 +119,10 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
     Option<Vec<AccountUpdate>>,
-    usize,        // max queue length
-    [Instant; 6], // timing instants
-    Duration,     // warmer duration
+    Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
+    usize,                   // max queue length
+    [Instant; 6],            // timing instants
+    Duration,                // warmer duration
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -323,7 +325,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
@@ -392,7 +394,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -420,10 +422,16 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            let _ = LEVM::warm_block_from_bal(bal, caching_store);
+                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store) {
+                                debug!("BAL warming failed (non-fatal): {e}");
+                            }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            let _ = LEVM::warm_block(block, caching_store, vm_type);
+                            if let Err(e) =
+                                LEVM::warm_block(block, caching_store, vm_type, &NativeCrypto)
+                            {
+                                debug!("Block warming failed (non-fatal): {e}");
+                            }
                         }
                         start.elapsed()
                     })
@@ -435,8 +443,8 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref)?;
+                        let (execution_result, produced_bal) =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -446,7 +454,7 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        if let Some(bal) = &bal {
+                        if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
                                 &chain_config,
@@ -456,7 +464,7 @@ impl Blockchain {
                         }
 
                         let exec_end_instant = Instant::now();
-                        Ok((execution_result, exec_end_instant))
+                        Ok((execution_result, produced_bal, exec_end_instant))
                     })
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
@@ -509,7 +517,7 @@ impl Blockchain {
                 ))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
-        let (execution_result, exec_end_instant) = execution_result?;
+        let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -517,6 +525,7 @@ impl Blockchain {
             execution_result,
             account_updates_list,
             accumulated_updates,
+            produced_bal,
             max_queue_length,
             [
                 start_instant,
@@ -1238,7 +1247,7 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -1347,7 +1356,9 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match self.options.r#type {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L1 => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
                 BlockchainType::L2(_) => {
                     let l2_config = match fee_configs {
                         Some(fee_configs) => {
@@ -1359,7 +1370,7 @@ impl Blockchain {
                             "L2Config not found for witness generation".to_string(),
                         ))?,
                     };
-                    Evm::new_from_db_for_l2(logger.clone(), *l2_config)
+                    Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
             };
 
@@ -1900,6 +1911,7 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            batch_mode: false,
         };
 
         self.storage
@@ -1949,6 +1961,34 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
+        let (_, result) = self.add_block_pipeline_inner(block, bal)?;
+        result
+    }
+
+    /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
+    /// On Amsterdam+ blocks the returned value is `Some(bal)`, otherwise `None`.
+    pub fn add_block_pipeline_bal(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
+        result?;
+        Ok(produced_bal)
+    }
+
+    /// Runs the full block pipeline (execute + merkleize + store).
+    ///
+    /// Returns a two-level Result:
+    /// - Outer `Err`: pipeline couldn't start (e.g. parent header not found).
+    /// - Inner `Result`: block storage outcome. The produced BAL is returned
+    ///   regardless of whether storage succeeded, so callers like
+    ///   `add_block_pipeline_bal` can retrieve it even on storage failure.
+    fn add_block_pipeline_inner(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1968,12 +2008,15 @@ impl Blockchain {
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let vm = match self.options.r#type.clone() {
-                BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone()),
+                BlockchainType::L1 => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
                 BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
                     logger.clone(),
                     *l2_config.fee_config.read().map_err(|_| {
                         EvmError::Custom("Fee config lock was poisoned".to_string())
                     })?,
+                    Arc::new(NativeCrypto),
                 ),
             };
             (vm, Some(logger))
@@ -1987,10 +2030,11 @@ impl Blockchain {
             res,
             account_updates_list,
             accumulated_updates,
+            produced_bal,
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2037,7 +2081,7 @@ impl Blockchain {
             );
         }
 
-        result
+        Ok((produced_bal, result))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2381,6 +2425,7 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
+            batch_mode: true,
         };
 
         self.storage
@@ -2438,7 +2483,7 @@ impl Blockchain {
             blobs_bundle.validate(transaction, fork)?;
         }
 
-        let sender = transaction.sender()?;
+        let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
@@ -2466,7 +2511,7 @@ impl Blockchain {
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
-        let sender = transaction.sender()?;
+        let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
@@ -2696,14 +2741,14 @@ impl Blockchain {
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
     let evm = match blockchain_type {
-        BlockchainType::L1 => Evm::new_for_l1(vm_db),
+        BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
             let fee_config = *l2_config
                 .fee_config
                 .read()
                 .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
 
-            Evm::new_for_l2(vm_db, fee_config)?
+            Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
     Ok(evm)
