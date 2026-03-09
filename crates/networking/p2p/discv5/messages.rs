@@ -1,5 +1,5 @@
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
-use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
+use aes_gcm::{aead::AeadMutInPlace, Aes128Gcm, KeyInit};
 use bytes::{BufMut, Bytes};
 use ethrex_common::H256;
 use ethrex_rlp::{
@@ -816,7 +816,7 @@ mod tests {
         types::NodeRecordPairs,
         utils::{node_id, public_key_from_signing_key},
     };
-    use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
+    use aes_gcm::{aead::AeadMutInPlace, Aes128Gcm, KeyInit};
     use bytes::BytesMut;
     use ethrex_common::{H264, H512};
     use hex_literal::hex;
@@ -1564,8 +1564,39 @@ mod tests {
         assert_eq!(PingMessage::decode(&buf).unwrap(), pkt);
     }
 
-    // TODO: Test encode pong packet (with known good encoding).
-    // TODO: Test decode pong packet (from known good encoding).
+    #[test]
+    fn encode_pong_message() {
+        // Manually constructed RLP for:
+        //   req_id      = [0x01]           -> 0x01        (single byte < 0x80)
+        //   enr_seq     = 1                -> 0x01
+        //   recipient_ip = 127.0.0.1       -> 0x84 7f 00 00 01
+        //   recipient_port = 9000 (0x2328) -> 0x82 23 28
+        // payload = 1+1+5+3 = 10 bytes => list prefix 0xca
+        let pkt = PongMessage {
+            req_id: Bytes::from_static(&[0x01]),
+            enr_seq: 1,
+            recipient_addr: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 9000),
+        };
+
+        let encoded = pkt.encode_to_vec();
+        let expected = hex!("ca0101847f000001822328");
+        assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn decode_pong_message() {
+        // Same known-good bytes as encode_pong_message above
+        let encoded = hex!("ca0101847f000001822328");
+        let decoded = PongMessage::decode(&encoded).unwrap();
+
+        assert_eq!(decoded.req_id, Bytes::from_static(&[0x01]));
+        assert_eq!(decoded.enr_seq, 1);
+        assert_eq!(
+            decoded.recipient_addr,
+            SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 9000)
+        );
+    }
+
     #[test]
     fn pong_packet_codec_roundtrip() {
         let pkt = PongMessage {
