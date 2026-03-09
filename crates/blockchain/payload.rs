@@ -622,18 +622,24 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-7928: Snapshot BAL recorder before trying the tx.
-            // If the tx is rejected, restore so only included txs affect the BAL.
-            // TODO: This clones the entire recorder every tx. Add a tx-level
-            // checkpoint/restore that also undoes touched_addresses and storage_reads
-            // (the existing checkpoint only handles inner call reverts).
-            let bal_snapshot = context.vm.db.bal_recorder.clone();
-
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
+            // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
+            // filters for the previous (committed) tx, which may insert reads.
             #[allow(clippy::cast_possible_truncation)]
             let tx_index = (context.payload.body.transactions.len() + 1) as u16;
             context.vm.set_bal_index(tx_index);
+
+            // EIP-7928: Lightweight tx-level checkpoint before trying the tx.
+            // If the tx is rejected, restore so only included txs affect the BAL.
+            // Taken after set_bal_index (which flushes previous tx) but before
+            // this tx's touches, so rejected txs leave no trace.
+            let bal_checkpoint = context
+                .vm
+                .db
+                .bal_recorder
+                .as_ref()
+                .map(|r| r.tx_checkpoint());
 
             // Record tx sender and recipient for BAL
             if let Some(recorder) = context.vm.db.bal_recorder_mut() {
@@ -656,7 +662,11 @@ impl Blockchain {
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     // Restore BAL recorder to pre-tx state so rejected txs
                     // don't pollute the block access list.
-                    context.vm.db.bal_recorder = bal_snapshot;
+                    if let (Some(recorder), Some(checkpoint)) =
+                        (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                    {
+                        recorder.tx_restore(checkpoint);
+                    }
                     txs.pop();
                     continue;
                 }

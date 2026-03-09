@@ -5,6 +5,7 @@ use ethrex_rlp::{
     encode::{RLPEncode, encode_length, list_length},
     structs,
 };
+use indexmap::{IndexMap, IndexSet};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -698,6 +699,21 @@ pub struct BlockAccessListCheckpoint {
     code_changes_len: BTreeMap<Address, usize>,
 }
 
+/// Tx-level checkpoint for fully undoing a rejected transaction during block building.
+///
+/// Unlike [`BlockAccessListCheckpoint`] (for inner-call reverts), this captures the
+/// full recorder state including touched addresses and storage reads, enabling complete
+/// rollback without cloning the entire recorder.
+#[derive(Debug)]
+pub struct TxCheckpoint {
+    inner: BlockAccessListCheckpoint,
+    current_index: u16,
+    touched_addresses_len: usize,
+    storage_reads_lens: IndexMap<Address, usize>,
+    initial_balances_len: usize,
+    addresses_with_initial_code_len: usize,
+}
+
 /// Records state accesses during block execution to build a Block Access List (EIP-7928).
 ///
 /// The recorder accumulates all storage reads/writes, balance changes, nonce changes,
@@ -713,14 +729,16 @@ pub struct BlockAccessListRecorder {
     /// 0=pre-exec, 1..n=tx indices, n+1=post-exec.
     current_index: u16,
     /// All addresses that must be in BAL (touched during execution).
-    touched_addresses: BTreeSet<Address>,
+    /// IndexSet for O(1) insert/lookup and length-based tx-level checkpoint/restore.
+    touched_addresses: IndexSet<Address>,
     /// Storage reads per address (slot -> set of slots read but not written).
-    storage_reads: BTreeMap<Address, BTreeSet<U256>>,
+    /// IndexMap/IndexSet for length-based tx-level checkpoint/restore.
+    storage_reads: IndexMap<Address, IndexSet<U256>>,
     /// Storage writes per address (slot -> list of (index, post_value) pairs).
     storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u16, U256)>>>,
     /// Initial balances for detecting balance round-trips.
-    /// Used as the starting point for per-transaction round-trip detection in build().
-    initial_balances: BTreeMap<Address, U256>,
+    /// IndexMap for length-based tx-level checkpoint/restore.
+    initial_balances: IndexMap<Address, U256>,
     /// Per-transaction initial storage values for net-zero filtering.
     /// Per EIP-7928: "If a storage slot's value is changed but its post-transaction value
     /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
@@ -737,9 +755,8 @@ pub struct BlockAccessListRecorder {
     /// Code changes per address (list of (index, new_code) pairs).
     code_changes: BTreeMap<Address, Vec<(u16, Bytes)>>,
     /// Addresses that had non-empty code at the start (before any code changes).
-    /// Used to distinguish CREATE-with-empty-code (no initial code → empty = no change)
-    /// from delegation-clear (had code → empty = actual change).
-    addresses_with_initial_code: BTreeSet<Address>,
+    /// IndexSet for length-based tx-level checkpoint/restore.
+    addresses_with_initial_code: IndexSet<Address>,
     /// Tracks reads that were promoted to writes, in insertion order per address.
     /// Used for efficient checkpoint/restore without cloning storage_reads.
     /// On restore, we truncate this Vec and the slots go back to being reads.
@@ -1104,8 +1121,13 @@ impl BlockAccessListRecorder {
         self.filter_net_zero_code();
         let mut bal = BlockAccessList::with_capacity(self.touched_addresses.len());
 
+        // Sort addresses for canonical BAL ordering (IndexSet preserves insertion order,
+        // but BAL requires ascending address order).
+        let mut sorted_addresses: Vec<_> = self.touched_addresses.iter().copied().collect();
+        sorted_addresses.sort();
+
         // Process all touched addresses
-        for address in &self.touched_addresses {
+        for address in &sorted_addresses {
             let mut account_changes = AccountChanges::new(*address);
 
             // Add storage writes (slot changes)
@@ -1126,14 +1148,17 @@ impl BlockAccessListRecorder {
             }
 
             // Add storage reads (excluding slots that were promoted to writes)
+            // Sort for canonical BAL ordering (IndexSet preserves insertion order).
             if let Some(reads) = self.storage_reads.get(address) {
                 let promoted = self.reads_promoted_to_writes.get(address);
-                for slot in reads {
-                    // Skip if this read was promoted to a write
-                    if promoted.is_some_and(|p| p.contains(slot)) {
-                        continue;
-                    }
-                    account_changes.add_storage_read(*slot);
+                let mut sorted_reads: Vec<_> = reads
+                    .iter()
+                    .filter(|slot| !promoted.is_some_and(|p| p.contains(slot)))
+                    .copied()
+                    .collect();
+                sorted_reads.sort();
+                for slot in sorted_reads {
+                    account_changes.add_storage_read(slot);
                 }
             }
 
@@ -1348,6 +1373,116 @@ impl BlockAccessListRecorder {
 
         // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
         // accessed addresses must be included even from reverted calls
+    }
+
+    /// Creates a tx-level checkpoint that captures the full recorder state.
+    ///
+    /// Unlike [`checkpoint`] (for inner-call reverts where touched addresses persist),
+    /// this captures everything needed to fully undo a rejected transaction during
+    /// block building. Uses length-based snapshots on IndexSet/IndexMap fields for
+    /// efficiency instead of cloning the entire recorder.
+    pub fn tx_checkpoint(&self) -> TxCheckpoint {
+        TxCheckpoint {
+            inner: self.checkpoint(),
+            current_index: self.current_index,
+            touched_addresses_len: self.touched_addresses.len(),
+            storage_reads_lens: self
+                .storage_reads
+                .iter()
+                .map(|(addr, slots)| (*addr, slots.len()))
+                .collect(),
+            initial_balances_len: self.initial_balances.len(),
+            addresses_with_initial_code_len: self.addresses_with_initial_code.len(),
+        }
+    }
+
+    /// Restores the recorder to a tx-level checkpoint, fully undoing a rejected transaction.
+    ///
+    /// Unlike [`restore`] (which preserves touched addresses and converts writes to reads),
+    /// this completely removes all traces of the rejected tx — addresses, reads, writes, and
+    /// all state changes.
+    pub fn tx_restore(&mut self, checkpoint: TxCheckpoint) {
+        self.current_index = checkpoint.current_index;
+
+        // Truncate append-only IndexSet/IndexMap fields to their checkpoint lengths
+        self.touched_addresses
+            .truncate(checkpoint.touched_addresses_len);
+        self.initial_balances
+            .truncate(checkpoint.initial_balances_len);
+        self.addresses_with_initial_code
+            .truncate(checkpoint.addresses_with_initial_code_len);
+
+        // Truncate storage_reads: remove new addresses, truncate existing inner sets.
+        // INVARIANT: storage_reads is append-only (entries never removed or reordered).
+        // checkpoint.storage_reads_lens.len() is the number of addresses present at
+        // checkpoint time, which are exactly the first N entries by insertion order.
+        self.storage_reads
+            .truncate(checkpoint.storage_reads_lens.len());
+        for (addr, slots) in &mut self.storage_reads {
+            if let Some(&len) = checkpoint.storage_reads_lens.get(addr) {
+                slots.truncate(len);
+            } else {
+                // Address was not in checkpoint — should not happen after outer truncate,
+                // but defensive clear to avoid stale state.
+                slots.clear();
+            }
+        }
+
+        // Clear per-tx state
+        self.tx_initial_storage.clear();
+        self.tx_initial_code.clear();
+
+        // Truncate writes/changes using the inner checkpoint (without the
+        // "promote writes to reads" step from inner-call restore, since rejected
+        // txs should leave no trace).
+        self.reads_promoted_to_writes
+            .retain(|addr, promoted| {
+                if let Some(&len) = checkpoint.inner.reads_promoted_len.get(addr) {
+                    promoted.truncate(len);
+                    len > 0
+                } else {
+                    false
+                }
+            });
+        self.storage_writes.retain(|addr, slots| {
+            if let Some(slot_lens) = checkpoint.inner.storage_writes_len.get(addr) {
+                slots.retain(|slot, changes| {
+                    if let Some(&len) = slot_lens.get(slot) {
+                        changes.truncate(len);
+                        len > 0
+                    } else {
+                        false
+                    }
+                });
+                !slots.is_empty()
+            } else {
+                false
+            }
+        });
+        self.balance_changes.retain(|addr, changes| {
+            if let Some(&len) = checkpoint.inner.balance_changes_len.get(addr) {
+                changes.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
+        self.nonce_changes.retain(|addr, changes| {
+            if let Some(&len) = checkpoint.inner.nonce_changes_len.get(addr) {
+                changes.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
+        self.code_changes.retain(|addr, changes| {
+            if let Some(&len) = checkpoint.inner.code_changes_len.get(addr) {
+                changes.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
     }
 
     /// Handles BAL cleanup for a self-destructed account per EIP-7928/EIP-6780.
