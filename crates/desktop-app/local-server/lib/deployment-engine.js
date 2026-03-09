@@ -1,8 +1,9 @@
 /**
  * Deployment Engine -- orchestrates the full L2 deployment lifecycle.
  *
- * Supports two modes:
+ * Supports three modes:
  * - Local: builds from source via Docker Compose on the platform host
+ * - Testnet: builds from source, uses external L1 RPC (no built-in L1 container)
  * - Remote: uses pre-built images, deploys via SSH to a remote server
  *
  * State machine: configured -> building/pulling -> l1_starting -> deploying_contracts -> l2_starting -> running
@@ -19,6 +20,7 @@ const docker = require("./docker-local");
 const remote = require("./docker-remote");
 const {
   generateComposeFile,
+  generateTestnetComposeFile,
   generateRemoteComposeFile,
   generateProgramsToml,
   writeComposeFile,
@@ -284,6 +286,177 @@ async function provision(deployment) {
     activeProvisions.delete(id);
     // Do NOT auto-destroy Docker containers on error.
     // User can inspect logs/state and manually delete or retry.
+    throw err;
+  }
+}
+
+// ============================================================
+// TESTNET PROVISIONING (build from source, external L1)
+// ============================================================
+
+async function provisionTestnet(deployment) {
+  const { id, program_slug: programSlug } = deployment;
+
+  const provisionInfo = { startedAt: Date.now(), phase: "checking_docker" };
+  activeProvisions.set(id, provisionInfo);
+  clearDeployEvents(id);
+
+  emit(id, "phase", { phase: "checking_docker", message: "Checking Docker availability..." });
+  updateDeployment(id, { phase: "checking_docker", error_message: null });
+
+  if (!docker.isDockerAvailable()) {
+    const errMsg = "Docker is not running. Please install and start Docker Desktop first.";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { phase: "error", error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  emit(id, "phase", { phase: "checking_docker", message: "Docker is available" });
+
+  let deployDir = null;
+  let testnetConfig = {};
+  try {
+    const config = deployment.config ? JSON.parse(deployment.config) : {};
+    deployDir = config.deployDir || null;
+    testnetConfig = config.testnet || {};
+  } catch {}
+
+  const l1RpcUrl = testnetConfig.l1RpcUrl;
+  const deployerPrivateKey = testnetConfig.deployerPrivateKey;
+  if (!l1RpcUrl) {
+    const errMsg = "L1 RPC URL is required for testnet deployment.";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { phase: "error", error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  // Testnet: no L1 port needed, only L2 + tools
+  const { l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
+  const projectName = `tokamak-${id.slice(0, 8)}`;
+
+  updateDeployment(id, {
+    docker_project: projectName,
+    l1_port: null,
+    l2_port: l2Port,
+    proof_coord_port: proofCoordPort,
+    tools_l1_explorer_port: toolsL1ExplorerPort,
+    tools_l2_explorer_port: toolsL2ExplorerPort,
+    tools_bridge_ui_port: toolsBridgeUIPort,
+    tools_db_port: toolsDbPort,
+    tools_metrics_port: toolsMetricsPort,
+    deploy_dir: deployDir,
+    rpc_url: l1RpcUrl,
+    phase: "building",
+    error_message: null,
+  });
+
+  provisionInfo.phase = "building";
+  emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration (testnet mode)..." });
+
+  try {
+    const gpu = docker.hasNvidiaGpu();
+    const composeContent = generateTestnetComposeFile({
+      programSlug, l2Port, proofCoordPort, metricsPort: toolsMetricsPort,
+      projectName, l1RpcUrl, deployerPrivateKey, gpu,
+    });
+    const composeFile = writeComposeFile(id, composeContent, deployDir);
+
+    emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
+    await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
+      const lines = chunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        emit(id, "log", { message: line });
+      }
+    });
+
+    // Skip L1 starting — using external L1 RPC
+    emit(id, "phase", { phase: "deploying_contracts", message: `Deploying L1 contracts to ${testnetConfig.network || 'external'} L1...` });
+
+    provisionInfo.phase = "deploying_contracts";
+    updateDeployment(id, { phase: "deploying_contracts" });
+    await docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+
+    await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
+
+    let envVars = {};
+    try {
+      envVars = await docker.extractEnv(projectName, composeFile);
+    } catch (extractErr) {
+      emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        envVars = await docker.extractEnv(projectName, composeFile);
+      } catch (retryErr) {
+        emit(id, "log", { message: `extractEnv retry failed: ${retryErr.message}` });
+      }
+    }
+
+    const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+    const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+    const timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+    const sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+    console.log(`[deployment-engine] testnet extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
+
+    if (!bridgeAddress || !proposerAddress) {
+      throw new Error(
+        `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
+        "The deployer may have exited before writing contract addresses."
+      );
+    }
+
+    updateDeployment(id, {
+      bridge_address: bridgeAddress,
+      proposer_address: proposerAddress,
+      timelock_address: timelockAddress,
+      sp1_verifier_address: sp1VerifierAddress,
+      env_project_id: projectName,
+      env_updated_at: Date.now(),
+    });
+
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed on testnet L1", bridgeAddress, proposerAddress });
+
+    provisionInfo.phase = "l2_starting";
+    emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node..." });
+    updateDeployment(id, { phase: "l2_starting" });
+    await docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
+    emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
+
+    provisionInfo.phase = "starting_prover";
+    emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
+    updateDeployment(id, { phase: "starting_prover" });
+    await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+
+    provisionInfo.phase = "starting_tools";
+    emit(id, "phase", { phase: "starting_tools", message: "Starting support tools..." });
+    updateDeployment(id, { phase: "starting_tools" });
+    try {
+      const freshEnv = await docker.extractEnv(projectName, composeFile);
+      // For testnet tools, override L1 RPC to use external URL
+      freshEnv.ETHREX_ETH_RPC_URL = l1RpcUrl;
+      await docker.startTools(freshEnv, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port: null, l2Port, toolsMetricsPort });
+      emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
+    } catch (toolsErr) {
+      emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
+    }
+
+    emit(id, "phase", {
+      phase: "running",
+      message: "Testnet deployment is running!",
+      l1Rpc: l1RpcUrl,
+      l2Rpc: `http://127.0.0.1:${l2Port}`,
+      bridgeAddress,
+      proposerAddress,
+    });
+    updateDeployment(id, { phase: "running", status: "active" });
+    activeProvisions.delete(id);
+    return updateDeployment(id, {});
+  } catch (err) {
+    emit(id, "error", { message: err.message });
+    updateDeployment(id, { phase: "error", error_message: err.message });
+    activeProvisions.delete(id);
     throw err;
   }
 }
@@ -612,6 +785,7 @@ async function waitForRemoteHealthy(conn, port, timeoutMs, deploymentId) {
 
 module.exports = {
   provision,
+  provisionTestnet,
   provisionRemote,
   stopDeployment,
   startDeployment,

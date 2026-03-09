@@ -684,6 +684,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
 .mode-badge.local { background: #f3e8ff; color: #7c3aed; }
 .mode-badge.remote { background: #ecfeff; color: #0891b2; }
 .mode-badge.manual { background: #eef2ff; color: #4338ca; }
+.mode-badge.testnet { background: #fef3c7; color: #b45309; }
 
 /* ============================================================
    Deployment List Cards (fallback for card-grid)

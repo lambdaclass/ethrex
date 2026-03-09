@@ -128,6 +128,22 @@ const REMOTE_STEPS = [
   { phase: 'running', label: 'Running' },
 ];
 
+const TESTNET_STEPS = [
+  { phase: 'checking_docker', label: 'Checking Docker' },
+  { phase: 'building', label: 'Building Docker Images' },
+  { phase: 'deploying_contracts', label: 'Deploying L1 Contracts' },
+  { phase: 'l2_starting', label: 'Starting L2 Node' },
+  { phase: 'starting_prover', label: 'Starting Prover' },
+  { phase: 'starting_tools', label: 'Starting Tools (Explorer, Bridge)' },
+  { phase: 'running', label: 'Running' },
+];
+
+const TESTNET_NETWORKS = {
+  sepolia: { chainId: 11155111, name: 'Sepolia', rpcPlaceholder: 'https://sepolia.infura.io/v3/YOUR_KEY' },
+  holesky: { chainId: 17000, name: 'Holesky', rpcPlaceholder: 'https://holesky.infura.io/v3/YOUR_KEY' },
+  custom: { chainId: null, name: 'Custom', rpcPlaceholder: 'https://your-l1-rpc-endpoint' },
+};
+
 const PHASE_ESTIMATES = {
   checking_docker: { min: 1, max: 5 },
   building: { min: 120, max: 600 },
@@ -278,16 +294,59 @@ function setLaunchMode(mode) {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
   document.getElementById('remote-host-area').style.display = mode === 'remote' ? 'block' : 'none';
-  document.getElementById('docker-status-area').style.display = mode === 'local' ? 'block' : 'none';
+  document.getElementById('docker-status-area').style.display = (mode === 'local' || mode === 'testnet') ? 'block' : 'none';
   document.getElementById('manual-rpc-area').style.display = mode === 'manual' ? 'block' : 'none';
+  document.getElementById('testnet-area').style.display = mode === 'testnet' ? 'block' : 'none';
   document.getElementById('l1-node-area').style.display = mode === 'local' ? 'block' : 'none';
   document.getElementById('deploy-dir-area').style.display = mode === 'manual' ? 'none' : 'block';
 
   const btn = document.getElementById('launch-deploy-btn');
   btn.textContent = mode === 'manual' ? 'Create L2 Config' : 'Deploy L2';
 
-  if (mode === 'local') checkDocker();
+  if (mode === 'local' || mode === 'testnet') checkDocker();
   if (mode === 'remote') loadHostsForLaunch();
+}
+
+function onTestnetNetworkChange() {
+  const net = document.getElementById('launch-testnet-network').value;
+  const info = TESTNET_NETWORKS[net];
+  document.getElementById('launch-testnet-rpc').placeholder = info.rpcPlaceholder;
+  document.getElementById('testnet-custom-chainid').style.display = net === 'custom' ? 'block' : 'none';
+  // Clear balance check
+  document.getElementById('testnet-balance-check').innerHTML = '';
+}
+
+async function checkTestnetBalance() {
+  const rpcUrl = (document.getElementById('launch-testnet-rpc')?.value || '').trim();
+  const address = (document.getElementById('launch-testnet-deployer-addr')?.value || '').trim();
+  const el = document.getElementById('testnet-balance-check');
+
+  if (!rpcUrl) { el.innerHTML = '<span style="color:var(--red-600,#dc2626);font-size:11px">Enter L1 RPC URL first.</span>'; return; }
+  if (!address) { el.innerHTML = '<span style="color:var(--red-600,#dc2626);font-size:11px">Enter deployer address first.</span>'; return; }
+
+  el.innerHTML = '<span style="color:var(--gray-500);font-size:11px">Checking...</span>';
+
+  try {
+    const res = await fetch(`${API}/deployments/testnet/check-balance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rpcUrl, address }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      el.innerHTML = `<span style="color:var(--red-600,#dc2626);font-size:11px">${esc(data.error)}</span>`;
+    } else {
+      const balColor = parseFloat(data.balanceEth) > 0.01 ? 'var(--green-600,#16a34a)' : 'var(--red-600,#dc2626)';
+      el.innerHTML = `
+        <div style="font-size:11px;padding:6px 10px;background:var(--gray-100,#f3f4f6);border-radius:6px">
+          <div>Address: <code style="font-size:10px">${esc(data.address)}</code></div>
+          <div>Balance: <strong style="color:${balColor}">${esc(data.balanceEth)} ETH</strong></div>
+          ${data.chainId ? `<div>L1 Chain ID: <code>${esc(String(data.chainId))}</code></div>` : ''}
+        </div>`;
+    }
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--red-600,#dc2626);font-size:11px">Connection failed: ${esc(e.message)}</span>`;
+  }
 }
 
 async function checkDocker() {
@@ -338,6 +397,21 @@ async function handleLaunchDeploy() {
         deployDir: (document.getElementById('launch-deploy-dir')?.value || '').trim() || undefined,
       },
     };
+    if (launchMode === 'testnet') {
+      const testnetRpc = (document.getElementById('launch-testnet-rpc')?.value || '').trim();
+      const deployerPk = (document.getElementById('launch-testnet-deployer-pk')?.value || '').trim();
+      const network = document.getElementById('launch-testnet-network').value;
+      if (!testnetRpc) { showLaunchError('L1 RPC URL is required for testnet'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
+      if (!deployerPk) { showLaunchError('Deployer private key is required for testnet'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
+      const netInfo = TESTNET_NETWORKS[network];
+      body.config.testnet = {
+        l1RpcUrl: testnetRpc,
+        deployerPrivateKey: deployerPk,
+        l1ChainId: netInfo.chainId || (parseInt(document.getElementById('launch-testnet-l1-chainid')?.value) || undefined),
+        network: network,
+      };
+      body.rpcUrl = testnetRpc;
+    }
     if (launchMode === 'remote') {
       const hostId = document.getElementById('launch-host-select').value;
       if (hostId) body.hostId = hostId;
@@ -464,7 +538,7 @@ function startDeployProgress(id) {
 
 function renderProgressSteps() {
   const container = document.getElementById('deploy-progress-steps');
-  const steps = launchMode === 'remote' ? REMOTE_STEPS : LOCAL_STEPS;
+  const steps = launchMode === 'remote' ? REMOTE_STEPS : (launchMode === 'testnet' ? TESTNET_STEPS : LOCAL_STEPS);
   const currentIdx = steps.findIndex(s => s.phase === currentPhase);
   const hasError = document.getElementById('deploy-error-msg').style.display !== 'none';
   const isTerminal = currentPhase === 'running' || hasError;
@@ -1011,7 +1085,7 @@ function renderDetail() {
 
   // Mode badge
   const config = parseDeployConfig(d);
-  const modeLabels = { local: 'Local', remote: 'Remote', manual: 'Manual' };
+  const modeLabels = { local: 'Local', remote: 'Remote', testnet: 'Testnet', manual: 'Manual' };
   document.getElementById('detail-mode-badge').innerHTML =
     `<span class="mode-badge ${config.mode}">${modeLabels[config.mode] || config.mode}</span>`;
 
@@ -1097,9 +1171,25 @@ function renderOverviewTab() {
   html += '<div class="card">';
   html += '<h3 style="font-size:13px;margin-bottom:8px">Services</h3>';
 
+  // Detect testnet mode
+  const dConfig = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+  const isTestnetDeploy = dConfig.mode === 'testnet';
+
   // Core services
   html += '<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:4px">Core</div>';
-  html += svcRow('L1 Node', 'tokamak-app-l1', d.l1_port ? `:${d.l1_port}` : null);
+  if (!isTestnetDeploy) {
+    html += svcRow('L1 Node', 'tokamak-app-l1', d.l1_port ? `:${d.l1_port}` : null);
+  } else {
+    // Testnet: show external L1 info instead of container
+    const testnetCfg = dConfig.testnet || {};
+    const netNames = { sepolia: 'Sepolia', holesky: 'Holesky', custom: 'Custom' };
+    html += `<div class="svc-row">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--blue-500,#3b82f6);flex-shrink:0"></span>
+      <span class="svc-name">L1 (${esc(netNames[testnetCfg.network] || 'External')})</span>
+      <span style="font-size:11px;color:var(--blue-600,#2563eb)">external</span>
+      <span style="font-size:10px;font-family:monospace;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(testnetCfg.l1RpcUrl || '')}">${esc((testnetCfg.l1RpcUrl || '').replace(/^https?:\/\//, '').slice(0, 30))}</span>
+    </div>`;
+  }
   html += svcRow('L2 Node', 'tokamak-app-l2', d.l2_port ? `:${d.l2_port}` : null);
   html += svcRow('Prover', 'tokamak-app-prover', null);
 
@@ -1161,8 +1251,11 @@ function renderOverviewTab() {
     <h3 style="font-size:13px;margin-bottom:6px">Settings</h3>
     <dl class="info-grid" style="font-size:12px">
       <dt>Name</dt><dd>${esc(d.name)}</dd>
+      <dt>Chain ID</dt><dd>${d.chain_id || '-'}</dd>
       <dt>Docker</dt><dd style="font-size:10px">${d.docker_project || '-'}</dd>
       <dt>Created</dt><dd style="font-size:10px">${new Date(d.created_at).toLocaleDateString()}</dd>
+      ${isTestnetDeploy ? `<dt>L1 Network</dt><dd>${esc((dConfig.testnet?.network || '').charAt(0).toUpperCase() + (dConfig.testnet?.network || '').slice(1))}</dd>
+      <dt>L1 RPC</dt><dd style="font-size:10px;word-break:break-all">${esc(dConfig.testnet?.l1RpcUrl || '-')}</dd>` : ''}
     </dl>
   </div>`;
   html += `<button class="btn-danger" style="font-size:11px;padding:6px 12px;align-self:flex-start" onclick="deleteDeployment('${d.id}')">Remove L2</button>`;
@@ -1343,7 +1436,28 @@ function renderConfigTab() {
   const d = detailDeployment;
   if (!d) return;
   const slug = d.program_slug || d.program_id;
+  const config = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+  const isTestnet = config.mode === 'testnet';
+  const testnet = config.testnet || {};
   const toml = `# Guest Program Registry Configuration\n# Generated by Tokamak for: ${d.name}\n\ndefault_program = "${slug}"\nenabled_programs = ["${slug}"]`;
+
+  let testnetHtml = '';
+  if (isTestnet) {
+    const netNames = { sepolia: 'Sepolia', holesky: 'Holesky', custom: 'Custom' };
+    testnetHtml = `
+    <div class="card" style="margin-bottom:24px">
+      <h3 style="margin-bottom:12px">Testnet Configuration</h3>
+      <dl class="info-grid">
+        <dt>L1 Network</dt><dd>${esc(netNames[testnet.network] || testnet.network || '-')}</dd>
+        <dt>L1 Chain ID</dt><dd>${esc(String(testnet.l1ChainId || '-'))}</dd>
+        <dt>L1 RPC URL</dt><dd style="word-break:break-all"><code>${esc(testnet.l1RpcUrl || d.rpc_url || '-')}</code></dd>
+        <dt>Deployer Key</dt><dd><code>${testnet.deployerPrivateKey ? '0x' + '•'.repeat(16) + testnet.deployerPrivateKey.slice(-6) : '-'}</code></dd>
+      </dl>
+      <div style="margin-top:8px;padding:8px 12px;background:var(--blue-50,#eff6ff);border-radius:6px;font-size:12px;color:var(--blue-700,#1d4ed8)">
+        L2 contracts are deployed on ${esc(netNames[testnet.network] || 'testnet')} L1. No built-in L1 node is used.
+      </div>
+    </div>`;
+  }
 
   document.getElementById('tab-config').innerHTML = `
     <div class="card" style="margin-bottom:24px">
@@ -1351,8 +1465,10 @@ function renderConfigTab() {
       <dl class="info-grid">
         <dt>Guest Program</dt><dd>${esc(slug)}</dd>
         <dt>Program Name</dt><dd>${esc(d.program_name || '')}</dd>
+        <dt>Deploy Mode</dt><dd><span class="mode-badge ${config.mode || 'local'}">${esc(config.mode || 'local')}</span></dd>
       </dl>
     </div>
+    ${testnetHtml}
     <div class="card" style="margin-bottom:24px">
       <h3 style="margin-bottom:12px">Configuration Files</h3>
       <p style="font-size:14px;color:var(--gray-500);margin-bottom:16px">Download configuration files to run an ethrex L2 node with this guest program.</p>
@@ -1367,7 +1483,7 @@ function renderConfigTab() {
       <div style="background:var(--gray-50);border-radius:8px;padding:16px;font-size:14px">
         <div style="margin-bottom:12px"><p style="font-weight:500;color:var(--gray-700);margin-bottom:4px">1. Clone ethrex</p><pre class="config-pre">git clone https://github.com/tokamak-network/ethrex.git\ncd ethrex</pre></div>
         <div style="margin-bottom:12px"><p style="font-weight:500;color:var(--gray-700);margin-bottom:4px">2. Run with guest program</p><pre class="config-pre">make -C crates/l2 init-guest-program PROGRAM=${esc(slug)}</pre></div>
-        <div style="margin-bottom:12px"><p style="font-weight:500;color:var(--gray-700);margin-bottom:4px">3. Endpoints</p><div style="color:var(--gray-500)"><p>L1 RPC: <code style="background:var(--gray-200);padding:2px 6px;border-radius:4px;font-size:12px">http://localhost:8545</code></p><p>L2 RPC: <code style="background:var(--gray-200);padding:2px 6px;border-radius:4px;font-size:12px">http://localhost:1729</code></p></div></div>
+        <div style="margin-bottom:12px"><p style="font-weight:500;color:var(--gray-700);margin-bottom:4px">3. Endpoints</p><div style="color:var(--gray-500)"><p>L1 RPC: <code style="background:var(--gray-200);padding:2px 6px;border-radius:4px;font-size:12px">${isTestnet ? esc(testnet.l1RpcUrl || 'https://your-l1-rpc') : 'http://localhost:8545'}</code></p><p>L2 RPC: <code style="background:var(--gray-200);padding:2px 6px;border-radius:4px;font-size:12px">http://localhost:1729</code></p></div></div>
         <div><p style="font-weight:500;color:var(--gray-700);margin-bottom:4px">4. Stop</p><pre class="config-pre">make -C crates/l2 down-guest-program</pre></div>
       </div>
     </div>`;
@@ -1424,7 +1540,6 @@ async function removeHost(id) {
   if (!confirm('Remove this host?')) return;
   try { await fetch(`${API}/hosts/${id}`, { method: 'DELETE' }); loadHosts(); } catch {}
 }
-
 
 // ============================================================
 // Directory Picker

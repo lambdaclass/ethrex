@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require("uuid");
 
 const {
   provision,
+  provisionTestnet,
   provisionRemote,
   stopDeployment,
   startDeployment,
@@ -66,6 +67,54 @@ router.get("/docker/status", (req, res) => {
     res.json({ available });
   } catch (e) {
     res.json({ available: false });
+  }
+});
+
+// POST /api/deployments/testnet/check-balance — check deployer balance on testnet
+router.post("/testnet/check-balance", async (req, res) => {
+  try {
+    const { rpcUrl, address } = req.body;
+    if (!rpcUrl || !address) {
+      return res.status(400).json({ error: "rpcUrl and address are required" });
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return res.status(400).json({ error: "Invalid Ethereum address format" });
+    }
+
+    const rpcCall = async (method, params = []) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const r = await globalThis.fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          signal: controller.signal,
+        });
+        const data = await r.json();
+        if (data.error) throw new Error(data.error.message || "RPC error");
+        return data.result;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+
+    const [balanceHex, chainIdHex] = await Promise.all([
+      rpcCall("eth_getBalance", [address, "latest"]),
+      rpcCall("eth_chainId"),
+    ]);
+
+    const balanceWei = BigInt(balanceHex || "0x0");
+    const balanceEth = Number(balanceWei) / 1e18;
+    const chainId = parseInt(chainIdHex || "0x0", 16);
+
+    res.json({
+      address,
+      balanceEth: balanceEth.toFixed(6),
+      chainId,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -178,11 +227,18 @@ router.post("/:id/provision", async (req, res) => {
     }
 
     const { hostId } = req.body;
-    res.json({ ok: true, message: "Provisioning started", remote: !!hostId });
+    // Determine mode from deployment config
+    let deployMode = 'local';
+    try {
+      const config = deployment.config ? JSON.parse(deployment.config) : {};
+      deployMode = config.mode || 'local';
+    } catch {}
+
+    res.json({ ok: true, message: "Provisioning started", remote: !!hostId, mode: deployMode });
 
     const provisionFn = hostId
       ? () => provisionRemote(deployment, hostId)
-      : () => provision(deployment);
+      : (deployMode === 'testnet' ? () => provisionTestnet(deployment) : () => provision(deployment));
 
     provisionFn().catch((err) => {
       console.error(`Provision failed for ${deployment.id}:`, err.message);
