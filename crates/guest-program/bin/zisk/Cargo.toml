@@ -1,5 +1,5 @@
 [package]
-version = "9.0.0"
+version = "10.0.0"
 name = "ethrex-guest-zisk"
 edition = "2024"
 license = "MIT OR Apache-2.0"

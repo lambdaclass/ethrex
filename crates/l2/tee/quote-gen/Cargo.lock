@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1482,7 +1482,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1571,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1584,7 +1584,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1622,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1646,7 +1646,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -3588,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",

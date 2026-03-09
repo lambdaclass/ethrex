@@ -3822,7 +3822,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3875,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -3893,7 +3893,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -3914,7 +3914,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -3946,7 +3946,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -3957,7 +3957,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "c-kzg",
  "kzg-rs",
@@ -3968,7 +3968,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -3987,7 +3987,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethrex-common",
@@ -4007,7 +4007,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "agg_mode_sdk",
  "alloy",
@@ -4067,7 +4067,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4090,7 +4090,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "axum 0.8.8",
  "bytes",
@@ -4119,7 +4119,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -4157,7 +4157,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "axum 0.8.8",
  "ethrex-common",
@@ -4172,7 +4172,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-monitor"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -4204,7 +4204,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4251,7 +4251,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -4290,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-repl"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "clap",
  "colored",
@@ -4307,7 +4307,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4320,7 +4320,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "axum 0.8.8",
  "axum-extra",
@@ -4361,7 +4361,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4386,7 +4386,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -4394,7 +4394,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4421,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4442,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-test"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4481,7 +4481,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4504,7 +4504,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
