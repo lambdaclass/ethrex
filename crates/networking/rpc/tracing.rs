@@ -190,11 +190,14 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 // CallTraceFrame to match geth's callTracer response format.
                 let block_trace: BlockTrace<CallTraceFrame> = call_traces
                     .into_iter()
-                    .rev()
-                    .filter_map(|(hash, trace)| {
-                        trace.into_iter().next().map(|frame| (hash, frame).into())
+                    .map(|(hash, trace)| {
+                        let frame = trace
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
+                        Ok((hash, frame).into())
                     })
-                    .collect();
+                    .collect::<Result<_, RpcErr>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
         }
