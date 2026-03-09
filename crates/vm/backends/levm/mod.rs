@@ -113,7 +113,7 @@ impl LEVM {
             })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -132,8 +132,8 @@ impl LEVM {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
 
             // EIP-7778: Separate gas tracking
-            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
-            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -344,7 +344,7 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -377,8 +377,8 @@ impl LEVM {
             }
 
             // EIP-7778: Separate gas tracking
-            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
-            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
