@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { TxResult as TxResultType } from '../lib/api';
 
+const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
+
 export default function TxResult({ result }: { result: TxResultType }) {
   const [copied, setCopied] = useState(false);
 
@@ -11,6 +13,8 @@ export default function TxResult({ result }: { result: TxResultType }) {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  const txUrl = result.txHash && BLOCKSCOUT_URL ? `${BLOCKSCOUT_URL}/tx/${result.txHash}?tab=frames` : '';
 
   return (
     <div
@@ -34,9 +38,20 @@ export default function TxResult({ result }: { result: TxResultType }) {
       {result.txHash && (
         <div className="flex items-center gap-2 mt-2">
           <span className="text-xs text-zinc-500">Hash:</span>
-          <code className="text-xs text-zinc-300 font-mono truncate max-w-[360px]">
-            {result.txHash}
-          </code>
+          {txUrl ? (
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-blue-400 hover:text-blue-300 font-mono truncate max-w-[360px] underline underline-offset-2"
+            >
+              {result.txHash}
+            </a>
+          ) : (
+            <code className="text-xs text-zinc-300 font-mono truncate max-w-[360px]">
+              {result.txHash}
+            </code>
+          )}
           <button
             onClick={copyHash}
             className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"

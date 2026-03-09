@@ -82,6 +82,11 @@ make start-frontend
 
 Starts the React frontend (Vite) on port 5173. Open **http://localhost:5173** in your browser.
 
+To link transaction hashes to Blockscout, create `frontend/.env`:
+```
+VITE_BLOCKSCOUT_URL=http://localhost:8082
+```
+
 ### Terminal 4: Blockscout (optional)
 
 ```bash
@@ -174,7 +179,16 @@ The `eip-8141-support` branch of [lambdaclass/ethrex-blockscout](https://github.
 
 ### Contract verification
 
-MockERC20 and WebAuthnVerifier are verifiable via the Blockscout API. The Yul contracts (GasSponsor, WebAuthnP256Account) use `verbatim` custom opcodes and can't be auto-verified — Blockscout's verifier doesn't support `solc --strict-assembly`.
+MockERC20 and WebAuthnVerifier are verifiable via the Blockscout API. After Blockscout is running and has indexed the genesis contracts, verify them:
+
+```bash
+cd demos/eip8141
+BLOCKSCOUT_URL=http://localhost:8082 make verify
+```
+
+This uses the v1 API (`verifysourcecode` with `solidity-standard-json-input` format) because the contracts are compiled with `--via-ir`, and the v2 API's standard-json-input endpoint is unavailable in some Blockscout versions.
+
+The Yul contracts (GasSponsor, WebAuthnP256Account) use `verbatim` custom opcodes and can't be auto-verified — Blockscout's verifier doesn't support `solc --strict-assembly`.
 
 ### Services
 
@@ -238,6 +252,8 @@ demos/eip8141/
   jwt.hex                  JWT secret for ethrex auth
   scripts/
     build-genesis.sh       Compiles contracts and injects into genesis
+    verify-contracts.sh    Verifies MockERC20 and WebAuthnVerifier on Blockscout
+    verify-contracts.py    Python verification logic (called by .sh)
   Makefile                 Build and run commands
 ```
 

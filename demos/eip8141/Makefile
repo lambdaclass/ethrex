@@ -1,4 +1,4 @@
-.PHONY: compile-contracts start-node start-backend start-frontend start-all install clean
+.PHONY: compile-contracts start-node start-backend start-frontend start-all install clean verify
 
 # Compile all contracts and generate genesis.json with real bytecodes
 compile-contracts:
@@ -49,6 +49,11 @@ start-all:
 	@echo "  make start-node"
 	@echo "  make start-backend"
 	@echo "  make start-frontend"
+
+# Verify contracts on Blockscout (requires running Blockscout instance)
+verify:
+	@echo "Verifying contracts on Blockscout..."
+	@BLOCKSCOUT_URL="$${BLOCKSCOUT_URL:-http://localhost:8082}" bash scripts/verify-contracts.sh
 
 clean:
 	rm -rf contracts/out
