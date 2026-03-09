@@ -440,13 +440,6 @@ pub struct VM<'a> {
     pub state_gas_used: u64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
-    /// EIP-8037: Gas consumed from gas_left that should NOT be counted as regular
-    /// gas when deriving `regular = gas_used - state_gas`. This accounts for:
-    /// 1. State gas spilled into gas_left in child frames that then reverted
-    ///    (child halted, state_gas_used restored, but spill stays consumed).
-    /// 2. Reserved child gas consumed on CREATE collision (EELS escrow mechanism
-    ///    keeps this out of regular_gas_used; ethrex must exclude it manually).
-    pub reverted_child_state_spill: u64,
     /// EIP-8037/EIP-7702: Reduction to intrinsic state gas when existing authorities
     /// are found during set_delegation. Tracked separately because state_gas_used
     /// must not be reduced (it would inflate regular_gas in block accounting).
@@ -486,7 +479,6 @@ impl<'a> VM<'a> {
             vm_type,
             state_gas_used: 0,
             state_gas_reservoir: 0,
-            reverted_child_state_spill: 0,
             intrinsic_state_gas_refund: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
