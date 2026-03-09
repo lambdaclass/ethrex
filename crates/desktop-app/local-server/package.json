@@ -12,6 +12,7 @@
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
+    "ethers": "^6.16.0",
     "express": "^4.21.0",
     "ssh2": "^1.16.0",
     "uuid": "^11.1.0"

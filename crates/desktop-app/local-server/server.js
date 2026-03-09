@@ -5,6 +5,7 @@ const path = require("path");
 const deploymentRoutes = require("./routes/deployments");
 const hostRoutes = require("./routes/hosts");
 const fsRoutes = require("./routes/fs");
+const keychainRoutes = require("./routes/keychain");
 
 const app = express();
 const PORT = process.env.LOCAL_SERVER_PORT || 5002;
@@ -29,6 +30,7 @@ app.use(express.static(path.join(__dirname, "public"), {
 app.use("/api/deployments", deploymentRoutes);
 app.use("/api/hosts", hostRoutes);
 app.use("/api/fs", fsRoutes);
+app.use("/api/keychain", keychainRoutes);
 
 // Store proxy — fetch programs from Platform API, fallback to defaults
 app.get("/api/store/programs", async (req, res) => {
@@ -60,11 +62,33 @@ recoverStuckDeployments().catch(e => console.error("[recovery] Error:", e.messag
 app.post("/api/open-url", (req, res) => {
   const { url } = req.body;
   if (!url || typeof url !== "string") return res.status(400).json({ error: "url required" });
+
+  const { exec } = require("child_process");
+
+  // Special case: register deployer key via macOS native secure dialogs
+  // Private key never touches the web UI — entered only in OS-level dialog
+  if (url === "keychain-register") {
+    if (process.platform !== "darwin") return res.status(400).json({ error: "macOS only" });
+    const script = `
+      set keyName to text returned of (display dialog "Enter a name for this deployer key:" default answer "sepolia-deployer" with title "Tokamak Keychain" buttons {"Cancel", "Next"} default button "Next")
+      set keyValue to text returned of (display dialog "Enter the deployer private key (0x...):" default answer "" with hidden answer with title "Tokamak Keychain" buttons {"Cancel", "Save"} default button "Save")
+      do shell script "security add-generic-password -a " & quoted form of keyName & " -s tokamak-appchain -w " & quoted form of keyValue & " -U"
+      return keyName
+    `;
+    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (err, stdout) => {
+      if (err) {
+        if (err.message.includes("-128")) return res.json({ ok: false, cancelled: true });
+        return res.status(500).json({ error: err.message });
+      }
+      res.json({ ok: true, keyName: stdout.trim() });
+    });
+    return;
+  }
+
   // Only allow http/https URLs on localhost or known domains
   if (!url.startsWith("http://127.0.0.1") && !url.startsWith("http://localhost") && !url.startsWith("https://")) {
     return res.status(400).json({ error: "Invalid URL" });
   }
-  const { exec } = require("child_process");
   const escaped = url.replace(/"/g, '\\"');
   const platform = process.platform;
   const cmd = platform === "win32" ? `start "" "${escaped}"`

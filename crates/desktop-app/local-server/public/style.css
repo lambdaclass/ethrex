@@ -307,6 +307,7 @@ body {
   flex-shrink: 0;
 }
 .data-table .status-dot.running { background: var(--green-500); }
+.data-table .status-dot.configured { background: var(--blue-500, #3b82f6); }
 .data-table .status-dot.stopped { background: var(--text-muted); }
 .data-table .status-dot.error { background: var(--red-600); }
 .data-table .status-dot.building { background: var(--yellow-600); animation: pulse 1.5s ease-in-out infinite; }
@@ -600,6 +601,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
 /* ============================================================
    Deploy Progress (Step 3)
    ============================================================ */
+.config-summary {
+  background: var(--blue-50, #eff6ff); border: 1px solid var(--blue-200, #bfdbfe);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; font-size: 12px;
+}
+.config-summary table { width: 100%; border-collapse: collapse; }
+.config-summary td { padding: 2px 8px 2px 0; vertical-align: top; }
+.config-summary td:first-child { color: var(--text-secondary); white-space: nowrap; width: 120px; }
+.config-summary td:last-child { color: var(--text-primary); word-break: break-all; }
 .deploy-card {
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 24px; background: var(--bg-card);

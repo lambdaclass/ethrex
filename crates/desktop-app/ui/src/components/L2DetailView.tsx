@@ -92,7 +92,8 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
   }, [l2Prop, containers, ko])
 
   const [chain, setChain] = useState<ChainMetrics>({
-    l1BlockNumber: 0, l2BlockNumber: 0, l1ChainId: 0, l2ChainId: 0,
+    l1BlockNumber: 0, l2BlockNumber: 0,
+    l1ChainId: l2Prop.l1ChainId || 0, l2ChainId: l2Prop.l2ChainId || l2Prop.chainId || 0,
     l2Tps: 0, l2BlockTime: 2, totalTxCount: 0, activeAccounts: 0,
     lastCommittedBatch: 0, lastVerifiedBatch: 0, latestBatch: 0,
   })
@@ -112,10 +113,10 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
       const data = await fetch(`${base}/api/deployments/${l2Prop.id}/monitoring`).then(r => r.json())
       setChain(prev => ({
         ...prev,
-        l1BlockNumber: data.l1?.blockNumber ?? 0,
-        l2BlockNumber: data.l2?.blockNumber ?? 0,
-        l1ChainId: data.l1?.chainId ?? 0,
-        l2ChainId: data.l2?.chainId ?? 0,
+        l1BlockNumber: data.l1?.blockNumber ?? prev.l1BlockNumber,
+        l2BlockNumber: data.l2?.blockNumber ?? prev.l2BlockNumber,
+        l1ChainId: data.l1?.chainId ?? prev.l1ChainId,
+        l2ChainId: data.l2?.chainId ?? prev.l2ChainId,
       }))
     } catch { /* ignore */ }
   }, [l2Prop.id])

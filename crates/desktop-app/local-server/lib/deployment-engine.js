@@ -30,6 +30,7 @@ const {
 const { isHealthy } = require("./rpc-client");
 const { updateDeployment, getNextAvailablePorts, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
 const { getHostById } = require("../db/hosts");
+const keychain = require("./keychain");
 
 // Active deployments event emitters (keyed by deployment ID)
 const deploymentEvents = new Map();
@@ -96,10 +97,91 @@ function isProvisionActive(deploymentId) {
 
 /** Cancel an active provision (cleanup before delete) */
 function cancelProvision(deploymentId) {
-  if (activeProvisions.has(deploymentId)) {
+  const info = activeProvisions.get(deploymentId);
+  if (info) {
+    // Signal the async provision to stop at next phase checkpoint
+    info.cancelled = true;
+    // Kill any tracked child process (docker build, docker compose up, etc.)
+    if (info.activeProcess && !info.activeProcess.killed) {
+      try { info.activeProcess.kill("SIGTERM"); } catch {}
+    }
     activeProvisions.delete(deploymentId);
     deploymentEvents.delete(deploymentId);
     console.log(`[deploy-engine] Cancelled active provision for ${deploymentId}`);
+  }
+}
+
+/**
+ * Parse contract addresses from deployer log output.
+ *
+ * The Rust deployer uses tracing info! macros that produce multiline output.
+ * Docker Compose prefixes each line, so the output looks like:
+ *   tokamak-app-deployer  | CommonBridge deployed:
+ *   tokamak-app-deployer  |   Proxy -> address=0x..., tx_hash=0x...
+ *   tokamak-app-deployer  |   Impl  -> address=0x..., tx_hash=0x...
+ *
+ * SP1Verifier is single-line: SP1Verifier deployed address=0x...
+ *
+ * Strategy: track the last "deployed:" label, then capture the first
+ * "Proxy -> address=..." line that follows it.
+ *
+ * Returns { bridge, proposer, timelock, sp1Verifier } with whatever was found.
+ */
+function parseContractAddressesFromLogs(logLines) {
+  const result = { bridge: null, proposer: null, timelock: null, sp1Verifier: null, sequencerRegistry: null, router: null };
+  const addressPattern = /address=(0x[0-9a-fA-F]{40})/;
+  let lastContract = null; // which contract was just announced
+
+  for (const line of logLines) {
+    // Detect contract announcement lines (e.g. "CommonBridge deployed:")
+    if (line.includes("CommonBridge deployed")) lastContract = "bridge";
+    else if (line.includes("OnChainProposer deployed")) lastContract = "proposer";
+    else if (line.includes("Timelock deployed")) lastContract = "timelock";
+    else if (line.includes("SP1Verifier deployed")) lastContract = "sp1Verifier";
+    else if (line.includes("SequencerRegistry deployed")) lastContract = "sequencerRegistry";
+    else if (line.includes("Router deployed")) lastContract = "router";
+
+    const match = line.match(addressPattern);
+    if (!match) continue;
+    const addr = match[1];
+
+    // SP1Verifier is single-line (address on same line as "deployed")
+    if (lastContract === "sp1Verifier" && line.includes("SP1Verifier deployed")) {
+      result.sp1Verifier = addr;
+      lastContract = null;
+      continue;
+    }
+
+    // For proxy-based contracts, capture the first "Proxy ->" address after the announcement
+    if (lastContract && line.includes("Proxy")) {
+      result[lastContract] = addr;
+      lastContract = null;
+    }
+  }
+  return result;
+}
+
+/** Throw if the provision was cancelled (call between phases) */
+function checkCancelled(provisionInfo) {
+  if (provisionInfo.cancelled) {
+    throw new Error("Deployment cancelled by user");
+  }
+}
+
+/** Run a docker command while tracking the process for cancellation */
+async function trackedDockerRun(provisionInfo, asyncFn) {
+  const promise = asyncFn();
+  // Track the child process (exposed as promise.process by runCompose)
+  if (promise.process) {
+    provisionInfo.activeProcess = promise.process;
+  }
+  try {
+    const result = await promise;
+    provisionInfo.activeProcess = null;
+    return result;
+  } catch (err) {
+    provisionInfo.activeProcess = null;
+    throw err;
   }
 }
 
@@ -169,30 +251,49 @@ async function provision(deployment) {
   provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
 
+  let composeFile = null;
   try {
     const gpu = docker.hasNvidiaGpu();
     const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures });
-    const composeFile = writeComposeFile(id, composeContent, deployDir);
+    composeFile = writeComposeFile(id, composeContent, deployDir);
 
     emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
-    await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
-      const lines = chunk.split("\n").filter(Boolean);
-      for (const line of lines) {
-        emit(id, "log", { message: line });
-      }
-    });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          emit(id, "log", { message: line });
+        }
+      })
+    );
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "l1_starting";
     emit(id, "phase", { phase: "l1_starting", message: "Starting L1 node..." });
     updateDeployment(id, { phase: "l1_starting" });
-    await docker.startL1(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startL1(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" })
+    );
     await waitForHealthy(`http://127.0.0.1:${l1Port}`, 60000, id);
     emit(id, "phase", { phase: "l1_starting", message: "L1 node is running" });
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "deploying_contracts";
     emit(id, "phase", { phase: "deploying_contracts", message: "Deploying L1 contracts (bridge, proposer, verifier)..." });
     updateDeployment(id, { phase: "deploying_contracts" });
-    await docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    const contractLogLines = [];
+    const contractLogFn = (chunk) => {
+      const lines = chunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        contractLogLines.push(line);
+        emit(id, "log", { message: line });
+      }
+    };
+    await trackedDockerRun(provisionInfo, () =>
+      docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, contractLogFn)
+    );
 
     await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
 
@@ -209,12 +310,37 @@ async function provision(deployment) {
       }
     }
 
-    const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
-    const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    const timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
-    const sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
-    console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}`);
-    emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}` });
+    let bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+    let proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+    let timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+    let sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+
+    // Fallback: parse addresses from deployer log output (covers case where .env wasn't written)
+    if (!bridgeAddress || !proposerAddress) {
+      const parsed = parseContractAddressesFromLogs(contractLogLines);
+      if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
+      if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
+      if (!timelockAddress && parsed.timelock) timelockAddress = parsed.timelock;
+      if (!sp1VerifierAddress && parsed.sp1Verifier) sp1VerifierAddress = parsed.sp1Verifier;
+      if (parsed.bridge || parsed.proposer) {
+        emit(id, "log", { message: `Parsed addresses from deployer logs: bridge=${parsed.bridge}, proposer=${parsed.proposer}` });
+      }
+    }
+
+    console.log(`[deployment-engine] contract addresses for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}`);
+    emit(id, "log", { message: `Contract addresses [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}` });
+
+    // Save whatever addresses we got (even partial) so they can be reused on retry
+    if (bridgeAddress || proposerAddress) {
+      updateDeployment(id, {
+        bridge_address: bridgeAddress,
+        proposer_address: proposerAddress,
+        timelock_address: timelockAddress,
+        sp1_verifier_address: sp1VerifierAddress,
+        env_project_id: projectName,
+        env_updated_at: Date.now(),
+      });
+    }
 
     if (!bridgeAddress || !proposerAddress) {
       throw new Error(
@@ -223,28 +349,29 @@ async function provision(deployment) {
       );
     }
 
-    updateDeployment(id, {
-      bridge_address: bridgeAddress,
-      proposer_address: proposerAddress,
-      timelock_address: timelockAddress,
-      sp1_verifier_address: sp1VerifierAddress,
-      env_project_id: projectName,
-      env_updated_at: Date.now(),
-    });
-
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "l2_starting";
     emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node..." });
     updateDeployment(id, { phase: "l2_starting" });
-    await docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" })
+    );
     await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
     emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "starting_prover";
     emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
     updateDeployment(id, { phase: "starting_prover" });
-    await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" })
+    );
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "starting_tools";
     emit(id, "phase", { phase: "starting_tools", message: "Starting support tools (Blockscout, Bridge UI, Dashboard)..." });
@@ -277,15 +404,25 @@ async function provision(deployment) {
       bridgeAddress,
       proposerAddress,
     });
-    updateDeployment(id, { phase: "running", status: "active" });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null });
     activeProvisions.delete(id);
     return updateDeployment(id, {});
   } catch (err) {
-    emit(id, "error", { message: err.message });
-    updateDeployment(id, { phase: "error", error_message: err.message });
+    // Stop all containers on error/cancel to prevent restart loops
+    if (composeFile) {
+      try {
+        await docker.stop(projectName, composeFile);
+        emit(id, "log", { message: `Stopped all containers for ${projectName}` });
+      } catch (stopErr) {
+        console.warn(`[deploy-engine] Failed to stop containers on error: ${stopErr.message}`);
+      }
+    }
+    // Don't overwrite state if already cancelled by user (stop endpoint sets phase)
+    if (!provisionInfo.cancelled) {
+      emit(id, "error", { message: err.message });
+      updateDeployment(id, { phase: "error", error_message: err.message });
+    }
     activeProvisions.delete(id);
-    // Do NOT auto-destroy Docker containers on error.
-    // User can inspect logs/state and manually delete or retry.
     throw err;
   }
 }
@@ -313,6 +450,7 @@ async function provisionTestnet(deployment) {
   }
 
   emit(id, "phase", { phase: "checking_docker", message: "Docker is available" });
+  emit(id, "log", { message: "Docker check passed" });
 
   let deployDir = null;
   let testnetConfig = {};
@@ -323,7 +461,6 @@ async function provisionTestnet(deployment) {
   } catch {}
 
   const l1RpcUrl = testnetConfig.l1RpcUrl;
-  const deployerPrivateKey = testnetConfig.deployerPrivateKey;
   if (!l1RpcUrl) {
     const errMsg = "L1 RPC URL is required for testnet deployment.";
     emit(id, "error", { message: errMsg });
@@ -332,9 +469,54 @@ async function provisionTestnet(deployment) {
     throw new Error(errMsg);
   }
 
+  emit(id, "log", { message: `L1 RPC URL: ${l1RpcUrl}` });
+  emit(id, "log", { message: `L1 Network: ${testnetConfig.network || 'custom'}` });
+  emit(id, "log", { message: `L1 Chain ID: ${testnetConfig.l1ChainId || 'auto'}` });
+
+  // Resolve deployer private key: prefer keychain, fallback to raw value
+  let deployerPrivateKey = testnetConfig.deployerPrivateKey;
+  if (testnetConfig.keychainKeyName) {
+    emit(id, "log", { message: `Loading deployer key from Keychain: "${testnetConfig.keychainKeyName}"...` });
+    const resolved = keychain.getSecret(testnetConfig.keychainKeyName);
+    if (!resolved) {
+      const errMsg = `Deployer key "${testnetConfig.keychainKeyName}" not found in Keychain. Please re-register the key.`;
+      emit(id, "error", { message: errMsg });
+      updateDeployment(id, { phase: "error", error_message: errMsg });
+      activeProvisions.delete(id);
+      throw new Error(errMsg);
+    }
+    deployerPrivateKey = resolved;
+    emit(id, "log", { message: `Deployer key loaded from Keychain: "${testnetConfig.keychainKeyName}" (${deployerPrivateKey.length} chars)` });
+  }
+
+  // Resolve role-specific keys (fallback to deployer key)
+  const roleKeys = { committerPk: null, proofCoordinatorPk: null, bridgeOwnerPk: null };
+  const roleKeyMap = [
+    { configKey: 'committerKeychainKey', resultKey: 'committerPk', label: 'Committer' },
+    { configKey: 'proofCoordinatorKeychainKey', resultKey: 'proofCoordinatorPk', label: 'Proof Coordinator' },
+    { configKey: 'bridgeOwnerKeychainKey', resultKey: 'bridgeOwnerPk', label: 'Bridge Owner' },
+  ];
+  for (const { configKey, resultKey, label } of roleKeyMap) {
+    const keychainName = testnetConfig[configKey];
+    if (keychainName) {
+      emit(id, "log", { message: `Loading ${label} key from Keychain: "${keychainName}"...` });
+      const resolved = keychain.getSecret(keychainName);
+      if (!resolved) {
+        const errMsg = `${label} key "${keychainName}" not found in Keychain. Please re-register the key.`;
+        emit(id, "error", { message: errMsg });
+        updateDeployment(id, { phase: "error", error_message: errMsg });
+        activeProvisions.delete(id);
+        throw new Error(errMsg);
+      }
+      roleKeys[resultKey] = resolved;
+      emit(id, "log", { message: `${label} key loaded from Keychain: "${keychainName}"` });
+    }
+  }
+
   // Testnet: no L1 port needed, only L2 + tools
   const { l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
+  emit(id, "log", { message: `Project: ${projectName}, L2 port: ${l2Port}, Proof coord port: ${proofCoordPort}` });
 
   updateDeployment(id, {
     docker_project: projectName,
@@ -355,92 +537,243 @@ async function provisionTestnet(deployment) {
   provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration (testnet mode)..." });
 
+  let composeFile = null;
+  const contractLogLines = []; // Track deployer logs for address recovery on cancel
   try {
     const gpu = docker.hasNvidiaGpu();
     const composeContent = generateTestnetComposeFile({
       programSlug, l2Port, proofCoordPort, metricsPort: toolsMetricsPort,
       projectName, l1RpcUrl, deployerPrivateKey, gpu,
+      committerPk: roleKeys.committerPk,
+      proofCoordinatorPk: roleKeys.proofCoordinatorPk,
+      bridgeOwnerPk: roleKeys.bridgeOwnerPk,
     });
-    const composeFile = writeComposeFile(id, composeContent, deployDir);
+    composeFile = writeComposeFile(id, composeContent, deployDir);
+    emit(id, "log", { message: `Docker Compose file: ${composeFile}` });
 
-    emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
-    await docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
-      const lines = chunk.split("\n").filter(Boolean);
-      for (const line of lines) {
-        emit(id, "log", { message: line });
+    // Check if any image for this programSlug already exists — skip build if so
+    const sharedImage = `tokamak-appchain:${programSlug}`;
+    emit(id, "log", { message: `Checking for existing Docker image: ${sharedImage}` });
+    const existingImage = docker.findImage(programSlug);
+    if (existingImage) {
+      emit(id, "phase", { phase: "building", message: `Docker image found — skipping build`, imageFound: existingImage });
+      emit(id, "log", { message: `Reusing existing image: ${existingImage}` });
+      // Tag the existing image with the shared name if needed
+      if (existingImage !== sharedImage) {
+        emit(id, "log", { message: `Tagging ${existingImage} → ${sharedImage}` });
+        try { require("child_process").execSync(`docker tag "${existingImage}" "${sharedImage}"`, { timeout: 10000 }); } catch {}
       }
-    });
-
-    // Skip L1 starting — using external L1 RPC
-    emit(id, "phase", { phase: "deploying_contracts", message: `Deploying L1 contracts to ${testnetConfig.network || 'external'} L1...` });
-
-    provisionInfo.phase = "deploying_contracts";
-    updateDeployment(id, { phase: "deploying_contracts" });
-    await docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
-
-    await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
-
-    let envVars = {};
-    try {
-      envVars = await docker.extractEnv(projectName, composeFile);
-    } catch (extractErr) {
-      emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
-      await new Promise(r => setTimeout(r, 3000));
-      try {
-        envVars = await docker.extractEnv(projectName, composeFile);
-      } catch (retryErr) {
-        emit(id, "log", { message: `extractEnv retry failed: ${retryErr.message}` });
-      }
-    }
-
-    const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
-    const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    const timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
-    const sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
-    console.log(`[deployment-engine] testnet extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
-
-    if (!bridgeAddress || !proposerAddress) {
-      throw new Error(
-        `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
-        "The deployer may have exited before writing contract addresses."
+    } else {
+      emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
+      await trackedDockerRun(provisionInfo, () =>
+        docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
+          const lines = chunk.split("\n").filter(Boolean);
+          for (const line of lines) {
+            emit(id, "log", { message: line });
+          }
+        })
       );
     }
 
-    updateDeployment(id, {
-      bridge_address: bridgeAddress,
-      proposer_address: proposerAddress,
-      timelock_address: timelockAddress,
-      sp1_verifier_address: sp1VerifierAddress,
-      env_project_id: projectName,
-      env_updated_at: Date.now(),
-    });
+    checkCancelled(provisionInfo);
+
+    // Check if contracts were already deployed for this deployment (e.g. retry after partial failure)
+    const existingDep = require("../db/deployments").getDeploymentById(id);
+    let bridgeAddress = existingDep?.bridge_address || null;
+    let proposerAddress = existingDep?.proposer_address || null;
+    let timelockAddress = existingDep?.timelock_address || null;
+    let sp1VerifierAddress = existingDep?.sp1_verifier_address || null;
+    let envVars = {};
+
+    if (bridgeAddress && proposerAddress) {
+      // Contracts already deployed — skip contract deployment
+      emit(id, "phase", { phase: "deploying_contracts", message: `Reusing existing contracts — bridge: ${bridgeAddress}` });
+      emit(id, "log", { message: `Skipping contract deployment: bridge=${bridgeAddress}, proposer=${proposerAddress}` });
+      provisionInfo.phase = "deploying_contracts";
+      updateDeployment(id, { phase: "deploying_contracts" });
+
+      // Try to restore envVars from previous deployment
+      try {
+        envVars = await docker.extractEnv(projectName, composeFile);
+      } catch {
+        // Build envVars from saved addresses
+        envVars = {
+          ETHREX_WATCHER_BRIDGE_ADDRESS: bridgeAddress,
+          ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS: proposerAddress,
+          ETHREX_TIMELOCK_ADDRESS: timelockAddress || "",
+          ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS: sp1VerifierAddress || "",
+        };
+      }
+    } else {
+      // Deploy contracts to L1
+      emit(id, "phase", { phase: "deploying_contracts", message: `Deploying L1 contracts to ${testnetConfig.network || 'external'} L1...` });
+
+      // Log deployer address and balance before contract deployment
+      try {
+        const { ethers } = require("ethers");
+        const wallet = new ethers.Wallet(deployerPrivateKey);
+        // Convert Docker-internal URLs to localhost for host-side access
+        const hostRpcUrl = l1RpcUrl.replace("host.docker.internal", "127.0.0.1");
+        const provider = new ethers.JsonRpcProvider(hostRpcUrl, undefined, { staticNetwork: true });
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10000));
+        const balance = await Promise.race([provider.getBalance(wallet.address), timeoutPromise]);
+        const balanceEth = ethers.formatEther(balance);
+        emit(id, "log", { message: `Deployer address: ${wallet.address}` });
+        emit(id, "log", { message: `Deployer balance: ${balanceEth} ETH` });
+        if (balance === 0n) {
+          emit(id, "log", { message: `WARNING: Deployer has 0 balance! Contract deployment will fail.` });
+        }
+        provider.destroy();
+      } catch (balErr) {
+        emit(id, "log", { message: `Could not check deployer balance: ${balErr.message}` });
+      }
+
+      provisionInfo.phase = "deploying_contracts";
+      updateDeployment(id, { phase: "deploying_contracts" });
+      const contractLogFn = (chunk) => {
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          contractLogLines.push(line);
+          emit(id, "log", { message: line });
+        }
+      };
+      let deployerFailed = false;
+      try {
+        await trackedDockerRun(provisionInfo, () =>
+          docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, contractLogFn)
+        );
+      } catch (deployErr) {
+        // If cancelled, don't try to recover — let checkCancelled handle it
+        checkCancelled(provisionInfo);
+        // The deployer may have deployed all contracts but failed at a post-deployment step
+        // (e.g., make_deposits). Check if we can recover addresses from logs.
+        deployerFailed = true;
+        emit(id, "log", { message: `Deployer exited with error: ${deployErr.message}` });
+        emit(id, "log", { message: "Checking if contract addresses can be recovered from logs..." });
+      }
+
+      try { await docker.stopService(projectName, composeFile, "tokamak-app-deployer"); } catch {}
+
+      try {
+        envVars = await docker.extractEnv(projectName, composeFile);
+      } catch (extractErr) {
+        emit(id, "log", { message: `extractEnv failed: ${extractErr.message}, retrying...` });
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          envVars = await docker.extractEnv(projectName, composeFile);
+        } catch (retryErr) {
+          emit(id, "log", { message: `extractEnv retry failed: ${retryErr.message}` });
+        }
+      }
+
+      bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+      proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+      timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+      sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+
+      // Fallback: parse addresses from deployer log output (covers case where .env wasn't written)
+      if (!bridgeAddress || !proposerAddress) {
+        const parsed = parseContractAddressesFromLogs(contractLogLines);
+        if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
+        if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
+        if (!timelockAddress && parsed.timelock) timelockAddress = parsed.timelock;
+        if (!sp1VerifierAddress && parsed.sp1Verifier) sp1VerifierAddress = parsed.sp1Verifier;
+        if (parsed.bridge || parsed.proposer) {
+          emit(id, "log", { message: `Recovered addresses from deployer logs: bridge=${parsed.bridge}, proposer=${parsed.proposer}` });
+        }
+      }
+
+      console.log(`[deployment-engine] testnet contract addresses for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
+
+      // Save whatever addresses we got (even partial) so they can be reused on retry
+      if (bridgeAddress || proposerAddress) {
+        updateDeployment(id, {
+          bridge_address: bridgeAddress,
+          proposer_address: proposerAddress,
+          timelock_address: timelockAddress,
+          sp1_verifier_address: sp1VerifierAddress,
+          env_project_id: projectName,
+          env_updated_at: Date.now(),
+        });
+      }
+
+      if (!bridgeAddress || !proposerAddress) {
+        throw new Error(
+          `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
+          "The deployer may have exited before writing contract addresses."
+        );
+      }
+
+      // If deployer failed but we recovered all addresses, write them to the Docker volume
+      // so the L2 service can read them (the deployer didn't write the .env file)
+      if (deployerFailed) {
+        emit(id, "log", { message: `Contract addresses recovered despite deployer error. Writing to volume...` });
+        const parsed = parseContractAddressesFromLogs(contractLogLines);
+        const ZERO = "0x0000000000000000000000000000000000000000";
+        try {
+          docker.writeEnvToVolume(projectName, {
+            ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS: proposerAddress,
+            ETHREX_TIMELOCK_ADDRESS: timelockAddress || ZERO,
+            ETHREX_WATCHER_BRIDGE_ADDRESS: bridgeAddress,
+            ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS: sp1VerifierAddress || ZERO,
+            ETHREX_DEPLOYER_RISC0_VERIFIER_ADDRESS: ZERO,
+            ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS: ZERO,
+            ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS: ZERO,
+            ENCLAVE_ID_DAO: ZERO,
+            FMSPC_TCB_DAO: ZERO,
+            PCK_DAO: ZERO,
+            PCS_DAO: ZERO,
+            ETHREX_DEPLOYER_SEQUENCER_REGISTRY_ADDRESS: parsed.sequencerRegistry || ZERO,
+            ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS: parsed.router || ZERO,
+          });
+          emit(id, "log", { message: "Contract addresses written to Docker volume." });
+        } catch (writeErr) {
+          emit(id, "log", { message: `Failed to write env to volume: ${writeErr.message}` });
+        }
+      }
+    }
+
+    checkCancelled(provisionInfo);
 
     emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed on testnet L1", bridgeAddress, proposerAddress });
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "l2_starting";
     emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node..." });
     updateDeployment(id, { phase: "l2_starting" });
-    await docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" })
+    );
     await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
     emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "starting_prover";
     emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
     updateDeployment(id, { phase: "starting_prover" });
-    await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" })
+    );
+
+    checkCancelled(provisionInfo);
 
     provisionInfo.phase = "starting_tools";
+    checkCancelled(provisionInfo);
     emit(id, "phase", { phase: "starting_tools", message: "Starting support tools..." });
     updateDeployment(id, { phase: "starting_tools" });
     try {
       const freshEnv = await docker.extractEnv(projectName, composeFile);
       // For testnet tools, override L1 RPC to use external URL
       freshEnv.ETHREX_ETH_RPC_URL = l1RpcUrl;
-      await docker.startTools(freshEnv, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port: null, l2Port, toolsMetricsPort });
+      await docker.startTools(freshEnv, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port: null, l2Port, toolsMetricsPort, skipL1Explorer: true });
       emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
     } catch (toolsErr) {
       emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
     }
+
+    checkCancelled(provisionInfo);
 
     emit(id, "phase", {
       phase: "running",
@@ -450,12 +783,50 @@ async function provisionTestnet(deployment) {
       bridgeAddress,
       proposerAddress,
     });
-    updateDeployment(id, { phase: "running", status: "active" });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null });
     activeProvisions.delete(id);
     return updateDeployment(id, {});
   } catch (err) {
-    emit(id, "error", { message: err.message });
-    updateDeployment(id, { phase: "error", error_message: err.message });
+    // Stop all containers on error/cancel to prevent restart loops
+    if (composeFile) {
+      try {
+        await docker.stop(projectName, composeFile);
+        emit(id, "log", { message: `Stopped all containers for ${projectName}` });
+      } catch (stopErr) {
+        console.warn(`[deploy-engine] Failed to stop containers on error: ${stopErr.message}`);
+      }
+      // Save partial contract addresses from env volume or deployer logs (prevents gas waste on retry)
+      let partialBridge = null, partialProposer = null, partialTimelock = null, partialSp1Verifier = null;
+      try {
+        const partialEnv = await docker.extractEnv(projectName, composeFile);
+        partialBridge = partialEnv.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+        partialProposer = partialEnv.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+        partialTimelock = partialEnv.ETHREX_TIMELOCK_ADDRESS || null;
+        partialSp1Verifier = partialEnv.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+      } catch { /* env volume may not exist yet */ }
+      // Fallback: parse from deployer log output
+      if ((!partialBridge || !partialProposer) && contractLogLines.length > 0) {
+        const parsed = parseContractAddressesFromLogs(contractLogLines);
+        if (!partialBridge && parsed.bridge) partialBridge = parsed.bridge;
+        if (!partialProposer && parsed.proposer) partialProposer = parsed.proposer;
+        if (!partialTimelock && parsed.timelock) partialTimelock = parsed.timelock;
+        if (!partialSp1Verifier && parsed.sp1Verifier) partialSp1Verifier = parsed.sp1Verifier;
+      }
+      if (partialBridge || partialProposer) {
+        updateDeployment(id, {
+          bridge_address: partialBridge,
+          proposer_address: partialProposer,
+          timelock_address: partialTimelock,
+          sp1_verifier_address: partialSp1Verifier,
+        });
+        emit(id, "log", { message: `Saved partial contracts: bridge=${partialBridge}, proposer=${partialProposer}` });
+      }
+    }
+    // Don't overwrite state if already cancelled by user (stop endpoint sets phase)
+    if (!provisionInfo.cancelled) {
+      emit(id, "error", { message: err.message });
+      updateDeployment(id, { phase: "error", error_message: err.message });
+    }
     activeProvisions.delete(id);
     throw err;
   }
@@ -579,7 +950,7 @@ async function provisionRemote(deployment, hostId) {
       bridgeAddress,
       proposerAddress,
     });
-    updateDeployment(id, { phase: "running", status: "active" });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null });
     activeProvisions.delete(id);
     conn.end();
     return updateDeployment(id, {});
@@ -619,6 +990,7 @@ async function startDeployment(deployment) {
   // Also start tools (Explorer, Bridge UI, Dashboard) if they were provisioned
   try {
     const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
+    const startConfig = deployment.config ? JSON.parse(deployment.config) : {};
     await docker.startTools(envVars, {
       toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
       toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
@@ -627,6 +999,7 @@ async function startDeployment(deployment) {
       l1Port: deployment.l1_port,
       l2Port: deployment.l2_port,
       toolsMetricsPort: deployment.tools_metrics_port,
+      skipL1Explorer: startConfig.mode === 'testnet',
     });
   } catch (e) {
     console.log(`[start] Tools start skipped: ${e.message}`);
@@ -795,5 +1168,6 @@ module.exports = {
   cancelProvision,
   getActiveProvisions,
   recoverStuckDeployments,
+  parseContractAddressesFromLogs,
   PHASES,
 };

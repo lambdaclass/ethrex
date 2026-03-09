@@ -32,6 +32,7 @@ let programs = [];
 let selectedProgram = null;
 let launchMode = 'local';
 let launchDeploymentId = null;
+let cachedDeployList = [];
 let buildLogLines = [];
 let deployEventSource = null;
 let deployEvents = [];
@@ -66,7 +67,31 @@ function showView(name) {
 
   if (name === 'deployments') loadDeployments();
   if (name === 'hosts') loadHosts();
-  if (name === 'launch') { loadPrograms(); launchGoStep(1); }
+  if (name === 'launch') {
+    loadPrograms(); launchGoStep(1); launchDeploymentId = null;
+    const db = document.getElementById('launch-deploy-btn'); if (db) db.textContent = 'Deploy L2';
+    // Reset form fields for fresh deployment
+    document.getElementById('launch-name').value = '';
+    document.getElementById('launch-chain-id').value = '';
+    document.getElementById('launch-deploy-dir').value = '';
+    document.getElementById('launch-l1-image').value = 'ethrex';
+    onL1NodeChange();
+    const rpcEl = document.getElementById('launch-testnet-rpc'); if (rpcEl) { rpcEl.value = ''; rpcEl.style.borderColor = '#f87171'; }
+    const keyEl = document.getElementById('launch-testnet-keychain-key'); if (keyEl) keyEl.value = '';
+    const addrEl = document.getElementById('launch-testnet-deployer-addr'); if (addrEl) addrEl.value = '';
+    const chainIdEl = document.getElementById('launch-testnet-l1-chainid'); if (chainIdEl) chainIdEl.value = '';
+    const balEl = document.getElementById('testnet-balance-check'); if (balEl) balEl.innerHTML = '';
+    const saveEl = document.getElementById('testnet-save-status'); if (saveEl) saveEl.innerHTML = '';
+    // Reset role key selectors
+    for (const id of ['launch-testnet-committer-key', 'launch-testnet-proof-coordinator-key', 'launch-testnet-bridge-owner-key']) {
+      const el = document.getElementById(id); if (el) el.value = '';
+    }
+    for (const id of ['launch-testnet-committer-addr', 'launch-testnet-proof-coordinator-addr', 'launch-testnet-bridge-owner-addr']) {
+      const el = document.getElementById(id); if (el) el.value = '';
+    }
+    const cfgSummary = document.getElementById('deploy-config-summary'); if (cfgSummary) cfgSummary.style.display = 'none';
+    selectedProgram = null;
+  }
 }
 
 // ============================================================
@@ -130,7 +155,7 @@ const REMOTE_STEPS = [
 
 const TESTNET_STEPS = [
   { phase: 'checking_docker', label: 'Checking Docker' },
-  { phase: 'building', label: 'Building Docker Images' },
+  { phase: 'building', label: 'Preparing Docker Images' },
   { phase: 'deploying_contracts', label: 'Deploying L1 Contracts' },
   { phase: 'l2_starting', label: 'Starting L2 Node' },
   { phase: 'starting_prover', label: 'Starting Prover' },
@@ -285,11 +310,14 @@ function launchGoStep(step) {
           </div>
           <button class="btn-change" onclick="launchGoStep(1)" style="margin-top:4px">Change</button>
         </div>
-        <div class="app-config-box" style="padding:6px 12px;margin:0;flex:1;font-size:11px">${configHtml}</div>
+        <div class="app-config-box" style="padding:6px 12px;margin:0;flex:1;font-size:11px">${configHtml}
+          <div id="docker-image-status" style="margin-top:6px;font-size:11px;color:var(--text-muted)">Checking Docker image...</div>
+        </div>
       </div>
     `;
 
     checkDocker();
+    checkDockerImage(pid);
   }
 }
 
@@ -320,39 +348,323 @@ function onL1NodeChange() {
     document.getElementById('launch-testnet-rpc').placeholder = info.rpcPlaceholder;
     document.getElementById('testnet-custom-chainid').style.display = val === 'custom-l1' ? 'block' : 'none';
     document.getElementById('testnet-balance-check').innerHTML = '';
+    loadKeychainKeys().then(() => onKeychainKeyChange());
   }
+}
+
+// ============================================================
+// Keychain Management
+// ============================================================
+
+async function loadKeychainKeys() {
+  try {
+    const res = await fetch(`${API}/keychain/keys`);
+    const data = await res.json();
+    const keys = data.keys || [];
+    const keyOptions = keys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+
+    // Deployer selector
+    const sel = document.getElementById('launch-testnet-keychain-key');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Select a key from Keychain...</option>' + keyOptions;
+    if (prev && keys.includes(prev)) sel.value = prev;
+
+    // Role selectors (committer, proof-coordinator, bridge-owner)
+    const roleIds = ['launch-testnet-committer-key', 'launch-testnet-proof-coordinator-key', 'launch-testnet-bridge-owner-key'];
+    for (const id of roleIds) {
+      const roleSel = document.getElementById(id);
+      if (!roleSel) continue;
+      const rolePrev = roleSel.value;
+      roleSel.innerHTML = '<option value="">Same as Deployer (default)</option>' + keyOptions;
+      if (rolePrev && keys.includes(rolePrev)) roleSel.value = rolePrev;
+    }
+  } catch (e) {
+    console.error('Failed to load keychain keys:', e);
+  }
+}
+
+async function refreshKeychainKeys() {
+  await loadKeychainKeys();
+  await onKeychainKeyChange();
+}
+
+async function onKeychainKeyChange() {
+  const sel = document.getElementById('launch-testnet-keychain-key');
+  const addrInput = document.getElementById('launch-testnet-deployer-addr');
+  if (!sel.value) { addrInput.value = ''; updateRoleDefaultAddresses(''); return; }
+  try {
+    const res = await fetch(`${API}/keychain/keys/${encodeURIComponent(sel.value)}`);
+    const data = await res.json();
+    if (data.address) {
+      addrInput.value = data.address;
+      updateRoleDefaultAddresses(data.address);
+    }
+  } catch (e) {
+    console.error('Failed to get address for key:', e);
+  }
+  autoCheckBalances();
+}
+
+// Show deployer address in role cards that are set to "Same as Deployer"
+function updateRoleDefaultAddresses(deployerAddress) {
+  const roleIds = [
+    { sel: 'launch-testnet-committer-key', addr: 'launch-testnet-committer-addr' },
+    { sel: 'launch-testnet-proof-coordinator-key', addr: 'launch-testnet-proof-coordinator-addr' },
+    { sel: 'launch-testnet-bridge-owner-key', addr: 'launch-testnet-bridge-owner-addr' },
+  ];
+  for (const { sel, addr } of roleIds) {
+    const selEl = document.getElementById(sel);
+    const addrEl = document.getElementById(addr);
+    if (!selEl || !addrEl) continue;
+    if (!selEl.value) {
+      // "Same as Deployer" selected — show deployer address in lighter style
+      addrEl.value = deployerAddress || '';
+      addrEl.placeholder = deployerAddress ? '' : '= Deployer';
+      addrEl.style.color = '#9ca3af';  // gray to indicate inherited
+    }
+  }
+}
+
+function toggleGuideLocale() {
+  document.querySelectorAll('.guide-ko').forEach(el => {
+    el.style.display = el.style.display === 'none' ? '' : 'none';
+  });
+  document.querySelectorAll('.guide-en').forEach(el => {
+    el.style.display = el.style.display === 'none' ? '' : 'none';
+  });
+}
+
+async function registerKeychainKey() {
+  try {
+    const res = await fetch(`${API}/open-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'keychain-register' }),
+    });
+    const data = await res.json();
+    if (data.ok && data.keyName) {
+      await loadKeychainKeys();
+      document.getElementById('launch-testnet-keychain-key').value = data.keyName;
+      await onKeychainKeyChange();
+    }
+  } catch (e) {
+    console.error('Keychain register failed:', e);
+  }
+}
+
+async function onRoleKeyChange(role) {
+  const idMap = {
+    'committer': { sel: 'launch-testnet-committer-key', addr: 'launch-testnet-committer-addr' },
+    'proof-coordinator': { sel: 'launch-testnet-proof-coordinator-key', addr: 'launch-testnet-proof-coordinator-addr' },
+    'bridge-owner': { sel: 'launch-testnet-bridge-owner-key', addr: 'launch-testnet-bridge-owner-addr' },
+  };
+  const ids = idMap[role];
+  if (!ids) return;
+  const sel = document.getElementById(ids.sel);
+  const addrInput = document.getElementById(ids.addr);
+  if (!sel.value) {
+    // "Same as Deployer" — show deployer address in gray
+    const deployerAddr = (document.getElementById('launch-testnet-deployer-addr')?.value || '').trim();
+    addrInput.value = deployerAddr || '';
+    addrInput.placeholder = deployerAddr ? '' : '= Deployer';
+    addrInput.style.color = '#9ca3af';
+    autoCheckBalances();
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/keychain/keys/${encodeURIComponent(sel.value)}`);
+    const data = await res.json();
+    if (data.address) {
+      addrInput.value = data.address;
+      addrInput.style.color = '#4b5563';  // darker = own key
+    }
+  } catch (e) {
+    console.error(`Failed to get address for ${role} key:`, e);
+  }
+  autoCheckBalances();
+}
+
+// Auto-check balances when keys change (only if RPC URL and deployer key are set)
+function autoCheckBalances() {
+  const rpcUrl = (document.getElementById('launch-testnet-rpc')?.value || '').trim();
+  const deployerAddr = (document.getElementById('launch-testnet-deployer-addr')?.value || '').trim();
+  if (rpcUrl && deployerAddr) checkTestnetBalance();
 }
 
 async function checkTestnetBalance() {
   const rpcUrl = (document.getElementById('launch-testnet-rpc')?.value || '').trim();
-  const address = (document.getElementById('launch-testnet-deployer-addr')?.value || '').trim();
+  const deployerAddr = (document.getElementById('launch-testnet-deployer-addr')?.value || '').trim();
   const el = document.getElementById('testnet-balance-check');
 
   if (!rpcUrl) { el.innerHTML = '<span style="color:var(--red-600,#dc2626);font-size:11px">Enter L1 RPC URL first.</span>'; return; }
-  if (!address) { el.innerHTML = '<span style="color:var(--red-600,#dc2626);font-size:11px">Enter deployer address first.</span>'; return; }
+  if (!deployerAddr) { el.innerHTML = '<span style="color:var(--red-600,#dc2626);font-size:11px">Select a Deployer key first.</span>'; return; }
 
-  el.innerHTML = '<span style="color:var(--gray-500);font-size:11px">Checking...</span>';
+  // Collect all roles with addresses and card status element IDs
+  const roles = [
+    { role: 'deployer', address: deployerAddr, statusId: 'balance-status-deployer' },
+    { role: 'committer', address: (document.getElementById('launch-testnet-committer-addr')?.value || '').trim() || deployerAddr, statusId: 'balance-status-committer' },
+    { role: 'proof-coordinator', address: (document.getElementById('launch-testnet-proof-coordinator-addr')?.value || '').trim() || deployerAddr, statusId: 'balance-status-proof-coordinator' },
+    { role: 'bridge-owner', address: (document.getElementById('launch-testnet-bridge-owner-addr')?.value || '').trim() || deployerAddr, statusId: 'balance-status-bridge-owner' },
+  ];
+
+  // Show loading in each card
+  for (const { statusId } of roles) {
+    const statusEl = document.getElementById(statusId);
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--gray-400);font-size:10px">Checking...</span>';
+  }
+  el.innerHTML = '<span style="color:var(--gray-500);font-size:11px">Checking all account balances...</span>';
 
   try {
-    const res = await fetch(`${API}/deployments/testnet/check-balance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rpcUrl, address }),
-    });
-    const data = await res.json();
-    if (data.error) {
-      el.innerHTML = `<span style="color:var(--red-600,#dc2626);font-size:11px">${esc(data.error)}</span>`;
-    } else {
-      const balColor = parseFloat(data.balanceEth) > 0.01 ? 'var(--green-600,#16a34a)' : 'var(--red-600,#dc2626)';
-      el.innerHTML = `
-        <div style="font-size:11px;padding:6px 10px;background:var(--gray-100,#f3f4f6);border-radius:6px">
-          <div>Address: <code style="font-size:10px">${esc(data.address)}</code></div>
-          <div>Balance: <strong style="color:${balColor}">${esc(data.balanceEth)} ETH</strong></div>
-          ${data.chainId ? `<div>L1 Chain ID: <code>${esc(String(data.chainId))}</code></div>` : ''}
+    const results = await Promise.all(
+      roles.map(async ({ role, address, statusId }) => {
+        const res = await fetch(`${API}/deployments/testnet/check-balance`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rpcUrl, address, role }),
+        });
+        const data = await res.json();
+        return { ...data, statusId, roleKey: role };
+      })
+    );
+
+    const firstError = results.find(r => r.error);
+    if (firstError) {
+      el.innerHTML = `<span style="color:var(--red-600,#dc2626);font-size:11px">${esc(firstError.error)}</span>`;
+      return;
+    }
+
+    // Format gas number for display (e.g. 12960000000 → "12.96B", 25000000 → "25M")
+    function formatGas(gas) {
+      if (gas >= 1e9) return (gas / 1e9).toFixed(2) + 'B';
+      if (gas >= 1e6) return (gas / 1e6).toFixed(0) + 'M';
+      if (gas >= 1e3) return (gas / 1e3).toFixed(0) + 'K';
+      return String(gas);
+    }
+
+    // Update each card with balance status
+    for (const r of results) {
+      const statusEl = document.getElementById(r.statusId);
+      if (!statusEl) continue;
+      const balColor = r.sufficient ? '#16a34a' : '#dc2626';
+      const icon = r.sufficient ? '✓' : '✗';
+      statusEl.innerHTML = `
+        <div style="margin-top:6px;padding:6px 8px;background:white;border-radius:6px;border:1px solid #e5e7eb;font-size:11px">
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <tr>
+              <td style="color:#6b7280;padding:1px 0">Balance</td>
+              <td style="text-align:right;font-weight:700;color:${balColor}">${esc(r.balanceEth)} ETH</td>
+            </tr>
+            <tr>
+              <td style="color:#6b7280;padding:1px 0">Required (1 month)</td>
+              <td style="text-align:right;font-weight:600">~${esc(r.estimatedCostEth)} ETH</td>
+            </tr>
+            <tr>
+              <td style="color:#6b7280;padding:1px 0">Est. Gas</td>
+              <td style="text-align:right">${formatGas(r.estimatedGas)} gas</td>
+            </tr>
+          </table>
+          <div style="color:${balColor};font-weight:600;margin-top:3px;font-size:11px">${icon} ${r.sufficient ? 'Sufficient' : 'Insufficient'}</div>
+          <details style="margin-top:3px">
+            <summary style="font-size:10px;color:#9ca3af;cursor:pointer;user-select:none">${esc(r.gasLabel)}</summary>
+            <div style="font-size:10px;color:#6b7280;margin-top:3px;line-height:1.5;padding:4px 6px;background:#f9fafb;border-radius:4px">
+              ${esc(r.gasDetail || '')}
+              ${r.interval ? `<br><strong>Tx interval:</strong> every ${esc(r.interval)}` : ''}
+            </div>
+          </details>
         </div>`;
     }
+
+    // Summary
+    const allSufficient = results.every(r => r.sufficient);
+    const first = results[0];
+    let html = `<div style="font-size:11px;padding:6px 10px;background:var(--gray-100,#f3f4f6);border-radius:6px">`;
+    if (first.chainId) html += `<span>L1 Chain ID: <code>${esc(String(first.chainId))}</code> · Gas Price: <code>${esc(first.gasPriceGwei)} gwei</code></span> · `;
+    html += `<span style="color:${allSufficient ? 'var(--green-600,#16a34a)' : 'var(--red-600,#dc2626)'};font-weight:600">
+      ${allSufficient ? '✓ All accounts funded' : '✗ Some accounts need more ETH'}
+    </span></div>`;
+    el.innerHTML = html;
   } catch (e) {
     el.innerHTML = `<span style="color:var(--red-600,#dc2626);font-size:11px">Connection failed: ${esc(e.message)}</span>`;
+  }
+}
+
+async function saveTestnetSettings() {
+  const name = document.getElementById('launch-name').value.trim();
+  if (!name) { showLaunchError('L2 name is required to save settings'); return; }
+  if (!selectedProgram) { showLaunchError('Please select a program first'); return; }
+
+  const el = document.getElementById('testnet-save-status');
+  el.innerHTML = '<span style="color:var(--gray-500);font-size:11px">Saving...</span>';
+
+  try {
+    const network = document.getElementById('launch-l1-image').value;
+    const netInfo = TESTNET_NETWORKS[network];
+    const body = {
+      programSlug: selectedProgram.program_id || selectedProgram.id,
+      name,
+      chainId: parseInt(document.getElementById('launch-chain-id').value) || undefined,
+      config: {
+        mode: 'testnet',
+        l1Image: network,
+        deployDir: (document.getElementById('launch-deploy-dir')?.value || '').trim() || undefined,
+        testnet: {
+          l1RpcUrl: (document.getElementById('launch-testnet-rpc')?.value || '').trim(),
+          keychainKeyName: (document.getElementById('launch-testnet-keychain-key')?.value || '').trim(),
+          committerKeychainKey: (document.getElementById('launch-testnet-committer-key')?.value || '').trim() || undefined,
+          proofCoordinatorKeychainKey: (document.getElementById('launch-testnet-proof-coordinator-key')?.value || '').trim() || undefined,
+          bridgeOwnerKeychainKey: (document.getElementById('launch-testnet-bridge-owner-key')?.value || '').trim() || undefined,
+          l1ChainId: netInfo?.chainId || (parseInt(document.getElementById('launch-testnet-l1-chainid')?.value) || undefined),
+          network: network === 'custom-l1' ? 'custom' : network,
+        },
+      },
+      rpcUrl: (document.getElementById('launch-testnet-rpc')?.value || '').trim(),
+    };
+
+    let res;
+    if (launchDeploymentId) {
+      // Update existing configured deployment
+      res = await fetch(`${API}/deployments/${launchDeploymentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: body.name, chain_id: body.chainId, rpc_url: body.rpcUrl, config: body.config }),
+      });
+    } else {
+      res = await fetch(`${API}/deployments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to save'); }
+    const data = await res.json();
+    if (!launchDeploymentId) launchDeploymentId = data.deployment?.id || data.id;
+
+    el.innerHTML = '<span style="color:var(--green-600,#16a34a)">Settings saved to My L2.</span>';
+    setTimeout(() => { el.innerHTML = ''; }, 3000);
+    loadDeployments();
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--red-600,#dc2626)">${esc(e.message)}</span>`;
+  }
+}
+
+let dockerImageReady = false;
+
+async function checkDockerImage(programSlug) {
+  const el = document.getElementById('docker-image-status');
+  if (!el) return;
+  dockerImageReady = false;
+  el.innerHTML = '<span style="color:var(--text-muted)">Checking Docker image...</span>';
+  try {
+    const res = await fetch(`${API}/deployments/check-image/${encodeURIComponent(programSlug)}`);
+    const data = await res.json();
+    if (data.exists) {
+      dockerImageReady = true;
+      el.innerHTML = `<span style="color:#16a34a;font-weight:600">Docker image ready: ${esc(data.image)}</span>`;
+    } else {
+      el.innerHTML = '<span style="color:#d97706;font-weight:600">Docker image not found — will be built during deployment (~5-10min)</span>';
+    }
+  } catch {
+    el.innerHTML = '<span style="color:var(--text-muted)">Could not check Docker image</span>';
   }
 }
 
@@ -406,15 +718,18 @@ async function handleLaunchDeploy() {
     };
     if (isTestnetL1()) {
       const testnetRpc = (document.getElementById('launch-testnet-rpc')?.value || '').trim();
-      const deployerPk = (document.getElementById('launch-testnet-deployer-pk')?.value || '').trim();
+      const keychainKey = (document.getElementById('launch-testnet-keychain-key')?.value || '').trim();
       const network = document.getElementById('launch-l1-image').value;
       if (!testnetRpc) { showLaunchError('L1 RPC URL is required for testnet'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
-      if (!deployerPk) { showLaunchError('Deployer private key is required for testnet'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
+      if (!keychainKey) { showLaunchError('Select a deployer key from Keychain. Click "Open Keychain Access" to register one.'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
       const netInfo = TESTNET_NETWORKS[network];
       body.config.mode = 'testnet';
       body.config.testnet = {
         l1RpcUrl: testnetRpc,
-        deployerPrivateKey: deployerPk,
+        keychainKeyName: keychainKey,
+        committerKeychainKey: (document.getElementById('launch-testnet-committer-key')?.value || '').trim() || undefined,
+        proofCoordinatorKeychainKey: (document.getElementById('launch-testnet-proof-coordinator-key')?.value || '').trim() || undefined,
+        bridgeOwnerKeychainKey: (document.getElementById('launch-testnet-bridge-owner-key')?.value || '').trim() || undefined,
         l1ChainId: netInfo.chainId || (parseInt(document.getElementById('launch-testnet-l1-chainid')?.value) || undefined),
         network: network === 'custom-l1' ? 'custom' : network,
       };
@@ -427,15 +742,25 @@ async function handleLaunchDeploy() {
     const deployDir = document.getElementById('launch-deploy-dir')?.value?.trim();
     if (deployDir) body.deployDir = deployDir;
 
-    // 1. Create deployment
-    const res = await fetch(`${API}/deployments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create'); }
-    const data = await res.json();
-    launchDeploymentId = data.deployment?.id || data.id;
+    // 1. Create or update deployment
+    if (launchDeploymentId) {
+      // Update existing configured deployment
+      const res = await fetch(`${API}/deployments/${launchDeploymentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: body.name, chain_id: body.chainId, rpc_url: body.rpcUrl, config: body.config }),
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to update'); }
+    } else {
+      const res = await fetch(`${API}/deployments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to create'); }
+      const data = await res.json();
+      launchDeploymentId = data.deployment?.id || data.id;
+    }
 
     if (launchMode === 'manual') {
       showDeploymentDetail(launchDeploymentId);
@@ -478,12 +803,95 @@ function hideLaunchError() {
 }
 
 // ============================================================
+// Deploy Config Summary (shown on step 3)
+// ============================================================
+function renderDeployConfigSummary(deployment) {
+  const el = document.getElementById('deploy-config-summary');
+  if (!el) return;
+  const config = typeof deployment.config === 'string' ? JSON.parse(deployment.config || '{}') : (deployment.config || {});
+  const mode = config.mode || launchMode || 'local';
+  const testnet = config.testnet || {};
+
+  const rows = [];
+  rows.push(['L2 Name', esc(deployment.name || '')]);
+  rows.push(['App', esc(deployment.program_name || programDisplayName(deployment.program_slug) || '')]);
+  rows.push(['Environment', mode === 'testnet' ? 'Testnet' : mode === 'remote' ? 'Remote' : 'Local (Docker)']);
+
+  if (mode === 'testnet') {
+    const networkLabels = { sepolia: 'Sepolia', holesky: 'Holesky', 'custom-l1': 'Custom L1' };
+    rows.push(['L1 Network', networkLabels[testnet.network] || testnet.network || config.l1Image || '']);
+    if (testnet.l1RpcUrl) rows.push(['L1 RPC URL', '<code>' + esc(testnet.l1RpcUrl) + '</code>']);
+    if (testnet.l1ChainId) rows.push(['L1 Chain ID', testnet.l1ChainId]);
+    // Role key summary
+    if (testnet.keychainKeyName) {
+      rows.push(['Deployer', `🔑 ${esc(testnet.keychainKeyName)}`]);
+      rows.push(['Committer', testnet.committerKeychainKey ? `🔑 ${esc(testnet.committerKeychainKey)}` : `🔑 ${esc(testnet.keychainKeyName)} <span style="opacity:0.5">(= Deployer)</span>`]);
+      rows.push(['Proof Coordinator', testnet.proofCoordinatorKeychainKey ? `🔑 ${esc(testnet.proofCoordinatorKeychainKey)}` : `🔑 ${esc(testnet.keychainKeyName)} <span style="opacity:0.5">(= Deployer)</span>`]);
+      rows.push(['Bridge Owner', testnet.bridgeOwnerKeychainKey ? `🔑 ${esc(testnet.bridgeOwnerKeychainKey)}` : `🔑 ${esc(testnet.keychainKeyName)} <span style="opacity:0.5">(= Deployer)</span>`]);
+    }
+  } else {
+    const l1Labels = { ethrex: 'ethrex (Tokamak)', geth: 'Geth', reth: 'Reth' };
+    rows.push(['L1 Node', l1Labels[config.l1Image] || config.l1Image || '']);
+    // Local mode: show hardcoded dev key roles
+    rows.push(['Deployer / Committer', '<code style="font-size:10px">0x3D1e…</code> <span style="opacity:0.5">(dev key)</span>']);
+    rows.push(['Proof Coordinator', '<code style="font-size:10px">0xE255…</code> <span style="opacity:0.5">(dev key)</span>']);
+    rows.push(['Bridge Owner', '<code style="font-size:10px">0x4417…</code> <span style="opacity:0.5">(dev key)</span>']);
+  }
+  if (deployment.chain_id) rows.push(['L2 Chain ID', deployment.chain_id]);
+  if (deployment.bridge_address) rows.push(['Bridge', '<code>' + esc(deployment.bridge_address) + '</code>']);
+  if (deployment.proposer_address) rows.push(['Proposer', '<code>' + esc(deployment.proposer_address) + '</code>']);
+
+  el.innerHTML = '<table>' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+  el.style.display = '';
+}
+
+// ============================================================
 // Deploy Progress (SSE)
 // ============================================================
+// Track deployed contracts in real-time
+let deployedContracts = {};
+let lastContractAnnouncement = null;
+let buildingImageFound = null; // Set when image is found (skip build)
+
+function parseContractFromLog(line) {
+  const addrMatch = line.match(/address=(0x[0-9a-fA-F]{40})/);
+
+  // Detect contract announcement
+  if (line.includes('CommonBridge deployed')) lastContractAnnouncement = 'CommonBridge';
+  else if (line.includes('OnChainProposer deployed')) lastContractAnnouncement = 'OnChainProposer';
+  else if (line.includes('Timelock deployed')) lastContractAnnouncement = 'Timelock';
+  else if (line.includes('SP1Verifier deployed')) lastContractAnnouncement = 'SP1Verifier';
+  else if (line.includes('SequencerRegistry deployed')) lastContractAnnouncement = 'SequencerRegistry';
+  else if (line.includes('GuestProgramRegistry initialized')) {
+    if (addrMatch) deployedContracts['GuestProgramRegistry'] = addrMatch[1];
+    lastContractAnnouncement = null;
+    return;
+  }
+
+  if (!addrMatch) return;
+  const addr = addrMatch[1];
+
+  // SP1Verifier is single-line
+  if (lastContractAnnouncement === 'SP1Verifier' && line.includes('SP1Verifier deployed')) {
+    deployedContracts['SP1Verifier'] = addr;
+    lastContractAnnouncement = null;
+    return;
+  }
+
+  // Proxy-based contracts: capture Proxy address
+  if (lastContractAnnouncement && line.includes('Proxy')) {
+    deployedContracts[lastContractAnnouncement] = addr;
+    lastContractAnnouncement = null;
+  }
+}
+
 function startDeployProgress(id) {
   currentPhase = 'configured';
   buildLogLines = [];
   deployEvents = [];
+  deployedContracts = {};
+  lastContractAnnouncement = null;
+  buildingImageFound = null;
   phaseDurations = {};
   deployStartTime = Date.now();
   phaseStartTime = Date.now();
@@ -493,9 +901,19 @@ function startDeployProgress(id) {
   document.getElementById('deploy-error-msg').style.display = 'none';
   document.getElementById('deploy-complete').style.display = 'none';
   document.getElementById('goto-dashboard-btn').style.display = 'none';
+  const cancelBtn = document.getElementById('cancel-deploy-btn');
+  cancelBtn.style.display = '';
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = 'Cancel Deployment';
 
   renderProgressSteps();
   startElapsedTimer();
+
+  // Load and show config summary
+  fetch(`${API}/deployments`).then(r => r.json()).then(data => {
+    const dep = (data.deployments || data || []).find(d => d.id === id);
+    if (dep) renderDeployConfigSummary(dep);
+  }).catch(() => {});
 
   if (deployEventSource) deployEventSource.close();
   deployEventSource = new EventSource(`${API}/deployments/${id}/events`);
@@ -506,11 +924,15 @@ function startDeployProgress(id) {
       if (data.event === 'log') {
         buildLogLines.push(data.message || '');
         if (buildLogLines.length > 200) buildLogLines = buildLogLines.slice(-200);
+        const prevCount = Object.keys(deployedContracts).length;
+        parseContractFromLog(data.message || '');
+        if (Object.keys(deployedContracts).length > prevCount) renderProgressSteps();
         renderBuildLog();
         return;
       }
 
       deployEvents.push(data);
+      if (data.imageFound) buildingImageFound = data.imageFound;
       if (data.phase && data.phase !== currentPhase) {
         if (currentPhase !== 'configured') {
           phaseDurations[currentPhase] = Math.floor((Date.now() - phaseStartTime) / 1000);
@@ -528,10 +950,14 @@ function startDeployProgress(id) {
         document.getElementById('deploy-error-msg').textContent = data.message || 'Deployment failed';
         document.getElementById('deploy-error-msg').style.display = 'block';
         document.getElementById('deploy-message').style.display = 'none';
+        document.getElementById('cancel-deploy-btn').style.display = 'none';
+        const resumeBtn = document.getElementById('resume-deploy-btn');
+        if (resumeBtn) { resumeBtn.style.display = ''; resumeBtn.dataset.id = launchDeploymentId; }
         stopElapsedTimer();
         deployEventSource.close();
       }
       if (data.phase === 'running') {
+        document.getElementById('cancel-deploy-btn').style.display = 'none';
         stopElapsedTimer();
         showDeployComplete(data);
         deployEventSource.close();
@@ -567,7 +993,8 @@ function renderProgressSteps() {
   container.innerHTML = steps.map((step, i) => {
     const isComplete = i < currentIdx || currentPhase === 'running';
     const isCurrent = step.phase === currentPhase;
-    const cls = isComplete ? 'done' : isCurrent ? 'active' : '';
+    const isBuildingSkipped = step.phase === 'building' && buildingImageFound && isCurrent;
+    const cls = (isComplete || isBuildingSkipped) ? 'done' : isCurrent ? 'active' : '';
     const elapsed = isCurrent && !isTerminal ? Math.floor((Date.now() - phaseStartTime) / 1000) : null;
     const completedDur = phaseDurations[step.phase];
     const estimate = formatEstimate(step.phase);
@@ -582,16 +1009,39 @@ function renderProgressSteps() {
       timeHtml = `<span style="color:var(--gray-300)">${estimate}</span>`;
     }
 
+    // If building phase and image was found, treat as quick-complete (no spinner)
+    const buildingSkipped = step.phase === 'building' && buildingImageFound && isCurrent && !isTerminal;
+
     let iconHtml;
-    if (isComplete) iconHtml = '\u2713';
+    if (isComplete || buildingSkipped) iconHtml = '\u2713';
     else if (isCurrent && !isTerminal) iconHtml = '<div style="width:12px;height:12px;border:2px solid white;border-top-color:transparent;border-radius:50%" class="animate-spin"></div>';
     else iconHtml = i + 1;
+
+    // Override time and class for skipped build
+    if (buildingSkipped) {
+      timeHtml = `<span style="color:var(--green-600);font-size:10px">${esc(buildingImageFound)}</span>`;
+    }
+
+    // Show contract addresses under deploying_contracts step
+    let contractsHtml = '';
+    if (step.phase === 'deploying_contracts' && Object.keys(deployedContracts).length > 0) {
+      const entries = Object.entries(deployedContracts);
+      contractsHtml = `<div style="margin:4px 0 0 28px;font-size:10px;line-height:1.6">` +
+        entries.map(([name, addr]) =>
+          `<div style="display:flex;gap:6px;align-items:center">` +
+            `<span style="color:var(--green-600);font-weight:600">\u2713</span>` +
+            `<span style="color:var(--text-secondary);min-width:140px">${esc(name)}</span>` +
+            `<code style="color:var(--text-muted);font-size:9px">${esc(addr)}</code>` +
+          `</div>`
+        ).join('') +
+        `</div>`;
+    }
 
     return `<div class="progress-step ${cls}">
       <div class="step-icon">${iconHtml}</div>
       <div class="step-label">${step.label}</div>
       <div class="step-time">${timeHtml}</div>
-    </div>`;
+    </div>${contractsHtml}`;
   }).join('');
 
   renderEventLog();
@@ -654,8 +1104,8 @@ async function resumeDeployProgress(id) {
     const dep = depList.find(d => d.id === id);
     const storedEvents = histData.events || [];
 
-    // Restore state from stored events
-    selectedProgram = selectedProgram || { name: dep?.program_name || programDisplayName(dep?.program_slug) || 'L2', id: dep?.program_slug || '' };
+    // Save program info (will be restored after showView reset)
+    const restoredProgram = { name: dep?.program_name || programDisplayName(dep?.program_slug) || 'L2', id: dep?.program_slug || '' };
     currentPhase = statusData.phase || dep?.phase || 'building';
     buildLogLines = [];
     deployEvents = [];
@@ -687,8 +1137,9 @@ async function resumeDeployProgress(id) {
     if (buildLogLines.length > 500) buildLogLines = buildLogLines.slice(-500);
     phaseStartTime = lastPhaseTime;
 
-    // Show launch view at step 3
+    // Show launch view at step 3 (showView resets selectedProgram, so restore after)
     showView('launch');
+    selectedProgram = restoredProgram;
     launchGoStep(3);
 
     const deployName = dep?.name || 'L2';
@@ -700,6 +1151,7 @@ async function resumeDeployProgress(id) {
 
     renderProgressSteps();
     renderBuildLog();
+    if (dep) renderDeployConfigSummary(dep);
 
     // If still active, connect SSE for live updates + start timer
     if (histData.isActive) {
@@ -774,6 +1226,7 @@ async function loadDeployments() {
     const res = await fetch(`${API}/deployments`);
     const data = await res.json();
     const list = data.deployments || data || [];
+    cachedDeployList = list;
     const container = document.getElementById('deployments-list');
 
     if (list.length === 0) {
@@ -808,8 +1261,11 @@ async function loadDeployments() {
 function renderDeploymentRow(d) {
   const isExpanded = expandedDeploymentId === d.id;
   const statusClass = d.phase === 'running' ? 'running' : d.phase === 'error' ? 'error'
+    : d.phase === 'configured' ? 'configured'
     : ['building','pulling','l1_starting','deploying_contracts','l2_starting','starting_prover','starting_tools','checking_docker'].includes(d.phase) ? 'building' : 'stopped';
-  const ports = [d.l1_port ? `L1:${d.l1_port}` : '', d.l2_port ? `L2:${d.l2_port}` : ''].filter(Boolean).join(' · ') || '-';
+  const rowConfig = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+  const isTestnet = rowConfig.mode === 'testnet';
+  const ports = [!isTestnet && d.l1_port ? `L1:${d.l1_port}` : '', d.l2_port ? `L2:${d.l2_port}` : ''].filter(Boolean).join(' · ') || '-';
 
   return `
     <tr class="deploy-row" data-id="${d.id}">
@@ -820,12 +1276,12 @@ function renderDeploymentRow(d) {
           </svg>
         </button>
       </td>
-      <td onclick="${isDeploying(d.phase) ? `resumeDeployProgress('${d.id}')` : `showDeploymentDetail('${d.id}')`}" style="cursor:pointer">
+      <td onclick="${isDeploying(d.phase) ? `resumeDeployProgress('${d.id}')` : (d.phase === 'configured' || d.phase === 'error' || isIncomplete(d)) ? `editConfiguredDeploy('${d.id}')` : `showDeploymentDetail('${d.id}')`}" style="cursor:pointer">
         <div class="name-cell">
           <div class="icon-box">${esc((d.name || '?').charAt(0))}</div>
           <div>
             <div class="name-text">${esc(d.name)}</div>
-            <div style="font-size:11px;color:var(--text-muted)">${esc(d.program_name || programDisplayName(d.program_slug) || d.program_id)}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${esc(d.program_name || programDisplayName(d.program_slug) || d.program_id)}${isTestnet ? ` · <span style="color:var(--blue-500,#3b82f6)">L1 ${esc({sepolia:'Sepolia',holesky:'Holesky',custom:'Custom'}[(rowConfig.testnet||{}).network]||'Testnet')}</span>` : ''}</div>
           </div>
         </div>
       </td>
@@ -848,17 +1304,22 @@ function renderDeploymentRow(d) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
             </button>` : ''}
           ${d.phase === 'error' ? `
-            <button class="icon-btn" title="View Error" onclick="event.stopPropagation(); resumeDeployProgress('${d.id}')" style="color:var(--red-500,#ef4444)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            </button>
-            <button class="icon-btn" title="Retry" onclick="event.stopPropagation(); retryDeploy('${d.id}')" style="color:var(--green-500,#22c55e)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            <button class="icon-btn" title="Edit & Retry" onclick="event.stopPropagation(); editConfiguredDeploy('${d.id}')" style="color:var(--green-500,#22c55e)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>` : ''}
-          ${d.phase === 'stopped' ? `
+          ${d.phase === 'configured' ? `
+            <button class="icon-btn" title="Edit & Deploy" onclick="event.stopPropagation(); editConfiguredDeploy('${d.id}')" style="color:var(--green-600,#16a34a)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>` : ''}
+          ${d.phase === 'stopped' && !isIncomplete(d) ? `
             <button class="icon-btn" title="Start" onclick="event.stopPropagation(); startDeploy('${d.id}')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             </button>` : ''}
-          <button class="icon-btn" title="Details" onclick="event.stopPropagation(); showDeploymentDetail('${d.id}')">
+          ${isIncomplete(d) ? `
+            <button class="icon-btn" title="Resume Deploy" onclick="event.stopPropagation(); editConfiguredDeploy('${d.id}')" style="color:var(--green-600,#16a34a)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>` : ''}
+          <button class="icon-btn" title="${(d.phase === 'configured' || d.phase === 'error' || isIncomplete(d)) ? 'Edit Settings' : 'Details'}" onclick="event.stopPropagation(); ${(d.phase === 'configured' || d.phase === 'error' || isIncomplete(d)) ? `editConfiguredDeploy('${d.id}')` : `showDeploymentDetail('${d.id}')`}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
           <button class="icon-btn danger" title="Delete" onclick="event.stopPropagation(); deleteDeploy('${d.id}')">
@@ -874,9 +1335,14 @@ function isDeploying(phase) {
   return ['checking_docker','building','pulling','l1_starting','deploying_contracts','l2_starting','starting_prover','starting_tools'].includes(phase);
 }
 
+// Deployment was stopped before ever reaching 'running' — incomplete build
+function isIncomplete(d) {
+  return d.phase === 'stopped' && d.status !== 'active';
+}
+
 function statusLabel(phase) {
   const map = {
-    configured: 'Created', checking_docker: 'Checking...', building: 'Building',
+    configured: 'Configured', checking_docker: 'Checking...', building: 'Building',
     pulling: 'Pulling', l1_starting: 'Starting', deploying_contracts: 'Deploying',
     l2_starting: 'Starting', starting_prover: 'Starting', starting_tools: 'Starting',
     running: 'Running', stopped: 'Stopped', error: 'Error',
@@ -905,7 +1371,16 @@ async function loadContainersForDeploy(id) {
     const el = document.getElementById(`containers-${id}`);
     if (!el) return;
 
-    const containers = data.containers || [];
+    // Filter out L1 Explorer containers for testnet deployments
+    const depInfo = cachedDeployList.find(d => d.id === id);
+    const depConfig = depInfo?.config ? (typeof depInfo.config === 'string' ? JSON.parse(depInfo.config) : depInfo.config) : {};
+    const isTestnetDep = depConfig.mode === 'testnet';
+    const l1ExplorerServices = ['frontend-l1', 'backend-l1'];
+    const containers = (data.containers || []).filter(c => {
+      if (!isTestnetDep) return true;
+      const svc = c.Service || c.service || c.Name || c.name || '';
+      return !l1ExplorerServices.includes(svc);
+    });
     if (containers.length === 0) {
       el.innerHTML = '<div class="container-empty">No containers running</div>';
       return;
@@ -985,6 +1460,59 @@ function formatContainerPorts(ports) {
   return '-';
 }
 
+async function resumeDeploy() {
+  const resumeBtn = document.getElementById('resume-deploy-btn');
+  const id = resumeBtn?.dataset.id;
+  if (!id) return;
+  resumeBtn.disabled = true;
+  resumeBtn.textContent = 'Resuming...';
+  try {
+    document.getElementById('deploy-error-msg').style.display = 'none';
+    resumeBtn.style.display = 'none';
+    const resp = await fetch(`${API}/deployments/${id}/provision`, { method: 'POST' });
+    if (resp.ok) {
+      launchDeploymentId = id;
+      startDeployProgress(id);
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      document.getElementById('deploy-error-msg').style.display = 'block';
+      document.getElementById('deploy-error-msg').textContent = err.error || 'Failed to resume';
+      resumeBtn.style.display = '';
+      resumeBtn.disabled = false;
+      resumeBtn.textContent = 'Resume Deployment';
+    }
+  } catch (e) {
+    console.error('Resume failed:', e);
+    resumeBtn.disabled = false;
+    resumeBtn.textContent = 'Resume Deployment';
+  }
+}
+
+async function cancelDeploy() {
+  if (!launchDeploymentId) return;
+  const btn = document.getElementById('cancel-deploy-btn');
+  btn.disabled = true;
+  btn.textContent = 'Cancelling...';
+  try {
+    await fetch(`${API}/deployments/${launchDeploymentId}/stop`, { method: 'POST' });
+    if (deployEventSource) { deployEventSource.close(); deployEventSource = null; }
+    stopElapsedTimer();
+    document.getElementById('deploy-error-msg').style.display = 'block';
+    document.getElementById('deploy-error-msg').textContent = 'Deployment cancelled by user.';
+    document.getElementById('deploy-message').style.display = 'none';
+    btn.style.display = 'none';
+    // Show Resume button
+    const resumeBtn = document.getElementById('resume-deploy-btn');
+    if (resumeBtn) { resumeBtn.style.display = ''; resumeBtn.dataset.id = launchDeploymentId; }
+    renderProgressSteps(); // Re-render to stop spinner and show error state
+    loadDeployments();
+  } catch (e) {
+    console.error('Cancel failed:', e);
+    btn.disabled = false;
+    btn.textContent = 'Cancel Deployment';
+  }
+}
+
 async function stopDeploy(id) {
   try {
     await fetch(`${API}/deployments/${id}/stop`, { method: 'POST' });
@@ -999,6 +1527,134 @@ async function startDeploy(id) {
   } catch (e) { console.error('Start failed:', e); }
 }
 
+async function editConfiguredDeploy(id) {
+  try {
+    const res = await fetch(`${API}/deployments/${id}`);
+    const data = await res.json();
+    const dep = data.deployment || data;
+    const config = dep.config ? (typeof dep.config === 'string' ? JSON.parse(dep.config) : dep.config) : {};
+
+    // Ensure programs are loaded
+    if (programs.length === 0) await loadPrograms();
+
+    // Navigate to launch step 2 first (showView resets selectedProgram)
+    showView('launch');
+
+    // Restore selectedProgram after showView reset
+    const slug = dep.program_slug || 'evm-l2';
+    selectedProgram = programs.find(p => (p.program_id || p.id) === slug) || { id: slug, name: programDisplayName(slug) || slug };
+
+    launchGoStep(2);
+
+    // Restore form fields
+    document.getElementById('launch-name').value = dep.name || '';
+    document.getElementById('launch-chain-id').value = dep.chain_id || '';
+
+    // Restore L1 node selection
+    if (config.l1Image) {
+      document.getElementById('launch-l1-image').value = config.l1Image;
+      onL1NodeChange();
+    }
+
+    // Restore testnet config
+    if (config.testnet) {
+      if (config.testnet.l1RpcUrl) {
+        const rpcInput = document.getElementById('launch-testnet-rpc');
+        rpcInput.value = config.testnet.l1RpcUrl;
+        rpcInput.style.borderColor = '';
+      }
+      if (config.testnet.keychainKeyName) {
+        await loadKeychainKeys();
+        document.getElementById('launch-testnet-keychain-key').value = config.testnet.keychainKeyName;
+        await onKeychainKeyChange();
+      }
+      // Restore role keys
+      const roleKeyMap = {
+        committerKeychainKey: { sel: 'launch-testnet-committer-key', role: 'committer' },
+        proofCoordinatorKeychainKey: { sel: 'launch-testnet-proof-coordinator-key', role: 'proof-coordinator' },
+        bridgeOwnerKeychainKey: { sel: 'launch-testnet-bridge-owner-key', role: 'bridge-owner' },
+      };
+      for (const [cfgKey, { sel, role }] of Object.entries(roleKeyMap)) {
+        if (config.testnet[cfgKey]) {
+          const el = document.getElementById(sel);
+          if (el) { el.value = config.testnet[cfgKey]; await onRoleKeyChange(role); }
+        }
+      }
+      if (config.testnet.l1ChainId && document.getElementById('launch-testnet-l1-chainid')) {
+        document.getElementById('launch-testnet-l1-chainid').value = config.testnet.l1ChainId;
+      }
+    }
+
+    if (config.deployDir) {
+      document.getElementById('launch-deploy-dir').value = config.deployDir;
+    }
+
+    // Store the existing deployment ID so Deploy uses it instead of creating a new one
+    launchDeploymentId = dep.id;
+
+    // Show deployment progress info if partially deployed
+    const deployBtn = document.getElementById('launch-deploy-btn');
+    const hasContracts = dep.bridge_address && dep.proposer_address;
+    const wasDeployed = dep.phase === 'error' || dep.phase === 'stopped' || dep.bridge_address || dep.docker_project;
+
+    if (wasDeployed) {
+      deployBtn.textContent = 'Continue Deploy';
+    } else {
+      deployBtn.textContent = 'Deploy L2';
+    }
+
+    // Show saved contract/deployment info
+    const infoEl = document.getElementById('launch-error');
+    const infoLines = [];
+    if (dep.phase === 'error' && dep.error_message) {
+      infoLines.push(`Last error: ${dep.error_message}`);
+    }
+    if (dep.bridge_address) infoLines.push(`Bridge: ${dep.bridge_address}`);
+    if (dep.proposer_address) infoLines.push(`Proposer: ${dep.proposer_address}`);
+    if (dep.bridge_address && dep.proposer_address) {
+      infoLines.push('Contracts already deployed — will be reused (no extra gas)');
+    } else if (dep.bridge_address && !dep.proposer_address) {
+      infoLines.push('Bridge deployed but Proposer missing — contracts will be redeployed');
+    }
+    if (dep.docker_project) infoLines.push(`Docker project: ${dep.docker_project}`);
+
+    if (infoLines.length > 0) {
+      const statusDiv = document.getElementById('testnet-save-status');
+      if (statusDiv) {
+        statusDiv.innerHTML = infoLines.map(l => `<div style="margin-bottom:2px;color:var(--text-secondary);font-size:11px">${esc(l)}</div>`).join('');
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load configured deployment:', e);
+  }
+}
+
+async function provisionDeploy(id) {
+  try {
+    const depRes = await fetch(`${API}/deployments`);
+    const depData = await depRes.json();
+    const depList = depData.deployments || depData || [];
+    const dep = depList.find(d => d.id === id);
+    const resp = await fetch(`${API}/deployments/${id}/provision`, { method: 'POST' });
+    if (resp.ok) {
+      launchDeploymentId = id;
+      showView('launch');
+      // Set selectedProgram after showView reset
+      if (dep) {
+        selectedProgram = { name: dep.program_name || programDisplayName(dep.program_slug) || 'L2', id: dep.program_slug || '', deployName: dep.name || 'L2' };
+      }
+      launchGoStep(3);
+      startDeployProgress(id);
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      console.error('Provision failed:', err.error || 'Unknown error');
+      loadDeployments();
+    }
+  } catch (e) {
+    console.error('Provision failed:', e);
+  }
+}
+
 async function retryDeploy(id) {
   try {
     // Stop existing containers without deleting DB record
@@ -1009,14 +1665,14 @@ async function retryDeploy(id) {
     const depData = await depRes.json();
     const depList = depData.deployments || depData || [];
     const dep = depList.find(d => d.id === id);
-    if (dep) {
-      selectedProgram = { name: dep.program_name || programDisplayName(dep.program_slug) || 'L2', id: dep.program_slug || '', deployName: dep.name || 'L2' };
-    }
-
     const resp = await fetch(`${API}/deployments/${id}/provision`, { method: 'POST' });
     if (resp.ok) {
       launchDeploymentId = id;
       showView('launch');
+      // Set selectedProgram after showView reset
+      if (dep) {
+        selectedProgram = { name: dep.program_name || programDisplayName(dep.program_slug) || 'L2', id: dep.program_slug || '', deployName: dep.name || 'L2' };
+      }
       launchGoStep(3);
       startDeployProgress(id);
     } else {
@@ -1144,7 +1800,7 @@ function renderOverviewTab() {
   }
 
   let html = '';
-  if (d.error_message) html += `<div class="error-box" style="margin-bottom:10px">${esc(d.error_message)}</div>`;
+  if (d.error_message && d.phase !== 'running') html += `<div class="error-box" style="margin-bottom:10px">${esc(d.error_message)}</div>`;
 
   // Helper: find container state
   const containers = detailStatus?.containers || [];
@@ -1203,7 +1859,20 @@ function renderOverviewTab() {
 
   // Tools services
   html += '<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin:8px 0 4px;padding-top:8px;border-top:1px solid var(--border-light)">Tools</div>';
-  html += svcRow('L1 Explorer', 'frontend-l1', d.tools_l1_explorer_port ? `:${d.tools_l1_explorer_port}` : null, true);
+  if (!isTestnetDeploy) {
+    html += svcRow('L1 Explorer', 'frontend-l1', d.tools_l1_explorer_port ? `:${d.tools_l1_explorer_port}` : null, true);
+  } else {
+    // Testnet: link to public explorer instead of local L1 Explorer
+    const explorerUrls = { sepolia: 'https://sepolia.etherscan.io', holesky: 'https://holesky.etherscan.io' };
+    const pubUrl = explorerUrls[(dConfig.testnet || {}).network];
+    if (pubUrl) {
+      html += `<div class="svc-row">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--blue-500);flex-shrink:0"></span>
+        <span class="svc-name">L1 Explorer</span>
+        <a href="${esc(pubUrl)}" target="_blank" style="font-size:11px;color:var(--blue-600)">${esc(pubUrl.replace('https://', ''))} ↗</a>
+      </div>`;
+    }
+  }
   html += svcRow('L2 Explorer', 'frontend-l2', d.tools_l2_explorer_port ? `:${d.tools_l2_explorer_port}` : null, true);
   html += svcRow('Dashboard', 'bridge-ui', d.tools_bridge_ui_port ? `:${d.tools_bridge_ui_port}` : null, true);
 
@@ -1231,11 +1900,13 @@ function renderOverviewTab() {
     if (timelock) contracts.push({ label: 'Timelock', addr: timelock });
     if (sp1Verifier) contracts.push({ label: 'SP1 Verifier', addr: sp1Verifier });
     if (contracts.length > 0) {
-      const explorerBase = d.tools_l1_explorer_port ? `http://localhost:${d.tools_l1_explorer_port}` : null;
-      const etherscanBaseUrls = { 1: 'https://etherscan.io', 11155111: 'https://sepolia.etherscan.io' };
-      const etherscanBase = etherscanBaseUrls[detailMonitoring?.l1?.chainId] || null;
+      const explorerBase = (!isTestnetDeploy && d.tools_l1_explorer_port) ? `http://localhost:${d.tools_l1_explorer_port}` : null;
+      const etherscanByNetwork = { sepolia: 'https://sepolia.etherscan.io', holesky: 'https://holesky.etherscan.io' };
+      const etherscanByChainId = { 1: 'https://etherscan.io', 11155111: 'https://sepolia.etherscan.io', 17000: 'https://holesky.etherscan.io' };
+      const etherscanBase = etherscanByNetwork[(dConfig.testnet || {}).network] || etherscanByChainId[detailMonitoring?.l1?.chainId] || null;
       const linkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
-      html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">L1 Deployed Contracts</h3>';
+      const l1ContractTitle = isTestnetDeploy ? `L1 Deployed Contracts (${esc({sepolia:'Sepolia',holesky:'Holesky',custom:'Custom'}[(dConfig.testnet||{}).network]||'Testnet')})` : 'L1 Deployed Contracts';
+      html += `<div class="card"><h3 style="font-size:13px;margin-bottom:6px">${l1ContractTitle}</h3>`;
       for (const c of contracts) {
         let links = '';
         if (explorerBase) links += `<a href="${explorerBase}/address/${esc(c.addr)}" target="_blank" style="color:var(--blue-600);margin-left:4px" title="Local Explorer">${linkIcon}</a>`;
@@ -1251,7 +1922,7 @@ function renderOverviewTab() {
   html += '<div style="display:flex;flex-direction:column;gap:14px">';
   if (detailMonitoring && (detailMonitoring.l1 || detailMonitoring.l2)) {
     html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">Chain Info</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-    if (detailMonitoring.l1) html += `<div style="padding:6px 8px;background:var(--bg);border-radius:6px"><div style="font-weight:600;font-size:11px;margin-bottom:2px">L1</div><div style="font-size:11px"><span style="color:var(--text-muted)">Block</span> <span style="font-family:monospace">${detailMonitoring.l1.blockNumber ?? '-'}</span></div><div style="font-size:11px"><span style="color:var(--text-muted)">Chain</span> <span style="font-family:monospace">${detailMonitoring.l1.chainId ?? '-'}</span></div></div>`;
+    if (detailMonitoring.l1) html += `<div style="padding:6px 8px;background:var(--bg);border-radius:6px"><div style="font-weight:600;font-size:11px;margin-bottom:2px">L1${isTestnetDeploy ? ` (${esc({sepolia:'Sepolia',holesky:'Holesky',custom:'Custom'}[(dConfig.testnet||{}).network]||'Testnet')})` : ''}</div><div style="font-size:11px"><span style="color:var(--text-muted)">Block</span> <span style="font-family:monospace">${detailMonitoring.l1.blockNumber ?? '-'}</span></div><div style="font-size:11px"><span style="color:var(--text-muted)">Chain</span> <span style="font-family:monospace">${detailMonitoring.l1.chainId ?? '-'}</span></div></div>`;
     if (detailMonitoring.l2) html += `<div style="padding:6px 8px;background:var(--bg);border-radius:6px"><div style="font-weight:600;font-size:11px;margin-bottom:2px">L2</div><div style="font-size:11px"><span style="color:var(--text-muted)">Block</span> <span style="font-family:monospace">${detailMonitoring.l2.blockNumber ?? '-'}</span></div><div style="font-size:11px"><span style="color:var(--text-muted)">Chain</span> <span style="font-family:monospace">${detailMonitoring.l2.chainId ?? '-'}</span></div></div>`;
     html += '</div></div>';
   }
@@ -1459,10 +2130,30 @@ function renderConfigTab() {
         <dt>L1 Network</dt><dd>${esc(netNames[testnet.network] || testnet.network || '-')}</dd>
         <dt>L1 Chain ID</dt><dd>${esc(String(testnet.l1ChainId || '-'))}</dd>
         <dt>L1 RPC URL</dt><dd style="word-break:break-all"><code>${esc(testnet.l1RpcUrl || d.rpc_url || '-')}</code></dd>
-        <dt>Deployer Key</dt><dd><code>${testnet.deployerPrivateKey ? '0x' + '•'.repeat(16) + testnet.deployerPrivateKey.slice(-6) : '-'}</code></dd>
+      </dl>
+      <h4 style="margin:12px 0 8px;font-size:13px;color:var(--gray-600,#4b5563)">Account Roles</h4>
+      <dl class="info-grid">
+        <dt>Deployer</dt><dd><code>${testnet.keychainKeyName ? `🔑 ${esc(testnet.keychainKeyName)}` : 'Not configured'}</code><br><span style="font-size:11px;color:var(--gray-400)">Deploys contracts to L1</span></dd>
+        <dt>Committer</dt><dd><code>${testnet.committerKeychainKey ? `🔑 ${esc(testnet.committerKeychainKey)}` : testnet.keychainKeyName ? `🔑 ${esc(testnet.keychainKeyName)} <span style="opacity:0.5">(= Deployer)</span>` : '-'}</code><br><span style="font-size:11px;color:var(--gray-400)">Commits L2 batches to L1</span></dd>
+        <dt>Proof Coordinator</dt><dd><code>${testnet.proofCoordinatorKeychainKey ? `🔑 ${esc(testnet.proofCoordinatorKeychainKey)}` : testnet.keychainKeyName ? `🔑 ${esc(testnet.keychainKeyName)} <span style="opacity:0.5">(= Deployer)</span>` : '-'}</code><br><span style="font-size:11px;color:var(--gray-400)">Sends ZK proofs to L1</span></dd>
+        <dt>Bridge Owner</dt><dd><code>${testnet.bridgeOwnerKeychainKey ? `🔑 ${esc(testnet.bridgeOwnerKeychainKey)}` : testnet.keychainKeyName ? `🔑 ${esc(testnet.keychainKeyName)} <span style="opacity:0.5">(= Deployer)</span>` : '-'}</code><br><span style="font-size:11px;color:var(--gray-400)">Security council: bridge + proposer ownership</span></dd>
       </dl>
       <div style="margin-top:8px;padding:8px 12px;background:var(--blue-50,#eff6ff);border-radius:6px;font-size:12px;color:var(--blue-700,#1d4ed8)">
         L2 contracts are deployed on ${esc(netNames[testnet.network] || 'testnet')} L1. No built-in L1 node is used.
+      </div>
+    </div>`;
+  } else {
+    // Local mode: show hardcoded dev account roles
+    testnetHtml = `
+    <div class="card" style="margin-bottom:24px">
+      <h3 style="margin-bottom:12px">Account Roles <span style="font-size:11px;font-weight:400;color:var(--gray-400)">(dev keys — local only)</span></h3>
+      <dl class="info-grid">
+        <dt>Deployer / Committer</dt><dd><code style="font-size:11px">0x3D1e15a1a55578f7c920884a9943b3B354b4E06F</code><br><span style="font-size:11px;color:var(--gray-400)">Deploys contracts + commits batches</span></dd>
+        <dt>Proof Coordinator</dt><dd><code style="font-size:11px">0xE25583099BA105D9ec0A67f5Ae86D90e50036425</code><br><span style="font-size:11px;color:var(--gray-400)">Sends ZK proofs to L1</span></dd>
+        <dt>Bridge Owner</dt><dd><code style="font-size:11px">0x4417092b70a3e5f10dc504d0947dd256b965fc62</code><br><span style="font-size:11px;color:var(--gray-400)">Security council: bridge + proposer ownership</span></dd>
+      </dl>
+      <div style="margin-top:8px;padding:8px 12px;background:var(--amber-50,#fffbeb);border-radius:6px;font-size:12px;color:var(--amber-700,#b45309)">
+        These are pre-funded development keys for local Docker deployment. On testnet/mainnet, use separate funded accounts.
       </div>
     </div>`;
   }
@@ -1587,3 +2278,12 @@ setInterval(checkHealth, 15000);
 loadDeployments();
 // Show launch button in header for deployments view
 document.getElementById('header-launch-btn').style.display = '';
+// Handle URL parameters (e.g. ?view=launch from Messenger)
+const urlParams = new URLSearchParams(window.location.search);
+const editId = urlParams.get('edit');
+const initialView = urlParams.get('view');
+if (editId) {
+  editConfiguredDeploy(editId);
+} else if (initialView) {
+  showView(initialView);
+}

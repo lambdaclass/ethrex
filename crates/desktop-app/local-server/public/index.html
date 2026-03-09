@@ -156,7 +156,7 @@
                   </p>
                 </div>
                 <label style="margin-bottom:8px">L1 RPC URL *
-                  <input type="text" id="launch-testnet-rpc" placeholder="https://sepolia.infura.io/v3/YOUR_KEY">
+                  <input type="text" id="launch-testnet-rpc" placeholder="https://sepolia.infura.io/v3/YOUR_KEY" oninput="this.style.borderColor=this.value.trim()?'':'#f87171'" style="border-color:#f87171">
                   <p class="form-hint">Ethereum L1 RPC endpoint. Must be accessible from this machine.</p>
                 </label>
                 <div id="testnet-custom-chainid" style="display:none">
@@ -165,16 +165,66 @@
                     <p class="form-hint">Chain ID of the custom L1 network.</p>
                   </label>
                 </div>
-                <label style="margin-bottom:8px">Deployer Private Key *
-                  <input type="password" id="launch-testnet-deployer-pk" placeholder="0x...">
-                  <p class="form-hint">Account that deploys L1 contracts. Must be funded with testnet ETH.</p>
-                </label>
-                <label style="margin-bottom:8px">Deployer Address
-                  <input type="text" id="launch-testnet-deployer-addr" placeholder="0x... (for balance check)">
-                  <p class="form-hint">Corresponding address of the private key above. Used for balance verification.</p>
-                </label>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                  <p style="font-weight:600;font-size:13px;margin:0">Wallet Configuration</p>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <button type="button" class="btn-secondary" onclick="registerKeychainKey()" style="font-size:11px;white-space:nowrap;padding:4px 8px">+ Register Key</button>
+                    <button type="button" class="btn-secondary" onclick="refreshKeychainKeys()" style="font-size:11px;white-space:nowrap;padding:4px 8px" title="Refresh key list">↻</button>
+                  </div>
+                </div>
+                <p class="form-hint" style="margin-bottom:8px">
+                  <span class="guide-ko" style="display:none">비밀키는 macOS 시스템 다이얼로그로 입력되어 키체인에 저장됩니다. 앱에서는 키 이름만 참조합니다.</span>
+                  <span class="guide-en">Private keys are stored in macOS Keychain. The app only references key names. All roles default to the Deployer key if not set separately.</span>
+                  <span style="font-size:10px;color:var(--blue-500,#3b82f6);cursor:pointer;user-select:none;margin-left:4px" onclick="toggleGuideLocale()">
+                    <span class="guide-ko" style="display:none">EN</span><span class="guide-en">한국어</span>
+                  </span>
+                </p>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+                  <div style="border-left:4px solid #2563eb;border-radius:8px;padding:10px 10px 10px 12px;background:#eff6ff;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                    <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px">Deployer *</div>
+                    <select id="launch-testnet-keychain-key" onchange="onKeychainKeyChange()" style="margin:0 0 2px;font-size:12px;width:100%">
+                      <option value="">Select key...</option>
+                    </select>
+                    <input type="text" id="launch-testnet-deployer-addr" placeholder="—" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                    <p style="font-size:10px;color:#2563eb;margin:2px 0 0">Deploys contracts to L1 (one-time)</p>
+                    <div id="balance-status-deployer"></div>
+                  </div>
+                  <div style="border-left:4px solid #16a34a;border-radius:8px;padding:10px 10px 10px 12px;background:#f0fdf4;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                    <div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:4px">Committer</div>
+                    <select id="launch-testnet-committer-key" onchange="onRoleKeyChange('committer')" style="margin:0 0 2px;font-size:12px;width:100%">
+                      <option value="">Same as Deployer</option>
+                    </select>
+                    <input type="text" id="launch-testnet-committer-addr" placeholder="= Deployer" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                    <p style="font-size:10px;color:#16a34a;margin:2px 0 0">Commits L2 batches to L1 (recurring)</p>
+                    <div id="balance-status-committer"></div>
+                  </div>
+                  <div style="border-left:4px solid #9333ea;border-radius:8px;padding:10px 10px 10px 12px;background:#faf5ff;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                    <div style="font-size:12px;font-weight:700;color:#7e22ce;margin-bottom:4px">Proof Coordinator</div>
+                    <select id="launch-testnet-proof-coordinator-key" onchange="onRoleKeyChange('proof-coordinator')" style="margin:0 0 2px;font-size:12px;width:100%">
+                      <option value="">Same as Deployer</option>
+                    </select>
+                    <input type="text" id="launch-testnet-proof-coordinator-addr" placeholder="= Deployer" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                    <p style="font-size:10px;color:#9333ea;margin:2px 0 0">Sends ZK proofs to L1 (recurring)</p>
+                    <div id="balance-status-proof-coordinator"></div>
+                  </div>
+                  <div style="border-left:4px solid #d97706;border-radius:8px;padding:10px 10px 10px 12px;background:#fffbeb;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                    <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:4px">Bridge Owner</div>
+                    <select id="launch-testnet-bridge-owner-key" onchange="onRoleKeyChange('bridge-owner')" style="margin:0 0 2px;font-size:12px;width:100%">
+                      <option value="">Same as Deployer</option>
+                    </select>
+                    <input type="text" id="launch-testnet-bridge-owner-addr" placeholder="= Deployer" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                    <p style="font-size:10px;color:#d97706;margin:2px 0 0">Security council: bridge + proposer (one-time)</p>
+                    <div id="balance-status-bridge-owner"></div>
+                  </div>
+                </div>
+
                 <div id="testnet-balance-check" style="margin-bottom:8px"></div>
-                <button type="button" class="btn-secondary" onclick="checkTestnetBalance()" style="margin-bottom:8px;font-size:11px">Check Balance</button>
+                <div style="display:flex;gap:6px;margin-bottom:8px">
+                  <button type="button" class="btn-secondary" onclick="checkTestnetBalance()" style="font-size:11px">Check All Balances</button>
+                  <button type="button" class="btn-secondary" onclick="saveTestnetSettings()" style="font-size:11px">💾 Save Settings</button>
+                </div>
+                <div id="testnet-save-status" style="font-size:11px;margin-bottom:4px"></div>
               </div>
             </div>
 
@@ -210,6 +260,7 @@
         <div id="launch-step3" class="launch-step" style="display:none">
           <h2>Deploying Your L2</h2>
           <p class="step-desc" id="deploy-info-text"></p>
+          <div id="deploy-config-summary" class="config-summary" style="display:none"></div>
           <div class="deploy-card">
             <div class="elapsed-bar">
               <div>Total elapsed: <span class="time" id="deploy-elapsed">0s</span></div>
@@ -230,6 +281,8 @@
           </div>
           <div class="form-actions" style="margin-top:16px">
             <button class="btn-primary" id="goto-dashboard-btn" style="display:none" onclick="goToDashboard()">Go to Dashboard</button>
+            <button class="btn-secondary" id="cancel-deploy-btn" style="display:none" onclick="cancelDeploy()">Cancel Deployment</button>
+            <button class="btn-primary" id="resume-deploy-btn" style="display:none" onclick="resumeDeploy()">Resume Deployment</button>
             <button class="btn-secondary" onclick="showView('deployments')">View All L2s</button>
           </div>
         </div>
@@ -300,6 +353,6 @@
     </footer>
   </div>
 
-  <script src="/app.js?v=14"></script>
+  <script src="/app.js?v=20"></script>
 </body>
 </html>

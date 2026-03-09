@@ -14,16 +14,34 @@ interface BridgeUIConfig {
 const SERVICE_NAME_PREFIXES = ['tokamak-app-', 'zk-dex-tools-'] as const
 
 const CORE_SERVICES = [
-  { label: 'L1 Node', service: 'tokamak-app-l1', portKey: 'l1Port' as const },
-  { label: 'L2 Node', service: 'tokamak-app-l2', portKey: 'l2Port' as const },
-  { label: 'Prover', service: 'tokamak-app-prover', portKey: null },
+  { label: 'L1 Node', service: 'tokamak-app-l1', portKey: 'l1Port' as const, localOnly: true },
+  { label: 'L2 Node', service: 'tokamak-app-l2', portKey: 'l2Port' as const, localOnly: false },
+  { label: 'Prover', service: 'tokamak-app-prover', portKey: null, localOnly: false },
 ]
 
-const TOOLS_SERVICES: { label: string; service: string; portKey: keyof L2Config | null }[] = [
-  { label: 'L1 Explorer', service: 'frontend-l1', portKey: 'toolsL1ExplorerPort' },
+const TOOLS_SERVICES: { label: string; service: string; portKey: keyof L2Config | null; localOnly?: boolean }[] = [
+  { label: 'L1 Explorer', service: 'frontend-l1', portKey: 'toolsL1ExplorerPort', localOnly: true },
   { label: 'L2 Explorer', service: 'frontend-l2', portKey: 'toolsL2ExplorerPort' },
   { label: 'Dashboard', service: 'bridge-ui', portKey: 'toolsBridgeUIPort' },
 ]
+
+const TESTNET_EXPLORER_URLS: Record<string, string> = {
+  sepolia: 'https://sepolia.etherscan.io',
+  holesky: 'https://holesky.etherscan.io',
+}
+
+const TESTNET_NETWORK_NAMES: Record<string, string> = {
+  sepolia: 'Sepolia',
+  holesky: 'Holesky',
+}
+
+/** Mask API key in RPC URL: https://...alchemy.com/v2/abcdef123 → https://...alchemy.com/v2/abc***23 */
+function maskRpcUrl(url: string): string {
+  return url.replace(/(\/v[12]\/)([a-zA-Z0-9_-]+)/, (_, prefix, key) => {
+    if (key.length <= 6) return `${prefix}${'*'.repeat(key.length)}`
+    return `${prefix}${key.slice(0, 3)}***${key.slice(-2)}`
+  })
+}
 
 interface Props {
   l2: L2Config
@@ -86,6 +104,10 @@ export default function L2DetailServicesTab({
     } catch (e) { console.error('Failed to open URL:', e) }
   }
 
+  const isTestnet = l2.networkMode === 'testnet'
+  const testnetNetworkName = l2.testnetNetwork ? (TESTNET_NETWORK_NAMES[l2.testnetNetwork] || l2.testnetNetwork) : 'External'
+  const testnetExplorerUrl = l2.testnetNetwork ? TESTNET_EXPLORER_URLS[l2.testnetNetwork] : null
+
   return (
     <>
       {/* Docker Services */}
@@ -98,6 +120,21 @@ export default function L2DetailServicesTab({
           <span className="text-[9px] uppercase tracking-wider text-[var(--color-text-secondary)] font-medium">Core</span>
         </div>
         {CORE_SERVICES.map(svc => {
+          // Testnet: replace L1 Node with external RPC info
+          if (isTestnet && svc.localOnly) {
+            return (
+              <div key={svc.service} className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#3b82f6' }} />
+                <span className="text-[12px] font-medium flex-shrink-0">L1 ({testnetNetworkName})</span>
+                <span className="text-[11px] text-[#2563eb]">external</span>
+                {l2.testnetL1RpcUrl && (
+                  <code className="text-[10px] font-mono text-[var(--color-text-secondary)] ml-auto truncate max-w-[180px]" title={maskRpcUrl(l2.testnetL1RpcUrl)}>
+                    {maskRpcUrl(l2.testnetL1RpcUrl).replace(/^https?:\/\//, '').slice(0, 30)}
+                  </code>
+                )}
+              </div>
+            )
+          }
           const state = svcState(svc.service)
           const running = state === 'running'
           const port = svc.portKey ? (l2[svc.portKey] ? `:${l2[svc.portKey]}` : null) : null
@@ -148,6 +185,25 @@ export default function L2DetailServicesTab({
           })()}
         </div>
         {TOOLS_SERVICES.map(svc => {
+          // Testnet: replace L1 Explorer with public Etherscan link
+          if (isTestnet && svc.localOnly) {
+            if (!testnetExplorerUrl) return null
+            return (
+              <div key={svc.service} className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#3b82f6' }} />
+                <span className="text-[12px] font-medium flex-shrink-0">L1 Explorer</span>
+                <button
+                  onClick={() => openInBrowser(testnetExplorerUrl)}
+                  className="ml-auto flex items-center gap-1 text-[10px] font-mono text-[#3b82f6] hover:opacity-70 cursor-pointer bg-transparent border-none"
+                >
+                  {testnetExplorerUrl.replace('https://', '')}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </div>
+            )
+          }
           const state = svcState(svc.service)
           const running = state === 'running'
           const dbPort = svc.portKey ? (l2[svc.portKey] as number | null) : null
@@ -226,7 +282,9 @@ export default function L2DetailServicesTab({
         if (proposer) contracts.push({ label: 'OnChainProposer', addr: proposer })
         if (timelock) contracts.push({ label: 'Timelock', addr: timelock })
         if (sp1Verifier) contracts.push({ label: 'SP1 Verifier', addr: sp1Verifier })
-        const explorerBase = l2.toolsL1ExplorerPort ? `http://localhost:${l2.toolsL1ExplorerPort}` : null
+        const explorerBase = isTestnet
+          ? testnetExplorerUrl
+          : l2.toolsL1ExplorerPort ? `http://localhost:${l2.toolsL1ExplorerPort}` : null
         if (contracts.length === 0) return null
         return (
           <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
