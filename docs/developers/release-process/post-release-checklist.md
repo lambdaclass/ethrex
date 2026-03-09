@@ -1,4 +1,4 @@
-# Etherx Post-Release Checklist
+# Ethrex Post-Release Checklist
 
 This checklist helps ensure the successful completion of the ethrex release process. After publishing a new release, follow the steps below to verify that everything is in order.
 
