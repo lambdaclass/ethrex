@@ -145,8 +145,11 @@ impl TrieLayerCache {
         None
     }
 
-    /// Looks up a FKV leaf value starting from the layer identified by `state_root`.
-    pub fn get_leaf_value(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
+    /// Looks up the RLP-encoded bytes for a key, checking all three maps (leaf values,
+    /// account nodes, storage nodes). This is the equivalent of the old flat `get()` method
+    /// and is needed by callers like `has_state_root` that call `TrieDB::get()` expecting
+    /// to receive encoded node bytes.
+    pub fn get_encoded(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
         if !self.bloom.contains(key) {
             return None;
         }
@@ -156,6 +159,12 @@ impl TrieLayerCache {
         while let Some(layer) = self.layers.get(&current_state_root) {
             if let Some(value) = layer.leaf_values.get(key) {
                 return Some(value.clone());
+            }
+            if let Some(entry) = layer.account_nodes.get(key) {
+                return Some(entry.encoded.clone());
+            }
+            if let Some(entry) = layer.storage_nodes.get(key) {
+                return Some(entry.encoded.clone());
             }
             current_state_root = layer.parent;
             if current_state_root == state_root {
@@ -417,8 +426,10 @@ impl TrieDB for TrieWrapper {
             Some(prefix) => prefix.concat(&key),
             None => key,
         };
-        // Check leaf value cache (FKV entries)
-        if let Some(value) = self.inner.get_leaf_value(self.state_root, key.as_ref()) {
+        // Check all layer cache maps (leaf values, account nodes, storage nodes).
+        // This is needed because callers like `has_state_root` use `get()` to retrieve
+        // the root node's encoded bytes, not just FKV leaf values.
+        if let Some(value) = self.inner.get_encoded(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
         self.db.get(key)
