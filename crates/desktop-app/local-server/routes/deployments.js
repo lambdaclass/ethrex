@@ -90,7 +90,7 @@ router.put("/:id", (req, res) => {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
-    const allowedFields = ["name", "chain_id", "rpc_url", "is_public"];
+    const allowedFields = ["name", "chain_id", "rpc_url", "is_public", "hashtags"];
     const updates = [];
     const values = [];
 

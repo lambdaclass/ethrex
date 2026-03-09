@@ -293,7 +293,7 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         head_block_hash,
         max_tries,
-        1000,
+        12000,
         ethrex_common::Address::default(),
     );
     tracker.spawn(block_producer_engine);

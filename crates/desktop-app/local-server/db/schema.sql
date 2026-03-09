@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   phase TEXT DEFAULT 'configured',
   bridge_address TEXT,
   proposer_address TEXT,
+  timelock_address TEXT,
+  sp1_verifier_address TEXT,
   error_message TEXT,
   tools_l1_explorer_port INTEGER,
   tools_l2_explorer_port INTEGER,
@@ -26,6 +28,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   env_project_id TEXT,
   env_updated_at INTEGER,
   is_public INTEGER DEFAULT 0,
+  hashtags TEXT,
   created_at INTEGER NOT NULL
 );
 

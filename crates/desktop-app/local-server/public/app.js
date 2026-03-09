@@ -975,6 +975,7 @@ let detailPollInterval = null;
 let detailDeployment = null;
 let detailStatus = null;
 let detailMonitoring = null;
+let detailContracts = null;
 let detailTab = 'overview';
 
 async function showDeploymentDetail(id) {
@@ -983,6 +984,7 @@ async function showDeploymentDetail(id) {
   detailDeployment = null;
   detailStatus = null;
   detailMonitoring = null;
+  detailContracts = null;
   detailTab = 'overview';
   if (detailPollInterval) { clearInterval(detailPollInterval); detailPollInterval = null; }
   if (logEventSource) { logEventSource.close(); logEventSource = null; }
@@ -1119,12 +1121,31 @@ function renderOverviewTab() {
 
   html += '</div>'; // card
 
-  // Contracts
-  if (d.bridge_address || d.proposer_address) {
-    html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">Contracts</h3>';
-    if (d.bridge_address) html += `<div class="endpoint-row"><span class="ep-label">Bridge</span><code style="font-size:10px">${esc(d.bridge_address)}</code></div>`;
-    if (d.proposer_address) html += `<div class="endpoint-row"><span class="ep-label">Proposer</span><code style="font-size:10px">${esc(d.proposer_address)}</code></div>`;
-    html += '</div>';
+  // Contracts — prefer detailContracts (from bridge-ui config.json), fallback to DB
+  {
+    const contracts = [];
+    const src = detailContracts || {};
+    const bridge = src.bridge_address || d.bridge_address;
+    const proposer = src.on_chain_proposer_address || d.proposer_address;
+    const timelock = src.timelock_address || d.timelock_address;
+    const sp1Verifier = src.sp1_verifier_address || d.sp1_verifier_address;
+    if (bridge) contracts.push({ label: 'CommonBridge', addr: bridge });
+    if (proposer) contracts.push({ label: 'OnChainProposer', addr: proposer });
+    if (timelock) contracts.push({ label: 'Timelock', addr: timelock });
+    if (sp1Verifier) contracts.push({ label: 'SP1 Verifier', addr: sp1Verifier });
+    if (contracts.length > 0) {
+      const explorerBase = d.tools_l1_explorer_port ? `http://localhost:${d.tools_l1_explorer_port}` : null;
+      const etherscanBase = detailMonitoring?.l1?.chainId === 1 ? 'https://etherscan.io' : detailMonitoring?.l1?.chainId === 11155111 ? 'https://sepolia.etherscan.io' : null;
+      const linkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+      html += '<div class="card"><h3 style="font-size:13px;margin-bottom:6px">L1 Deployed Contracts</h3>';
+      for (const c of contracts) {
+        let links = '';
+        if (explorerBase) links += `<a href="${explorerBase}/address/${esc(c.addr)}" target="_blank" style="color:var(--blue-600);margin-left:4px" title="Local Explorer">${linkIcon}</a>`;
+        if (etherscanBase) links += `<a href="${etherscanBase}/address/${esc(c.addr)}" target="_blank" style="color:var(--blue-600);margin-left:4px" title="Etherscan">${linkIcon}</a>`;
+        html += `<div class="endpoint-row"><span class="ep-label">${esc(c.label)}</span><code style="font-size:10px">${esc(c.addr)}</code>${links}</div>`;
+      }
+      html += '</div>';
+    }
   }
   html += '</div>'; // end left
 
@@ -1137,26 +1158,12 @@ function renderOverviewTab() {
     html += '</div></div>';
   }
   html += `<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <h3 style="font-size:13px">Settings</h3>
-      <button class="btn-back" style="font-size:11px" onclick="toggleSettingsEdit()">Edit</button>
-    </div>
-    <div id="settings-display">
-      <dl class="info-grid" style="font-size:12px">
-        <dt>Chain ID</dt><dd>${d.chain_id || '-'}</dd>
-        <dt>Docker</dt><dd style="font-size:10px">${d.docker_project || '-'}</dd>
-        <dt>Created</dt><dd style="font-size:10px">${new Date(d.created_at).toLocaleDateString()}</dd>
-      </dl>
-    </div>
-    <div id="settings-edit" style="display:none">
-      <label>L2 Name<input type="text" id="edit-name" value="${esc(d.name)}"></label>
-      <label>Chain ID<input type="number" id="edit-chain-id" value="${d.chain_id || ''}"></label>
-      <label>L1 RPC URL<input type="text" id="edit-rpc-url" value="${esc(d.rpc_url || '')}"></label>
-      <div style="display:flex;gap:6px;margin-top:6px">
-        <button class="btn-primary" onclick="saveSettings()">Save</button>
-        <button class="btn-secondary" onclick="toggleSettingsEdit()">Cancel</button>
-      </div>
-    </div>
+    <h3 style="font-size:13px;margin-bottom:6px">Settings</h3>
+    <dl class="info-grid" style="font-size:12px">
+      <dt>Name</dt><dd>${esc(d.name)}</dd>
+      <dt>Docker</dt><dd style="font-size:10px">${d.docker_project || '-'}</dd>
+      <dt>Created</dt><dd style="font-size:10px">${new Date(d.created_at).toLocaleDateString()}</dd>
+    </dl>
   </div>`;
   html += `<button class="btn-danger" style="font-size:11px;padding:6px 12px;align-self:flex-start" onclick="deleteDeployment('${d.id}')">Remove L2</button>`;
   html += '</div>'; // end right
@@ -1225,6 +1232,13 @@ async function fetchDetailStatus() {
     ]);
     if (sRes.ok) detailStatus = await sRes.json();
     if (mRes.ok) detailMonitoring = await mRes.json();
+    // Fetch contract addresses from bridge-ui config.json
+    if (detailDeployment?.tools_bridge_ui_port && !detailContracts) {
+      try {
+        const cRes = await fetch(`http://localhost:${detailDeployment.tools_bridge_ui_port}/config.json`);
+        if (cRes.ok) detailContracts = await cRes.json();
+      } catch {}
+    }
     if (detailTab === 'overview') renderOverviewTab();
   } catch {}
 }
@@ -1411,38 +1425,6 @@ async function removeHost(id) {
   try { await fetch(`${API}/hosts/${id}`, { method: 'DELETE' }); loadHosts(); } catch {}
 }
 
-// ============================================================
-// Settings Edit
-// ============================================================
-function toggleSettingsEdit() {
-  const display = document.getElementById('settings-display');
-  const edit = document.getElementById('settings-edit');
-  if (!display || !edit) return;
-  const showing = edit.style.display !== 'none';
-  display.style.display = showing ? 'block' : 'none';
-  edit.style.display = showing ? 'none' : 'block';
-}
-
-async function saveSettings() {
-  if (!currentDeploymentId || !detailDeployment) return;
-  const name = document.getElementById('edit-name')?.value?.trim();
-  if (!name) return;
-  try {
-    const body = {
-      name,
-      chain_id: parseInt(document.getElementById('edit-chain-id')?.value) || null,
-      rpc_url: document.getElementById('edit-rpc-url')?.value?.trim() || null,
-    };
-    const res = await fetch(`${API}/deployments/${currentDeploymentId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      detailDeployment = data.deployment || data;
-      renderDetail();
-    }
-  } catch {}
-}
 
 // ============================================================
 // Directory Picker

@@ -209,8 +209,10 @@ async function provision(deployment) {
 
     const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
     const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
-    emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}` });
+    const timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+    const sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+    console.log(`[deployment-engine] extractEnv for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}`);
+    emit(id, "log", { message: `extractEnv [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}` });
 
     if (!bridgeAddress || !proposerAddress) {
       throw new Error(
@@ -222,6 +224,8 @@ async function provision(deployment) {
     updateDeployment(id, {
       bridge_address: bridgeAddress,
       proposer_address: proposerAddress,
+      timelock_address: timelockAddress,
+      sp1_verifier_address: sp1VerifierAddress,
       env_project_id: projectName,
       env_updated_at: Date.now(),
     });
@@ -536,6 +540,22 @@ async function recoverStuckDeployments() {
         updateDeployment(dep.id, { phase: "error", error_message: errMsg });
         insertDeployEvent(dep.id, "error", dep.phase, errMsg, null);
         continue;
+      }
+      // Backfill missing contract addresses from Docker env volume
+      if (dep.bridge_address && (!dep.timelock_address || !dep.sp1_verifier_address) && dep.docker_project) {
+        try {
+          const composeFile = require("path").join(getDeploymentDir(dep.id), "docker-compose.yaml");
+          const envVars = await docker.extractEnv(dep.docker_project, composeFile);
+          const updates = {};
+          if (!dep.timelock_address && envVars.ETHREX_TIMELOCK_ADDRESS) updates.timelock_address = envVars.ETHREX_TIMELOCK_ADDRESS;
+          if (!dep.sp1_verifier_address && envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS) updates.sp1_verifier_address = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS;
+          if (Object.keys(updates).length > 0) {
+            updateDeployment(dep.id, updates);
+            console.log(`[recovery] Backfilled contract addresses for ${dep.id}: ${JSON.stringify(updates)}`);
+          }
+        } catch (e) {
+          console.log(`[recovery] Could not backfill contracts for ${dep.id}: ${e.message}`);
+        }
       }
       // Reconcile: phase says "running" but Docker containers are actually stopped
       if (dep.phase === "running" && dep.docker_project) {

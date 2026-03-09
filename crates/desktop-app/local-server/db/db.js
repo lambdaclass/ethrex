@@ -22,4 +22,14 @@ db.pragma("foreign_keys = ON");
 const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf-8");
 db.exec(schema);
 
+// Migrations — add columns that may not exist in older DBs
+const migrations = [
+  "ALTER TABLE deployments ADD COLUMN hashtags TEXT",
+  "ALTER TABLE deployments ADD COLUMN timelock_address TEXT",
+  "ALTER TABLE deployments ADD COLUMN sp1_verifier_address TEXT",
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch { /* column already exists */ }
+}
+
 module.exports = db;
