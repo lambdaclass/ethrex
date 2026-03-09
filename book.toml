@@ -45,4 +45,3 @@ additional-js = ["mermaid.min.js", "mermaid-init.js"]
 # Needs to be installed with `cargo install mdbook-linkcheck2`
 [output.linkcheck2]
 optional = true
-exclude = ["native-rollup.l2beat.com"]
