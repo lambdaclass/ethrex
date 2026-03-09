@@ -166,6 +166,10 @@ pub const COST_PER_STATE_BYTE: u64 = 1174;
 pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
 pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
+// Pre-computed products to avoid repeated checked_mul in hot paths
+pub const STATE_GAS_NEW_ACCOUNT: u64 = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE; // 131_488
+pub const STATE_GAS_STORAGE_SET: u64 = STATE_BYTES_PER_STORAGE_SET * COST_PER_STATE_BYTE; // 37_568
+pub const STATE_GAS_AUTH_TOTAL: u64 = STATE_BYTES_PER_AUTH_TOTAL * COST_PER_STATE_BYTE; // 158_490
 pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam
 pub const CODE_DEPOSIT_REGULAR_COST_PER_WORD: u64 = 6; // keccak hash cost per 32-byte word
 

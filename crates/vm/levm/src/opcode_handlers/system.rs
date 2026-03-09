@@ -15,7 +15,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::{self, COST_PER_STATE_BYTE, STATE_BYTES_PER_NEW_ACCOUNT},
+    gas_cost::{self, STATE_GAS_NEW_ACCOUNT},
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
@@ -92,10 +92,7 @@ impl OpcodeHandler for OpCallHandler {
         // EIP-8037 (Amsterdam+): charge state gas for call to empty account with value transfer.
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         let gas_left = if fork >= Fork::Amsterdam && address_is_empty && !value.is_zero() {
-            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            vm.increase_state_gas(state_gas)?;
+            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
             vm.current_call_frame.gas_remaining as u64
         } else {
             gas_left
@@ -467,10 +464,7 @@ impl OpcodeHandler for OpCreateHandler {
         // EIP-8037 (Amsterdam+): charge state gas for new account creation BEFORE
         // generic_create() reserves child gas.
         if vm.env.config.fork >= Fork::Amsterdam {
-            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            vm.increase_state_gas(state_gas)?;
+            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
         }
 
         vm.generic_create(value_in_wei, code_offset, code_len, None)
@@ -495,10 +489,7 @@ impl OpcodeHandler for OpCreate2Handler {
         // EIP-8037 (Amsterdam+): charge state gas for new account creation BEFORE
         // generic_create() reserves child gas.
         if vm.env.config.fork >= Fork::Amsterdam {
-            let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            vm.increase_state_gas(state_gas)?;
+            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
         }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))
@@ -558,10 +549,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
             // EIP-8037 (Amsterdam+): charge state gas for new account creation via SELFDESTRUCT
             if target_account_is_empty && balance > U256::zero() {
-                let state_gas = STATE_BYTES_PER_NEW_ACCOUNT
-                    .checked_mul(COST_PER_STATE_BYTE)
-                    .ok_or(ExceptionalHalt::OutOfGas)?;
-                vm.increase_state_gas(state_gas)?;
+                vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
             }
         } else {
             vm.current_call_frame

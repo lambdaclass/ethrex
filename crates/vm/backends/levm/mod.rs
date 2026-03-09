@@ -851,7 +851,8 @@ impl LEVM {
                 Self::seed_db_from_bal(&mut tx_db, bal, tx_idx as u16)?;
 
                 // Enable accessed_accounts tracker for BAL pure-access validation.
-                tx_db.accessed_accounts = Some(FxHashSet::default());
+                // Most txs touch sender + recipient + a few contracts; 16 avoids rehashing.
+                tx_db.accessed_accounts = Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
 
                 let report = LEVM::execute_tx_in_block(
                     tx,

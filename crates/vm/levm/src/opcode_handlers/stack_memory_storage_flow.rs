@@ -20,7 +20,7 @@
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, COST_PER_STATE_BYTE, SSTORE_STIPEND, STATE_BYTES_PER_STORAGE_SET},
+    gas_cost::{self, SSTORE_STIPEND, STATE_GAS_STORAGE_SET},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
@@ -293,10 +293,7 @@ impl OpcodeHandler for OpSStoreHandler {
             && original_value.is_zero()
             && !value.is_zero()
         {
-            let state_gas = STATE_BYTES_PER_STORAGE_SET
-                .checked_mul(COST_PER_STATE_BYTE)
-                .ok_or(ExceptionalHalt::OutOfGas)?;
-            vm.increase_state_gas(state_gas)?;
+            vm.increase_state_gas(STATE_GAS_STORAGE_SET)?;
         }
 
         vm.current_call_frame
@@ -344,10 +341,7 @@ impl OpcodeHandler for OpSStoreHandler {
                                 reason = "state gas constants fit i64"
                             )]
                             {
-                                delta += STATE_BYTES_PER_STORAGE_SET
-                                    .checked_mul(COST_PER_STATE_BYTE)
-                                    .ok_or(InternalError::Overflow)?
-                                    as i64;
+                                delta += STATE_GAS_STORAGE_SET as i64;
                             }
                         } else {
                             delta += RESTORE_EMPTY_SLOT_COST;

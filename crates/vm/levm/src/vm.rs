@@ -534,27 +534,29 @@ impl<'a> VM<'a> {
     }
 
     /// EIP-8037: Charge state gas, drawing from reservoir first, spilling to gas_remaining if exhausted.
+    ///
+    /// Must only be called for Amsterdam+ forks. All call sites must guard with
+    /// `fork >= Fork::Amsterdam` before invoking this method.
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "arithmetic proven safe by min()"
     )]
     pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
-        if self.env.config.fork >= Fork::Amsterdam {
-            // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
-            let from_reservoir = self.state_gas_reservoir.min(gas);
-            // Safe: from_reservoir <= gas
-            let spill = gas - from_reservoir;
-            if spill > 0 {
-                // Charge spill from gas_remaining first — if OOG, return early
-                // without mutating reservoir or state_gas_used (matches EELS behavior)
-                self.current_call_frame.increase_consumed_gas(spill)?;
-            }
-            // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
-            self.state_gas_reservoir -= from_reservoir;
-        } else {
-            // Pre-Amsterdam: no reservoir, charge directly from gas_remaining
-            self.current_call_frame.increase_consumed_gas(gas)?;
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "increase_state_gas called pre-Amsterdam"
+        );
+        // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
+        let from_reservoir = self.state_gas_reservoir.min(gas);
+        // Safe: from_reservoir <= gas
+        let spill = gas - from_reservoir;
+        if spill > 0 {
+            // Charge spill from gas_remaining first — if OOG, return early
+            // without mutating reservoir or state_gas_used (matches EELS behavior)
+            self.current_call_frame.increase_consumed_gas(spill)?;
         }
+        // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
+        self.state_gas_reservoir -= from_reservoir;
         // Only increment state_gas_used AFTER the charge succeeds
         self.state_gas_used = self
             .state_gas_used

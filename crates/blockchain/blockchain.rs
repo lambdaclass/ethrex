@@ -74,7 +74,7 @@ use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
-    get_total_blob_gas, validate_block_access_list_hash, validate_block_access_list_size,
+    get_total_blob_gas, validate_block_access_list_hash,
     validate_block_pre_execution, validate_gas_used, validate_receipts_root,
     validate_requests_hash,
 };
@@ -347,7 +347,6 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
-            validate_block_access_list_size(&block.header, &chain_config, bal)?;
         }
 
         Ok((execution_result, account_updates))
@@ -465,8 +464,7 @@ impl Blockchain {
                                 bal,
                                 block.body.transactions.len(),
                             )?;
-                            validate_block_access_list_size(&block.header, &chain_config, bal)?;
-                        }
+                                        }
 
                         let exec_end_instant = Instant::now();
                         Ok((execution_result, produced_bal, exec_end_instant))
@@ -1265,7 +1263,6 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
-            validate_block_access_list_size(&block.header, chain_config, bal)?;
         }
 
         Ok(execution_result)
