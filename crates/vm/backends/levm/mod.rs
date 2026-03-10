@@ -115,15 +115,19 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
-        let transactions_with_sender =
-            block
-                .body
-                .get_transactions_with_sender(crypto)
-                .map_err(|error| {
-                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-                })?;
+        // Pre-warm sender caches in parallel via rayon. Each tx.sender() populates
+        // its OnceCell cache; the execution loop below gets instant cache hits.
+        // Using for_each avoids allocating an intermediate Vec<(tx, sender)>.
+        block
+            .body
+            .transactions
+            .par_iter()
+            .for_each(|tx| { let _ = tx.sender(crypto); });
 
-        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+        for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
+            let tx_sender = tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
             check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
@@ -212,16 +216,32 @@ impl LEVM {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
 
-        let transactions_with_sender =
-            block
-                .body
-                .get_transactions_with_sender(crypto)
-                .map_err(|error| {
-                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-                })?;
+        // Pre-warm sender caches in parallel via rayon. Each tx.sender() populates
+        // its OnceCell cache; subsequent sender() calls get instant cache hits.
+        // Using for_each avoids allocating an intermediate Vec<(tx, sender)>.
+        block
+            .body
+            .transactions
+            .par_iter()
+            .for_each(|tx| { let _ = tx.sender(crypto); });
 
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
+            // Collect senders from cache (all are instant hits after pre-warm above)
+            let transactions_with_sender: Vec<(&Transaction, Address)> = block
+                .body
+                .transactions
+                .iter()
+                .map(|tx| {
+                    let sender = tx.sender(crypto).map_err(|error| {
+                        EvmError::Transaction(format!(
+                            "Couldn't recover addresses with error: {error}"
+                        ))
+                    });
+                    sender.map(|s| (tx, s))
+                })
+                .collect::<Result<_, _>>()?;
+
             // No BAL recording needed: we have the header BAL, not building a new one
             Self::prepare_block(block, db, vm_type, crypto)?;
 
@@ -293,7 +313,10 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+        for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
+            let tx_sender = tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
             check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
