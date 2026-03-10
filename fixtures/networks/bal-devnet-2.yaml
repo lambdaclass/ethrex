@@ -33,6 +33,7 @@ ethereum_genesis_generator_params:
   image: ethpandaops/ethereum-genesis-generator:master
 dora_params:
   image: ethpandaops/dora:eip7928-support
+  max_mem: 4096
 additional_services:
   - dora
   - spamoor
