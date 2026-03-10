@@ -80,12 +80,7 @@ cd demos/eip8141
 make start-frontend
 ```
 
-Starts the React frontend (Vite) on port 5173. Open **http://localhost:5173** in your browser.
-
-To link transaction hashes to Blockscout, create `frontend/.env`:
-```
-VITE_BLOCKSCOUT_URL=http://localhost:8082
-```
+Starts the React frontend (Vite) on port 5173. Open **http://localhost:5173** in your browser. Transaction hashes automatically link to Blockscout at `http://<hostname>:8082`. To override, set `VITE_BLOCKSCOUT_URL` in `frontend/.env`.
 
 ### Terminal 4: Blockscout (optional)
 
@@ -279,6 +274,24 @@ demos/eip8141/
     verify-contracts.py    Python verification logic (called by .sh)
   Makefile                 Build and run commands
 ```
+
+## Redeploying
+
+To kill everything, wipe databases, and restart fresh:
+
+```bash
+cd demos/eip8141
+
+# Without Blockscout
+make redeploy
+
+# With Blockscout (wipes Blockscout DB too)
+make redeploy-full BLOCKSCOUT_REPO=/path/to/ethrex-blockscout
+```
+
+**Important paths:**
+- ethrex dev DB: `~/Library/Application Support/ethrex/dev/` (macOS) or `~/.local/share/ethrex/dev/` (Linux)
+- Blockscout Postgres data: `ethrex-blockscout/docker-compose/services/blockscout-db-data/` (bind mount relative to `services/` subdir, NOT `docker-compose/`)
 
 ## Troubleshooting
 

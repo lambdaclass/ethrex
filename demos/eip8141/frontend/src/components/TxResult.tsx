@@ -47,7 +47,6 @@ export default function TxResult({ result }: { result: TxResultType }) {
           {txUrl ? (
             <a
               href={txUrl}
-              target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-blue-400 hover:text-blue-300 font-mono truncate max-w-[360px] underline underline-offset-2"
             >

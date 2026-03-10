@@ -137,6 +137,22 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     expect(result.frameResults[1].mode).toBe('SENDER');
     expect(result.frameResults[1].status).toBe('OK');
 
+    // ── Tx hash link verification ──
+    // The tx hash must be a clickable <a> link pointing to Blockscout
+    const txLink = page.locator('a.font-mono').first();
+    await expect(txLink).toBeVisible();
+    const href = await txLink.getAttribute('href');
+    expect(href).toBeTruthy();
+    expect(href).toContain('/tx/');
+    expect(href).toContain(result.txHash!);
+    expect(href).toMatch(/^http:\/\/.+:8082\/tx\/0x/);
+    // Link must NOT have target="_blank" (Safari blocks HTTPS→HTTP popups)
+    const target = await txLink.getAttribute('target');
+    expect(target).toBeNull();
+    // Verify the element is an <a> tag (not a <code> or <span>)
+    const tagName = await txLink.evaluate(el => el.tagName.toLowerCase());
+    expect(tagName).toBe('a');
+
     // ── Balance verification via RPC ──
     const accountAfter = await captureState(ACCOUNT);
     const deadAfter = await captureState(DEAD);

@@ -1,4 +1,4 @@
-.PHONY: compile-contracts start-node start-backend start-frontend start-all install clean verify
+.PHONY: compile-contracts start-node start-backend start-frontend start-all install clean verify redeploy redeploy-full
 
 # Compile all contracts and generate genesis.json with real bytecodes
 compile-contracts:
@@ -54,6 +54,15 @@ start-all:
 verify:
 	@echo "Verifying contracts on Blockscout..."
 	@BLOCKSCOUT_URL="$${BLOCKSCOUT_URL:-http://localhost:8082}" bash scripts/verify-contracts.sh
+
+# Redeploy demo: kill all services, wipe DBs, restart
+redeploy:
+	@bash scripts/redeploy.sh
+
+# Redeploy demo including Blockscout (pass BLOCKSCOUT_REPO)
+# Usage: make redeploy-full BLOCKSCOUT_REPO=/path/to/ethrex-blockscout
+redeploy-full:
+	@bash scripts/redeploy.sh --blockscout-repo "$${BLOCKSCOUT_REPO}"
 
 clean:
 	rm -rf contracts/out
