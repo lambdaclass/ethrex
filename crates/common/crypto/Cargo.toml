@@ -27,7 +27,7 @@ ark-ec = "0.5.0"
 ark-ff = { version = "0.5.0", features = ["asm"] }
 malachite = "0.6.1"
 p256 = { version = "0.13.2", features = ["ecdsa", "arithmetic", "expose-field"] }
-bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-fp-struct", features = ["groups", "bits", "pairings", "alloc", "experimental"] }
+bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-affine-constructors", features = ["groups", "bits", "pairings", "alloc", "experimental"] }
 ff = "0.13"
 
 #[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
