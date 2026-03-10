@@ -149,7 +149,9 @@ impl GeneralizedDatabase {
 
     // ================== Account related functions =====================
     /// Loads account
-    /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
+    /// Caches the account in `current_accounts_state` on first access.
+    /// Does NOT populate `initial_accounts_state` -- that happens lazily
+    /// in `get_account_mut` when the account is first mutably accessed.
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
@@ -161,16 +163,10 @@ impl GeneralizedDatabase {
                 if let Some(ref base) = self.shared_base
                     && let Some(account) = base.get(&address)
                 {
-                    if !self.skip_initial_tracking {
-                        self.initial_accounts_state.insert(address, account.clone());
-                    }
                     return Ok(entry.insert(account.clone()));
                 }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
-                if !self.skip_initial_tracking {
-                    self.initial_accounts_state.insert(address, account.clone());
-                }
                 Ok(entry.insert(account))
             }
         }
@@ -184,7 +180,22 @@ impl GeneralizedDatabase {
     /// Gets mutable reference of an account
     /// Warning: Use directly only if outside of the EVM, otherwise use `vm.get_account_mut` because it contemplates call frame backups.
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
-        let acc = self.load_account(address)?;
+        // Ensure the account is loaded into current_accounts_state.
+        self.load_account(address)?;
+
+        // Lazily populate initial_accounts_state on first mutable access.
+        // The snapshot must be captured BEFORE mark_modified for correct diffing
+        // in get_state_transitions / get_state_transitions_tx.
+        if !self.skip_initial_tracking {
+            let acc = self.current_accounts_state.get(&address).unwrap();
+            if acc.is_unmodified() {
+                self.initial_accounts_state
+                    .entry(address)
+                    .or_insert_with(|| acc.clone());
+            }
+        }
+
+        let acc = self.current_accounts_state.get_mut(&address).unwrap();
         acc.mark_modified();
         Ok(acc)
     }
@@ -254,6 +265,9 @@ impl GeneralizedDatabase {
     }
 
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
+    /// If the account is already in `initial_accounts_state` (because it was mutably accessed),
+    /// the fetched value is cached there for correct diffing. If not (read-only access), we
+    /// skip since `initial_accounts_state` will be populated lazily on first mutation.
     fn get_value_from_database(
         &mut self,
         address: Address,
@@ -263,17 +277,10 @@ impl GeneralizedDatabase {
         if self.skip_initial_tracking {
             return Ok(value);
         }
-        // Account must already be in initial_accounts_state
-        match self.initial_accounts_state.get_mut(&address) {
-            Some(account) => {
-                account.storage.insert(key, value);
-            }
-            None => {
-                // If we are fetching the storage of an account it means that we previously fetched the account from database before.
-                return Err(InternalError::msg(
-                    "Account not found in InMemoryDB when fetching storage",
-                ));
-            }
+        // If the account is already tracked in initial_accounts_state, cache the
+        // storage value there so get_state_transitions can diff against it.
+        if let Some(account) = self.initial_accounts_state.get_mut(&address) {
+            account.storage.insert(key, value);
         }
         Ok(value)
     }
@@ -708,8 +715,14 @@ impl<'a> VM<'a> {
 
         let value = self.db.get_value_from_database(address, key)?;
 
-        // Update the account with the fetched value
-        let account = self.get_account_mut(address)?;
+        // Cache the fetched value without marking the account as modified or
+        // creating a call frame backup -- we're only caching a read from the
+        // database, not mutating account state.
+        let account = self
+            .db
+            .current_accounts_state
+            .get_mut(&address)
+            .ok_or(InternalError::AccountNotFound)?;
         account.storage.insert(key, value);
 
         Ok(value)
