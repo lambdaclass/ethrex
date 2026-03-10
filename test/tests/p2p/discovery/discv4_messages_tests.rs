@@ -1,11 +1,11 @@
-use bytes::{Bytes, BufMut};
+use bytes::{BufMut, Bytes};
 use ethrex_common::{H256, H264, H512};
+use ethrex_crypto::keccak::keccak_hash;
 use ethrex_p2p::discv4::messages::{
     ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
     PacketDecodeErr, PingMessage, PongMessage,
 };
 use ethrex_p2p::types::{Endpoint, Node, NodeRecord};
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use secp256k1::SecretKey;
 use std::fmt::Write;
@@ -45,8 +45,7 @@ fn test_encode_ping_message() {
     let msg = Message::Ping(PingMessage::new(from, to, expiration));
 
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -70,14 +69,12 @@ fn test_encode_pong_message_with_enr_seq() {
     };
     let expiration: u64 = 1719507696;
     let ping_hash: H256 =
-        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23")
-            .unwrap();
+        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23").unwrap();
     let enr_seq = 1704896740573;
     let msg = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
 
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -102,12 +99,10 @@ fn test_encode_pong_message() {
     };
     let expiration: u64 = 1719507696;
     let ping_hash: H256 =
-        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23")
-            .unwrap();
+        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23").unwrap();
     let msg = Message::Pong(PongMessage::new(to, ping_hash, expiration));
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -130,8 +125,7 @@ fn test_encode_find_node_message() {
     let msg = Message::FindNode(FindNodeMessage::new(target, expiration));
 
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -161,8 +155,7 @@ fn test_encode_neighbors_message() {
         public_key_2,
     );
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -184,8 +177,7 @@ fn test_encode_enr_request_message() {
     let expiration: u64 = 17195043770;
     let msg = Message::ENRRequest(ENRRequestMessage { expiration });
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
     let mut buf = Vec::new();
     msg.encode_with_header(&mut buf, &signer);
@@ -202,8 +194,7 @@ fn test_encode_enr_request_message() {
 #[test]
 fn test_encode_enr_response() {
     let request_hash =
-        H256::from_str("ebc0a41dfdf5499552fb7e61799c577360a442170dbed4cb0745d628f06d9f98")
-            .unwrap();
+        H256::from_str("ebc0a41dfdf5499552fb7e61799c577360a442170dbed4cb0745d628f06d9f98").unwrap();
     let signature = H512::from_str("131d8cbc28a2dee4cae36ee3c268c44877e77eb248758d5a204df36b29a13ee53100fd47d3d6fd498ea48349d822d0965904fabcdeeecd9f5133a6062abdfbe3").unwrap();
     let seq = 0x018cf3c3bd18;
 
@@ -257,8 +248,7 @@ fn test_encode_enr_response() {
     });
 
     let key_bytes =
-        H256::from_str("2e6a09427ba14acc853cbbff291c75c3cb57754ac1e3df8df9cac086b3a83aa4")
-            .unwrap();
+        H256::from_str("2e6a09427ba14acc853cbbff291c75c3cb57754ac1e3df8df9cac086b3a83aa4").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
     let mut buf = Vec::new();
     msg.encode_with_header(&mut buf, &signer);
@@ -290,11 +280,9 @@ fn test_decode_pong_message_with_enr_seq() {
     };
     let expiration: u64 = 1719507696;
     let ping_hash: H256 =
-        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23")
-            .unwrap();
+        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23").unwrap();
     let enr_seq = 1704896740573;
-    let expected =
-        Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
+    let expected = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
     assert_eq!(decoded_msg, &expected);
 }
 
@@ -317,8 +305,7 @@ fn test_decode_pong_message() {
     };
     let expiration: u64 = 1719507696;
     let ping_hash: H256 =
-        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23")
-            .unwrap();
+        H256::from_str("3e1bf98f025f98d54ed2f61bbef63b6b46f50e12d7b937d6bdea19afd640be23").unwrap();
     let expected = Message::Pong(PongMessage::new(to, ping_hash, expiration));
     assert_eq!(decoded_msg, &expected);
 }
@@ -328,8 +315,7 @@ fn test_decode_enr_response() {
     let encoded = "f8c6a0ebc0a41dfdf5499552fb7e61799c577360a442170dbed4cb0745d628f06d9f98f8a3b840131d8cbc28a2dee4cae36ee3c268c44877e77eb248758d5a204df36b29a13ee53100fd47d3d6fd498ea48349d822d0965904fabcdeeecd9f5133a6062abdfbe386018cf3c3bd1883657468c7c68488cf81d980826964827634826970848ac533b589736563703235366b31a1034e5e92199ee224a01932a377160aa432f31d0b351f84ab413a8e0a42f4f3647684736e6170c08374637082765f8375647082765f";
     let decoded = Message::decode_with_type(0x06, &decode_hex(encoded).unwrap()).unwrap();
     let request_hash =
-        H256::from_str("ebc0a41dfdf5499552fb7e61799c577360a442170dbed4cb0745d628f06d9f98")
-            .unwrap();
+        H256::from_str("ebc0a41dfdf5499552fb7e61799c577360a442170dbed4cb0745d628f06d9f98").unwrap();
     let signature = H512::from_str("131d8cbc28a2dee4cae36ee3c268c44877e77eb248758d5a204df36b29a13ee53100fd47d3d6fd498ea48349d822d0965904fabcdeeecd9f5133a6062abdfbe3").unwrap();
     let seq = 0x018cf3c3bd18;
 
@@ -403,8 +389,7 @@ fn test_decode_ping_message() {
     let msg = Message::Ping(PingMessage::new(from, to, expiration));
 
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -434,8 +419,7 @@ fn test_decode_ping_message_with_enr_seq() {
     let msg = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
 
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -453,8 +437,7 @@ fn test_decode_find_node_message() {
     let msg = Message::FindNode(FindNodeMessage::new(target, expiration));
 
     let key_bytes =
-        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("577d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
 
     let mut buf = Vec::new();
@@ -518,8 +501,7 @@ fn test_decode_with_malformed_signature_should_fail() {
     let msg = Message::Ping(PingMessage::new(from, to, expiration));
 
     let key_bytes =
-        H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
     let mut buf = Vec::new();
     msg.encode_with_header(&mut buf, &signer);
@@ -556,8 +538,7 @@ fn test_decode_with_malformed_signature_recover_id_should_fail() {
     let msg = Message::Ping(PingMessage::new(from, to, expiration));
 
     let key_bytes =
-        H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3")
-            .unwrap();
+        H256::from_str("177d8278cc7748fad214b5378669b420f8221afb45ce930b7f22da49cbc545f3").unwrap();
     let signer = SecretKey::from_slice(key_bytes.as_bytes()).unwrap();
     let mut buf = Vec::new();
     msg.encode_with_header(&mut buf, &signer);

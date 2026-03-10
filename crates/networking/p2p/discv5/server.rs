@@ -106,12 +106,12 @@ pub enum OutMessage {
 pub struct DiscoveryServer {
     pub local_node: Node,
     pub local_node_record: NodeRecord,
-    pub signer: SecretKey,
-    pub udp_socket: Arc<UdpSocket>,
+    signer: SecretKey,
+    udp_socket: Arc<UdpSocket>,
     pub peer_table: PeerTable,
-    pub initial_lookup_interval: f64,
+    initial_lookup_interval: f64,
     /// Outgoing message count, used for nonce generation as per the spec.
-    pub counter: u32,
+    counter: u32,
     /// Pending outgoing messages awaiting WhoAreYou response, keyed by nonce.
     pub pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
@@ -177,6 +177,30 @@ impl DiscoveryServer {
             .await?;
 
         Ok(discovery_server.start())
+    }
+
+    pub fn new_for_test(
+        local_node: Node,
+        local_node_record: NodeRecord,
+        signer: SecretKey,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
+    ) -> Self {
+        Self {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            peer_table,
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+        }
     }
 
     async fn handle_packet(

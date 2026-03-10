@@ -591,4 +591,3 @@ pub async fn process_batches_on_queue(
 
     Ok(())
 }
-
