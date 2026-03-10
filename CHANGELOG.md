@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-03
+
+- Add bloom filter to skip trie seeks for non-existent storage slots [#6288](https://github.com/lambdaclass/ethrex/pull/6288)
+
 ### 2026-03-02
 
 - SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
