@@ -432,9 +432,13 @@ impl Blockchain {
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) =
-                                LEVM::warm_block(block, caching_store, vm_type, &NativeCrypto, cancelled_ref)
-                            {
+                            if let Err(e) = LEVM::warm_block(
+                                block,
+                                caching_store,
+                                vm_type,
+                                &NativeCrypto,
+                                cancelled_ref,
+                            ) {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
                         }
