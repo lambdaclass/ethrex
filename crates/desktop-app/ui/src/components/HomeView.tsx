@@ -29,8 +29,8 @@ async function openDeployManager(view?: string) {
   const existing = await WebviewWindow.getByLabel('deploy-manager')
   if (existing) {
     if (view) {
-      try { await existing.emit('navigate-view', view) } catch {}
-      try { await (existing as any).eval(`showView('${view}')`) } catch {}
+      // Navigate to the requested view by changing the URL
+      try { await existing.setUrl(url) } catch {}
     }
     await existing.show()
     await existing.setFocus()
@@ -203,7 +203,14 @@ export default function HomeView({ onNavigate }: HomeViewProps) {
           <h2 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
             {ko ? '주요 기능' : 'Key Features'}
           </h2>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => openDeployManager()} className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-center">
+              <span className="text-base">⚙️</span>
+              <div>
+                <div className="text-[11px] font-medium">{ko ? 'L2 매니저' : 'L2 Manager'}</div>
+                <div className="text-[9px] text-[var(--color-text-secondary)]">{ko ? '배포 · 관리' : 'Deploy & Manage'}</div>
+              </div>
+            </button>
             <button onClick={() => onNavigate('chat')} className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl bg-[var(--color-bg-sidebar)] border border-[var(--color-border)] hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-center">
               <span className="text-base">🤖</span>
               <div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import { platformAPI } from '../api/platform'
@@ -73,6 +74,24 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
   const [platformLoggedIn, setPlatformLoggedIn] = useState(false)
   const [tags, setTags] = useState<string[]>(l2Prop.hashtags || [])
   const [comments, setComments] = useState<Comment[]>(() => [...L2_DETAIL_MOCK_COMMENTS])
+
+  const openManagerDetail = useCallback(async () => {
+    try {
+      const baseUrl = await invoke<string>('open_deployment_ui')
+      const url = `${baseUrl}?detail=${l2Prop.id}`
+      const existing = await WebviewWindow.getByLabel('deploy-manager')
+      if (existing) {
+        try { await existing.setUrl(url) } catch {}
+        await existing.show()
+        await existing.setFocus()
+      } else {
+        new WebviewWindow('deploy-manager', {
+          url, title: 'Tokamak L2 Manager',
+          width: 1100, height: 800, minWidth: 800, minHeight: 600, center: true,
+        })
+      }
+    } catch (e) { console.error('Failed to open manager:', e) }
+  }, [l2Prop.id])
 
   // Derive live status from containers, overriding stale prop
   // null = not yet fetched (use prop as-is), [] = fetched but empty (truly stopped)
@@ -155,7 +174,6 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
     { id: 'services', label: ko ? '서비스' : 'Services' },
     { id: 'publish', label: ko ? '공개' : 'Publish' },
     { id: 'community', label: ko ? '커뮤니티' : 'Community' },
-    { id: 'logs', label: ko ? '로그' : 'Logs' },
   ]
 
   return (
@@ -222,6 +240,8 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
           <L2DetailServicesTab
             l2={l2} ko={ko} containers={containers ?? []} products={products}
             actionLoading={actionLoading} handleAction={handleAction}
+            l1ChainId={chain.l1ChainId} l2ChainId={chain.l2ChainId}
+            onOpenManager={openManagerDetail}
             onRefresh={onRefresh}
             onRetry={async () => {
               setActionLoading(true)

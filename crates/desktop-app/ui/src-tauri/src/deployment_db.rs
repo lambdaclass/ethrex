@@ -21,6 +21,8 @@ pub struct DeploymentRow {
     pub proposer_address: Option<String>,
     pub timelock_address: Option<String>,
     pub sp1_verifier_address: Option<String>,
+    pub guest_program_registry_address: Option<String>,
+    pub verification_status: Option<String>,
     pub error_message: Option<String>,
     pub config: Option<String>,
     pub is_public: i64,
@@ -29,6 +31,7 @@ pub struct DeploymentRow {
     pub tools_l2_explorer_port: Option<i64>,
     pub tools_bridge_ui_port: Option<i64>,
     pub hashtags: Option<String>,
+    pub ever_running: i64,
 }
 
 /// Container info returned by local-server status endpoint.
@@ -76,9 +79,10 @@ pub fn list_deployments_from_db() -> Result<Vec<DeploymentRow>, String> {
             "SELECT id, program_slug, name, chain_id, rpc_url, status, deploy_method,
                     docker_project, l1_port, l2_port, proof_coord_port, phase,
                     bridge_address, proposer_address, timelock_address, sp1_verifier_address,
+                    guest_program_registry_address, verification_status,
                     error_message, config, is_public, created_at,
                     tools_l1_explorer_port, tools_l2_explorer_port, tools_bridge_ui_port,
-                    hashtags
+                    hashtags, ever_running
              FROM deployments ORDER BY created_at DESC",
         )
         .map_err(|e| format!("SQL prepare error: {e}"))?;
@@ -102,14 +106,17 @@ pub fn list_deployments_from_db() -> Result<Vec<DeploymentRow>, String> {
                 proposer_address: row.get(13)?,
                 timelock_address: row.get(14)?,
                 sp1_verifier_address: row.get(15)?,
-                error_message: row.get(16)?,
-                config: row.get(17)?,
-                is_public: row.get(18)?,
-                created_at: row.get(19)?,
-                tools_l1_explorer_port: row.get(20)?,
-                tools_l2_explorer_port: row.get(21)?,
-                tools_bridge_ui_port: row.get(22)?,
-                hashtags: row.get(23)?,
+                guest_program_registry_address: row.get(16)?,
+                verification_status: row.get(17)?,
+                error_message: row.get(18)?,
+                config: row.get(19)?,
+                is_public: row.get(20)?,
+                created_at: row.get(21)?,
+                tools_l1_explorer_port: row.get(22)?,
+                tools_l2_explorer_port: row.get(23)?,
+                tools_bridge_ui_port: row.get(24)?,
+                hashtags: row.get(25)?,
+                ever_running: row.get::<_, Option<i64>>(26)?.unwrap_or(0),
             })
         })
         .map_err(|e| format!("SQL query error: {e}"))?;

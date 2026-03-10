@@ -4,6 +4,11 @@
 # Network-aware: supports local L1 (default) and external L1 (testnet or mainnet).
 # Set L1_RPC_URL/L1_CHAIN_ID/L1_EXPLORER_URL/L1_NETWORK_NAME to use an external L1.
 # IS_EXTERNAL_L1 is auto-detected from L1_RPC_URL presence but can be overridden.
+#
+# Public access: set PUBLIC_BASE_URL (e.g., https://l2.example.com) to generate URLs
+# accessible from outside the host machine. When set, L2 RPC/Explorer/Metrics URLs
+# use PUBLIC_BASE_URL instead of localhost. L1 RPC is proxied through /api/l1-rpc
+# to protect API keys.
 
 # Determine L1 RPC URL
 L1_RPC_RESOLVED="${L1_RPC_URL:-http://localhost:${TOOLS_L1_RPC_PORT:-8545}}"
@@ -39,6 +44,23 @@ else
   IS_EXTERNAL_L1_RESOLVED="false"
 fi
 
+# Public access mode: generate external URLs if PUBLIC_BASE_URL is set
+PUBLIC_BASE=$(echo "${PUBLIC_BASE_URL:-}" | tr -d '"\\' | sed 's:/*$::')
+if [ -n "$PUBLIC_BASE" ]; then
+  IS_PUBLIC="true"
+  # For public mode: proxy L1 RPC through server to protect API keys
+  L1_RPC_PUBLIC="${PUBLIC_BASE}/api/l1-rpc"
+  L2_RPC_PUBLIC="${PUBLIC_BASE}/rpc"
+  L2_EXPLORER_PUBLIC="${PUBLIC_BASE}/explorer"
+  METRICS_PUBLIC="${PUBLIC_BASE}/metrics"
+else
+  IS_PUBLIC="false"
+  L1_RPC_PUBLIC="${L1_RPC_RESOLVED}"
+  L2_RPC_PUBLIC="http://localhost:${TOOLS_L2_RPC_PORT:-1729}"
+  L2_EXPLORER_PUBLIC="http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}"
+  METRICS_PUBLIC="http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
+fi
+
 cat > /usr/share/nginx/html/config.json << EOF
 {
   "bridge_address": "${ETHREX_WATCHER_BRIDGE_ADDRESS:-}",
@@ -46,17 +68,38 @@ cat > /usr/share/nginx/html/config.json << EOF
   "timelock_address": "${ETHREX_TIMELOCK_ADDRESS:-}",
   "sp1_verifier_address": "${ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS:-}",
   "bridge_l2_address": "0x000000000000000000000000000000000000ffff",
-  "l1_rpc": "${L1_RPC_RESOLVED}",
-  "l2_rpc": "http://localhost:${TOOLS_L2_RPC_PORT:-1729}",
+  "l1_rpc": "${L1_RPC_PUBLIC}",
+  "l2_rpc": "${L2_RPC_PUBLIC}",
   "l1_explorer": "${L1_EXPLORER_RESOLVED}",
-  "l2_explorer": "http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}",
+  "l2_explorer": "${L2_EXPLORER_PUBLIC}",
   "l1_chain_id": ${L1_CHAIN_ID_RESOLVED},
   "l2_chain_id": ${L2_CHAIN_ID_RESOLVED},
   "l1_network_name": "${L1_NETWORK_NAME_RESOLVED}",
   "is_external_l1": ${IS_EXTERNAL_L1_RESOLVED},
-  "metrics_url": "http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
+  "is_public": ${IS_PUBLIC},
+  "metrics_url": "${METRICS_PUBLIC}"
 }
 EOF
 
-echo "[entrypoint] Generated config.json with bridge_address=${ETHREX_WATCHER_BRIDGE_ADDRESS:-<not set>}, is_external_l1=${IS_EXTERNAL_L1_RESOLVED}, l1_chain_id=${L1_CHAIN_ID_RESOLVED}, l1_network=${L1_NETWORK_NAME_RESOLVED}"
+echo "[entrypoint] Generated config.json: bridge=${ETHREX_WATCHER_BRIDGE_ADDRESS:-<not set>}, external_l1=${IS_EXTERNAL_L1_RESOLVED}, chain=${L1_CHAIN_ID_RESOLVED}, network=${L1_NETWORK_NAME_RESOLVED}, public=${IS_PUBLIC}"
+
+# If public mode, generate nginx reverse proxy config for L1 RPC API key protection
+if [ "$IS_PUBLIC" = "true" ]; then
+  cat > /etc/nginx/conf.d/l1-rpc-proxy.conf << PROXYEOF
+# L1 RPC proxy: protects API key from client-side exposure
+location /api/l1-rpc {
+    proxy_pass ${L1_RPC_RESOLVED};
+    proxy_set_header Content-Type application/json;
+    proxy_method POST;
+    # Rate limit: 10 req/s per IP
+    limit_req zone=l1rpc burst=20 nodelay;
+}
+PROXYEOF
+  # Add rate limit zone to nginx.conf if not present
+  if ! grep -q "limit_req_zone.*l1rpc" /etc/nginx/nginx.conf 2>/dev/null; then
+    sed -i 's/http {/http {\n    limit_req_zone $binary_remote_addr zone=l1rpc:10m rate=10r\/s;/' /etc/nginx/nginx.conf 2>/dev/null || true
+  fi
+  echo "[entrypoint] Public mode: L1 RPC proxy enabled at /api/l1-rpc"
+fi
+
 exec nginx -g "daemon off;"

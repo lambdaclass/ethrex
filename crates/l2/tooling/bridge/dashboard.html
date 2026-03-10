@@ -340,20 +340,20 @@
         <div class="quick-link-label">Withdrawal Tracker</div>
         <div class="quick-link-sub">L2 &rarr; L1 Status</div>
       </a>
-      <a class="quick-link ql-l1" href="http://localhost:8083" target="_blank" id="linkL1Explorer">
+      <a class="quick-link ql-l1" href="#" target="_blank" id="linkL1Explorer">
         <div class="quick-link-icon">&#9635;</div>
         <div class="quick-link-label">L1 Explorer</div>
-        <div class="quick-link-sub">Blockscout :8083</div>
+        <div class="quick-link-sub">Loading...</div>
       </a>
-      <a class="quick-link ql-l2" href="http://localhost:8082" target="_blank" id="linkL2Explorer">
+      <a class="quick-link ql-l2" href="#" target="_blank" id="linkL2Explorer">
         <div class="quick-link-icon">&#9635;</div>
         <div class="quick-link-label">L2 Explorer</div>
-        <div class="quick-link-sub">Blockscout :8082</div>
+        <div class="quick-link-sub">Loading...</div>
       </a>
-      <a class="quick-link ql-metrics" href="http://localhost:3702/metrics" target="_blank" id="linkMetrics">
+      <a class="quick-link ql-metrics" href="#" target="_blank" id="linkMetrics">
         <div class="quick-link-icon">&#9636;</div>
         <div class="quick-link-label">Metrics</div>
-        <div class="quick-link-sub">Prometheus :3702</div>
+        <div class="quick-link-sub">Loading...</div>
       </a>
     </div>
 
@@ -362,7 +362,7 @@
     <div class="chain-stats">
       <div class="chain-stat-card l1">
         <div class="chain-stat-header">
-          <div class="chain-stat-title l1" id="l1ChainTitle">L1 (Chain ID: 9)</div>
+          <div class="chain-stat-title l1" id="l1ChainTitle">L1 (Chain ID: -)</div>
           <div class="service-status checking" id="l1ChainStatus">
             <div class="dot"></div>
             <span>checking</span>
@@ -379,7 +379,7 @@
           </div>
           <div class="stat-item">
             <div class="stat-label">RPC</div>
-            <div class="stat-value" style="font-size:12px;" id="l1RpcDisplay">localhost:8545</div>
+            <div class="stat-value" style="font-size:12px;" id="l1RpcDisplay">-</div>
           </div>
           <div class="stat-item">
             <div class="stat-label">Peers</div>
@@ -389,7 +389,7 @@
       </div>
       <div class="chain-stat-card l2">
         <div class="chain-stat-header">
-          <div class="chain-stat-title l2" id="l2ChainTitle">L2 (Chain ID: 65536999)</div>
+          <div class="chain-stat-title l2" id="l2ChainTitle">L2 (Chain ID: -)</div>
           <div class="service-status checking" id="l2ChainStatus">
             <div class="dot"></div>
             <span>checking</span>
@@ -406,11 +406,11 @@
           </div>
           <div class="stat-item">
             <div class="stat-label">RPC</div>
-            <div class="stat-value" style="font-size:12px;">localhost:1729</div>
+            <div class="stat-value" style="font-size:12px;" id="l2RpcDisplay">-</div>
           </div>
           <div class="stat-item">
             <div class="stat-label">Coordinator</div>
-            <div class="stat-value" style="font-size:12px;">:3900</div>
+            <div class="stat-value" style="font-size:12px;" id="l2CoordDisplay">-</div>
           </div>
         </div>
       </div>
@@ -430,11 +430,11 @@
         <div class="service-details">
           <div class="service-detail">
             <span class="label">URL</span>
-            <span class="value"><a href="http://localhost:8083" target="_blank">localhost:8083</a></span>
+            <span class="value"><a href="#" target="_blank" id="svcL1Link">-</a></span>
           </div>
           <div class="service-detail">
             <span class="label">Backend API</span>
-            <span class="value">:8083/api</span>
+            <span class="value" id="svcL1Api">-</span>
           </div>
         </div>
       </div>
@@ -449,11 +449,11 @@
         <div class="service-details">
           <div class="service-detail">
             <span class="label">URL</span>
-            <span class="value"><a href="http://localhost:8082" target="_blank">localhost:8082</a></span>
+            <span class="value"><a href="#" target="_blank" id="svcL2Link">-</a></span>
           </div>
           <div class="service-detail">
             <span class="label">Backend API</span>
-            <span class="value">:8082/api</span>
+            <span class="value" id="svcL2Api">-</span>
           </div>
         </div>
       </div>
@@ -468,7 +468,7 @@
         <div class="service-details">
           <div class="service-detail">
             <span class="label">URL</span>
-            <span class="value"><a href="/bridge.html">localhost:3000/bridge.html</a></span>
+            <span class="value"><a href="/bridge.html" id="svcBridgeLink">bridge.html</a></span>
           </div>
           <div class="service-detail">
             <span class="label">Type</span>
@@ -487,7 +487,7 @@
         <div class="service-details">
           <div class="service-detail">
             <span class="label">URL</span>
-            <span class="value"><a href="http://localhost:3702/metrics" target="_blank">localhost:3702</a></span>
+            <span class="value"><a href="#" target="_blank" id="svcMetricsLink">-</a></span>
           </div>
           <div class="service-detail">
             <span class="label">Type</span>
@@ -521,7 +521,7 @@
         <div>
           <div class="contract-name">L1 Deployer</div>
           <div class="contract-addr" style="margin-top:2px;">
-            <a href="http://localhost:8083/address/0x3d1e15a1a55578f7c920884a9943b3b35d0d885b" target="_blank">0x3d1e15a1a55578f7c920884a9943b3b35d0d885b</a>
+            <a href="#/address/0x3d1e15a1a55578f7c920884a9943b3b35d0d885b" target="_blank">0x3d1e15a1a55578f7c920884a9943b3b35d0d885b</a>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -533,7 +533,7 @@
         <div>
           <div class="contract-name">Bridge Owner / L2 Owner</div>
           <div class="contract-addr" style="margin-top:2px;">
-            <a href="http://localhost:8083/address/0x4417092b70a3e5f10dc504d0947dd256b965fc62" target="_blank">0x4417092b70a3e5f10dc504d0947dd256b965fc62</a>
+            <a href="#/address/0x4417092b70a3e5f10dc504d0947dd256b965fc62" target="_blank">0x4417092b70a3e5f10dc504d0947dd256b965fc62</a>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -545,7 +545,7 @@
         <div>
           <div class="contract-name">Test Account #1</div>
           <div class="contract-addr" style="margin-top:2px;">
-            <a href="http://localhost:8083/address/0x8943545177806ed17b9f23f0a21ee5948ecaa776" target="_blank">0x8943545177806ed17b9f23f0a21ee5948ecaa776</a>
+            <a href="#/address/0x8943545177806ed17b9f23f0a21ee5948ecaa776" target="_blank">0x8943545177806ed17b9f23f0a21ee5948ecaa776</a>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -557,7 +557,7 @@
         <div>
           <div class="contract-name">Test Account #2</div>
           <div class="contract-addr" style="margin-top:2px;">
-            <a href="http://localhost:8083/address/0xe25583099ba105d9ec0a67f5ae86d90e50036425" target="_blank">0xe25583099ba105d9ec0a67f5ae86d90e50036425</a>
+            <a href="#/address/0xe25583099ba105d9ec0a67f5ae86d90e50036425" target="_blank">0xe25583099ba105d9ec0a67f5ae86d90e50036425</a>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -569,7 +569,7 @@
         <div>
           <div class="contract-name">Test Account #3</div>
           <div class="contract-addr" style="margin-top:2px;">
-            <a href="http://localhost:8083/address/0x614561d2d143621e126e87831aef287678b442b8" target="_blank">0x614561d2d143621e126e87831aef287678b442b8</a>
+            <a href="#/address/0x614561d2d143621e126e87831aef287678b442b8" target="_blank">0x614561d2d143621e126e87831aef287678b442b8</a>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -581,7 +581,7 @@
         <div>
           <div class="contract-name">Test Account #4</div>
           <div class="contract-addr" style="margin-top:2px;">
-            <a href="http://localhost:8083/address/0xf93ee4cf8c6c40b329b0c0626f28333c132cf241" target="_blank">0xf93ee4cf8c6c40b329b0c0626f28333c132cf241</a>
+            <a href="#/address/0xf93ee4cf8c6c40b329b0c0626f28333c132cf241" target="_blank">0xf93ee4cf8c6c40b329b0c0626f28333c132cf241</a>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;">
@@ -600,15 +600,15 @@
         <h4 style="color: var(--l1-color);">L1 Network</h4>
         <div class="config-row">
           <span class="label">Network Name</span>
-          <span class="value" id="netL1Name">TokamakAppL2 L1 Local</span>
+          <span class="value" id="netL1Name">-</span>
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
-          <span class="value" id="netL1Rpc">http://localhost:8545</span>
+          <span class="value" id="netL1Rpc">-</span>
         </div>
         <div class="config-row">
           <span class="label">Chain ID</span>
-          <span class="value" id="netL1ChainId">9</span>
+          <span class="value" id="netL1ChainId">-</span>
         </div>
         <div class="config-row">
           <span class="label">Currency</span>
@@ -616,9 +616,9 @@
         </div>
         <div class="config-row">
           <span class="label">Explorer</span>
-          <span class="value" id="netL1Explorer">http://localhost:8083</span>
+          <span class="value" id="netL1Explorer">-</span>
         </div>
-        <button class="btn-add-network" id="btnAddL1" data-chain-id="9" data-rpc="http://localhost:8545" data-name="TokamakAppL2 L1 Local" data-explorer="http://localhost:8083">
+        <button class="btn-add-network" id="btnAddL1" data-chain-id="" data-rpc="" data-name="" data-explorer="">
           Add to MetaMask
         </button>
       </div>
@@ -626,15 +626,15 @@
         <h4 style="color: var(--l2-color);">L2 Network</h4>
         <div class="config-row">
           <span class="label">Network Name</span>
-          <span class="value">TokamakAppL2 L2 Local</span>
+          <span class="value" id="netL2Name">-</span>
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
-          <span class="value" id="netL2Rpc">http://localhost:1729</span>
+          <span class="value" id="netL2Rpc">-</span>
         </div>
         <div class="config-row">
           <span class="label">Chain ID</span>
-          <span class="value">65536999</span>
+          <span class="value" id="netL2ChainId">-</span>
         </div>
         <div class="config-row">
           <span class="label">Currency</span>
@@ -642,9 +642,9 @@
         </div>
         <div class="config-row">
           <span class="label">Explorer</span>
-          <span class="value" id="netL2Explorer">http://localhost:8082</span>
+          <span class="value" id="netL2Explorer">-</span>
         </div>
-        <button class="btn-add-network" id="btnAddL2" data-chain-id="65536999" data-rpc="http://localhost:1729" data-name="TokamakAppL2 L2 Local" data-explorer="http://localhost:8082">
+        <button class="btn-add-network" id="btnAddL2" data-chain-id="" data-rpc="" data-name="" data-explorer="">
           Add to MetaMask
         </button>
       </div>
@@ -656,8 +656,8 @@
   </div>
 
   <script>
-    let L1_RPC = 'http://localhost:8545';
-    let L2_RPC = 'http://localhost:1729';
+    let L1_RPC = null;
+    let L2_RPC = null;
     let CONFIG = null;
 
     function setStatus(elId, status, label) {
@@ -724,59 +724,64 @@
             document.getElementById('l2ChainTitle').textContent = 'L2 (Chain ID: ' + CONFIG.l2_chain_id + ')';
           }
 
-          // Update quick links
-          const l1Exp = CONFIG.l1_explorer || 'http://localhost:8083';
-          const l2Exp = CONFIG.l2_explorer || 'http://localhost:8082';
-          document.getElementById('linkL1Explorer').href = l1Exp;
-          let l1ExpLabel = 'Blockscout';
-          try {
-            l1ExpLabel = isExternalL1 ? l1NetworkName + ' Explorer' : 'Blockscout :' + new URL(l1Exp).port;
-          } catch (e) {
-            console.warn('Could not parse L1 explorer URL for label:', l1Exp);
-            if (isExternalL1) l1ExpLabel = l1NetworkName + ' Explorer';
+          // Derive URLs
+          const l1Exp = CONFIG.l1_explorer || '';
+          const l2Exp = CONFIG.l2_explorer || '';
+          const l1ChainId = CONFIG.l1_chain_id || '';
+          const l2ChainId = CONFIG.l2_chain_id || '';
+          const l1NetName = isExternalL1 ? ('TokamakAppL2 L1 ' + l1NetworkName) : 'TokamakAppL2 L1 Local';
+          const l2NetName = isExternalL1 ? ('TokamakAppL2 L2 ' + l1NetworkName) : 'TokamakAppL2 L2 Local';
+
+          // Quick links
+          if (l1Exp) {
+            document.getElementById('linkL1Explorer').href = l1Exp;
+            try {
+              document.getElementById('linkL1Explorer').querySelector('.quick-link-sub').textContent =
+                isExternalL1 ? l1NetworkName + ' Explorer' : 'Blockscout :' + new URL(l1Exp).port;
+            } catch {}
           }
-          document.getElementById('linkL1Explorer').querySelector('.quick-link-sub').textContent = l1ExpLabel;
-          document.getElementById('linkL2Explorer').href = l2Exp;
-          try {
-            document.getElementById('linkL2Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l2Exp).port;
-          } catch (e) {
-            console.warn('Could not parse L2 explorer URL for label:', l2Exp);
+          if (l2Exp) {
+            document.getElementById('linkL2Explorer').href = l2Exp;
+            try {
+              document.getElementById('linkL2Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l2Exp).port;
+            } catch {}
           }
 
-          // Update L1 service card
+          // L1 service card
           const svcL1Card = document.getElementById('svcL1BlockscoutCard');
           if (svcL1Card) {
+            const l1Link = document.getElementById('svcL1Link');
+            const l1Api = document.getElementById('svcL1Api');
             if (isExternalL1) {
-              // Replace L1 Blockscout with external explorer info
               document.getElementById('svcL1ExplorerName').textContent = 'L1 Explorer (' + l1NetworkName + ')';
               setStatus('svcL1Blockscout', 'online', 'external');
-              const links = svcL1Card.querySelectorAll('.service-detail .value');
-              if (links[0]) links[0].innerHTML = '<a href="' + l1Exp + '" target="_blank">' + new URL(l1Exp).host + '</a>';
-              if (links[1]) links[1].textContent = 'External';
-            } else {
-              const links = svcL1Card.querySelectorAll('.service-detail .value');
-              if (links[0]) links[0].innerHTML = '<a href="' + l1Exp + '" target="_blank">localhost:' + new URL(l1Exp).port + '</a>';
-              if (links[1]) links[1].textContent = ':' + new URL(l1Exp).port + '/api';
+              if (l1Link && l1Exp) { l1Link.href = l1Exp; l1Link.textContent = new URL(l1Exp).host; }
+              if (l1Api) l1Api.textContent = 'External';
+            } else if (l1Exp) {
+              try {
+                if (l1Link) { l1Link.href = l1Exp; l1Link.textContent = 'localhost:' + new URL(l1Exp).port; }
+                if (l1Api) l1Api.textContent = ':' + new URL(l1Exp).port + '/api';
+              } catch {}
             }
           }
-          const svcL2Link = document.querySelector('#svcL2Blockscout')?.closest('.service-card');
-          if (svcL2Link) {
-            const links = svcL2Link.querySelectorAll('.service-detail .value');
-            if (links[0]) links[0].innerHTML = '<a href="' + l2Exp + '" target="_blank">localhost:' + new URL(l2Exp).port + '</a>';
-            if (links[1]) links[1].textContent = ':' + new URL(l2Exp).port + '/api';
+          // L2 service card
+          const l2Link = document.getElementById('svcL2Link');
+          const l2Api = document.getElementById('svcL2Api');
+          if (l2Exp) {
+            try {
+              if (l2Link) { l2Link.href = l2Exp; l2Link.textContent = 'localhost:' + new URL(l2Exp).port; }
+              if (l2Api) l2Api.textContent = ':' + new URL(l2Exp).port + '/api';
+            } catch {}
           }
 
-          // Update chain stat RPC display
+          // Chain stat RPC display
+          try { document.getElementById('l1RpcDisplay').textContent = new URL(L1_RPC).host; } catch {}
           try {
-            const l1RpcHost = new URL(L1_RPC).host;
-            document.getElementById('l1RpcDisplay').textContent = l1RpcHost;
+            document.getElementById('l2RpcDisplay').textContent = 'localhost:' + (new URL(L2_RPC).port || '1729');
+            document.getElementById('l2CoordDisplay').textContent = ':3900';
           } catch {}
-          const l2RpcPort = new URL(L2_RPC).port || '1729';
-          document.querySelectorAll('.chain-stat-card.l2 .stat-value').forEach(el => {
-            if (el.textContent.includes('localhost:')) el.textContent = 'localhost:' + l2RpcPort;
-          });
 
-          // Update Bridge UI service card URL
+          // Bridge UI service card URL
           const bridgePort = window.location.port || '3000';
           const svcBridge = document.querySelector('#svcBridge')?.closest('.service-card');
           if (svcBridge) {
@@ -784,12 +789,7 @@
             if (link) link.textContent = 'localhost:' + bridgePort + '/bridge.html';
           }
 
-          // Update MetaMask network config
-          const l1ChainId = CONFIG.l1_chain_id || 9;
-          const l2ChainId = CONFIG.l2_chain_id || 65536999;
-          const l1NetName = isExternalL1 ? ('TokamakAppL2 L1 ' + l1NetworkName) : 'TokamakAppL2 L1 Local';
-          const l2NetName = isExternalL1 ? ('TokamakAppL2 L2 ' + l1NetworkName) : 'TokamakAppL2 L2 Local';
-
+          // MetaMask network config
           document.getElementById('netL1Name').textContent = l1NetName;
           document.getElementById('netL1Rpc').textContent = L1_RPC;
           document.getElementById('netL1ChainId').textContent = String(l1ChainId);
@@ -801,7 +801,9 @@
           btnL1.dataset.name = l1NetName;
           btnL1.dataset.explorer = l1Exp;
 
+          document.getElementById('netL2Name').textContent = l2NetName;
           document.getElementById('netL2Rpc').textContent = L2_RPC;
+          document.getElementById('netL2ChainId').textContent = String(l2ChainId);
           document.getElementById('netL2Explorer').textContent = l2Exp;
 
           const btnL2 = document.getElementById('btnAddL2');
@@ -810,31 +812,30 @@
           btnL2.dataset.name = l2NetName;
           btnL2.dataset.explorer = l2Exp;
 
-          // Update metrics links
+          // Metrics links
           if (CONFIG.metrics_url) {
-            const metricsPort = new URL(CONFIG.metrics_url).port || '3702';
-            const linkMetrics = document.getElementById('linkMetrics');
-            if (linkMetrics) {
-              linkMetrics.href = CONFIG.metrics_url;
-              const sub = linkMetrics.querySelector('.quick-link-sub');
-              if (sub) sub.textContent = 'Prometheus :' + metricsPort;
-            }
-            const svcMetrics = document.querySelector('#svcMetrics')?.closest('.service-card');
-            if (svcMetrics) {
-              const link = svcMetrics.querySelector('.service-detail .value a');
-              if (link) {
-                link.href = CONFIG.metrics_url;
-                link.textContent = 'localhost:' + metricsPort;
+            try {
+              const metricsPort = new URL(CONFIG.metrics_url).port || '3702';
+              const linkMetrics = document.getElementById('linkMetrics');
+              if (linkMetrics) {
+                linkMetrics.href = CONFIG.metrics_url;
+                const sub = linkMetrics.querySelector('.quick-link-sub');
+                if (sub) sub.textContent = 'Prometheus :' + metricsPort;
               }
-            }
+              const svcMetricsLink = document.getElementById('svcMetricsLink');
+              if (svcMetricsLink) {
+                svcMetricsLink.href = CONFIG.metrics_url;
+                svcMetricsLink.textContent = 'localhost:' + metricsPort;
+              }
+            } catch {}
           }
 
-          // Update test account explorer links (only visible for local L1)
-          if (!isExternalL1) {
+          // Test account explorer links (only visible for local L1)
+          if (!isExternalL1 && l1Exp) {
             document.querySelectorAll('#testAccountsSection .contract-addr a').forEach(a => {
               const href = a.getAttribute('href');
-              if (href && href.includes('localhost:8083')) {
-                a.setAttribute('href', href.replace('http://localhost:8083', l1Exp));
+              if (href && href.startsWith('#/address/')) {
+                a.setAttribute('href', l1Exp + href.slice(1));
               }
             });
           }
@@ -865,8 +866,8 @@
     }
 
     function renderContracts() {
-      const l1Explorer = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
-      const l2Explorer = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
+      const l1Explorer = CONFIG ? CONFIG.l1_explorer : '';
+      const l2Explorer = CONFIG ? CONFIG.l2_explorer : '';
 
       // --- L1 Deployed Contracts ---
       const l1Section = document.getElementById('contractsSection');
@@ -918,7 +919,8 @@
 
     async function updateChainStats() {
       // L1
-      try {
+      if (!L1_RPC) { setStatus('l1ChainStatus', 'offline', 'no config'); }
+      else try {
         const [blockHex, gasPriceHex] = await Promise.all([
           rpcCall(L1_RPC, 'eth_blockNumber'),
           rpcCall(L1_RPC, 'eth_gasPrice')
@@ -935,7 +937,8 @@
       }
 
       // L2
-      try {
+      if (!L2_RPC) { setStatus('l2ChainStatus', 'offline', 'no config'); }
+      else try {
         const [blockHex, gasPriceHex] = await Promise.all([
           rpcCall(L2_RPC, 'eth_blockNumber'),
           rpcCall(L2_RPC, 'eth_gasPrice')
@@ -951,41 +954,36 @@
     }
 
     async function updateServiceStatus() {
-      const l1Exp = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
-      const l2Exp = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
+      const l1Exp = CONFIG ? CONFIG.l1_explorer : '';
+      const l2Exp = CONFIG ? CONFIG.l2_explorer : '';
 
       // L1 Explorer status
       const isExternalL1 = CONFIG && CONFIG.is_external_l1 === true;
       if (isExternalL1) {
-        // External L1 explorer is always "online" (we don't manage it)
         setStatus('svcL1Blockscout', 'online', 'external');
+      } else if (!l1Exp) {
+        setStatus('svcL1Blockscout', 'offline', 'no config');
       } else {
         try {
           const resp = await fetch(l1Exp + '/api/v2/stats');
-          if (resp.ok) {
-            setStatus('svcL1Blockscout', 'online', 'online');
-          } else {
-            setStatus('svcL1Blockscout', 'offline', 'starting');
-          }
+          setStatus('svcL1Blockscout', resp.ok ? 'online' : 'offline', resp.ok ? 'online' : 'starting');
         } catch {
           setStatus('svcL1Blockscout', 'offline', 'offline');
         }
       }
 
       // L2 Blockscout
-      try {
+      if (!l2Exp) { setStatus('svcL2Blockscout', 'offline', 'no config'); }
+      else try {
         const resp = await fetch(l2Exp + '/api/v2/stats');
-        if (resp.ok) {
-          setStatus('svcL2Blockscout', 'online', 'online');
-        } else {
-          setStatus('svcL2Blockscout', 'offline', 'starting');
-        }
+        setStatus('svcL2Blockscout', resp.ok ? 'online' : 'offline', resp.ok ? 'online' : 'starting');
       } catch {
         setStatus('svcL2Blockscout', 'offline', 'offline');
       }
 
       // Prometheus Metrics
-      const metricsUrl = CONFIG ? CONFIG.metrics_url : 'http://localhost:3702/metrics';
+      const metricsUrl = CONFIG ? CONFIG.metrics_url : null;
+      if (!metricsUrl) { setStatus('svcMetrics', 'offline', 'no config'); return; }
       try {
         await fetch(metricsUrl, { mode: 'no-cors' });
         setStatus('svcMetrics', 'online', 'online');

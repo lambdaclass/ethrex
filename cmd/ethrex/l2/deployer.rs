@@ -20,8 +20,11 @@ use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, create2_deploy_from_bytecode_no_wait,
     initialize_contract_no_wait, send_generic_transaction, wait_for_transaction_receipt,
+    wait_for_transaction_receipt_with_interval,
 };
-use ethrex_l2_sdk::{deploy_with_proxy_from_bytecode_no_wait, register_fee_token_no_wait};
+use ethrex_l2_sdk::{
+    deploy_with_proxy_from_bytecode_no_wait, register_fee_token_no_wait, ProxyDeployment,
+};
 use ethrex_rpc::{
     EthClient,
     clients::Overrides,
@@ -636,12 +639,12 @@ pub async fn deploy_l1_contracts(
         )
     };
 
-    let (contract_addresses, deploy_tx_hashes) =
+    let (contract_addresses, _) =
         deploy_contracts(&eth_client, &opts, &signer).await?;
 
     info!("Initializing contracts");
 
-    let initialize_tx_hashes = initialize_contracts(
+    let _ = initialize_contracts(
         contract_addresses.clone(),
         &eth_client,
         &opts,
@@ -650,18 +653,7 @@ pub async fn deploy_l1_contracts(
     )
     .await?;
 
-    info!("Waiting for transactions receipts");
-
-    for tx_hash in deploy_tx_hashes.iter().chain(initialize_tx_hashes.iter()) {
-        if *tx_hash == H256::default() {
-            continue;
-        }
-        let receipt = wait_for_transaction_receipt(*tx_hash, &eth_client, 100).await?;
-        if !receipt.receipt.status {
-            error!("Receipt status is false for tx_hash: {tx_hash:#x}");
-            return Err(DeployerError::TransactionReceiptError);
-        }
-    }
+    // All deploy/init receipts already confirmed inline — no batch wait needed
 
     if contract_addresses.router.is_some() {
         let _ = register_chain(
@@ -711,12 +703,49 @@ lazy_static::lazy_static! {
     static ref SALT: std::sync::Mutex<H256>  = std::sync::Mutex::new(H256::zero());
 }
 
+/// Default chain ID when RPC call fails (local devnet).
+const LOCAL_DEVNET_CHAIN_ID: u64 = 9;
+/// Chain IDs above this threshold are considered external networks (testnets/mainnet).
+const EXTERNAL_CHAIN_ID_THRESHOLD: u64 = 100;
+
+/// Compute receipt polling interval based on chain ID (external L1 ~12s, local ~2s).
+async fn receipt_interval_secs(eth_client: &EthClient) -> u64 {
+    let chain_id = eth_client.get_chain_id().await.unwrap_or(LOCAL_DEVNET_CHAIN_ID.into());
+    if chain_id > EXTERNAL_CHAIN_ID_THRESHOLD.into() { 12 } else { 2 }
+}
+
+/// Wait for both tx hashes of a proxy deployment (impl + proxy) and verify receipts.
+async fn confirm_proxy_deployment(
+    eth_client: &EthClient,
+    deployment: &ProxyDeployment,
+    name: &str,
+    interval_secs: u64,
+) -> Result<(), DeployerError> {
+    for (label, tx_hash) in [
+        ("impl", deployment.implementation_tx_hash),
+        ("proxy", deployment.proxy_tx_hash),
+    ] {
+        if tx_hash == H256::default() {
+            continue;
+        }
+        let receipt = wait_for_transaction_receipt_with_interval(tx_hash, eth_client, 20, interval_secs).await?;
+        if !receipt.receipt.status {
+            error!("{name} {label} tx failed: {tx_hash:#x}");
+            return Err(DeployerError::TransactionReceiptError);
+        }
+    }
+    info!("{name} confirmed on-chain");
+    Ok(())
+}
+
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
     deployer: &Signer,
 ) -> Result<(ContractAddresses, Vec<H256>), DeployerError> {
     trace!("Deploying contracts");
+
+    let interval_secs = receipt_interval_secs(eth_client).await;
 
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -768,6 +797,7 @@ async fn deploy_contracts(
             router_deployment.implementation_address,
             router_deployment.implementation_tx_hash,
         );
+        confirm_proxy_deployment(eth_client, &router_deployment, "Router", interval_secs).await?;
         nonce += 2;
 
         router_deployment
@@ -802,6 +832,7 @@ async fn deploy_contracts(
             timelock_deployment.implementation_address,
             timelock_deployment.implementation_tx_hash,
         );
+        confirm_proxy_deployment(eth_client, &timelock_deployment, "Timelock", interval_secs).await?;
         (
             Some(timelock_deployment.clone()),
             Some(timelock_deployment.proxy_address),
@@ -848,6 +879,7 @@ async fn deploy_contracts(
         on_chain_proposer_deployment.implementation_address,
         on_chain_proposer_deployment.implementation_tx_hash,
     );
+    confirm_proxy_deployment(eth_client, &on_chain_proposer_deployment, "OnChainProposer", interval_secs).await?;
 
     info!("Deploying CommonBridge");
 
@@ -873,6 +905,7 @@ async fn deploy_contracts(
         bridge_deployment.implementation_address,
         bridge_deployment.implementation_tx_hash,
     );
+    confirm_proxy_deployment(eth_client, &bridge_deployment, "CommonBridge", interval_secs).await?;
 
     nonce += 2;
 
@@ -903,6 +936,7 @@ async fn deploy_contracts(
             sequencer_registry_deployment.implementation_address,
             sequencer_registry_deployment.implementation_tx_hash,
         );
+        confirm_proxy_deployment(eth_client, &sequencer_registry_deployment, "SequencerRegistry", interval_secs).await?;
         sequencer_registry_deployment
     } else {
         Default::default()
@@ -933,6 +967,7 @@ async fn deploy_contracts(
         guest_program_registry_deployment.implementation_address,
         guest_program_registry_deployment.implementation_tx_hash,
     );
+    confirm_proxy_deployment(eth_client, &guest_program_registry_deployment, "GuestProgramRegistry", interval_secs).await?;
 
     nonce += 2;
 
@@ -959,6 +994,14 @@ async fn deploy_contracts(
                 )
                 .await?;
             info!(address = %format!("{sp1_verifier_address:#x}"), tx_hash = %format!("{verifier_deployment_tx_hash:#x}"), "SP1Verifier deployed");
+            if verifier_deployment_tx_hash != H256::default() {
+                let receipt = wait_for_transaction_receipt_with_interval(verifier_deployment_tx_hash, eth_client, 20, interval_secs).await?;
+                if !receipt.receipt.status {
+                    error!("SP1Verifier tx failed: {verifier_deployment_tx_hash:#x}");
+                    return Err(DeployerError::TransactionReceiptError);
+                }
+                info!("SP1Verifier confirmed on-chain");
+            }
             (verifier_deployment_tx_hash, sp1_verifier_address)
         }
         _ => (H256::default(), Address::zero()),
@@ -1020,25 +1063,7 @@ async fn deploy_contracts(
         tdx_verifier_address = ?tdx_verifier_address,
         "Contracts deployed"
     );
-    let mut receipts = vec![
-        on_chain_proposer_deployment.implementation_tx_hash,
-        on_chain_proposer_deployment.proxy_tx_hash,
-        bridge_deployment.implementation_tx_hash,
-        bridge_deployment.proxy_tx_hash,
-        sequencer_registry_deployment.implementation_tx_hash,
-        sequencer_registry_deployment.proxy_tx_hash,
-        guest_program_registry_deployment.implementation_tx_hash,
-        guest_program_registry_deployment.proxy_tx_hash,
-        sp1_verifier_deployment_tx_hash,
-        router_deployment.implementation_tx_hash,
-        router_deployment.proxy_tx_hash,
-    ];
-
-    if let Some(timelock_deployment) = timelock_deployment {
-        receipts.push(timelock_deployment.implementation_tx_hash);
-        receipts.push(timelock_deployment.proxy_tx_hash);
-    }
-
+    // All deploy receipts already confirmed above — no batch wait needed
     Ok((
         ContractAddresses {
             on_chain_proposer_address: on_chain_proposer_deployment.proxy_address,
@@ -1052,7 +1077,7 @@ async fn deploy_contracts(
             router: opts.router.or(Some(router_deployment.proxy_address)),
             timelock_address,
         },
-        receipts,
+        vec![], // receipts already confirmed per-contract
     ))
 }
 
@@ -1193,7 +1218,25 @@ async fn initialize_contracts(
     initializer: &Signer,
 ) -> Result<Vec<H256>, DeployerError> {
     trace!("Initializing contracts");
-    let mut tx_hashes = vec![];
+    let mut tx_hashes: Vec<H256> = vec![];
+    let interval_secs = receipt_interval_secs(eth_client).await;
+
+    /// Confirm a single transaction receipt immediately after sending.
+    async fn confirm_init_tx(
+        tx_hash: H256,
+        eth_client: &EthClient,
+        label: &str,
+        interval_secs: u64,
+    ) -> Result<(), DeployerError> {
+        let receipt = wait_for_transaction_receipt_with_interval(tx_hash, eth_client, 20, interval_secs).await?;
+        if !receipt.receipt.status {
+            error!("{label} tx failed: {tx_hash:#x}");
+            return Err(DeployerError::TransactionReceiptError);
+        }
+        info!("{label} confirmed on-chain");
+        Ok(())
+    }
+
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
         .await?
@@ -1253,6 +1296,7 @@ async fn initialize_contracts(
             .await?
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "Timelock initialized");
+        confirm_init_tx(initialize_tx_hash, eth_client, "Timelock init", interval_secs).await?;
         tx_hashes.push(initialize_tx_hash);
     } else {
         info!("Skipping Timelock initialization (based enabled)");
@@ -1310,7 +1354,7 @@ async fn initialize_contracts(
         .await?;
 
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
-
+        confirm_init_tx(initialize_tx_hash, eth_client, "OnChainProposer init", interval_secs).await?;
         tx_hashes.push(initialize_tx_hash);
 
         info!("Initializing SequencerRegistry");
@@ -1343,6 +1387,7 @@ async fn initialize_contracts(
             .await?
         };
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "SequencerRegistry initialized");
+        confirm_init_tx(initialize_tx_hash, eth_client, "SequencerRegistry init", interval_secs).await?;
         tx_hashes.push(initialize_tx_hash);
     } else {
         if let Some(router) = contract_addresses.router
@@ -1420,6 +1465,7 @@ async fn initialize_contracts(
         )
         .await?;
         info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "OnChainProposer initialized");
+        confirm_init_tx(initialize_tx_hash, eth_client, "OnChainProposer init", interval_secs).await?;
         tx_hashes.push(initialize_tx_hash);
     }
 
@@ -1464,6 +1510,7 @@ async fn initialize_contracts(
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "CommonBridge initialized");
+    confirm_init_tx(initialize_tx_hash, eth_client, "CommonBridge init", interval_secs).await?;
     tx_hashes.push(initialize_tx_hash);
 
     if let Some(fee_token) = opts.initial_fee_token {
@@ -1489,6 +1536,7 @@ async fn initialize_contracts(
         .await?;
         info!(?fee_token, "CommonBridge initial fee token registered");
         info!(tx_hash = %format!("{register_tx_hash:#x}"), "Initial fee token registration transaction sent");
+        confirm_init_tx(register_tx_hash, eth_client, "Fee token registration", interval_secs).await?;
         tx_hashes.push(register_tx_hash);
     }
 
@@ -1518,6 +1566,7 @@ async fn initialize_contracts(
         )
         .await?;
 
+        confirm_init_tx(transfer_tx_hash, eth_client, "Bridge ownership transfer", interval_secs).await?;
         tx_hashes.push(transfer_tx_hash);
 
         if let Some(owner_pk) = opts.bridge_owner_pk {
@@ -1544,6 +1593,7 @@ async fn initialize_contracts(
 
             let accept_tx_hash = send_generic_transaction(eth_client, accept_tx, &signer).await?;
 
+            confirm_init_tx(accept_tx_hash, eth_client, "Bridge ownership accept", interval_secs).await?;
             tx_hashes.push(accept_tx_hash);
             info!(
                 transfer_tx_hash = %format!("{transfer_tx_hash:#x}"),
@@ -1589,6 +1639,7 @@ async fn initialize_contracts(
         .await?
     };
     info!(tx_hash = %format!("{initialize_tx_hash:#x}"), "GuestProgramRegistry initialized");
+    confirm_init_tx(initialize_tx_hash, eth_client, "GuestProgramRegistry init", interval_secs).await?;
     tx_hashes.push(initialize_tx_hash);
 
     // GuestProgramRegistry is linked to OnChainProposer via the initialize() parameter,
@@ -1638,6 +1689,7 @@ async fn initialize_contracts(
             program_id,
             "Guest program registered in GuestProgramRegistry"
         );
+        confirm_init_tx(register_tx_hash, eth_client, "Guest program registration", interval_secs).await?;
         tx_hashes.push(register_tx_hash);
 
         // 2. Register VK for this program if SP1 is enabled.
@@ -1706,6 +1758,7 @@ async fn initialize_contracts(
                 program_type_id,
                 "SP1 verification key registered via Timelock"
             );
+            confirm_init_tx(vk_tx_hash, eth_client, "VK registration", interval_secs).await?;
             tx_hashes.push(vk_tx_hash);
         }
     }
@@ -1867,7 +1920,7 @@ async fn make_deposits(
     }
     trace!("Deposits finished");
     if let Some(hash) = last_hash {
-        wait_for_transaction_receipt(hash, eth_client, 100).await?;
+        wait_for_transaction_receipt(hash, eth_client, 20).await?;
     }
     Ok(())
 }

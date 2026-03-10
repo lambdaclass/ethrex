@@ -471,8 +471,9 @@ async function stopTools() {
   const toolsCompose = path.join(l2Dir, "docker-compose-zk-dex-tools.yaml");
   if (!fs.existsSync(toolsCompose)) return;
 
+  // Stop all profiles (default + external-l1) to ensure proxy-l2 etc. are also stopped
   await new Promise((resolve) => {
-    const proc = spawn("docker", ["compose", "-f", toolsCompose, "down", "--remove-orphans"], {
+    const proc = spawn("docker", ["compose", "-f", toolsCompose, "--profile", "*", "down", "--remove-orphans"], {
       cwd: l2Dir,
       stdio: "pipe",
     });
