@@ -4,14 +4,20 @@ use ethrex_guest_program::l2::{ProgramInput, execution_program};
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
 
 use openvm_keccak256::keccak256;
-use rkyv::rancor::Error;
 
 openvm::init!();
 
 pub fn main() {
     openvm::io::println("start reading input");
     let input = openvm::io::read_vec();
-    let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
+
+    #[cfg(feature = "eip-8025")]
+    let input = ProgramInput::decode(&input).unwrap();
+    #[cfg(not(feature = "eip-8025"))]
+    let input = {
+        use rkyv::rancor::Error;
+        rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap()
+    };
     openvm::io::println("finish reading input");
 
     openvm::io::println("start execution");

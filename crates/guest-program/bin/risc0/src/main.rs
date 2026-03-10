@@ -6,14 +6,20 @@ use ethrex_guest_program::l2::{ProgramInput, execution_program};
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
 
 use risc0_zkvm::guest::env;
-use rkyv::rancor::Error;
 
 fn main() {
     println!("start reading input");
     let start = env::cycle_count();
     let mut input = Vec::new();
     env::stdin().read_to_end(&mut input).unwrap();
-    let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
+
+    #[cfg(feature = "eip-8025")]
+    let input = ProgramInput::decode(&input).unwrap();
+    #[cfg(not(feature = "eip-8025"))]
+    let input = {
+        use rkyv::rancor::Error;
+        rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap()
+    };
     let end = env::cycle_count();
     println!("end reading input, cycles: {}", end - start);
 

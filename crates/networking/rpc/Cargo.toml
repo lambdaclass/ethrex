@@ -43,6 +43,10 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
+# EIP-8025 SSZ dependencies (optional)
+ssz-merkle = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
+ssz-types = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
+
 # Clients
 envy = "0.4.2"
 thiserror.workspace = true
@@ -62,3 +66,4 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
+eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025", "dep:ssz-merkle", "dep:ssz-types"]

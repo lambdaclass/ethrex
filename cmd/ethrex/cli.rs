@@ -323,15 +323,35 @@ pub struct Options {
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub max_blobs_per_block: Option<u32>,
+    #[cfg(feature = "eip-8025")]
     #[arg(
-        long = "precompute-witnesses",
-        action = ArgAction::SetTrue,
-        default_value = "false",
-        help = "Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage",
-        help_heading = "Node options",
-        env = "ETHREX_PRECOMPUTE_WITNESSES"
+        long = "proof.callback-url",
+        value_name = "URL",
+        help = "Callback URL for delivering generated proofs (EIP-8025).",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_CALLBACK_URL"
     )]
-    pub precompute_witnesses: bool,
+    pub proof_callback_url: Option<url::Url>,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.coordinator-addr",
+        default_value = "127.0.0.1",
+        value_name = "ADDRESS",
+        help = "Listening address for the proof coordinator TCP server.",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_COORDINATOR_ADDR"
+    )]
+    pub proof_coordinator_addr: String,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.coordinator-port",
+        default_value_t = 9100,
+        value_name = "PORT",
+        help = "Listening port for the proof coordinator TCP server.",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_COORDINATOR_PORT"
+    )]
+    pub proof_coordinator_port: u16,
 }
 
 impl Options {
@@ -414,7 +434,12 @@ impl Default for Options {
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
-            precompute_witnesses: false,
+            #[cfg(feature = "eip-8025")]
+            proof_callback_url: None,
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator_addr: "127.0.0.1".to_string(),
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator_port: 9100,
         }
     }
 }
