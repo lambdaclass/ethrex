@@ -103,8 +103,8 @@ impl Nibbles {
     /// the prefix and return true, otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
         if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
-            self.data = self.data[prefix.len()..].to_vec();
-            self.already_consumed.extend(&prefix.data);
+            self.already_consumed.extend_from_slice(&prefix.data);
+            self.data.drain(..prefix.len());
             true
         } else {
             false
@@ -145,9 +145,14 @@ impl Nibbles {
 
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Nibbles {
-        let mut ret = self.slice(offset, self.len());
-        ret.already_consumed = [&self.already_consumed, &self.data[0..offset]].concat();
-        ret
+        let mut already_consumed =
+            Vec::with_capacity(self.already_consumed.len() + offset);
+        already_consumed.extend_from_slice(&self.already_consumed);
+        already_consumed.extend_from_slice(&self.data[..offset]);
+        Nibbles {
+            data: self.data[offset..].to_vec(),
+            already_consumed,
+        }
     }
 
     /// Returns the nibbles beween the start and end indexes
@@ -178,7 +183,6 @@ impl Nibbles {
     /// Taken from https://github.com/citahub/cita_trie/blob/master/src/nibbles.rs#L56
     /// Encodes the nibbles in compact form
     pub fn encode_compact(&self) -> Vec<u8> {
-        let mut compact = vec![];
         let is_leaf = self.is_leaf();
         let mut hex = if is_leaf {
             &self.data[0..self.data.len() - 1]
@@ -191,6 +195,7 @@ impl Nibbles {
         // extension    odd            |    0001      0x1
         // leaf         even           |    0010      0x2
         // leaf         odd            |    0011      0x3
+        let mut compact = Vec::with_capacity(hex.len() / 2 + 1);
         let v = if hex.len() % 2 == 1 {
             let v = 0x10 + hex[0];
             hex = &hex[1..];
@@ -240,16 +245,22 @@ impl Nibbles {
 
     /// Concatenates self and another Nibbles returning a new Nibbles
     pub fn concat(&self, other: &Nibbles) -> Nibbles {
+        let mut data = Vec::with_capacity(self.data.len() + other.data.len());
+        data.extend_from_slice(&self.data);
+        data.extend_from_slice(&other.data);
         Nibbles {
-            data: [&self.data[..], &other.data[..]].concat(),
+            data,
             already_consumed: self.already_consumed.clone(),
         }
     }
 
-    /// Returns a copy of self with the nibble added at the and
+    /// Returns a copy of self with the nibble added at the end
     pub fn append_new(&self, nibble: u8) -> Nibbles {
+        let mut data = Vec::with_capacity(self.data.len() + 1);
+        data.extend_from_slice(&self.data);
+        data.push(nibble);
         Nibbles {
-            data: [self.data.clone(), vec![nibble]].concat(),
+            data,
             already_consumed: self.already_consumed.clone(),
         }
     }
@@ -304,12 +315,16 @@ fn compact_to_hex(compact: &[u8]) -> Vec<u8> {
     }
     let mut base = keybytes_to_hex(compact);
     // delete terminator flag
-    if base[0] < 2 {
-        base = base[..base.len() - 1].to_vec();
-    }
+    let end = if base[0] < 2 {
+        base.len() - 1
+    } else {
+        base.len()
+    };
     // apply odd flag
     let chop = 2 - (base[0] & 1) as usize;
-    base[chop..].to_vec()
+    base.drain(..chop);
+    base.truncate(end - chop);
+    base
 }
 
 // Code taken from https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/trie/encoding.go#L96
