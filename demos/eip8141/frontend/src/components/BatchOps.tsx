@@ -126,13 +126,23 @@ export default function BatchOps({ credential }: Props) {
                   </button>
                 )}
               </div>
-              <input
-                type="text"
-                placeholder="To address (0x...)"
-                value={op.to}
-                onChange={e => updateOp(i, 'to', e.target.value)}
-                className="w-full rounded border border-zinc-700 bg-zinc-900/50 px-2.5 py-1.5 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="To address (0x...)"
+                  value={op.to}
+                  onChange={e => updateOp(i, 'to', e.target.value)}
+                  className="flex-1 rounded border border-zinc-700 bg-zinc-900/50 px-2.5 py-1.5 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => updateOp(i, 'to', '0x' + Array.from(crypto.getRandomValues(new Uint8Array(20)), b => b.toString(16).padStart(2, '0')).join(''))}
+                  className="rounded border border-zinc-700 bg-zinc-900/50 px-2 text-xs text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors cursor-pointer"
+                  title="Random address"
+                >
+                  🎲
+                </button>
+              </div>
               <div className="flex gap-2">
                 <input
                   type="text"

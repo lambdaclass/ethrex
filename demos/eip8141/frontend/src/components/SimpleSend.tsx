@@ -92,13 +92,23 @@ export default function SimpleSend({ credential }: Props) {
         <div className="space-y-4">
           <div>
             <label className="block text-xs text-zinc-400 mb-1.5">Recipient Address</label>
-            <input
-              type="text"
-              placeholder="0x..."
-              value={to}
-              onChange={e => setTo(e.target.value)}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="0x..."
+                value={to}
+                onChange={e => setTo(e.target.value)}
+                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setTo('0x' + Array.from(crypto.getRandomValues(new Uint8Array(20)), b => b.toString(16).padStart(2, '0')).join(''))}
+                className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-2.5 text-xs text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors cursor-pointer"
+                title="Random address"
+              >
+                🎲
+              </button>
+            </div>
           </div>
 
           <div>
