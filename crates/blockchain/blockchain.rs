@@ -64,11 +64,10 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    ChainConfig, Code, HashedAccountUpdate, Receipt, Transaction, WrappedEIP4844Transaction,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
@@ -479,13 +478,35 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
+
+                // Hashing intermediary: reads unhashed AccountUpdates from
+                // execution, keccak-hashes addresses and storage keys, and
+                // forwards HashedAccountUpdate batches to the merkleizer.
+                let (hashed_tx, hashed_rx) = channel();
+                let _hasher_handle = std::thread::Builder::new()
+                    .name("block_executor_hasher".to_string())
+                    .spawn_scoped(s, move || {
+                        for batch in rx {
+                            let hashed_batch: Vec<HashedAccountUpdate> = batch
+                                .into_iter()
+                                .map(HashedAccountUpdate::from_update)
+                                .collect();
+                            if hashed_tx.send(hashed_batch).is_err() {
+                                break;
+                            }
+                        }
+                    })
+                    .map_err(|e| {
+                        ChainError::Custom(format!("Failed to spawn hasher thread: {e}"))
+                    })?;
+
                 let parent_header_ref = &parent_header; // Avoid moving to thread
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StoreError> {
                         let (account_updates_list, accumulated_updates) = if bal.is_some() {
                             self.handle_merkleization_bal(
-                                rx,
+                                hashed_rx,
                                 parent_header_ref,
                                 queue_length_ref,
                                 max_queue_length_ref,
@@ -493,7 +514,7 @@ impl Blockchain {
                         } else {
                             self.handle_merkleization(
                                 s,
-                                rx,
+                                hashed_rx,
                                 parent_header_ref,
                                 queue_length_ref,
                                 max_queue_length_ref,
@@ -556,7 +577,7 @@ impl Blockchain {
     fn handle_merkleization<'a, 's, 'b>(
         &'a self,
         scope: &'s std::thread::Scope<'s, '_>,
-        rx: Receiver<Vec<AccountUpdate>>,
+        rx: Receiver<Vec<HashedAccountUpdate>>,
         parent_header: &'b BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
@@ -581,7 +602,6 @@ impl Blockchain {
 
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
-        let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -596,22 +616,33 @@ impl Blockchain {
             *max_queue_length = current_length.max(*max_queue_length);
             // Accumulate updates for witness generation if enabled
             if let Some(acc) = &mut accumulator {
-                for update in updates.clone() {
+                for update in &updates {
+                    // Reconstruct an AccountUpdate for witness accumulation
+                    let unhashed_update = AccountUpdate {
+                        address: update.address,
+                        removed: update.removed,
+                        info: update.info.clone(),
+                        code: update.code.clone(),
+                        // Witness accumulator uses unhashed keys, but we only
+                        // have hashed keys here. The storage map is unused by
+                        // the witness path that matters (it re-reads from
+                        // storage), so we pass an empty map.
+                        added_storage: Default::default(),
+                        removed_storage: update.removed_storage,
+                    };
                     match acc.entry(update.address) {
                         Entry::Vacant(e) => {
-                            e.insert(update);
+                            e.insert(unhashed_update);
                         }
                         Entry::Occupied(mut e) => {
-                            e.get_mut().merge(update);
+                            e.get_mut().merge(unhashed_update);
                         }
                     }
                 }
             }
 
             for update in updates {
-                let hashed_address = *hashed_address_cache
-                    .entry(update.address)
-                    .or_insert_with(|| keccak(update.address));
+                let hashed_address = update.hashed_address;
                 let account_bucket = hashed_address.as_fixed_bytes()[0] >> 4;
                 workers_tx[account_bucket as usize]
                     .send(MerklizationRequest::LoadAccount(hashed_address))
@@ -638,8 +669,7 @@ impl Blockchain {
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
                 }
-                for (key, value) in update.added_storage {
-                    let hashed_key = keccak(key);
+                for (hashed_key, value) in update.added_storage {
                     let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                     workers_tx[bucket as usize]
                         .send(MerklizationRequest::MerklizeStorage {
@@ -759,7 +789,7 @@ impl Blockchain {
     )]
     fn handle_merkleization_bal(
         &self,
-        rx: Receiver<Vec<AccountUpdate>>,
+        rx: Receiver<Vec<HashedAccountUpdate>>,
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
@@ -767,19 +797,29 @@ impl Blockchain {
         const NUM_WORKERS: usize = 16;
         let parent_state_root = parent_header.state_root;
 
-        // === Stage A: Drain + accumulate all AccountUpdates ===
+        // === Stage A: Drain + accumulate all HashedAccountUpdates ===
         // BAL guarantees completeness, so we block until execution finishes.
-        let mut all_updates: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
+        // Accumulate by hashed_address since addresses are already hashed.
+        let mut all_updates: FxHashMap<H256, HashedAccountUpdate> = FxHashMap::default();
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
             *max_queue_length = current_length.max(*max_queue_length);
             for update in updates {
-                match all_updates.entry(update.address) {
+                match all_updates.entry(update.hashed_address) {
                     Entry::Vacant(e) => {
                         e.insert(update);
                     }
                     Entry::Occupied(mut e) => {
-                        e.get_mut().merge(update);
+                        let existing = e.get_mut();
+                        existing.removed = update.removed;
+                        existing.removed_storage |= update.removed_storage;
+                        if let Some(info) = update.info {
+                            existing.info = Some(info);
+                        }
+                        if let Some(code) = update.code {
+                            existing.code = Some(code);
+                        }
+                        existing.added_storage.extend(update.added_storage);
                     }
                 }
             }
@@ -787,16 +827,28 @@ impl Blockchain {
 
         // Extract witness accumulator before consuming updates
         let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
+            Some(
+                all_updates
+                    .values()
+                    .map(|u| AccountUpdate {
+                        address: u.address,
+                        removed: u.removed,
+                        info: u.info.clone(),
+                        code: u.code.clone(),
+                        added_storage: Default::default(),
+                        removed_storage: u.removed_storage,
+                    })
+                    .collect::<Vec<_>>(),
+            )
         } else {
             None
         };
 
-        // Extract code updates and build work items with pre-hashed addresses
+        // Extract code updates and build work items (addresses already hashed)
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
-        let mut accounts: Vec<(H256, AccountUpdate)> = Vec::with_capacity(all_updates.len());
-        for (addr, update) in all_updates {
-            let hashed = keccak(addr);
+        let mut accounts: Vec<(H256, HashedAccountUpdate)> =
+            Vec::with_capacity(all_updates.len());
+        for (hashed, update) in all_updates {
             if let Some(info) = &update.info
                 && let Some(code) = &update.code
             {
@@ -901,8 +953,7 @@ impl Blockchain {
                                             )?
                                         };
 
-                                        for (key, value) in &update.added_storage {
-                                            let hashed_key = keccak(key);
+                                        for (hashed_key, value) in &update.added_storage {
                                             if value.is_zero() {
                                                 trie.remove(hashed_key.as_bytes())?;
                                             } else {
