@@ -18,6 +18,7 @@ use ethrex_common::{
         Transaction, TxKind, fee_config::FeeConfig,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
@@ -345,6 +346,7 @@ fn fee_token_ratio_cached_between_prepare_and_finalize() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
+        &NativeCrypto,
     )
     .expect("VM creation should succeed");
 
