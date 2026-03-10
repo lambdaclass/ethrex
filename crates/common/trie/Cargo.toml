@@ -18,7 +18,7 @@ thiserror.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json = "1.0.117"
-smallvec = { version = "1.10.0", features = ["const_generics", "union"] }
+smallvec = { version = "1.10.0", features = ["const_generics", "union", "serde"] }
 digest = "0.10.6"
 lazy_static.workspace = true
 crossbeam.workspace = true
