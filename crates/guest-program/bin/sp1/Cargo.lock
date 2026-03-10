@@ -913,6 +913,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hex-simd",
+ "indexmap 2.13.0",
  "k256",
  "kzg-rs",
  "lazy_static",
