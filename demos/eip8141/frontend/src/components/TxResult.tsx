@@ -64,6 +64,14 @@ export default function TxResult({ result }: { result: TxResultType }) {
           >
             {copied ? 'Copied' : 'Copy'}
           </button>
+          <a
+            href={txUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto rounded border border-zinc-700 bg-zinc-800/60 hover:border-zinc-500 hover:bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors no-underline"
+          >
+            View in Explorer
+          </a>
         </div>
       )}
 
