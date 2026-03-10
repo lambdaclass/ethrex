@@ -248,6 +248,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.telegramSave': '텔레그램 설정 저장',
     'settings.telegramSaved': '텔레그램 설정이 저장되었습니다.',
     'settings.telegramHowTo': '@BotFather에게 /newbot 명령으로 봇을 만들고 토큰을 받으세요.',
+    'settings.systemAlerts': '시스템 알림 (프로세스 크래시, 컨테이너 종료 등)',
   },
   en: {
     // Home
@@ -496,6 +497,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.telegramSave': 'Save Telegram Settings',
     'settings.telegramSaved': 'Telegram settings saved.',
     'settings.telegramHowTo': 'Create a bot with /newbot command to @BotFather and get your token.',
+    'settings.systemAlerts': 'System alerts (process crashes, container exits, etc.)',
   },
 }
 

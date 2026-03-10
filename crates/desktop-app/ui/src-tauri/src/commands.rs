@@ -621,9 +621,15 @@ pub struct TelegramConfig {
     pub bot_token: String,
     pub allowed_chat_ids: String,
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub system_alerts_enabled: bool,
 }
 
-fn telegram_config_path() -> Result<std::path::PathBuf, String> {
+fn default_true() -> bool {
+    true
+}
+
+pub(crate) fn telegram_config_path() -> Result<std::path::PathBuf, String> {
     let dir = dirs::data_dir()
         .ok_or("Cannot find app data directory")?
         .join("tokamak-appchain");
@@ -637,8 +643,15 @@ fn mask_token(token: &str) -> String {
     format!("{}...{}", &token[..8], &token[token.len()-4..])
 }
 
+fn write_telegram_config(config: &TelegramConfig) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(config).map_err(|e| format!("Serialize error: {e}"))?;
+    let path = telegram_config_path()?;
+    std::fs::write(&path, &json).map_err(|e| format!("Failed to save: {e}"))?;
+    Ok(())
+}
+
 /// Internal helper: reads telegram config from disk without masking.
-fn read_telegram_config() -> Result<TelegramConfig, String> {
+pub(crate) fn read_telegram_config() -> Result<TelegramConfig, String> {
     let path = telegram_config_path()?;
     match std::fs::read_to_string(&path) {
         Ok(json) => {
@@ -651,6 +664,7 @@ fn read_telegram_config() -> Result<TelegramConfig, String> {
                 bot_token: String::new(),
                 allowed_chat_ids: String::new(),
                 enabled: false,
+                system_alerts_enabled: true,
             })
         }
         Err(e) => Err(format!("Failed to read config: {e}")),
@@ -684,11 +698,10 @@ pub fn save_telegram_config(
         bot_token: final_token,
         allowed_chat_ids,
         enabled: existing.enabled,
+        system_alerts_enabled: existing.system_alerts_enabled,
     };
-    let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
-    let path = telegram_config_path()?;
-    std::fs::write(&path, &json).map_err(|e| format!("Failed to save config: {e}"))?;
-    log::info!("[TG] config saved to {}", path.display());
+    write_telegram_config(&config)?;
+    log::info!("[TG] config saved");
 
     // Restart bot if running (to pick up new token/chat IDs)
     if existing.enabled && tg_manager.is_running() {
@@ -711,9 +724,7 @@ pub fn toggle_telegram_bot(
     // Update enabled in config file
     let mut config = read_telegram_config()?;
     config.enabled = enabled;
-    let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
-    let path = telegram_config_path()?;
-    std::fs::write(&path, &json).map_err(|e| format!("Failed to save: {e}"))?;
+    write_telegram_config(&config)?;
 
     if enabled {
         match tg_manager.start() {
@@ -725,8 +736,7 @@ pub fn toggle_telegram_bot(
                 log::warn!("[TG] failed to start bot: {e}");
                 // Revert enabled
                 config.enabled = false;
-                let json = serde_json::to_string_pretty(&config).map_err(|e| format!("Serialize error: {e}"))?;
-                std::fs::write(&path, &json).map_err(|e| format!("Failed to save: {e}"))?;
+                write_telegram_config(&config)?;
                 Err(e)
             }
         }
@@ -751,6 +761,20 @@ pub fn get_telegram_bot_status(
     tg_manager: State<Arc<TelegramBotManager>>,
 ) -> bool {
     tg_manager.is_running()
+}
+
+#[tauri::command]
+pub fn toggle_system_alerts(
+    enabled: bool,
+    tg_manager: State<Arc<TelegramBotManager>>,
+) -> Result<bool, String> {
+    let mut config = read_telegram_config()?;
+    config.system_alerts_enabled = enabled;
+    write_telegram_config(&config)?;
+
+    tg_manager.set_system_alerts_enabled(enabled);
+    log::info!("[TG] system alerts {}", if enabled { "enabled" } else { "disabled" });
+    Ok(enabled)
 }
 
 // ============================================================================
