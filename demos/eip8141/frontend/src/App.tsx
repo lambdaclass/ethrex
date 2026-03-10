@@ -4,6 +4,19 @@ import AccountPanel from './components/AccountPanel';
 import TabLayout from './components/TabLayout';
 import Footer from './components/Footer';
 
+const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
+
+function getExplorerUrl(): string {
+  if (BLOCKSCOUT_URL) return BLOCKSCOUT_URL;
+  const { hostname } = window.location;
+  const parts = hostname.split('.');
+  if (parts.length >= 3) {
+    parts.splice(-2, 0, 'explorer');
+    return `https://${parts.join('.')}`;
+  }
+  return `https://${hostname}:8083`;
+}
+
 export default function App() {
   const [credential, setCredential] = useState<StoredCredential | null>(null);
 
@@ -26,6 +39,14 @@ export default function App() {
                 EIP-8141 Frame Transactions
               </span>
             </h1>
+            <a
+              href={getExplorerUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-4 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:border-zinc-500 hover:bg-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors no-underline"
+            >
+              Block Explorer
+            </a>
           </div>
           {credential && (
             <AccountPanel
