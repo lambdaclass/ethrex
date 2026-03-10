@@ -10,6 +10,7 @@ license.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p = { workspace = true, features = ["l2"] }

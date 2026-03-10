@@ -12,7 +12,6 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::utils::u256_from_big_endian;
-use ethrex_crypto::keccak::keccak_hash;
 
 pub struct OpKeccak256Handler;
 impl OpcodeHandler for OpKeccak256Handler {
@@ -30,8 +29,8 @@ impl OpcodeHandler for OpKeccak256Handler {
 
         vm.current_call_frame
             .stack
-            .push(u256_from_big_endian(&keccak_hash(
-                vm.current_call_frame.memory.load_range(offset, len)?,
+            .push(u256_from_big_endian(&vm.crypto.keccak256(
+                &vm.current_call_frame.memory.load_range(offset, len)?,
             )))?;
 
         Ok(OpcodeResult::Continue)
