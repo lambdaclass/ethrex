@@ -62,6 +62,7 @@ impl RocksDBBackend {
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
+        opts.set_allow_mmap_reads(true);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
 
         let compressible_tables = [
@@ -86,7 +87,9 @@ impl RocksDBBackend {
 
         // Shared block cache for all column families: caches decompressed SST data
         // blocks in userspace, reducing kernel I/O for hot data (trie nodes, accounts).
-        let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
+        // 8GB with mmap reads: block cache serves as L1 (hot data), mmap'd pages
+        // as L2 (OS page cache), eliminating pread() syscall overhead on misses.
+        let block_cache = Cache::new_lru_cache(8 * 1024 * 1024 * 1024); // 8GB
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
@@ -134,6 +137,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_whole_key_filtering(true);
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -147,6 +151,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_whole_key_filtering(true);
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
