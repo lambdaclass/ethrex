@@ -2181,6 +2181,37 @@ function renderOverviewTab() {
       })()}</dd>` : ''}
     </dl>
   </div>`;
+  // External Access card
+  html += `<div class="card">
+    <h3 style="font-size:13px;margin-bottom:6px">External Access</h3>`;
+  if (d.is_public && d.public_domain) {
+    const publicCfg = {
+      l2Rpc: d.public_l2_rpc_url || 'http://' + d.public_domain + ':' + (d.l2_port || 1729),
+      l2Explorer: d.public_l2_explorer_url || 'http://' + d.public_domain + ':' + (d.tools_l2_explorer_port || 8082),
+      l1Explorer: d.public_l1_explorer_url || (d.l1_port ? 'http://' + d.public_domain + ':' + (d.tools_l1_explorer_port || 8083) : null),
+      dashboard: d.public_dashboard_url || 'http://' + d.public_domain + ':' + (d.tools_bridge_ui_port || 3000),
+    };
+    html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">';
+    html += '<span style="background:var(--green-100,#dcfce7);color:var(--green-700,#15803d);padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600">Enabled</span>';
+    html += '<span style="font-size:11px;font-family:monospace;color:var(--text-secondary)">' + esc(d.public_domain) + '</span>';
+    html += '</div>';
+    const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const urlRow = (label, url) => url ? '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="font-size:10px;color:var(--text-muted);width:70px">' + label + '</span><code style="font-size:10px;flex:1">' + esc(url) + '</code><button class="pa-copy-btn" data-url="' + esc(url) + '" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px" title="Copy">' + copyIcon + '</button></div>' : '';
+    html += urlRow('Dashboard', publicCfg.dashboard);
+    html += urlRow('Bridge', publicCfg.dashboard + '/bridge.html');
+    html += urlRow('L2 Explorer', publicCfg.l2Explorer);
+    html += urlRow('L2 RPC', publicCfg.l2Rpc);
+    if (publicCfg.l1Explorer) html += urlRow('L1 Explorer', publicCfg.l1Explorer);
+    html += '<div style="display:flex;gap:6px;margin-top:8px">';
+    html += '<button class="btn-secondary pa-edit-btn" style="padding:3px 10px;font-size:10px" data-id="' + d.id + '" data-domain="' + esc(d.public_domain) + '">Edit</button>';
+    html += '<button class="btn-secondary pa-disable-btn" style="padding:3px 10px;font-size:10px;color:var(--orange-600,#ea580c)" data-id="' + d.id + '">Disable</button>';
+    html += '</div>';
+  } else {
+    html += '<p style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Allow external users to access Dashboard, Bridge, Explorer, and L2 RPC via public domain or IP.</p>';
+    html += '<button class="btn-secondary pa-edit-btn" style="padding:4px 12px;font-size:11px" ' + (isProvisioned ? '' : 'disabled title="Deploy first"') + ' data-id="' + d.id + '">Enable Public Access</button>';
+  }
+  html += '</div>';
+
   html += `<button class="btn-danger" style="font-size:11px;padding:6px 12px;align-self:flex-start" onclick="deleteDeployment('${d.id}', event)">Remove L2</button>`;
   html += '</div>'; // end right
 
@@ -2525,6 +2556,107 @@ function toggleRpcUrl(uid, btn) {
   f.style.display = show ? 'inline' : 'none';
   m.style.display = show ? 'none' : 'inline';
   btn.textContent = show ? 'Hide' : 'Show';
+}
+
+// ============================================================
+// External Access (Public Domain/IP)
+// ============================================================
+
+// Delegated click handlers for public access buttons (avoids inline onclick with user data)
+document.addEventListener('click', (e) => {
+  const editBtn = e.target.closest('.pa-edit-btn');
+  if (editBtn) { showPublicAccessModal(editBtn.dataset.id, editBtn.dataset.domain); return; }
+  const disableBtn = e.target.closest('.pa-disable-btn');
+  if (disableBtn) { disablePublicAccess(disableBtn.dataset.id, disableBtn); return; }
+  const btn = e.target.closest('.pa-copy-btn');
+  if (!btn) return;
+  const url = btn.dataset.url;
+  if (url) {
+    navigator.clipboard.writeText(url).then(() => {
+      btn.textContent = '✓';
+      setTimeout(() => { btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; }, 1000);
+    });
+  }
+});
+
+function showPublicAccessModal(deploymentId, currentDomain) {
+  // Remove existing modal
+  document.getElementById('public-access-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'public-access-modal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+  modal.innerHTML = `
+    <div style="background:var(--bg-card,#fff);border-radius:10px;padding:20px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.2)">
+      <h3 style="font-size:14px;margin-bottom:12px">External Access Settings</h3>
+      <div style="margin-bottom:10px">
+        <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Public Domain / IP</label>
+        <input id="pa-domain" type="text" value="${currentDomain || ''}" placeholder="e.g. l2.example.com or 203.0.113.50"
+          style="width:100%;padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;box-sizing:border-box">
+        <span style="font-size:10px;color:var(--text-muted)">Other URLs will be auto-calculated from this + port numbers</span>
+      </div>
+      <details style="margin-bottom:12px">
+        <summary style="font-size:11px;cursor:pointer;color:var(--text-secondary)">Advanced URL Settings</summary>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+          <div><label style="font-size:10px;color:var(--text-muted)">L2 RPC URL</label><input id="pa-l2rpc" type="text" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:11px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box"></div>
+          <div><label style="font-size:10px;color:var(--text-muted)">L2 Explorer URL</label><input id="pa-l2explorer" type="text" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:11px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box"></div>
+          <div><label style="font-size:10px;color:var(--text-muted)">L1 Explorer URL</label><input id="pa-l1explorer" type="text" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:11px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box"></div>
+          <div><label style="font-size:10px;color:var(--text-muted)">Dashboard URL</label><input id="pa-dashboard" type="text" placeholder="Auto" style="width:100%;padding:4px 8px;font-size:11px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box"></div>
+        </div>
+      </details>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-secondary" style="padding:5px 14px;font-size:12px" onclick="document.getElementById('public-access-modal').remove()">Cancel</button>
+        <button class="btn-primary" style="padding:5px 14px;font-size:12px" onclick="enablePublicAccess('${deploymentId}',this)">Enable</button>
+      </div>
+    </div>`;
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+  document.getElementById('pa-domain').focus();
+}
+
+async function enablePublicAccess(deploymentId, btn) {
+  const domain = document.getElementById('pa-domain').value.trim();
+  if (!domain) { alert('Please enter a domain or IP'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Enabling...';
+  try {
+    const body = { publicDomain: domain };
+    const l2Rpc = document.getElementById('pa-l2rpc').value.trim();
+    const l2Explorer = document.getElementById('pa-l2explorer').value.trim();
+    const l1Explorer = document.getElementById('pa-l1explorer').value.trim();
+    const dashboard = document.getElementById('pa-dashboard').value.trim();
+    if (l2Rpc) body.l2RpcUrl = l2Rpc;
+    if (l2Explorer) body.l2ExplorerUrl = l2Explorer;
+    if (l1Explorer) body.l1ExplorerUrl = l1Explorer;
+    if (dashboard) body.dashboardUrl = dashboard;
+    const resp = await fetch(`${API}/deployments/${deploymentId}/public-access`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) { const err = await resp.json(); throw new Error(err.error || 'Server error'); }
+    document.getElementById('public-access-modal')?.remove();
+    await loadDeployments();
+    if (currentDeploymentId === deploymentId) showDeploymentDetail(deploymentId);
+  } catch (e) {
+    alert('Failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Enable';
+  }
+}
+
+async function disablePublicAccess(deploymentId, btn) {
+  if (!confirm('Disable public access? Services will revert to localhost mode.')) return;
+  btn.disabled = true;
+  btn.textContent = 'Disabling...';
+  try {
+    const resp = await fetch(`${API}/deployments/${deploymentId}/public-access`, { method: 'DELETE' });
+    if (!resp.ok) { const err = await resp.json(); throw new Error(err.error || 'Server error'); }
+    await loadDeployments();
+    if (currentDeploymentId === deploymentId) showDeploymentDetail(deploymentId);
+  } catch (e) {
+    alert('Failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Disable';
+  }
 }
 
 // ============================================================

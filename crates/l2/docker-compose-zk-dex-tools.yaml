@@ -109,8 +109,8 @@ services:
     depends_on:
       - backend-l1
     environment:
-      NEXT_PUBLIC_API_HOST: localhost:${TOOLS_L1_EXPLORER_PORT:-8083}
-      NEXT_PUBLIC_API_PROTOCOL: http
+      NEXT_PUBLIC_API_HOST: ${PUBLIC_L1_EXPLORER_HOST}
+      NEXT_PUBLIC_API_PROTOCOL: ${PUBLIC_L1_EXPLORER_PROTOCOL}
       NEXT_PUBLIC_NETWORK_NAME: TokamakAppL2 ZK-DEX L1
       NEXT_PUBLIC_NETWORK_SHORT_NAME: TokamakAppL2 ZK-DEX L1
       NEXT_PUBLIC_NETWORK_ID: 9
@@ -118,11 +118,11 @@ services:
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
       NEXT_PUBLIC_API_BASE_PATH: /
-      NEXT_PUBLIC_APP_HOST: localhost:${TOOLS_L1_EXPLORER_PORT:-8083}
-      NEXT_PUBLIC_APP_PROTOCOL: http
+      NEXT_PUBLIC_APP_HOST: ${PUBLIC_L1_EXPLORER_HOST}
+      NEXT_PUBLIC_APP_PROTOCOL: ${PUBLIC_L1_EXPLORER_PROTOCOL}
       NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs']"
       NEXT_PUBLIC_IS_TESTNET: true
-      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ${PUBLIC_L1_WS_PROTOCOL}
       NEXT_PUBLIC_API_SPEC_URL: https://raw.githubusercontent.com/blockscout/blockscout-api-v2-swagger/main/swagger.yaml
       NEXT_PUBLIC_AD_BANNER_PROVIDER: none
       NEXT_PUBLIC_AD_TEXT_PROVIDER: none
@@ -195,8 +195,8 @@ services:
     depends_on:
       - backend-l2
     environment:
-      NEXT_PUBLIC_API_HOST: localhost:${TOOLS_L2_EXPLORER_PORT:-8082}
-      NEXT_PUBLIC_API_PROTOCOL: http
+      NEXT_PUBLIC_API_HOST: ${PUBLIC_L2_EXPLORER_HOST}
+      NEXT_PUBLIC_API_PROTOCOL: ${PUBLIC_L2_EXPLORER_PROTOCOL}
       NEXT_PUBLIC_NETWORK_NAME: TokamakAppL2 ZK-DEX L2
       NEXT_PUBLIC_NETWORK_SHORT_NAME: TokamakAppL2 ZK-DEX L2
       NEXT_PUBLIC_NETWORK_ID: ${L2_CHAIN_ID:-65536999}
@@ -204,11 +204,11 @@ services:
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
       NEXT_PUBLIC_API_BASE_PATH: /
-      NEXT_PUBLIC_APP_HOST: localhost:${TOOLS_L2_EXPLORER_PORT:-8082}
-      NEXT_PUBLIC_APP_PROTOCOL: http
+      NEXT_PUBLIC_APP_HOST: ${PUBLIC_L2_EXPLORER_HOST}
+      NEXT_PUBLIC_APP_PROTOCOL: ${PUBLIC_L2_EXPLORER_PROTOCOL}
       NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs']"
       NEXT_PUBLIC_IS_TESTNET: true
-      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ${PUBLIC_L2_WS_PROTOCOL}
       NEXT_PUBLIC_API_SPEC_URL: https://raw.githubusercontent.com/blockscout/blockscout-api-v2-swagger/main/swagger.yaml
       NEXT_PUBLIC_AD_BANNER_PROVIDER: none
       NEXT_PUBLIC_AD_TEXT_PROVIDER: none
@@ -400,6 +400,13 @@ services:
       L1_NETWORK_NAME: ${L1_NETWORK_NAME:-}
       L2_CHAIN_ID: ${L2_CHAIN_ID:-}
       IS_EXTERNAL_L1: ${IS_EXTERNAL_L1:-}
+      # Public access (external domain/IP)
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-}
+      PUBLIC_L2_RPC_URL: ${PUBLIC_L2_RPC_URL:-}
+      PUBLIC_L2_EXPLORER_URL: ${PUBLIC_L2_EXPLORER_URL:-}
+      PUBLIC_L1_EXPLORER_URL: ${PUBLIC_L1_EXPLORER_URL:-}
+      PUBLIC_DASHBOARD_URL: ${PUBLIC_DASHBOARD_URL:-}
     ports:
       - target: 80
         published: ${TOOLS_BRIDGE_UI_PORT:-3000}
@@ -418,7 +425,7 @@ configs:
       # L2 Blockscout
       server {
           listen 8082;
-          server_name localhost;
+          server_name _;
           proxy_http_version 1.1;
 
           location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {
@@ -449,7 +456,7 @@ configs:
       # L1 Blockscout
       server {
           listen 8083;
-          server_name localhost;
+          server_name _;
           proxy_http_version 1.1;
 
           location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {
@@ -487,7 +494,7 @@ configs:
       # L2 Blockscout only (external L1 mode — no L1 Blockscout)
       server {
           listen 8082;
-          server_name localhost;
+          server_name _;
           proxy_http_version 1.1;
 
           location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {

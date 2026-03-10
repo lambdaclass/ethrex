@@ -10,6 +10,8 @@ const {
   stopDeployment,
   startDeployment,
   destroyDeployment,
+  enablePublicAccess,
+  disablePublicAccess,
   getEmitter,
   isProvisionActive,
   cancelProvision,
@@ -21,7 +23,7 @@ const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
 const rpc = require("../lib/rpc-client");
 const keychain = require("../lib/keychain");
-const { getExternalL1Config } = require("../lib/tools-config");
+const { getExternalL1Config, getPublicAccessConfig, getToolsPorts } = require("../lib/tools-config");
 const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
@@ -618,16 +620,7 @@ router.post("/:id/service/:service/start", async (req, res) => {
       // Tools use separate compose — start all tools together (they depend on each other)
       const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
       const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
-      await docker.startTools(`${deployment.docker_project}-tools`, envVars, {
-        toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
-        toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
-        toolsBridgeUIPort: deployment.tools_bridge_ui_port,
-        toolsDbPort: deployment.tools_db_port,
-        l1Port: deployment.l1_port,
-        l2Port: deployment.l2_port,
-        toolsMetricsPort: deployment.tools_metrics_port,
-        ...getExternalL1Config(deployment),
-      });
+      await docker.startTools(`${deployment.docker_project}-tools`, envVars, getToolsPorts(deployment));
       return res.json({ ok: true, message: `Tools started` });
     }
     const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
@@ -645,17 +638,7 @@ router.post("/:id/build-tools", async (req, res) => {
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
     if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
 
-    const toolsPorts = {
-      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
-      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
-      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
-      toolsDbPort: deployment.tools_db_port,
-      toolsMetricsPort: deployment.tools_metrics_port,
-      l1Port: deployment.l1_port,
-      l2Port: deployment.l2_port,
-    };
-
-    await docker.buildTools(`${deployment.docker_project}-tools`, toolsPorts);
+    await docker.buildTools(`${deployment.docker_project}-tools`, getToolsPorts(deployment));
     res.json({ ok: true, message: "Tools images rebuilt" });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -680,20 +663,9 @@ router.post("/:id/restart-tools", async (req, res) => {
       if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
     }
 
-    const toolsPorts = {
-      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
-      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
-      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
-      toolsDbPort: deployment.tools_db_port,
-      toolsMetricsPort: deployment.tools_metrics_port,
-      l1Port: deployment.l1_port,
-      l2Port: deployment.l2_port,
-      ...getExternalL1Config(deployment),
-    };
-
     // Respond immediately — docker compose up can take 30s+ and WebKit times out
     res.json({ ok: true, message: "Tools starting..." });
-    docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts).catch(e => {
+    docker.restartTools(`${deployment.docker_project}-tools`, envVars, getToolsPorts(deployment)).catch(e => {
       console.error("Tools restart failed:", e.message);
     });
   } catch (e) {
@@ -710,6 +682,76 @@ router.post("/:id/stop-tools", async (req, res) => {
     res.json({ ok: true, message: "Tools stopping..." });
     docker.stopTools(`${deployment.docker_project}-tools`).catch(e => {
       console.error("Tools stop failed:", e.message);
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==========================================
+// External Access (Public Domain/IP)
+// ==========================================
+
+// POST /api/deployments/:id/public-access
+router.post("/:id/public-access", async (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+
+    const { publicDomain } = req.body;
+    if (!publicDomain) return res.status(400).json({ error: "publicDomain is required" });
+    // Validate domain/IP: only allow safe hostname characters
+    if (!/^[a-zA-Z0-9._:-]+$/.test(publicDomain)) {
+      return res.status(400).json({ error: "publicDomain contains invalid characters" });
+    }
+
+    // Save to DB
+    updateDeployment(deployment.id, {
+      is_public: 1,
+      public_domain: publicDomain,
+      public_l2_rpc_url: req.body.l2RpcUrl || null,
+      public_l2_explorer_url: req.body.l2ExplorerUrl || null,
+      public_l1_explorer_url: req.body.l1ExplorerUrl || null,
+      public_dashboard_url: req.body.dashboardUrl || null,
+    });
+
+    const updated = db.prepare("SELECT * FROM deployments WHERE id = ?").get(deployment.id);
+    const publicConfig = getPublicAccessConfig(updated);
+
+    // Regenerate compose (0.0.0.0 binding) + restart L2 + tools (async — can take 60s+)
+    res.json({ ok: true, message: "Enabling public access...", publicConfig });
+
+    enablePublicAccess(deployment).catch(e => {
+      console.error(`[public-access] Enable failed: ${e.message}`);
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/deployments/:id/public-access
+router.delete("/:id/public-access", async (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+
+    // Clear public access in DB
+    updateDeployment(deployment.id, {
+      is_public: 0,
+      public_domain: null,
+      public_l2_rpc_url: null,
+      public_l2_explorer_url: null,
+      public_l1_explorer_url: null,
+      public_dashboard_url: null,
+    });
+
+    // Regenerate compose (127.0.0.1 binding) + restart L2 + tools (async)
+    res.json({ ok: true, message: "Disabling public access..." });
+
+    disablePublicAccess(deployment).catch(e => {
+      console.error(`[public-access] Disable failed: ${e.message}`);
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

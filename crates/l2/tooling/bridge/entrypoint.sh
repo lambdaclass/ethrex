@@ -48,16 +48,22 @@ fi
 PUBLIC_BASE=$(echo "${PUBLIC_BASE_URL:-}" | tr -d '"\\' | sed 's:/*$::')
 if [ -n "$PUBLIC_BASE" ]; then
   IS_PUBLIC="true"
-  # For public mode: proxy L1 RPC through server to protect API keys
+  PUBLIC_DOMAIN_RESOLVED=$(echo "${PUBLIC_DOMAIN:-}" | tr -d '"\\')
+  # Per-service custom URLs (from Manager), falling back to PUBLIC_BASE + port
   L1_RPC_PUBLIC="${PUBLIC_BASE}/api/l1-rpc"
-  L2_RPC_PUBLIC="${PUBLIC_BASE}/rpc"
-  L2_EXPLORER_PUBLIC="${PUBLIC_BASE}/explorer"
-  METRICS_PUBLIC="${PUBLIC_BASE}/metrics"
+  L2_RPC_PUBLIC="${PUBLIC_L2_RPC_URL:-${PUBLIC_BASE}:${TOOLS_L2_RPC_PORT:-1729}}"
+  L2_EXPLORER_PUBLIC="${PUBLIC_L2_EXPLORER_URL:-${PUBLIC_BASE}:${TOOLS_L2_EXPLORER_PORT:-8082}}"
+  L1_EXPLORER_PUBLIC="${PUBLIC_L1_EXPLORER_URL:-${L1_EXPLORER_RESOLVED}}"
+  DASHBOARD_PUBLIC="${PUBLIC_DASHBOARD_URL:-${PUBLIC_BASE}}"
+  METRICS_PUBLIC="http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
 else
   IS_PUBLIC="false"
+  PUBLIC_DOMAIN_RESOLVED=""
   L1_RPC_PUBLIC="${L1_RPC_RESOLVED}"
   L2_RPC_PUBLIC="http://localhost:${TOOLS_L2_RPC_PORT:-1729}"
   L2_EXPLORER_PUBLIC="http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}"
+  L1_EXPLORER_PUBLIC="${L1_EXPLORER_RESOLVED}"
+  DASHBOARD_PUBLIC=""
   METRICS_PUBLIC="http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
 fi
 
@@ -70,13 +76,15 @@ cat > /usr/share/nginx/html/config.json << EOF
   "bridge_l2_address": "0x000000000000000000000000000000000000ffff",
   "l1_rpc": "${L1_RPC_PUBLIC}",
   "l2_rpc": "${L2_RPC_PUBLIC}",
-  "l1_explorer": "${L1_EXPLORER_RESOLVED}",
+  "l1_explorer": "${L1_EXPLORER_PUBLIC}",
   "l2_explorer": "${L2_EXPLORER_PUBLIC}",
   "l1_chain_id": ${L1_CHAIN_ID_RESOLVED},
   "l2_chain_id": ${L2_CHAIN_ID_RESOLVED},
   "l1_network_name": "${L1_NETWORK_NAME_RESOLVED}",
   "is_external_l1": ${IS_EXTERNAL_L1_RESOLVED},
   "is_public": ${IS_PUBLIC},
+  "public_domain": "${PUBLIC_DOMAIN_RESOLVED}",
+  "dashboard_url": "${DASHBOARD_PUBLIC}",
   "metrics_url": "${METRICS_PUBLIC}"
 }
 EOF
@@ -85,21 +93,43 @@ echo "[entrypoint] Generated config.json: bridge=${ETHREX_WATCHER_BRIDGE_ADDRESS
 
 # If public mode, generate nginx reverse proxy config for L1 RPC API key protection
 if [ "$IS_PUBLIC" = "true" ]; then
-  cat > /etc/nginx/conf.d/l1-rpc-proxy.conf << PROXYEOF
-# L1 RPC proxy: protects API key from client-side exposure
-location /api/l1-rpc {
-    proxy_pass ${L1_RPC_RESOLVED};
-    proxy_set_header Content-Type application/json;
-    proxy_method POST;
-    # Rate limit: 10 req/s per IP
-    limit_req zone=l1rpc burst=20 nodelay;
-}
-PROXYEOF
+  # Store L1 RPC proxy location for inclusion in the server block below
+  L1_RPC_PROXY_BLOCK="
+    location /api/l1-rpc {
+        proxy_pass ${L1_RPC_RESOLVED};
+        proxy_set_header Content-Type application/json;
+        proxy_method POST;
+        limit_req zone=l1rpc burst=20 nodelay;
+    }"
   # Add rate limit zone to nginx.conf if not present
   if ! grep -q "limit_req_zone.*l1rpc" /etc/nginx/nginx.conf 2>/dev/null; then
     sed -i 's/http {/http {\n    limit_req_zone $binary_remote_addr zone=l1rpc:10m rate=10r\/s;/' /etc/nginx/nginx.conf 2>/dev/null || true
   fi
   echo "[entrypoint] Public mode: L1 RPC proxy enabled at /api/l1-rpc"
+else
+  L1_RPC_PROXY_BLOCK=""
 fi
+
+# Single server block: cache-busting for config.json + optional L1 RPC proxy
+# Must be a server block since conf.d/*.conf is included at http level
+cat > /etc/nginx/conf.d/app-server.conf << SERVEREOF
+server {
+    listen 80;
+    server_name _;
+
+    location = /config.json {
+        root /usr/share/nginx/html;
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+    }
+${L1_RPC_PROXY_BLOCK}
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+    }
+}
+SERVEREOF
+# Remove default server to avoid port conflict
+rm -f /etc/nginx/conf.d/default.conf
 
 exec nginx -g "daemon off;"

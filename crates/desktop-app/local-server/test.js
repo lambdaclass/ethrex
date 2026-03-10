@@ -1397,6 +1397,337 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       })
     )
 
+    // ============================================================
+    // External Access — Unit Tests
+    // ============================================================
+    .then(() => {
+      console.log("\n=== External Access: tools-config Tests ===");
+
+      const { getExternalL1Config, getPublicAccessConfig, getToolsPorts } = require("./lib/tools-config");
+
+      test("getPublicAccessConfig returns empty when is_public=0", () => {
+        const result = getPublicAccessConfig({ is_public: 0, public_domain: "example.com" });
+        assert.deepStrictEqual(result, {});
+      });
+
+      test("getPublicAccessConfig returns empty when public_domain is null", () => {
+        const result = getPublicAccessConfig({ is_public: 1, public_domain: null });
+        assert.deepStrictEqual(result, {});
+      });
+
+      test("getPublicAccessConfig auto-calculates URLs from domain + ports", () => {
+        const result = getPublicAccessConfig({
+          is_public: 1, public_domain: "203.0.113.50",
+          l2_port: 1729, tools_l2_explorer_port: 8082,
+          tools_l1_explorer_port: 8083, tools_bridge_ui_port: 3000,
+          l1_port: 8545,
+        });
+        assert.equal(result.publicDomain, "203.0.113.50");
+        assert.equal(result.publicBaseUrl, "http://203.0.113.50");
+        assert.equal(result.publicL2RpcUrl, "http://203.0.113.50:1729");
+        assert.equal(result.publicL2ExplorerUrl, "http://203.0.113.50:8082");
+        assert.equal(result.publicL1ExplorerUrl, "http://203.0.113.50:8083");
+        assert.equal(result.publicDashboardUrl, "http://203.0.113.50:3000");
+      });
+
+      test("getPublicAccessConfig uses custom URLs when provided", () => {
+        const result = getPublicAccessConfig({
+          is_public: 1, public_domain: "l2.example.com",
+          public_l2_rpc_url: "https://rpc.example.com",
+          public_l2_explorer_url: "https://explorer.example.com",
+          public_dashboard_url: "https://dash.example.com",
+          l2_port: 1729, tools_l2_explorer_port: 8082, tools_bridge_ui_port: 3000,
+        });
+        assert.equal(result.publicL2RpcUrl, "https://rpc.example.com");
+        assert.equal(result.publicL2ExplorerUrl, "https://explorer.example.com");
+        assert.equal(result.publicDashboardUrl, "https://dash.example.com");
+      });
+
+      test("getPublicAccessConfig returns null L1 explorer when no l1_port (testnet)", () => {
+        const result = getPublicAccessConfig({
+          is_public: 1, public_domain: "l2.example.com",
+          l2_port: 1729, tools_l2_explorer_port: 8082, tools_bridge_ui_port: 3000,
+          l1_port: null, tools_l1_explorer_port: 8083,
+        });
+        assert.equal(result.publicL1ExplorerUrl, null);
+      });
+
+      test("getToolsPorts includes port + external L1 + public access configs", () => {
+        const deployment = {
+          tools_l1_explorer_port: 8083, tools_l2_explorer_port: 8082,
+          tools_bridge_ui_port: 3000, tools_db_port: 7432,
+          tools_metrics_port: 3702, l1_port: 8545, l2_port: 1729,
+          is_public: 1, public_domain: "10.0.0.1",
+          config: JSON.stringify({ mode: "testnet", testnet: { l1RpcUrl: "https://sepolia.infura.io", l1ChainId: 11155111, network: "sepolia" } }),
+        };
+        const ports = getToolsPorts(deployment);
+        // Base ports
+        assert.equal(ports.toolsL1ExplorerPort, 8083);
+        assert.equal(ports.l2Port, 1729);
+        // External L1 config
+        assert.equal(ports.skipL1Explorer, true);
+        assert.equal(ports.l1RpcUrl, "https://sepolia.infura.io");
+        assert.equal(ports.isExternalL1, true);
+        // Public access config
+        assert.equal(ports.publicDomain, "10.0.0.1");
+        assert.ok(ports.publicL2RpcUrl);
+      });
+
+      test("getToolsPorts works for local mode (no external L1, no public access)", () => {
+        const deployment = {
+          tools_l1_explorer_port: 8083, tools_l2_explorer_port: 8082,
+          tools_bridge_ui_port: 3000, tools_db_port: 7432,
+          tools_metrics_port: 3702, l1_port: 8545, l2_port: 1729,
+          is_public: 0, config: null,
+        };
+        const ports = getToolsPorts(deployment);
+        assert.equal(ports.skipL1Explorer, false);
+        assert.equal(ports.publicDomain, undefined);
+        assert.equal(ports.l1Port, 8545);
+      });
+
+      return Promise.resolve();
+    })
+
+    .then(() => {
+      console.log("\n=== External Access: compose-generator Tests ===");
+
+      const { generateComposeFile, generateTestnetComposeFile } = require("./lib/compose-generator");
+
+      test("generateComposeFile: isPublic=false binds to 127.0.0.1", () => {
+        const yaml = generateComposeFile({
+          programSlug: "evm-l2", l1Port: 8545, l2Port: 1729,
+          proofCoordPort: 3900, metricsPort: 3702, projectName: "test-local",
+          isPublic: false,
+        });
+        assert.ok(yaml.includes("127.0.0.1:1729:1729"), "L2 port should bind to 127.0.0.1");
+        assert.ok(yaml.includes("127.0.0.1:3900:3900"), "proof coord port should bind to 127.0.0.1");
+        assert.ok(!yaml.includes("0.0.0.0:1729"), "should not bind L2 to 0.0.0.0");
+      });
+
+      test("generateComposeFile: isPublic=true binds to 0.0.0.0", () => {
+        const yaml = generateComposeFile({
+          programSlug: "evm-l2", l1Port: 8545, l2Port: 1729,
+          proofCoordPort: 3900, metricsPort: 3702, projectName: "test-public",
+          isPublic: true,
+        });
+        assert.ok(yaml.includes("0.0.0.0:1729:1729"), "L2 port should bind to 0.0.0.0");
+        // Proof coord and metrics are internal-only — always 127.0.0.1
+        assert.ok(yaml.includes("127.0.0.1:3900:3900"), "proof coord port should stay on 127.0.0.1");
+        assert.ok(yaml.includes("127.0.0.1:3702:3702"), "metrics port should stay on 127.0.0.1");
+        // L1 should always stay on 127.0.0.1
+        assert.ok(yaml.includes("127.0.0.1:8545:8545"), "L1 port should stay on 127.0.0.1");
+      });
+
+      test("generateComposeFile: default isPublic is false", () => {
+        const yaml = generateComposeFile({
+          programSlug: "evm-l2", l1Port: 8545, l2Port: 1729,
+          projectName: "test-default",
+        });
+        assert.ok(yaml.includes("127.0.0.1:1729:1729"), "default should bind to 127.0.0.1");
+      });
+
+      test("generateTestnetComposeFile: isPublic=true binds to 0.0.0.0", () => {
+        const yaml = generateTestnetComposeFile({
+          programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900,
+          metricsPort: 3702, projectName: "test-testnet",
+          l1RpcUrl: "https://sepolia.infura.io/v3/key",
+          deployerPrivateKey: "0x" + "a".repeat(64),
+          isPublic: true,
+        });
+        assert.ok(yaml.includes("0.0.0.0:1729:1729"), "testnet L2 should bind to 0.0.0.0");
+        // No L1 container in testnet
+        assert.ok(!yaml.includes("tokamak-app-l1"), "testnet should not have L1 container");
+      });
+
+      test("generateTestnetComposeFile: isPublic=false binds to 127.0.0.1", () => {
+        const yaml = generateTestnetComposeFile({
+          programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900,
+          metricsPort: 3702, projectName: "test-testnet-local",
+          l1RpcUrl: "https://sepolia.infura.io/v3/key",
+          deployerPrivateKey: "0x" + "a".repeat(64),
+          isPublic: false,
+        });
+        assert.ok(yaml.includes("127.0.0.1:1729:1729"), "testnet L2 should bind to 127.0.0.1");
+      });
+
+      return Promise.resolve();
+    })
+
+    .then(() => {
+      console.log("\n=== External Access: DB Tests ===");
+
+      test("is_public column exists and defaults to 0", () => {
+        const d = deploymentsDb.createDeployment({ programSlug: "evm-l2", name: "Public Test" });
+        const row = deploymentsDb.getDeploymentById(d.id);
+        assert.strictEqual(row.is_public, 0);
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      test("public access fields are updatable", () => {
+        const d = deploymentsDb.createDeployment({ programSlug: "evm-l2", name: "Public Fields Test" });
+        deploymentsDb.updateDeployment(d.id, {
+          is_public: 1,
+          public_domain: "l2.example.com",
+          public_l2_rpc_url: "https://rpc.example.com",
+          public_l2_explorer_url: "https://explorer.example.com",
+          public_l1_explorer_url: "https://l1.example.com",
+          public_dashboard_url: "https://dash.example.com",
+        });
+        const row = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(row.is_public, 1);
+        assert.equal(row.public_domain, "l2.example.com");
+        assert.equal(row.public_l2_rpc_url, "https://rpc.example.com");
+        assert.equal(row.public_l2_explorer_url, "https://explorer.example.com");
+        assert.equal(row.public_l1_explorer_url, "https://l1.example.com");
+        assert.equal(row.public_dashboard_url, "https://dash.example.com");
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      test("public access fields can be cleared (set to null)", () => {
+        const d = deploymentsDb.createDeployment({ programSlug: "evm-l2", name: "Public Clear Test" });
+        deploymentsDb.updateDeployment(d.id, { is_public: 1, public_domain: "test.com" });
+        deploymentsDb.updateDeployment(d.id, {
+          is_public: 0, public_domain: null,
+          public_l2_rpc_url: null, public_l2_explorer_url: null,
+          public_l1_explorer_url: null, public_dashboard_url: null,
+        });
+        const row = deploymentsDb.getDeploymentById(d.id);
+        assert.equal(row.is_public, 0);
+        assert.equal(row.public_domain, null);
+        assert.equal(row.public_l2_rpc_url, null);
+        deploymentsDb.deleteDeployment(d.id);
+      });
+
+      return Promise.resolve();
+    })
+
+    // ============================================================
+    // External Access — E2E API Tests
+    // ============================================================
+    .then(async () => {
+      console.log("\n=== External Access: E2E API Tests ===");
+
+      const http = require("http");
+      const app = require("./server");
+      const server = http.createServer(app);
+      await new Promise((resolve) => server.listen(0, resolve));
+      const port = server.address().port;
+      const base = `http://127.0.0.1:${port}`;
+
+      try {
+        // Create a deployment for testing
+        let res = await fetch(`${base}/api/deployments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "E2E Public Access Test", programSlug: "evm-l2" }),
+        });
+        const { deployment: dep } = await res.json();
+        const depId = dep.id;
+
+        // -- POST public-access without provisioning should fail --
+        await testAsync("POST public-access on unprovisioned deployment returns 400", async () => {
+          const r = await fetch(`${base}/api/deployments/${depId}/public-access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ publicDomain: "example.com" }),
+          });
+          assert.equal(r.status, 400);
+          const data = await r.json();
+          assert.ok(data.error.includes("Not provisioned"), `Expected 'Not provisioned', got: ${data.error}`);
+        });
+
+        // -- DELETE public-access on unprovisioned deployment should fail --
+        await testAsync("DELETE public-access on unprovisioned deployment returns 400", async () => {
+          const r = await fetch(`${base}/api/deployments/${depId}/public-access`, { method: "DELETE" });
+          assert.equal(r.status, 400);
+        });
+
+        // -- Simulate a provisioned deployment by setting docker_project --
+        db.prepare("UPDATE deployments SET docker_project = ?, l2_port = ?, phase = ? WHERE id = ?")
+          .run("tokamak-e2etest", 1729, "running", depId);
+
+        // -- POST public-access without publicDomain should fail --
+        await testAsync("POST public-access without publicDomain returns 400", async () => {
+          const r = await fetch(`${base}/api/deployments/${depId}/public-access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          assert.equal(r.status, 400);
+          const data = await r.json();
+          assert.ok(data.error.includes("publicDomain"), `Expected 'publicDomain' error, got: ${data.error}`);
+        });
+
+        // -- POST public-access with valid domain saves to DB --
+        await testAsync("POST public-access saves domain and custom URLs to DB", async () => {
+          const r = await fetch(`${base}/api/deployments/${depId}/public-access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              publicDomain: "203.0.113.50",
+              l2RpcUrl: "https://rpc.custom.com",
+              dashboardUrl: "https://dash.custom.com",
+            }),
+          });
+          // Response should be immediate (async engine call happens in background)
+          assert.equal(r.status, 200);
+          const data = await r.json();
+          assert.equal(data.ok, true);
+          assert.ok(data.publicConfig);
+          assert.equal(data.publicConfig.publicDomain, "203.0.113.50");
+
+          // Verify DB was updated
+          const row = db.prepare("SELECT * FROM deployments WHERE id = ?").get(depId);
+          assert.equal(row.is_public, 1);
+          assert.equal(row.public_domain, "203.0.113.50");
+          assert.equal(row.public_l2_rpc_url, "https://rpc.custom.com");
+          assert.equal(row.public_dashboard_url, "https://dash.custom.com");
+          assert.equal(row.public_l2_explorer_url, null); // not provided, auto-calculated
+        });
+
+        // -- GET deployment should include public access fields --
+        await testAsync("GET deployment includes is_public and public_domain", async () => {
+          const r = await fetch(`${base}/api/deployments/${depId}`);
+          const data = await r.json();
+          assert.equal(data.deployment.is_public, 1);
+          assert.equal(data.deployment.public_domain, "203.0.113.50");
+        });
+
+        // -- DELETE public-access clears DB fields --
+        await testAsync("DELETE public-access clears is_public and public fields", async () => {
+          const r = await fetch(`${base}/api/deployments/${depId}/public-access`, { method: "DELETE" });
+          assert.equal(r.status, 200);
+          const data = await r.json();
+          assert.equal(data.ok, true);
+
+          // Verify DB was cleared
+          const row = db.prepare("SELECT * FROM deployments WHERE id = ?").get(depId);
+          assert.equal(row.is_public, 0);
+          assert.equal(row.public_domain, null);
+          assert.equal(row.public_l2_rpc_url, null);
+          assert.equal(row.public_dashboard_url, null);
+        });
+
+        // -- POST public-access on nonexistent deployment returns 404 --
+        await testAsync("POST public-access on nonexistent deployment returns 404", async () => {
+          const r = await fetch(`${base}/api/deployments/nonexistent-id/public-access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ publicDomain: "example.com" }),
+          });
+          assert.equal(r.status, 404);
+        });
+
+        // Cleanup
+        db.prepare("DELETE FROM deployments WHERE id = ?").run(depId);
+      } finally {
+        server.close();
+      }
+
+      return Promise.resolve();
+    })
+
     .then(() => {
       // Cleanup
       fs.rmSync(testDir, { recursive: true, force: true });
