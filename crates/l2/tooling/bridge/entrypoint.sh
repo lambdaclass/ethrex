@@ -51,8 +51,8 @@ if [ -n "$PUBLIC_BASE" ]; then
   PUBLIC_DOMAIN_RESOLVED=$(echo "${PUBLIC_DOMAIN:-}" | tr -d '"\\')
   # Per-service custom URLs (from Manager), falling back to PUBLIC_BASE + port
   L1_RPC_PUBLIC="${PUBLIC_BASE}/api/l1-rpc"
-  L2_RPC_PUBLIC="${PUBLIC_L2_RPC_URL:-http://localhost:${TOOLS_L2_RPC_PORT:-1729}}"
-  L2_EXPLORER_PUBLIC="${PUBLIC_L2_EXPLORER_URL:-http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}}"
+  L2_RPC_PUBLIC="${PUBLIC_L2_RPC_URL:-${PUBLIC_BASE}:${TOOLS_L2_RPC_PORT:-1729}}"
+  L2_EXPLORER_PUBLIC="${PUBLIC_L2_EXPLORER_URL:-${PUBLIC_BASE}:${TOOLS_L2_EXPLORER_PORT:-8082}}"
   L1_EXPLORER_PUBLIC="${PUBLIC_L1_EXPLORER_URL:-${L1_EXPLORER_RESOLVED}}"
   DASHBOARD_PUBLIC="${PUBLIC_DASHBOARD_URL:-${PUBLIC_BASE}}"
   METRICS_PUBLIC="http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
@@ -111,11 +111,25 @@ PROXYEOF
 fi
 
 # Cache-busting for config.json — prevent browsers from serving stale URLs after mode switch
+# Must be a server block since conf.d/*.conf is included at http level
 cat > /etc/nginx/conf.d/config-cache.conf << 'CACHEEOF'
-location = /config.json {
-    expires -1;
-    add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+server {
+    listen 80;
+    server_name _;
+
+    location = /config.json {
+        root /usr/share/nginx/html;
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+    }
+
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+    }
 }
 CACHEEOF
+# Remove default server to avoid port conflict
+rm -f /etc/nginx/conf.d/default.conf
 
 exec nginx -g "daemon off;"

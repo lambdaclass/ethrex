@@ -400,6 +400,13 @@ services:
       L1_NETWORK_NAME: ${L1_NETWORK_NAME:-}
       L2_CHAIN_ID: ${L2_CHAIN_ID:-}
       IS_EXTERNAL_L1: ${IS_EXTERNAL_L1:-}
+      # Public access (external domain/IP)
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-}
+      PUBLIC_L2_RPC_URL: ${PUBLIC_L2_RPC_URL:-}
+      PUBLIC_L2_EXPLORER_URL: ${PUBLIC_L2_EXPLORER_URL:-}
+      PUBLIC_L1_EXPLORER_URL: ${PUBLIC_L1_EXPLORER_URL:-}
+      PUBLIC_DASHBOARD_URL: ${PUBLIC_DASHBOARD_URL:-}
     ports:
       - target: 80
         published: ${TOOLS_BRIDGE_UI_PORT:-3000}

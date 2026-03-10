@@ -2196,7 +2196,7 @@ function renderOverviewTab() {
     html += '<span style="font-size:11px;font-family:monospace;color:var(--text-secondary)">' + esc(d.public_domain) + '</span>';
     html += '</div>';
     const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-    const urlRow = (label, url) => url ? '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="font-size:10px;color:var(--text-muted);width:70px">' + label + '</span><code style="font-size:10px;flex:1">' + esc(url) + '</code><button onclick="navigator.clipboard.writeText(\'' + esc(url).replace(/'/g, "\\'") + '\');this.innerHTML=\'✓\';setTimeout(()=>this.innerHTML=\'' + copyIcon + '\',1000)" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px" title="Copy">' + copyIcon + '</button></div>' : '';
+    const urlRow = (label, url) => url ? '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="font-size:10px;color:var(--text-muted);width:70px">' + label + '</span><code style="font-size:10px;flex:1">' + esc(url) + '</code><button class="pa-copy-btn" data-url="' + esc(url) + '" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px" title="Copy">' + copyIcon + '</button></div>' : '';
     html += urlRow('Dashboard', publicCfg.dashboard);
     html += urlRow('Bridge', publicCfg.dashboard + '/bridge.html');
     html += urlRow('L2 Explorer', publicCfg.l2Explorer);
@@ -2561,6 +2561,19 @@ function toggleRpcUrl(uid, btn) {
 // ============================================================
 // External Access (Public Domain/IP)
 // ============================================================
+
+// Delegated click handler for copy buttons (avoids inline onclick with URLs)
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.pa-copy-btn');
+  if (!btn) return;
+  const url = btn.dataset.url;
+  if (url) {
+    navigator.clipboard.writeText(url).then(() => {
+      btn.textContent = '✓';
+      setTimeout(() => { btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; }, 1000);
+    });
+  }
+});
 
 function showPublicAccessModal(deploymentId, currentDomain) {
   // Remove existing modal
