@@ -22,7 +22,7 @@ export default function NewProgramPage() {
     return (
       <div className="max-w-3xl mx-auto px-4 py-16 text-center">
         <h1 className="text-2xl font-bold mb-4">Login Required</h1>
-        <p className="text-gray-600 mb-4">You need to login to create a program.</p>
+        <p className="text-gray-600 mb-4">You need to login to create an app.</p>
         <Link href="/login" className="text-blue-600 hover:underline">
           Go to Login
         </Link>
@@ -124,7 +124,7 @@ export default function NewProgramPage() {
             disabled={loading}
             className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? "Creating..." : "Create Program"}
+            {loading ? "Creating..." : "Create App"}
           </button>
         </form>
       </div>

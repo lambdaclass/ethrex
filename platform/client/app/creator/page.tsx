@@ -49,7 +49,7 @@ export default function CreatorPage() {
           href="/creator/new"
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
         >
-          + New Program
+          + New App
         </Link>
       </div>
 
@@ -59,12 +59,12 @@ export default function CreatorPage() {
         </div>
       ) : programs.length === 0 ? (
         <div className="bg-white rounded-xl shadow-sm border p-12 text-center">
-          <p className="text-gray-500 text-lg mb-4">You haven't created any programs yet.</p>
+          <p className="text-gray-500 text-lg mb-4">You haven&apos;t created any apps yet.</p>
           <Link
             href="/creator/new"
             className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 inline-block"
           >
-            Create Your First Program
+            Create Your First App
           </Link>
         </div>
       ) : (

@@ -40,7 +40,7 @@ export default function Home() {
             href="/creator/new"
             className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg text-lg font-medium hover:bg-gray-50"
           >
-            Create Program
+            Create App
           </Link>
         </div>
       </div>
