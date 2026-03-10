@@ -3,6 +3,13 @@ import type { TxResult as TxResultType } from '../lib/api';
 
 const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
 
+// Derive Blockscout URL: use env var if set, otherwise try same origin on port 8082
+function getBlockscoutTxUrl(txHash: string): string {
+  if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/tx/${txHash}`;
+  const { protocol, hostname } = window.location;
+  return `${protocol}//${hostname}:8082/tx/${txHash}`;
+}
+
 export default function TxResult({ result }: { result: TxResultType }) {
   const [copied, setCopied] = useState(false);
 
@@ -14,7 +21,7 @@ export default function TxResult({ result }: { result: TxResultType }) {
     }
   };
 
-  const txUrl = result.txHash && BLOCKSCOUT_URL ? `${BLOCKSCOUT_URL}/tx/${result.txHash}?tab=frames` : '';
+  const txUrl = result.txHash ? getBlockscoutTxUrl(result.txHash) : '';
 
   return (
     <div
