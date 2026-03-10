@@ -2,6 +2,7 @@ use ethrex_l2_common::messages::get_balance_diffs;
 use ethrex_vm::{Evm, GuestProgramStateWrapper};
 
 use crate::common::{BatchExecutionResult, execute_blocks};
+use crate::crypto::get_crypto_provider;
 use crate::l2::blobs::verify_blob;
 use crate::l2::error::L2ExecutionError;
 use crate::l2::input::ProgramInput;
@@ -22,6 +23,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
         blob_proof,
     } = input;
 
+    let crypto = get_crypto_provider();
+
     // Execute blocks using the common execution logic
     let BatchExecutionResult {
         receipts,
@@ -41,7 +44,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
                     "FeeConfig not provided for L2 execution".to_string(),
                 )
             })?;
-            Evm::new_for_l2(db.clone(), fee_config).map_err(crate::common::ExecutionError::Evm)
+            Evm::new_for_l2(db.clone(), fee_config, crypto.clone())
+                .map_err(crate::common::ExecutionError::Evm)
         },
     )?;
 

@@ -6,6 +6,11 @@
 
 - Add bloom filter to skip trie seeks for non-existent storage slots [#6288](https://github.com/lambdaclass/ethrex/pull/6288)
 
+### 2026-03-02
+
+- SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+- Use FxHashMap in call frame backup [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+
 ### 2026-02-27
 
 - Refactor LEVM opcode handlers to avoid expensive matches [#4791](https://github.com/lambdaclass/ethrex/pull/4791)

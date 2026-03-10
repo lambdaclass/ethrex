@@ -22,6 +22,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
+use ethrex_crypto::Crypto;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::{OnceCell, RefCell},
@@ -403,7 +404,7 @@ impl Substate {
 /// # Example
 ///
 /// ```ignore
-/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let mut vm = VM::new(env, db, &tx, tracer, vm_type, &NativeCrypto);
 /// let report = vm.execute()?;
 /// if report.is_success() {
 ///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
@@ -436,10 +437,11 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
-
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
+    /// Crypto provider for cryptographic operations.
+    pub crypto: &'a dyn Crypto,
 }
 
 impl<'a> VM<'a> {
@@ -449,6 +451,7 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
+        crypto: &'a dyn Crypto,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -488,6 +491,7 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            crypto,
         };
 
         let call_type = if is_create {
@@ -570,6 +574,7 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
+                self.crypto,
             );
 
             call_frame.gas_remaining = gas_remaining as i64;
@@ -626,9 +631,17 @@ impl<'a> VM<'a> {
         gas_remaining: &mut u64,
         fork: Fork,
         cache: Option<&precompiles::PrecompileCache>,
+        crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
         Self::handle_precompile_result(
-            precompiles::execute_precompile(code_address, calldata, gas_remaining, fork, cache),
+            precompiles::execute_precompile(
+                code_address,
+                calldata,
+                gas_remaining,
+                fork,
+                cache,
+                crypto,
+            ),
             gas_limit,
             *gas_remaining,
         )
