@@ -596,8 +596,8 @@ router.post("/:id/service/:service/stop", async (req, res) => {
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
     if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
     if (TOOLS_SERVICES.has(req.params.service)) {
-      // Tools use separate compose — stop via tools compose
-      await docker.stopTools();
+      // Tools use separate compose — stop via tools compose (per-deployment)
+      await docker.stopTools(`${deployment.docker_project}-tools`);
       return res.json({ ok: true, message: `Tools stopped` });
     }
     const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
@@ -618,7 +618,7 @@ router.post("/:id/service/:service/start", async (req, res) => {
       // Tools use separate compose — start all tools together (they depend on each other)
       const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
       const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
-      await docker.startTools(envVars, {
+      await docker.startTools(`${deployment.docker_project}-tools`, envVars, {
         toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
         toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
         toolsBridgeUIPort: deployment.tools_bridge_ui_port,
@@ -643,6 +643,7 @@ router.post("/:id/build-tools", async (req, res) => {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
 
     const toolsPorts = {
       toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
@@ -654,7 +655,7 @@ router.post("/:id/build-tools", async (req, res) => {
       l2Port: deployment.l2_port,
     };
 
-    await docker.buildTools(toolsPorts);
+    await docker.buildTools(`${deployment.docker_project}-tools`, toolsPorts);
     res.json({ ok: true, message: "Tools images rebuilt" });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -692,7 +693,7 @@ router.post("/:id/restart-tools", async (req, res) => {
 
     // Respond immediately — docker compose up can take 30s+ and WebKit times out
     res.json({ ok: true, message: "Tools starting..." });
-    docker.restartTools(envVars, toolsPorts).catch(e => {
+    docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts).catch(e => {
       console.error("Tools restart failed:", e.message);
     });
   } catch (e) {
@@ -703,8 +704,11 @@ router.post("/:id/restart-tools", async (req, res) => {
 // POST /api/deployments/:id/stop-tools
 router.post("/:id/stop-tools", async (req, res) => {
   try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
     res.json({ ok: true, message: "Tools stopping..." });
-    docker.stopTools().catch(e => {
+    docker.stopTools(`${deployment.docker_project}-tools`).catch(e => {
       console.error("Tools stop failed:", e.message);
     });
   } catch (e) {
@@ -733,7 +737,7 @@ router.get("/:id/status", async (req, res) => {
     }
     // Also fetch tools containers (Explorer, Bridge UI, etc.)
     try {
-      const toolsContainers = await docker.getToolsStatus();
+      const toolsContainers = await docker.getToolsStatus(`${deployment.docker_project}-tools`);
       if (toolsContainers.length > 0) {
         containers = containers.concat(toolsContainers);
       }
@@ -826,7 +830,7 @@ router.get("/:id/logs", async (req, res) => {
     const follow = req.query.follow === "true";
     const tail = parseInt(req.query.tail) || 100;
 
-    const toolsServices = ["bridge-ui", "db", "backend-l1", "backend-l2", "frontend-l1", "frontend-l2", "proxy"];
+    const toolsServices = ["bridge-ui", "db", "db-init", "backend-l1", "backend-l2", "frontend-l1", "frontend-l2", "proxy", "proxy-l2-only", "redis-db", "function-selectors", "function-selectors-l2"];
     const isToolsService = service && toolsServices.includes(service);
 
     if (follow) {
@@ -837,7 +841,7 @@ router.get("/:id/logs", async (req, res) => {
       });
 
       const proc = isToolsService
-        ? docker.streamToolsLogs(service)
+        ? docker.streamToolsLogs(`${deployment.docker_project}-tools`, service)
         : docker.streamLogs(deployment.docker_project, composeFile, service);
 
       proc.stdout.on("data", (chunk) => {
@@ -854,7 +858,7 @@ router.get("/:id/logs", async (req, res) => {
       req.on("close", () => proc.kill("SIGTERM"));
     } else {
       const logs = isToolsService
-        ? await docker.getToolsLogs(service, tail)
+        ? await docker.getToolsLogs(`${deployment.docker_project}-tools`, service, tail)
         : await docker.getLogs(deployment.docker_project, composeFile, service, tail);
       res.json({ logs });
     }
