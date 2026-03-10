@@ -48,8 +48,6 @@ pub enum TrieGenerationError {
     TrieStackEmpty(Nibbles),
     #[error(transparent)]
     FlushToDbError(TrieError),
-    #[error("When joining the write threads, error")]
-    ThreadJoinError(),
 }
 
 /// How many nodes we group before sending to write
