@@ -102,20 +102,16 @@ cp ethrex-blockscout/frontend/ui/pages/Transaction.tsx blockscout-frontend/ui/pa
 cp ethrex-blockscout/frontend/ui/tx/TxFrames.tsx blockscout-frontend/ui/tx/TxFrames.tsx
 mkdir -p blockscout-frontend/ui/tx/frames
 cp ethrex-blockscout/frontend/ui/tx/frames/*.tsx blockscout-frontend/ui/tx/frames/
+cp ethrex-blockscout/frontend/types/api/transaction.ts blockscout-frontend/types/api/transaction.ts
 ```
 
-Then patch `blockscout-frontend/types/api/transaction.ts`:
-1. Add `frame_details?: Array<TxFrame>;` inside the `Transaction` type (after `has_error_in_internal_transactions`)
-2. Add the `TxFrame` interface at the end of the file:
-```typescript
-export interface TxFrame {
-  index: number;
-  mode: string;
-  mode_id: number;
-  to: string | null;
-  gas_limit: string;
-  data: string;
-}
+**For remote/HTTPS deployments**, edit `ethrex-blockscout/docker-compose/envs/common-frontend.env` and update the host/protocol settings:
+```
+NEXT_PUBLIC_API_HOST=your-domain.com:8082
+NEXT_PUBLIC_API_PROTOCOL=https
+NEXT_PUBLIC_APP_HOST=your-domain.com:8082
+NEXT_PUBLIC_APP_PROTOCOL=https
+NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=wss
 ```
 
 Start all services:
@@ -124,7 +120,7 @@ cd ethrex-blockscout
 docker compose -f docker-compose/docker-compose.yml up -d --build
 ```
 
-First run pulls images and builds backend + frontend (~10 min). Subsequent starts are fast. Open **http://localhost:8082** once the containers are up. Frame transactions show a **Frames** tab on the transaction detail page.
+First run pulls images and builds backend + frontend (~10 min). The Docker build requires **8 GB+ RAM** (or swap) for the Next.js frontend compilation. Subsequent starts are fast. Open **http://localhost:8082** once the containers are up. Frame transactions show a **Frames** tab on the transaction detail page.
 
 To check status:
 ```bash
