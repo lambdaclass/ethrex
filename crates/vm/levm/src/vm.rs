@@ -831,8 +831,24 @@ impl<'a> VM<'a> {
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
 
+        // Derive top-level status from SENDER frames: if any SENDER frame
+        // reverted, the transaction's execution failed (analogous to status 0
+        // in standard transactions). VERIFY frames are authentication, not
+        // execution — their failure makes the TX invalid (handled above).
+        let any_sender_reverted = frame_tx
+            .frames
+            .iter()
+            .zip(ctx.frame_results.iter())
+            .any(|(frame, (success, _, _))| frame.mode == FrameMode::Sender && !success);
+
+        let result = if any_sender_reverted {
+            TxResult::Revert(VMError::RevertOpcode.into())
+        } else {
+            TxResult::Success
+        };
+
         let report = ExecutionReport {
-            result: TxResult::Success,
+            result,
             gas_used: total_gas_used,
             gas_spent: total_gas_used,
             gas_refunded: gas_refund,
