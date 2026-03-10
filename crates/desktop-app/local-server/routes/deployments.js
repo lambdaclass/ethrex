@@ -21,26 +21,10 @@ const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
 const rpc = require("../lib/rpc-client");
 const keychain = require("../lib/keychain");
+const { getExternalL1Config } = require("../lib/tools-config");
 const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
-
-/** Build external L1 config props from deployment config (DRY helper for start/restart tools) */
-function getExternalL1Config(deployment) {
-  const depConfig = deployment.config ? JSON.parse(deployment.config) : {};
-  const isExternal = depConfig.mode === 'testnet';
-  const testnetCfg = depConfig.testnet || {};
-  return {
-    skipL1Explorer: isExternal,
-    ...(isExternal && {
-      l1RpcUrl: testnetCfg.l1RpcUrl,
-      l1ChainId: testnetCfg.l1ChainId,
-      l1ExplorerUrl: testnetCfg.l1ExplorerUrl,
-      l1NetworkName: testnetCfg.network,
-      isExternalL1: true,
-    }),
-  };
-}
 
 // ==========================================
 // CRUD (local — no auth required)

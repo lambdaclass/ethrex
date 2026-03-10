@@ -737,7 +737,11 @@
           }
           document.getElementById('linkL1Explorer').querySelector('.quick-link-sub').textContent = l1ExpLabel;
           document.getElementById('linkL2Explorer').href = l2Exp;
-          document.getElementById('linkL2Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l2Exp).port;
+          try {
+            document.getElementById('linkL2Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l2Exp).port;
+          } catch (e) {
+            console.warn('Could not parse L2 explorer URL for label:', l2Exp);
+          }
 
           // Update L1 service card
           const svcL1Card = document.getElementById('svcL1BlockscoutCard');

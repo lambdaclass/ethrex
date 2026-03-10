@@ -270,6 +270,8 @@ services:
     depends_on:
       - backend-l1
       - backend-l2
+    environment:
+      POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     env_file:
       - .zk-dex-deployed.env
     restart: "no"
@@ -282,7 +284,7 @@ services:
 
         echo "Inserting L1 function selectors..."
 
-        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<'EOF'
+        psql "postgresql://blockscout:$${POSTGRES_PASSWORD}@db:5432/blockscout_l1" <<'EOF'
         INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES
           (((x'3db97de8')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"commitBatch","inputs":[{"name":"batchNumber","type":"uint256"},{"name":"newStateRoot","type":"bytes32"},{"name":"withdrawalsLogsMerkleRoot","type":"bytes32"},{"name":"processedPrivilegedTransactionsRollingHash","type":"bytes32"},{"name":"lastBlockHash","type":"bytes32"}],"outputs":[],"stateMutability":"nonpayable"}'),
           (((x'1ebed24e')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"verifyBatch","inputs":[{"name":"batchNumber","type":"uint256"},{"name":"risc0BlockProof","type":"bytes"},{"name":"risc0Journal","type":"bytes"},{"name":"sp1PublicValues","type":"bytes"},{"name":"sp1ProofBytes","type":"bytes"},{"name":"tdxPublicValues","type":"bytes"},{"name":"tdxSignature","type":"bytes"}],"outputs":[],"stateMutability":"nonpayable"}'),
@@ -296,7 +298,7 @@ services:
 
         echo "Inserting L2 function selectors..."
 
-        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2 <<'EOF'
+        psql "postgresql://blockscout:$${POSTGRES_PASSWORD}@db:5432/blockscout_l2" <<'EOF'
         INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES
           (((x'51cff8d9')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"withdraw","inputs":[{"name":"_receiverOnL1","type":"address"}],"outputs":[],"stateMutability":"payable"}'),
           (((x'd23061db')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"withdrawERC20","inputs":[{"name":"tokenL1","type":"address"},{"name":"tokenL2","type":"address"},{"name":"destination","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[],"stateMutability":"nonpayable"}'),
@@ -312,14 +314,14 @@ services:
         BRIDGE_HEX=$$(echo "$$ETHREX_WATCHER_BRIDGE_ADDRESS" | sed 's/^0x//')
         PROPOSER_HEX=$$(echo "$$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" | sed 's/^0x//')
 
-        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l1 <<EOF
+        psql "postgresql://blockscout:$${POSTGRES_PASSWORD}@db:5432/blockscout_l1" <<EOF
         INSERT INTO address_names (address_hash, name, inserted_at, updated_at) VALUES
           (decode('$${PROPOSER_HEX}', 'hex'), 'OnChainProposer', NOW(), NOW()),
           (decode('$${BRIDGE_HEX}', 'hex'), 'CommonBridge', NOW(), NOW())
         ON CONFLICT DO NOTHING;
         EOF
 
-        psql postgresql://blockscout:ceWb1MeLBEeOIfk65gU8EjF8@db:5432/blockscout_l2 <<'EOF'
+        psql "postgresql://blockscout:$${POSTGRES_PASSWORD}@db:5432/blockscout_l2" <<'EOF'
         INSERT INTO address_names (address_hash, name, inserted_at, updated_at) VALUES
           (decode('000000000000000000000000000000000000FFFF', 'hex'), 'CommonBridgeL2', NOW(), NOW())
         ON CONFLICT DO NOTHING;
