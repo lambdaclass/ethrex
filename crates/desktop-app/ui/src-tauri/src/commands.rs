@@ -643,6 +643,7 @@ fn mask_token(token: &str) -> String {
     format!("{}...{}", &token[..8], &token[token.len()-4..])
 }
 
+/// Internal helper: writes telegram config to disk.
 fn write_telegram_config(config: &TelegramConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config).map_err(|e| format!("Serialize error: {e}"))?;
     let path = telegram_config_path()?;
