@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "cd ../../local-server && npm install --omit=dev && cd ../ui && pnpm build"
+    "beforeBuildCommand": "cd ../local-server && npm install --omit=dev && cd ../ui && pnpm build"
   },
   "app": {
     "windows": [
