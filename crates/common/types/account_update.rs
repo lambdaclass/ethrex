@@ -1,6 +1,7 @@
 use crate::{
     Address, H256, U256,
     types::{AccountInfo, Code},
+    utils::keccak,
 };
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,42 @@ impl AccountUpdate {
         }
         for (key, value) in other.added_storage {
             self.added_storage.insert(key, value);
+        }
+    }
+}
+
+/// An `AccountUpdate` with pre-computed keccak256 hashes for the address
+/// and all storage keys. Used by the hashing intermediary thread to
+/// offload keccak work from the merkleizer.
+#[derive(Debug, Clone)]
+pub struct HashedAccountUpdate {
+    pub hashed_address: H256,
+    pub address: Address,
+    pub removed: bool,
+    pub info: Option<AccountInfo>,
+    pub code: Option<Code>,
+    /// Storage entries with pre-hashed keys: (hashed_key, value).
+    pub added_storage: Vec<(H256, U256)>,
+    pub removed_storage: bool,
+}
+
+impl HashedAccountUpdate {
+    /// Hash an `AccountUpdate`'s address and storage keys.
+    pub fn from_update(update: AccountUpdate) -> Self {
+        let hashed_address = keccak(update.address);
+        let added_storage = update
+            .added_storage
+            .into_iter()
+            .map(|(key, value)| (keccak(key), value))
+            .collect();
+        Self {
+            hashed_address,
+            address: update.address,
+            removed: update.removed,
+            info: update.info,
+            code: update.code,
+            added_storage,
+            removed_storage: update.removed_storage,
         }
     }
 }
