@@ -24,6 +24,7 @@ use ethrex_common::{
         requests::Requests,
     },
 };
+use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
@@ -76,6 +77,16 @@ fn check_gas_limit(
     Ok(())
 }
 
+/// Error type for BAL validation failures, distinguishing state mismatches
+/// from database errors.
+#[derive(Debug, thiserror::Error)]
+enum BalValidationError {
+    #[error("{0}")]
+    Mismatch(String),
+    #[error("{0}")]
+    Database(String),
+}
+
 impl LEVM {
     /// Execute a block and return the execution result.
     ///
@@ -85,6 +96,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let record_bal = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -96,7 +108,7 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        Self::prepare_block(block, db, vm_type)?;
+        Self::prepare_block(block, db, vm_type, crypto)?;
 
         let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
@@ -104,12 +116,15 @@ impl LEVM {
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
         let transactions_with_sender =
-            block.body.get_transactions_with_sender().map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+            block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if record_bal {
@@ -125,11 +140,11 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
             // EIP-7778: Separate gas tracking
-            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
-            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
@@ -143,30 +158,34 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        // Set BAL index for post-execution phase (withdrawals, uint16)
+        // Set BAL index for post-execution phase (requests + withdrawals, uint16)
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
         if record_bal {
             #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
-            db.set_bal_index(withdrawal_index);
-        }
+            let post_tx_index = (block.body.transactions.len() + 1) as u16;
+            db.set_bal_index(post_tx_index);
 
-        if let Some(withdrawals) = &block.body.withdrawals {
             // Record ALL withdrawal recipients for BAL per EIP-7928:
             // "Withdrawal recipients regardless of amount"
             // The amount filter only applies to balance_changes, not touched_addresses
-            if record_bal && let Some(recorder) = db.bal_recorder_mut() {
+            if let Some(withdrawals) = &block.body.withdrawals
+                && let Some(recorder) = db.bal_recorder_mut()
+            {
                 recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
-            Self::process_withdrawals(db, withdrawals)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
@@ -187,20 +206,24 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
 
         let transactions_with_sender =
-            block.body.get_transactions_with_sender().map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+            block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
 
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
             // No BAL recording needed: we have the header BAL, not building a new one
-            Self::prepare_block(block, db, vm_type)?;
+            Self::prepare_block(block, db, vm_type, crypto)?;
 
             // Drain system call state and snapshot for per-tx db seeding
             LEVM::get_state_transitions_tx(db)?;
@@ -215,6 +238,7 @@ impl LEVM {
                 &merkleizer,
                 queue_length,
                 system_seed,
+                crypto,
             )?;
 
             // Seed main db with post-tx state (excluding withdrawal effects) so
@@ -225,15 +249,17 @@ impl LEVM {
             let last_tx_idx = block.body.transactions.len() as u16;
             Self::seed_db_from_bal(db, bal, last_tx_idx)?;
 
-            // Withdrawals apply on top of seeded state; requests read predeploy storage
+            // Order must match geth: requests (system calls) BEFORE withdrawals.
+            let requests = match vm_type {
+                VMType::L1 => {
+                    extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
+                }
+                VMType::L2(_) => Default::default(),
+            };
+
             if let Some(withdrawals) = &block.body.withdrawals {
                 Self::process_withdrawals(db, withdrawals)?;
             }
-
-            let requests = match vm_type {
-                VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
-                VMType::L2(_) => Default::default(),
-            };
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
@@ -254,7 +280,7 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        Self::prepare_block(block, db, vm_type)?;
+        Self::prepare_block(block, db, vm_type, crypto)?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -268,7 +294,7 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -292,6 +318,7 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
                 false,
+                crypto,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -301,8 +328,8 @@ impl LEVM {
             }
 
             // EIP-7778: Separate gas tracking
-            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used
-            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting
+            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
+            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
@@ -330,28 +357,32 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        // Set BAL index for post-execution phase (withdrawals, uint16)
+        // Set BAL index for post-execution phase (requests + withdrawals, uint16)
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
         if is_amsterdam {
             #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_index = (block.body.transactions.len() + 1) as u16;
-            db.set_bal_index(withdrawal_index);
-        }
+            let post_tx_index = (block.body.transactions.len() + 1) as u16;
+            db.set_bal_index(post_tx_index);
 
-        if let Some(withdrawals) = &block.body.withdrawals {
             // Record ALL withdrawal recipients for BAL per EIP-7928
-            if is_amsterdam && let Some(recorder) = db.bal_recorder_mut() {
+            if let Some(withdrawals) = &block.body.withdrawals
+                && let Some(recorder) = db.bal_recorder_mut()
+            {
                 recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
-            Self::process_withdrawals(db, withdrawals)?;
         }
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled
@@ -652,6 +683,7 @@ impl LEVM {
         merkleizer: &Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
+        crypto: &dyn Crypto,
     ) -> Result<(Vec<Receipt>, u64), EvmError> {
         let store = db.store.clone();
         let header = &block.header;
@@ -701,6 +733,7 @@ impl LEVM {
                     vm_type,
                     &mut stack_pool,
                     false,
+                    crypto,
                 )?;
 
                 // Validate execution results against BAL claims (per-tx).
@@ -717,9 +750,24 @@ impl LEVM {
                     &tx_db.codes,
                     bal,
                     &validation_index,
+                    &system_seed,
+                    &store,
                 )
                 .map_err(|e| {
-                    EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                    let state_addrs: Vec<_> = tx_db.current_accounts_state.keys().collect();
+                    // Collect addresses with BAL changes at this tx's index
+                    let bal_active: Vec<_> =
+                        if let Some(active) = validation_index.tx_to_accounts.get(&bal_idx) {
+                            active.iter().map(|&i| bal.accounts()[i].address).collect()
+                        } else {
+                            vec![]
+                        };
+                    EvmError::Custom(format!(
+                        "BAL validation failed for tx {tx_idx} (sender={sender:?}, \
+                         result={:?}, bal_active_at_{bal_idx}={bal_active:?}, \
+                         state_addrs={state_addrs:?}): {e}",
+                        report.result
+                    ))
                 })?;
 
                 Ok((tx_idx, tx.tx_type(), report))
@@ -758,6 +806,62 @@ impl LEVM {
         Ok((receipts, block_gas_used))
     }
 
+    /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
+    /// back to system_seed/store if no BAL entry exists before that index.
+    fn seeded_balance(
+        seed_idx: u16,
+        acct: &ethrex_common::types::block_access_list::AccountChanges,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+    ) -> Result<U256, BalValidationError> {
+        let pos = acct
+            .balance_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+        if pos > 0 {
+            Ok(acct.balance_changes[pos - 1].post_balance)
+        } else if let Some(a) = system_seed.get(&acct.address) {
+            Ok(a.info.balance)
+        } else {
+            store
+                .get_account_state(acct.address)
+                .map(|a| a.balance)
+                .map_err(|e| {
+                    BalValidationError::Database(format!(
+                        "DB error reading balance for {:?}: {e}",
+                        acct.address
+                    ))
+                })
+        }
+    }
+
+    /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
+    /// back to system_seed/store if no BAL entry exists before that index.
+    fn seeded_nonce(
+        seed_idx: u16,
+        acct: &ethrex_common::types::block_access_list::AccountChanges,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+    ) -> Result<u64, BalValidationError> {
+        let pos = acct
+            .nonce_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+        if pos > 0 {
+            Ok(acct.nonce_changes[pos - 1].post_nonce)
+        } else if let Some(a) = system_seed.get(&acct.address) {
+            Ok(a.info.nonce)
+        } else {
+            store
+                .get_account_state(acct.address)
+                .map(|a| a.nonce)
+                .map_err(|e| {
+                    BalValidationError::Database(format!(
+                        "DB error reading nonce for {:?}: {e}",
+                        acct.address
+                    ))
+                })
+        }
+    }
+
     /// Validates that a tx's post-execution state matches BAL claims.
     ///
     /// Replaces the previous snapshot->diff->validate approach:
@@ -771,6 +875,8 @@ impl LEVM {
     /// `codes`: code cache from per-tx DB (for code change validation)
     /// `bal`: the block access list
     /// `index`: pre-built validation index
+    /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
+    /// `store`: database (fallback for pre-state lookups)
     #[allow(clippy::too_many_arguments)]
     fn validate_tx_execution(
         bal_idx: u16,
@@ -779,7 +885,9 @@ impl LEVM {
         codes: &FxHashMap<H256, Code>,
         bal: &BlockAccessList,
         index: &BalAddressIndex,
-    ) -> Result<(), String> {
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+    ) -> Result<(), BalValidationError> {
         // PART A: For each BAL account with changes at bal_idx,
         //         verify execution produced matching post-state.
         if let Some(active_accounts) = index.tx_to_accounts.get(&bal_idx) {
@@ -793,15 +901,50 @@ impl LEVM {
                     match actual {
                         Some(a) if a.info.balance == expected => {}
                         Some(a) => {
-                            return Err(format!(
+                            return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={}",
                                 a.info.balance
-                            ));
+                            )));
                         }
                         None => {
-                            return Err(format!(
-                                "account {addr:?} has BAL balance change at {bal_idx} but not in execution state"
-                            ));
+                            // Account not in execution state. Check if the BAL entry
+                            // is extraneous (claimed post-balance == pre-state balance,
+                            // i.e., a no-op recorded by the builder). The state root
+                            // will catch any true discrepancy.
+                            let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store)?;
+                            if expected != seeded {
+                                // Dump full BAL entry for diagnosis
+                                let all_bal_indices: Vec<u16> = acct
+                                    .balance_changes
+                                    .iter()
+                                    .map(|c| c.block_access_index)
+                                    .collect();
+                                let all_nonce_indices: Vec<u16> = acct
+                                    .nonce_changes
+                                    .iter()
+                                    .map(|c| c.block_access_index)
+                                    .collect();
+                                let all_storage_indices: Vec<(u16, u64)> = acct
+                                    .storage_changes
+                                    .iter()
+                                    .flat_map(|sc| {
+                                        sc.slot_changes
+                                            .iter()
+                                            .map(|c| (c.block_access_index, sc.slot.low_u64()))
+                                    })
+                                    .collect();
+                                let code_indices: Vec<u16> = acct
+                                    .code_changes
+                                    .iter()
+                                    .map(|c| c.block_access_index)
+                                    .collect();
+                                return Err(BalValidationError::Mismatch(format!(
+                                    "account {addr:?} has BAL balance change at {bal_idx} \
+                                     but not in execution state (expected={expected}, pre={seeded}, \
+                                     all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
+                                     storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
+                                )));
+                            }
                         }
                     }
                 }
@@ -811,15 +954,19 @@ impl LEVM {
                     match actual {
                         Some(a) if a.info.nonce == expected => {}
                         Some(a) => {
-                            return Err(format!(
+                            return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} nonce mismatch at index {bal_idx}: BAL={expected}, exec={}",
                                 a.info.nonce
-                            ));
+                            )));
                         }
                         None => {
-                            return Err(format!(
-                                "account {addr:?} has BAL nonce change at {bal_idx} but not in execution state"
-                            ));
+                            let seeded = Self::seeded_nonce(seed_idx, acct, system_seed, store)?;
+                            if expected != seeded {
+                                return Err(BalValidationError::Mismatch(format!(
+                                    "account {addr:?} has BAL nonce change at {bal_idx} \
+                                     but not in execution state (expected={expected}, pre={seeded})"
+                                )));
+                            }
                         }
                     }
                 }
@@ -828,21 +975,59 @@ impl LEVM {
                 if let Some(expected_code) = find_exact_change_code(&acct.code_changes, bal_idx) {
                     match actual {
                         Some(a) => {
-                            let actual_code = codes
-                                .get(&a.info.code_hash)
-                                .map(|c| &c.bytecode)
-                                .cloned()
-                                .unwrap_or_default();
+                            let actual_code = if let Some(c) = codes.get(&a.info.code_hash) {
+                                c.bytecode.clone()
+                            } else {
+                                store
+                                    .get_account_code(a.info.code_hash)
+                                    .map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading account code for {addr:?}: {e}"
+                                        ))
+                                    })?
+                                    .bytecode
+                            };
                             if actual_code != *expected_code {
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} code mismatch at index {bal_idx}"
-                                ));
+                                )));
                             }
                         }
                         None => {
-                            return Err(format!(
-                                "account {addr:?} has BAL code change at {bal_idx} but not in execution state"
-                            ));
+                            // No-op check: compare against pre-state code.
+                            // Try system_seed + codes cache first, then fall
+                            // back to store (consistent with balance/nonce).
+                            let code_hash = if let Some(a) = system_seed.get(&addr) {
+                                a.info.code_hash
+                            } else {
+                                store
+                                    .get_account_state(addr)
+                                    .map(|a| a.code_hash)
+                                    .map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading account state for {addr:?}: {e}"
+                                        ))
+                                    })?
+                            };
+                            let pre_code = if let Some(c) = codes.get(&code_hash) {
+                                c.bytecode.clone()
+                            } else {
+                                store
+                                    .get_account_code(code_hash)
+                                    .map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading account code for hash \
+                                             {code_hash:?}: {e}"
+                                        ))
+                                    })?
+                                    .bytecode
+                            };
+                            if *expected_code != pre_code {
+                                return Err(BalValidationError::Mismatch(format!(
+                                    "account {addr:?} has BAL code change at {bal_idx} \
+                                     but not in execution state"
+                                )));
+                            }
                         }
                     }
                 }
@@ -855,11 +1040,24 @@ impl LEVM {
                         let key = ethrex_common::utils::u256_to_h256(sc.slot);
                         let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
                         if actual_value != Some(expected_value) {
-                            return Err(format!(
+                            // If account not in execution state, check pre-state
+                            if actual.is_none() || actual_value.is_none() {
+                                let pre_value =
+                                    store.get_storage_value(addr, key).map_err(|e| {
+                                        BalValidationError::Database(format!(
+                                            "DB error reading storage for {addr:?} slot {}: {e}",
+                                            sc.slot
+                                        ))
+                                    })?;
+                                if expected_value == pre_value {
+                                    continue; // Extraneous entry
+                                }
+                            }
+                            return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} storage slot {} mismatch at index {bal_idx}: \
                                  BAL={expected_value}, exec={actual_value:?}",
                                 sc.slot
-                            ));
+                            )));
                         }
                     }
                 }
@@ -894,11 +1092,11 @@ impl LEVM {
                 if seeded_pos > 0 {
                     let seeded = acct.balance_changes[seeded_pos - 1].post_balance;
                     if account.info.balance != seeded {
-                        return Err(format!(
+                        return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} balance changed by execution ({}) but BAL has no \
                              balance change at index {bal_idx} (seeded={seeded})",
                             account.info.balance
-                        ));
+                        )));
                     }
                 }
                 // If seeded_pos == 0, balance was never seeded (loaded from store/shared_base).
@@ -913,11 +1111,11 @@ impl LEVM {
                 if seeded_pos > 0 {
                     let seeded = acct.nonce_changes[seeded_pos - 1].post_nonce;
                     if account.info.nonce != seeded {
-                        return Err(format!(
+                        return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} nonce changed by execution ({}) but BAL has no \
                              nonce change at index {bal_idx} (seeded={seeded})",
                             account.info.nonce
-                        ));
+                        )));
                     }
                 }
             }
@@ -937,10 +1135,10 @@ impl LEVM {
                         ethrex_common::utils::keccak(seeded_code)
                     };
                     if account.info.code_hash != seeded_hash {
-                        return Err(format!(
+                        return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} code changed by execution but BAL has no \
                              code change at index {bal_idx}"
-                        ));
+                        )));
                     }
                 }
             }
@@ -961,11 +1159,11 @@ impl LEVM {
                         if seeded_pos > 0 {
                             let seeded = sc.slot_changes[seeded_pos - 1].post_value;
                             if value != seeded {
-                                return Err(format!(
+                                return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} storage slot {slot_u256} changed by \
                                      execution ({value}) but BAL has no change at index \
                                      {bal_idx} (seeded={seeded})"
-                                ));
+                                )));
                             }
                         }
                     }
@@ -992,13 +1190,17 @@ impl LEVM {
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
+        crypto: &dyn Crypto,
         cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })?;
+        let txs_with_sender = block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
 
         // Group transactions by sender for sequential execution within groups
         let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
@@ -1026,6 +1228,7 @@ impl LEVM {
                         vm_type,
                         stack_pool,
                         true,
+                        crypto,
                     );
                 }
             },
@@ -1149,15 +1352,15 @@ impl LEVM {
             &vm_type,
         )?;
 
-        let block_excess_blob_gas = block_header.excess_blob_gas.map(U256::from);
+        let block_excess_blob_gas = block_header.excess_blob_gas;
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
             config,
-            block_number: block_header.number.into(),
+            block_number: block_header.number,
             coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
+            timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
             slot_number: block_header
                 .slot_number
@@ -1168,7 +1371,7 @@ impl LEVM {
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
             block_excess_blob_gas,
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+            block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
             tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
@@ -1193,14 +1396,16 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         vm.execute().map_err(VMError::into)
     }
 
     // Like execute_tx but allows reusing the stack pool
+    #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
@@ -1212,10 +1417,11 @@ impl LEVM {
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let result = vm.execute().map_err(VMError::into);
@@ -1235,6 +1441,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
@@ -1242,7 +1449,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -1293,6 +1500,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1311,6 +1519,7 @@ impl LEVM {
             BEACON_ROOTS_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
         Ok(())
     }
@@ -1319,6 +1528,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1333,6 +1543,7 @@ impl LEVM {
             HISTORY_STORAGE_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
         Ok(())
     }
@@ -1340,6 +1551,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1354,6 +1566,7 @@ impl LEVM {
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
 
         match report.result {
@@ -1369,6 +1582,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1383,6 +1597,7 @@ impl LEVM {
             CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
 
         match report.result {
@@ -1399,18 +1614,19 @@ impl LEVM {
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto)?;
 
         let report = vm.stateless_execute()?;
 
@@ -1427,6 +1643,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
@@ -1438,12 +1655,12 @@ impl LEVM {
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            Self::beacon_root_contract_call(block_header, db, vm_type)?;
+            Self::beacon_root_contract_call(block_header, db, vm_type, crypto)?;
         }
 
         if fork >= Fork::Prague {
             //eip 2935: stores parent block hash in system contract
-            Self::process_block_hash_history(block_header, db, vm_type)?;
+            Self::process_block_hash_history(block_header, db, vm_type, crypto)?;
         }
         Ok(())
     }
@@ -1456,6 +1673,7 @@ pub fn generic_system_contract_levm(
     contract_address: Address,
     system_address: Address,
     vm_type: VMType,
+    crypto: &dyn Crypto,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -1469,14 +1687,14 @@ pub fn generic_system_contract_levm(
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
         gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
-        block_number: block_header.number.into(),
+        block_number: block_header.number,
         coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
+        timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         base_fee_per_gas: U256::zero(),
         gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_excess_blob_gas: block_header.excess_blob_gas,
+        block_blob_gas_used: block_header.blob_gas_used,
         block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
         config,
         ..Default::default()
@@ -1508,7 +1726,7 @@ pub fn generic_system_contract_levm(
         recorder.enter_system_call();
     }
 
-    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
         .and_then(|mut vm| vm.execute())
         .map_err(EvmError::from);
 
@@ -1545,6 +1763,7 @@ pub fn extract_all_requests_levm(
     db: &mut GeneralizedDatabase,
     header: &BlockHeader,
     vm_type: VMType,
+    crypto: &dyn Crypto,
 ) -> Result<Vec<Requests>, EvmError> {
     if let VMType::L2(_) = vm_type {
         return Err(EvmError::InvalidEVM(
@@ -1559,12 +1778,13 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type, crypto)?
         .output
         .into();
-    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
-        .output
-        .into();
+    let consolidation_data: Vec<u8> =
+        LEVM::dequeue_consolidation_requests(header, db, vm_type, crypto)?
+            .output
+            .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
@@ -1658,7 +1878,7 @@ fn env_from_generic(
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
-    let block_excess_blob_gas = header.excess_blob_gas.map(U256::from);
+    let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
     // Validate slot_number for Amsterdam+ blocks
@@ -1684,9 +1904,9 @@ fn env_from_generic(
             .gas
             .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
-        block_number: header.number.into(),
+        block_number: header.number,
         coinbase: header.coinbase,
-        timestamp: header.timestamp.into(),
+        timestamp: header.timestamp,
         prev_randao: Some(header.prev_randao),
         slot_number,
         chain_id: chain_config.chain_id.into(),
@@ -1694,7 +1914,7 @@ fn env_from_generic(
         base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
         gas_price,
         block_excess_blob_gas,
-        block_blob_gas_used: header.blob_gas_used.map(U256::from),
+        block_blob_gas_used: header.blob_gas_used,
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
@@ -1713,6 +1933,7 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
+    crypto: &'a dyn Crypto,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -1749,7 +1970,7 @@ fn vm_from_generic<'a>(
     };
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

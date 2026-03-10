@@ -677,28 +677,6 @@ impl<'a> VM<'a> {
     /// Accesses to an account's storage slot and returns the value in it.
     ///
     /// Accessed storage slots are stored in the `accessed_storage_slots` set.
-    /// Accessed storage slots take place in some gas cost computation.
-    ///
-    /// Note: This function does NOT record to BAL. Per EIP-7928, BAL recording
-    /// must happen after gas checks pass. Use `record_storage_slot_to_bal()`
-    /// separately after the gas check succeeds.
-    pub fn access_storage_slot(
-        &mut self,
-        address: Address,
-        key: H256,
-    ) -> Result<(U256, bool), InternalError> {
-        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
-
-        let storage_slot = self.get_storage_value(address, key)?;
-
-        // Note: BAL recording is NOT done here per EIP-7928.
-        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
-        // Call record_storage_slot_to_bal() after gas check passes.
-
-        Ok((storage_slot, storage_slot_was_cold))
-    }
-
     /// Records a storage slot read to BAL after gas checks have passed.
     /// Per EIP-7928: "If pre-state validation fails, the target is never accessed and must not appear in BAL."
     /// This function should be called AFTER the gas check succeeds.
