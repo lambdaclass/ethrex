@@ -1211,7 +1211,7 @@ mod tests {
         );
 
         let record = handshake.record.expect("expected ENR record");
-        let pairs = record.decode_pairs();
+        let pairs = record.pairs();
         assert_eq!(pairs.id.as_deref(), Some("v4"));
         assert!(pairs.secp256k1.is_some());
     }
@@ -1302,10 +1302,10 @@ mod tests {
         let sig = "17e1b073918da32d640642c762c0e2781698e4971f8ab39a77746adad83f01e76ffc874c5924808bbe7c50890882c2b8a01287a0b08312d1d53a17d517f5eb27";
         let key = "0313d14211e0287b2361a1615890a9b5212080546d0a257ae4cff96cf534992cb9";
 
-        let record = NodeRecord {
-            signature: H512::from_str(sig).unwrap(),
-            seq: 1,
-            pairs: NodeRecordPairs {
+        let record = NodeRecord::new(
+            H512::from_str(sig).unwrap(),
+            1,
+            NodeRecordPairs {
                 id: Some("v4".to_owned()),
                 ip: Some(Ipv4Addr::new(127, 0, 0, 1)),
                 ip6: None,
@@ -1313,9 +1313,10 @@ mod tests {
                 udp_port: None,
                 secp256k1: Some(H264::from_str(key).unwrap()),
                 eth: None,
-            }
-            .into(),
-        };
+                snap: None,
+                other: vec![],
+            },
+        );
 
         let handshake = Handshake {
             src_id,
@@ -1505,7 +1506,7 @@ mod tests {
         );
 
         let record = handshake.record.clone().expect("expected ENR record");
-        let pairs = record.decode_pairs();
+        let pairs = record.pairs();
         assert_eq!(pairs.id.as_deref(), Some("v4"));
         assert!(pairs.secp256k1.is_some());
 
@@ -1591,20 +1592,15 @@ mod tests {
 
     #[test]
     fn nodes_packet_codec_roundtrip() {
-        let pairs: Vec<(Bytes, Bytes)> = NodeRecordPairs {
+        let pairs = NodeRecordPairs {
             id: Some("id".to_string()),
             ..Default::default()
-        }
-        .into();
+        };
 
         let pkt = NodesMessage {
             req_id: Bytes::from_static(&[1, 2, 3, 4]),
             total: 2,
-            nodes: vec![NodeRecord {
-                seq: 4321,
-                pairs,
-                signature: H512::random(),
-            }],
+            nodes: vec![NodeRecord::new(H512::random(), 4321, pairs)],
         };
 
         let buf = pkt.encode_to_vec();

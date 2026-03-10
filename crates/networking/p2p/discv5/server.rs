@@ -325,7 +325,7 @@ impl DiscoveryServer {
                 trace!(from = %src_id, "Handshake ENR signature verification failed");
                 return Ok(());
             }
-            let pairs = record.decode_pairs();
+            let pairs = record.pairs();
             let pubkey = pairs
                 .secp256k1
                 .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
@@ -903,7 +903,7 @@ impl DiscoveryServer {
             return;
         };
         // Preserve fork_id if present
-        if let Some(fork_id) = self.local_node_record.decode_pairs().eth
+        if let Some(fork_id) = self.local_node_record.get_fork_id().cloned()
             && new_record.set_fork_id(fork_id, &self.signer).is_err()
         {
             error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
