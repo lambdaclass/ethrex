@@ -250,6 +250,9 @@ impl LEVM {
             // No BAL recording needed: we have the header BAL, not building a new one
             Self::prepare_block(block, db, vm_type, crypto)?;
 
+            // Build validation index once — shared across parallel execution and post-exec seeding.
+            let validation_index = bal.build_validation_index();
+
             // Drain system call state and snapshot for per-tx db seeding
             LEVM::get_state_transitions_tx(db)?;
             let system_seed = Arc::new(std::mem::take(&mut db.initial_accounts_state));
@@ -264,6 +267,7 @@ impl LEVM {
                 queue_length,
                 system_seed,
                 crypto,
+                &validation_index,
             );
 
             // If parallel execution failed (e.g. BAL validation), still check system
@@ -276,11 +280,22 @@ impl LEVM {
                     Err(parallel_err) => {
                         #[allow(clippy::cast_possible_truncation)]
                         let last_tx_idx = block.body.transactions.len() as u16;
-                        if Self::seed_db_from_bal(db, bal, last_tx_idx).is_ok() {
+                        if Self::seed_db_from_bal(
+                            db,
+                            bal,
+                            last_tx_idx,
+                            &validation_index.accounts_by_min_index,
+                        )
+                        .is_ok()
+                        {
                             if let VMType::L1 = vm_type {
                                 if let Err(e @ EvmError::SystemContractCallFailed(_)) =
                                     extract_all_requests_levm(
-                                        &[], db, &block.header, vm_type, crypto,
+                                        &[],
+                                        db,
+                                        &block.header,
+                                        vm_type,
+                                        crypto,
                                     )
                                 {
                                     return Err(e);
@@ -297,7 +312,12 @@ impl LEVM {
             // withdrawal balances (process_withdrawals handles those below).
             #[allow(clippy::cast_possible_truncation)]
             let last_tx_idx = block.body.transactions.len() as u16;
-            Self::seed_db_from_bal(db, bal, last_tx_idx)?;
+            Self::seed_db_from_bal(
+                db,
+                bal,
+                last_tx_idx,
+                &validation_index.accounts_by_min_index,
+            )?;
 
             // Order must match geth: requests (system calls) BEFORE withdrawals.
             let requests = match vm_type {
@@ -667,8 +687,13 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
         max_idx: u16,
+        accounts_by_min_index: &[(u16, usize)],
     ) -> Result<(), EvmError> {
-        for acct_changes in bal.accounts() {
+        // Only visit accounts whose minimum change index <= max_idx.
+        let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
+        let bal_accounts = bal.accounts();
+        for &(_, acct_idx) in &accounts_by_min_index[..end] {
+            let acct_changes = &bal_accounts[acct_idx];
             let addr = acct_changes.address;
 
             // Binary search (slices are sorted ascending by block_access_index):
@@ -796,6 +821,7 @@ impl LEVM {
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
+        validation_index: &BalAddressIndex,
     ) -> Result<
         (
             Vec<Receipt>,
@@ -816,9 +842,6 @@ impl LEVM {
             .send(account_updates)
             .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
         queue_length.fetch_add(1, Ordering::Relaxed);
-
-        // Build validation index once — shared read-only across parallel tx validations.
-        let validation_index = bal.build_validation_index();
 
         // Build a checklist of all BAL storage_reads. Entries are removed as they
         // are actually read during execution phases. Anything left over is extraneous.
@@ -886,7 +909,12 @@ impl LEVM {
                 // For tx at index i, we want state through BAL index i
                 // (= system calls + effects of txs 0..i-1).
                 #[allow(clippy::cast_possible_truncation)]
-                Self::seed_db_from_bal(&mut tx_db, bal, tx_idx as u16)?;
+                Self::seed_db_from_bal(
+                    &mut tx_db,
+                    bal,
+                    tx_idx as u16,
+                    &validation_index.accounts_by_min_index,
+                )?;
 
                 // Enable accessed_accounts tracker for BAL pure-access validation.
                 // Most txs touch sender + recipient + a few contracts; 16 avoids rehashing.

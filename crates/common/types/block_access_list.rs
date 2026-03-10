@@ -559,6 +559,7 @@ impl BlockAccessList {
         let mut addr_to_idx =
             FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
         let mut tx_to_accounts: FxHashMap<u16, Vec<usize>> = FxHashMap::default();
+        let mut accounts_by_min_index: Vec<(u16, usize)> = Vec::new();
 
         for (i, acct) in self.inner.iter().enumerate() {
             addr_to_idx.insert(acct.address, i);
@@ -580,14 +581,21 @@ impl BlockAccessList {
                 }
             }
 
+            if let Some(&min_idx) = seen_indices.iter().next() {
+                accounts_by_min_index.push((min_idx, i));
+            }
+
             for idx in seen_indices {
                 tx_to_accounts.entry(idx).or_default().push(i);
             }
         }
 
+        accounts_by_min_index.sort_unstable_by_key(|(min_idx, _)| *min_idx);
+
         BalAddressIndex {
             addr_to_idx,
             tx_to_accounts,
+            accounts_by_min_index,
         }
     }
 }
@@ -599,6 +607,10 @@ pub struct BalAddressIndex {
     pub addr_to_idx: FxHashMap<Address, usize>,
     /// For each block_access_index, the BAL-inner indices with changes at that index.
     pub tx_to_accounts: FxHashMap<u16, Vec<usize>>,
+    /// BAL-inner indices sorted by their minimum block_access_index.
+    /// Used by `seed_db_from_bal` to skip accounts with no changes at indices <= max_idx.
+    /// Only includes accounts that have at least one mutation (balance/nonce/code/storage write).
+    pub accounts_by_min_index: Vec<(u16, usize)>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
@@ -1435,15 +1447,14 @@ impl BlockAccessListRecorder {
         // Truncate writes/changes using the inner checkpoint (without the
         // "promote writes to reads" step from inner-call restore, since rejected
         // txs should leave no trace).
-        self.reads_promoted_to_writes
-            .retain(|addr, promoted| {
-                if let Some(&len) = checkpoint.inner.reads_promoted_len.get(addr) {
-                    promoted.truncate(len);
-                    len > 0
-                } else {
-                    false
-                }
-            });
+        self.reads_promoted_to_writes.retain(|addr, promoted| {
+            if let Some(&len) = checkpoint.inner.reads_promoted_len.get(addr) {
+                promoted.truncate(len);
+                len > 0
+            } else {
+                false
+            }
+        });
         self.storage_writes.retain(|addr, slots| {
             if let Some(slot_lens) = checkpoint.inner.storage_writes_len.get(addr) {
                 slots.retain(|slot, changes| {
