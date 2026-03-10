@@ -58,21 +58,27 @@ function runCompose(projectName, composeFile, args, opts = {}) {
   return promise;
 }
 
-/** Build Docker images for the deployment */
-async function buildImages(projectName, composeFile, env = {}, onLog) {
-  // Remove any existing images for this project to avoid "already exists" errors
-  try {
-    const existing = execSync(
-      `docker images --filter "reference=tokamak-appchain:*-${projectName}" --format "{{.Repository}}:{{.Tag}}"`,
-      { timeout: 10000 }
-    ).toString().trim();
-    if (existing) {
-      for (const img of existing.split("\n").filter(Boolean)) {
-        execSync(`docker rmi "${img}"`, { timeout: 30000, stdio: "ignore" });
+/** Build Docker images for the deployment.
+ * @param {object} opts
+ * @param {boolean} [opts.forceRebuild=false] - When true, removes existing images before building.
+ *   When false (default), reuses existing images if found.
+ */
+async function buildImages(projectName, composeFile, env = {}, onLog, { forceRebuild = false } = {}) {
+  if (forceRebuild) {
+    // Remove any existing images for this project to force a clean build
+    try {
+      const existing = execSync(
+        `docker images --filter "reference=tokamak-appchain:*-${projectName}" --format "{{.Repository}}:{{.Tag}}"`,
+        { timeout: 10000 }
+      ).toString().trim();
+      if (existing) {
+        for (const img of existing.split("\n").filter(Boolean)) {
+          execSync(`docker rmi "${img}"`, { timeout: 30000, stdio: "ignore" });
+        }
       }
+    } catch {
+      // Ignore cleanup errors — images may be in use or already gone
     }
-  } catch {
-    // Ignore cleanup errors — images may be in use or already gone
   }
   return runCompose(projectName, composeFile, ["build"], { env, onLog });
 }
@@ -487,6 +493,10 @@ function hasNvidiaGpu() {
 
 /** Find an existing Docker image for a programSlug (e.g. evm-l2, zk-dex) */
 function findImage(programSlug) {
+  // Sanitize slug: only allow alphanumeric, hyphens, and underscores to prevent command injection
+  if (!programSlug || !/^[a-zA-Z0-9_-]+$/.test(programSlug)) {
+    return null;
+  }
   try {
     // First check shared name: tokamak-appchain:{slug}
     const shared = execSync(`docker image inspect "tokamak-appchain:${programSlug}" --format "{{.Id}}"`, { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] });

@@ -685,6 +685,24 @@ pub async fn deploy_l1_contracts(
     }
 
     write_contract_addresses_to_env(contract_addresses.clone(), opts.env_file_path)?;
+
+    // Structured JSON output for programmatic parsing by deployment managers
+    println!(
+        "DEPLOYER_RESULT_JSON:{}",
+        serde_json::json!({
+            "status": "success",
+            "contracts": {
+                "CommonBridge": format!("{:#x}", contract_addresses.bridge_address),
+                "OnChainProposer": format!("{:#x}", contract_addresses.on_chain_proposer_address),
+                "SP1Verifier": format!("{:#x}", contract_addresses.sp1_verifier_address),
+                "GuestProgramRegistry": format!("{:#x}", contract_addresses.guest_program_registry_address),
+                "SequencerRegistry": format!("{:#x}", contract_addresses.sequencer_registry_address),
+                "Timelock": contract_addresses.timelock_address.map(|a| format!("{:#x}", a)),
+                "Router": contract_addresses.router.map(|a| format!("{:#x}", a)),
+            }
+        })
+    );
+
     info!("Deployer binary finished successfully");
     Ok(contract_addresses)
 }

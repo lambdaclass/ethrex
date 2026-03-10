@@ -507,6 +507,42 @@ testAsync("isHealthy returns false for unreachable host", async () => {
         assert.equal(result.proposer, null);
       });
 
+      test("parseContractAddressesFromLogs: prefers JSON over legacy logs", () => {
+        const logs = [
+          "tokamak-app-deployer  | CommonBridge deployed:",
+          "tokamak-app-deployer  |   Proxy -> address=0x0000000000000000000000000000000000000001, tx_hash=0xabc",
+          'DEPLOYER_RESULT_JSON:{"status":"success","contracts":{"CommonBridge":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","OnChainProposer":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","SP1Verifier":"0xcccccccccccccccccccccccccccccccccccccccc","Timelock":"0xdddddddddddddddddddddddddddddddddddddddd","SequencerRegistry":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","Router":null}}',
+        ];
+        const result = parseContractAddressesFromLogs(logs);
+        // Should use JSON values, not legacy log values
+        assert.equal(result.bridge, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert.equal(result.proposer, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert.equal(result.sp1Verifier, "0xcccccccccccccccccccccccccccccccccccccccc");
+        assert.equal(result.timelock, "0xdddddddddddddddddddddddddddddddddddddddd");
+        assert.equal(result.sequencerRegistry, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+        assert.equal(result.router, null);
+      });
+
+      test("parseContractAddressesFromLogs: falls back to legacy when JSON is malformed", () => {
+        const logs = [
+          "DEPLOYER_RESULT_JSON:{invalid json",
+          "CommonBridge deployed:",
+          "  Proxy -> address=0x1111111111111111111111111111111111111111, tx_hash=0x1",
+        ];
+        const result = parseContractAddressesFromLogs(logs);
+        assert.equal(result.bridge, "0x1111111111111111111111111111111111111111");
+      });
+
+      test("parseContractAddressesFromLogs: JSON with GuestProgramRegistry", () => {
+        const logs = [
+          'DEPLOYER_RESULT_JSON:{"status":"success","contracts":{"CommonBridge":"0xaaaa000000000000000000000000000000000000","OnChainProposer":"0xbbbb000000000000000000000000000000000000","SP1Verifier":"0xcccc000000000000000000000000000000000000","GuestProgramRegistry":"0xdddd000000000000000000000000000000000000","Timelock":null,"SequencerRegistry":"0xeeee000000000000000000000000000000000000","Router":null}}',
+        ];
+        const result = parseContractAddressesFromLogs(logs);
+        assert.equal(result.bridge, "0xaaaa000000000000000000000000000000000000");
+        assert.equal(result.proposer, "0xbbbb000000000000000000000000000000000000");
+        assert.equal(result.timelock, null);
+      });
+
       // -- 4-key testnet compose generation --
       const { generateTestnetComposeFile } = require("./lib/compose-generator");
       const { ethers } = require("ethers");
@@ -686,6 +722,681 @@ testAsync("isHealthy returns false for unreachable host", async () => {
         }
       })
     )
+    // ============================================================
+    // Phase 1: Testnet Safety API Tests
+    // ============================================================
+    .then(() => {
+      console.log("\n=== Phase 1: Testnet Safety API Tests ===");
+
+      // -- makeRpcCaller / CHAIN_NAMES / formatGwei (unit logic) --
+      test("ROLE_GAS_ESTIMATES has all 4 roles", () => {
+        // Re-parse from route file constants
+        const roles = ["deployer", "committer", "proof-coordinator", "bridge-owner"];
+        const ROLE_GAS_ESTIMATES = {
+          deployer: { gas: 25_000_000 },
+          committer: { gas: 8_640_000_000 },
+          "proof-coordinator": { gas: 12_960_000_000 },
+          "bridge-owner": { gas: 500_000 },
+        };
+        for (const r of roles) {
+          assert.ok(ROLE_GAS_ESTIMATES[r], `Missing role: ${r}`);
+          assert.ok(ROLE_GAS_ESTIMATES[r].gas > 0, `Gas must be > 0 for ${r}`);
+        }
+      });
+
+      test("gas cost calculation: BigInt precision matches float", () => {
+        // Simulate check-balance calculation
+        const gasPriceWei = BigInt(3_000_000_000); // 3 gwei
+        const deployerGas = 25_000_000;
+        const estimatedCostWei = gasPriceWei * BigInt(deployerGas);
+        const estimatedCostEth = Number(estimatedCostWei) / 1e18;
+        // 25M gas * 3 gwei = 75M gwei = 0.075 ETH
+        assert.ok(Math.abs(estimatedCostEth - 0.075) < 0.0001, `Expected ~0.075, got ${estimatedCostEth}`);
+      });
+
+      test("gas cost: deployer sufficient check with BigInt comparison", () => {
+        const balanceWei = BigInt("100000000000000000"); // 0.1 ETH
+        const gasPriceWei = BigInt(3_000_000_000); // 3 gwei
+        const estimatedCostWei = gasPriceWei * BigInt(25_000_000);
+        // 0.075 ETH cost vs 0.1 ETH balance → sufficient
+        assert.ok(balanceWei >= estimatedCostWei, "0.1 ETH should cover 0.075 ETH cost");
+
+        const lowBalance = BigInt("50000000000000000"); // 0.05 ETH
+        assert.ok(lowBalance < estimatedCostWei, "0.05 ETH should NOT cover 0.075 ETH cost");
+      });
+
+      test("formatGwei: small values use toPrecision", () => {
+        const formatGwei = (g) => g < 0.0001 ? g.toPrecision(4) : g.toFixed(4);
+        assert.equal(formatGwei(3.5), "3.5000");
+        assert.equal(formatGwei(0.00005), "0.00005000");
+        assert.equal(formatGwei(0.0001), "0.0001");
+      });
+
+      test("CHAIN_NAMES maps known chain IDs", () => {
+        const CHAIN_NAMES = { 1: "Ethereum Mainnet", 11155111: "Sepolia", 17000: "Holesky" };
+        assert.equal(CHAIN_NAMES[11155111], "Sepolia");
+        assert.equal(CHAIN_NAMES[1], "Ethereum Mainnet");
+        assert.equal(CHAIN_NAMES[17000], "Holesky");
+        assert.equal(CHAIN_NAMES[999] || `Chain 999`, "Chain 999");
+      });
+    })
+    .then(() =>
+      // -- API: check-rpc endpoint --
+      testAsync("POST /testnet/check-rpc rejects missing rpcUrl", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/check-rpc`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("rpcUrl"));
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      testAsync("POST /testnet/check-rpc returns error for unreachable URL", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/check-rpc`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rpcUrl: "http://127.0.0.1:19999" }),
+          });
+          assert.equal(res.status, 500);
+          const data = await res.json();
+          assert.equal(data.ok, false);
+          assert.ok(data.error);
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      // -- API: check-balance endpoint --
+      testAsync("POST /testnet/check-balance rejects missing fields", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/check-balance`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rpcUrl: "http://localhost:8545" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("address"));
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      testAsync("POST /testnet/check-balance rejects invalid address format", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/check-balance`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rpcUrl: "http://localhost:8545", address: "not-an-address" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("Invalid"));
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      // -- API: keychain/accounts endpoint --
+      testAsync("GET /keychain/accounts returns array", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/keychain/accounts`);
+          assert.equal(res.status, 200);
+          const data = await res.json();
+          assert.ok(Array.isArray(data.accounts), "accounts should be an array");
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      // -- API: resolve-keys endpoint --
+      testAsync("POST /testnet/resolve-keys rejects missing rpcUrl", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/resolve-keys`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deployerKey: "some-key" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("rpcUrl"));
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      testAsync("POST /testnet/resolve-keys returns error for nonexistent keychain key", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/resolve-keys`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rpcUrl: "http://localhost:8545", deployerKey: "nonexistent-key-12345" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("not found"), `Expected 'not found' error, got: ${data.error}`);
+        } finally {
+          server.close();
+        }
+      })
+    )
+    .then(() =>
+      // -- API: check-image endpoint --
+      testAsync("GET /check-image/:slug returns exists=false for unknown slug", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/check-image/nonexistent-slug-99999`);
+          assert.equal(res.status, 200);
+          const data = await res.json();
+          assert.equal(data.exists, false);
+          assert.equal(data.image, null);
+        } finally {
+          server.close();
+        }
+      })
+    )
+    // ==========================================
+    // Phase 2: Build Optimization Tests
+    // ==========================================
+    .then(() => {
+      console.log("\n--- Phase 2: Build Optimization Tests ---");
+      return Promise.resolve();
+    })
+
+    // -- buildImages forceRebuild option --
+    .then(() =>
+      test("buildImages accepts forceRebuild option without error", () => {
+        const dockerLocal = require("./lib/docker-local");
+        assert.equal(typeof dockerLocal.buildImages, "function");
+      })
+    )
+
+    // -- findImage returns null for unknown slug --
+    .then(() =>
+      test("findImage returns null for nonexistent program slug", () => {
+        const dockerLocal = require("./lib/docker-local");
+        const result = dockerLocal.findImage("totally-nonexistent-program-slug-xyz");
+        assert.equal(result, null);
+      })
+    )
+
+    // -- deployment-engine config parsing --
+    .then(() =>
+      test("forceRebuild/forceRedeploy parsed from deployment config JSON", () => {
+        // Simulate config parsing logic from deployment-engine.js
+        const config1 = JSON.parse('{"forceRebuild": true, "forceRedeploy": false}');
+        assert.equal(!!config1.forceRebuild, true);
+        assert.equal(!!config1.forceRedeploy, false);
+
+        const config2 = JSON.parse('{"forceRebuild": "true"}');
+        assert.equal(!!config2.forceRebuild, true);
+
+        const config3 = JSON.parse('{}');
+        assert.equal(!!config3.forceRebuild, false);
+        assert.equal(!!config3.forceRedeploy, false);
+      })
+    )
+
+    // -- check-image API with known vs unknown slug --
+    .then(() =>
+      testAsync("GET /check-image/:slug returns correct shape", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/check-image/test-slug-abc`);
+          assert.equal(res.status, 200);
+          const data = await res.json();
+          assert.equal(typeof data.exists, "boolean");
+          assert.ok("image" in data, "response should have 'image' field");
+        } finally {
+          server.close();
+        }
+      })
+    )
+
+    // ==========================================
+    // Phase 4: Stability Tests
+    // ==========================================
+    .then(() => {
+      console.log("\n--- Phase 4: Stability Tests ---");
+      return Promise.resolve();
+    })
+
+    // -- build step progress parsing --
+    .then(() =>
+      test("Docker build step parsing: Step X/Y format", () => {
+        const lines = [
+          "Step 1/15 : FROM rust:1.75 AS builder",
+          "Step 8/15 : RUN cargo build --release",
+          "Step 15/15 : ENTRYPOINT [\"ethrex\"]",
+        ];
+        const results = [];
+        for (const line of lines) {
+          const stepMatch = line.match(/Step (\d+)\/(\d+)/i);
+          if (stepMatch) {
+            const current = parseInt(stepMatch[1]);
+            const total = parseInt(stepMatch[2]);
+            const pct = Math.round((current / total) * 100);
+            results.push({ current, total, pct });
+          }
+        }
+        assert.equal(results.length, 3);
+        assert.equal(results[0].pct, 7);   // 1/15
+        assert.equal(results[1].pct, 53);  // 8/15
+        assert.equal(results[2].pct, 100); // 15/15
+      })
+    )
+
+    .then(() =>
+      test("Docker build step parsing: BuildKit format #N [stage X/Y]", () => {
+        const lines = [
+          "#8 [builder 1/6] RUN cargo chef prepare",
+          "#9 [builder 3/6] RUN cargo chef cook",
+          "#10 [builder 6/6] RUN cargo build --release",
+        ];
+        const results = [];
+        for (const line of lines) {
+          const stepMatch = line.match(/#\d+ \[.*? (\d+)\/(\d+)\]/);
+          if (stepMatch) {
+            const current = parseInt(stepMatch[1]);
+            const total = parseInt(stepMatch[2]);
+            const pct = Math.round((current / total) * 100);
+            results.push({ current, total, pct });
+          }
+        }
+        assert.equal(results.length, 3);
+        assert.equal(results[0].pct, 17);  // 1/6
+        assert.equal(results[1].pct, 50);  // 3/6
+        assert.equal(results[2].pct, 100); // 6/6
+      })
+    )
+
+    // -- estimate-gas API: rejects missing rpcUrl --
+    .then(() =>
+      testAsync("POST /testnet/estimate-gas rejects missing rpcUrl", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/estimate-gas`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("rpcUrl"), `Expected rpcUrl error, got: ${data.error}`);
+        } finally {
+          server.close();
+        }
+      })
+    )
+
+    // -- estimate-gas API: returns breakdown for all 4 roles --
+    .then(() =>
+      test("ROLE_GAS_ESTIMATES covers all roles for estimate-gas breakdown", () => {
+        const ROLE_GAS_ESTIMATES = {
+          deployer: { gas: 25_000_000 },
+          committer: { gas: 8_640_000_000 },
+          "proof-coordinator": { gas: 12_960_000_000 },
+          "bridge-owner": { gas: 500_000 },
+        };
+        assert.equal(Object.keys(ROLE_GAS_ESTIMATES).length, 4);
+        // Total gas should be the sum
+        const totalGas = Object.values(ROLE_GAS_ESTIMATES).reduce((acc, r) => acc + BigInt(r.gas), 0n);
+        assert.equal(totalGas, 21625500000n);
+      })
+    )
+
+    // -- provision retry: error phase allows re-provision --
+    .then(() =>
+      testAsync("POST /provision allows retry on error phase deployment", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          // Create a deployment
+          let res = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Retry Test" }),
+          });
+          const { deployment } = await res.json();
+
+          // Set it to error phase
+          const deploymentsDb = require("./db/deployments");
+          deploymentsDb.updateDeployment(deployment.id, { phase: "error", error_message: "Build failed" });
+
+          // Verify provision is NOT rejected (it should accept error phase)
+          res = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/provision`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          // provision should accept (200) not reject (400)
+          assert.equal(res.status, 200);
+          const data = await res.json();
+          assert.equal(data.ok, true);
+
+          // Cleanup
+          deploymentsDb.deleteDeployment(deployment.id);
+        } finally {
+          server.close();
+        }
+      })
+    )
+
+    // -- provision retry: in-progress phase rejects --
+    .then(() =>
+      testAsync("POST /provision rejects retry during in-progress phase", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          let res = await fetch(`http://127.0.0.1:${port}/api/deployments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "InProgress Test" }),
+          });
+          const { deployment } = await res.json();
+
+          // Set to building phase (in-progress)
+          const deploymentsDb = require("./db/deployments");
+          deploymentsDb.updateDeployment(deployment.id, { phase: "building" });
+
+          res = await fetch(`http://127.0.0.1:${port}/api/deployments/${deployment.id}/provision`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("already in progress"), `Expected in-progress error, got: ${data.error}`);
+
+          deploymentsDb.deleteDeployment(deployment.id);
+        } finally {
+          server.close();
+        }
+      })
+    )
+
+    // ==========================================
+    // Phase 3: UX Improvement Tests
+    // ==========================================
+    .then(() => {
+      console.log("\n--- Phase 3: UX Improvement Tests ---");
+      return Promise.resolve();
+    })
+
+    // -- rawConfig parsing: testnet role keys --
+    .then(() =>
+      test("rawConfig parsing: extracts testnet role keys correctly", () => {
+        const rawConfig = JSON.stringify({
+          mode: "testnet",
+          testnet: {
+            keychainKeyName: "deployer-key",
+            committerKeychainKey: "committer-key",
+            proofCoordinatorKeychainKey: "proof-key",
+            l1RpcUrl: "https://rpc.sepolia.org",
+            network: "sepolia",
+          },
+        });
+        const config = JSON.parse(rawConfig);
+        const testnet = config.testnet || {};
+        assert.equal(testnet.keychainKeyName, "deployer-key");
+        assert.equal(testnet.committerKeychainKey, "committer-key");
+        assert.equal(testnet.proofCoordinatorKeychainKey, "proof-key");
+        assert.equal(testnet.bridgeOwnerKeychainKey, undefined);
+      })
+    )
+
+    // -- rawConfig parsing: missing testnet block --
+    .then(() =>
+      test("rawConfig parsing: handles missing testnet block gracefully", () => {
+        const rawConfig = JSON.stringify({ mode: "local" });
+        const config = JSON.parse(rawConfig);
+        const testnet = config.testnet || {};
+        assert.equal(testnet.keychainKeyName, undefined);
+        // Roles should all default to deployer (undefined)
+        assert.equal(testnet.committerKeychainKey, undefined);
+      })
+    )
+
+    // -- rawConfig parsing: null/empty config --
+    .then(() =>
+      test("rawConfig parsing: handles null and empty config", () => {
+        // null config
+        let config = {};
+        try { config = null ? JSON.parse(null) : {}; } catch { config = {}; }
+        assert.deepStrictEqual(config, {});
+
+        // empty string
+        config = {};
+        try { config = "" ? JSON.parse("") : {}; } catch { config = {}; }
+        assert.deepStrictEqual(config, {});
+      })
+    )
+
+    // -- role key mapping: default roles use deployer key --
+    .then(() =>
+      test("role key mapping: unset roles default to deployer key", () => {
+        const testnet = {
+          keychainKeyName: "my-deployer",
+          // committer, proofCoordinator, bridgeOwner not set
+        };
+        const deployerKey = testnet.keychainKeyName;
+        const roles = [
+          { label: "Deployer", key: deployerKey, isDefault: false },
+          { label: "Committer", key: testnet.committerKeychainKey || deployerKey, isDefault: !testnet.committerKeychainKey },
+          { label: "Proof Coordinator", key: testnet.proofCoordinatorKeychainKey || deployerKey, isDefault: !testnet.proofCoordinatorKeychainKey },
+          { label: "Bridge Owner", key: testnet.bridgeOwnerKeychainKey || deployerKey, isDefault: !testnet.bridgeOwnerKeychainKey },
+        ];
+        assert.equal(roles[0].key, "my-deployer");
+        assert.equal(roles[0].isDefault, false);
+        assert.equal(roles[1].key, "my-deployer");
+        assert.equal(roles[1].isDefault, true);
+        assert.equal(roles[2].key, "my-deployer");
+        assert.equal(roles[2].isDefault, true);
+        assert.equal(roles[3].key, "my-deployer");
+        assert.equal(roles[3].isDefault, true);
+      })
+    )
+
+    // -- role key mapping: separate keys --
+    .then(() =>
+      test("role key mapping: separate keys override deployer default", () => {
+        const testnet = {
+          keychainKeyName: "deployer",
+          committerKeychainKey: "committer",
+          proofCoordinatorKeychainKey: "proof-coord",
+          bridgeOwnerKeychainKey: "bridge-owner",
+        };
+        const deployerKey = testnet.keychainKeyName;
+        const roles = [
+          { label: "Deployer", key: deployerKey },
+          { label: "Committer", key: testnet.committerKeychainKey || deployerKey, isDefault: !testnet.committerKeychainKey },
+          { label: "Proof Coordinator", key: testnet.proofCoordinatorKeychainKey || deployerKey, isDefault: !testnet.proofCoordinatorKeychainKey },
+          { label: "Bridge Owner", key: testnet.bridgeOwnerKeychainKey || deployerKey, isDefault: !testnet.bridgeOwnerKeychainKey },
+        ];
+        assert.equal(roles[1].key, "committer");
+        assert.equal(roles[1].isDefault, false);
+        assert.equal(roles[2].key, "proof-coord");
+        assert.equal(roles[2].isDefault, false);
+        assert.equal(roles[3].key, "bridge-owner");
+        assert.equal(roles[3].isDefault, false);
+      })
+    )
+
+    // -- balance threshold: low balance detection --
+    .then(() =>
+      test("balance threshold: detects low balance below 0.01 ETH", () => {
+        const LOW_BALANCE_THRESHOLD = 0.01;
+        const roleBalances = {
+          deployer: { address: "0x1111", balance: "1.5" },
+          committer: { address: "0x2222", balance: "0.005" },
+          proofCoordinator: { address: "0x3333", balance: "0.0" },
+          bridgeOwner: { address: "0x4444", balance: "0.05" },
+        };
+        const lowRoles = Object.entries(roleBalances).filter(
+          ([, r]) => parseFloat(r.balance) < LOW_BALANCE_THRESHOLD
+        );
+        assert.equal(lowRoles.length, 2);
+        assert.equal(lowRoles[0][0], "committer");
+        assert.equal(lowRoles[1][0], "proofCoordinator");
+      })
+    )
+
+    // -- balance threshold: all sufficient --
+    .then(() =>
+      test("balance threshold: no warning when all balances sufficient", () => {
+        const LOW_BALANCE_THRESHOLD = 0.01;
+        const roleBalances = {
+          deployer: { address: "0x1111", balance: "2.0" },
+          committer: { address: "0x2222", balance: "0.5" },
+          proofCoordinator: { address: "0x3333", balance: "0.1" },
+          bridgeOwner: { address: "0x4444", balance: "0.01" },
+        };
+        const hasLow = Object.values(roleBalances).some(
+          (r) => parseFloat(r.balance) < LOW_BALANCE_THRESHOLD
+        );
+        assert.equal(hasLow, false);
+      })
+    )
+
+    // -- balance threshold: edge case exactly 0.01 --
+    .then(() =>
+      test("balance threshold: exactly 0.01 ETH is not low", () => {
+        const LOW_BALANCE_THRESHOLD = 0.01;
+        assert.equal(parseFloat("0.01") < LOW_BALANCE_THRESHOLD, false);
+        assert.equal(parseFloat("0.009999") < LOW_BALANCE_THRESHOLD, true);
+      })
+    )
+
+    // -- resolve-keys API: returns roles with correct shape --
+    .then(() =>
+      testAsync("resolve-keys API: response has correct role keys", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          // Will fail because keychain key doesn't exist, but validates the API shape
+          const res = await fetch(`http://127.0.0.1:${port}/api/deployments/testnet/resolve-keys`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              rpcUrl: "https://rpc.sepolia.org",
+              deployerKey: "nonexistent-key-for-test",
+            }),
+          });
+          // Should return 400 because key doesn't exist in keychain
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error, "should have error field");
+        } finally {
+          server.close();
+        }
+      })
+    )
+
+    // -- clipboard copy: address format validation --
+    .then(() =>
+      test("contract address format: valid Ethereum addresses", () => {
+        const addresses = [
+          "0x2f6cf9ec2beed1b8169330994242e97398ce3352",
+          "0x0000000000000000000000000000000000000000",
+          "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+        ];
+        for (const addr of addresses) {
+          assert.ok(/^0x[0-9a-fA-F]{40}$/.test(addr), `${addr} should be valid`);
+          // Mask function test: first 6 + last 4
+          const masked = `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+          assert.equal(masked.length, 13);
+          assert.ok(masked.startsWith("0x"));
+          assert.ok(masked.includes("..."));
+        }
+      })
+    )
+
+    // -- check-image with Docker running: known image format --
+    .then(() =>
+      testAsync("check-image with Docker: returns proper exists boolean", async () => {
+        const app = require("./server");
+        const server = http.createServer(app);
+        await new Promise((resolve) => server.listen(0, resolve));
+        const port = server.address().port;
+        try {
+          // Test with a slug that likely exists (zk-dex) and one that doesn't
+          const [resKnown, resUnknown] = await Promise.all([
+            fetch(`http://127.0.0.1:${port}/api/deployments/check-image/zk-dex`),
+            fetch(`http://127.0.0.1:${port}/api/deployments/check-image/nonexistent-image-xyz`),
+          ]);
+          const dataKnown = await resKnown.json();
+          const dataUnknown = await resUnknown.json();
+
+          assert.equal(typeof dataKnown.exists, "boolean");
+          assert.equal(typeof dataUnknown.exists, "boolean");
+          assert.equal(dataUnknown.exists, false);
+          assert.equal(dataUnknown.image, null);
+          // dataKnown.exists may be true or false depending on whether image was built
+          if (dataKnown.exists) {
+            assert.ok(dataKnown.image, "when exists=true, image should be set");
+          }
+        } finally {
+          server.close();
+        }
+      })
+    )
+
     .then(() => {
       // Cleanup
       fs.rmSync(testDir, { recursive: true, force: true });

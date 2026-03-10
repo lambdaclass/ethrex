@@ -28,7 +28,7 @@ const {
   getAppProfile,
 } = require("./compose-generator");
 const { isHealthy } = require("./rpc-client");
-const { updateDeployment, getNextAvailablePorts, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
+const { updateDeployment, getDeploymentById, getNextAvailablePorts, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
 const { getHostById } = require("../db/hosts");
 const keychain = require("./keychain");
 
@@ -128,7 +128,29 @@ function cancelProvision(deploymentId) {
  * Returns { bridge, proposer, timelock, sp1Verifier } with whatever was found.
  */
 function parseContractAddressesFromLogs(logLines) {
-  const result = { bridge: null, proposer: null, timelock: null, sp1Verifier: null, sequencerRegistry: null, router: null };
+  const result = { bridge: null, proposer: null, timelock: null, sp1Verifier: null, sequencerRegistry: null, router: null, guestProgramRegistry: null };
+
+  // Priority 1: Look for structured JSON output from deployer (DEPLOYER_RESULT_JSON:{...})
+  for (const line of logLines) {
+    const jsonMatch = line.match(/DEPLOYER_RESULT_JSON:(\{.*\})/);
+    if (jsonMatch) {
+      try {
+        const data = JSON.parse(jsonMatch[1]);
+        if (data.status === "success" && data.contracts) {
+          result.bridge = data.contracts.CommonBridge || null;
+          result.proposer = data.contracts.OnChainProposer || null;
+          result.timelock = data.contracts.Timelock || null;
+          result.sp1Verifier = data.contracts.SP1Verifier || null;
+          result.sequencerRegistry = data.contracts.SequencerRegistry || null;
+          result.router = data.contracts.Router || null;
+          result.guestProgramRegistry = data.contracts.GuestProgramRegistry || null;
+          return result;
+        }
+      } catch { /* fall through to legacy parsing */ }
+    }
+  }
+
+  // Priority 2: Legacy log-based parsing (for older deployer versions)
   const addressPattern = /address=(0x[0-9a-fA-F]{40})/;
   let lastContract = null; // which contract was just announced
 
@@ -139,6 +161,7 @@ function parseContractAddressesFromLogs(logLines) {
     else if (line.includes("Timelock deployed")) lastContract = "timelock";
     else if (line.includes("SP1Verifier deployed")) lastContract = "sp1Verifier";
     else if (line.includes("SequencerRegistry deployed")) lastContract = "sequencerRegistry";
+    else if (line.includes("GuestProgramRegistry deployed")) lastContract = "guestProgramRegistry";
     else if (line.includes("Router deployed")) lastContract = "router";
 
     const match = line.match(addressPattern);
@@ -224,10 +247,14 @@ async function provision(deployment) {
   // Parse config
   let deployDir = null;
   let dumpFixtures = false;
+  let forceRebuild = false;
+  let forceRedeploy = false;
   try {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     deployDir = config.deployDir || null;
     dumpFixtures = !!config.dumpFixtures;
+    forceRebuild = !!config.forceRebuild;
+    forceRedeploy = !!config.forceRedeploy;
   } catch {}
 
   const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
@@ -257,15 +284,34 @@ async function provision(deployment) {
     const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures });
     composeFile = writeComposeFile(id, composeContent, deployDir);
 
-    emit(id, "phase", { phase: "building", message: "Building Docker images... (this may take several minutes on first run)" });
-    await trackedDockerRun(provisionInfo, () =>
-      docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
-        const lines = chunk.split("\n").filter(Boolean);
-        for (const line of lines) {
-          emit(id, "log", { message: line });
-        }
-      })
-    );
+    // Check for existing image to skip rebuild (unless forceRebuild)
+    const existingImage = !forceRebuild ? docker.findImage(programSlug) : null;
+    if (existingImage && !forceRebuild) {
+      emit(id, "phase", { phase: "building", message: `Docker image found (${existingImage}) — skipping build` });
+      emit(id, "log", { message: `Reusing existing image: ${existingImage}` });
+    } else {
+      emit(id, "phase", { phase: "building", message: forceRebuild
+        ? "Force rebuilding Docker images..."
+        : "Building Docker images... (this may take several minutes on first run)" });
+      let buildStepMax = 0;
+      await trackedDockerRun(provisionInfo, () =>
+        docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
+          const lines = chunk.split("\n").filter(Boolean);
+          for (const line of lines) {
+            emit(id, "log", { message: line });
+            // Parse Docker build step progress: "Step X/Y :" or "#N [stage X/Y]"
+            const stepMatch = line.match(/Step (\d+)\/(\d+)/i) || line.match(/#\d+ \[.*? (\d+)\/(\d+)\]/);
+            if (stepMatch) {
+              const current = parseInt(stepMatch[1]);
+              const total = parseInt(stepMatch[2]);
+              if (total > buildStepMax) buildStepMax = total;
+              const pct = Math.round((current / total) * 100);
+              emit(id, "phase", { phase: "building", message: `Building... step ${current}/${total} (${pct}%)`, progress: pct });
+            }
+          }
+        }, { forceRebuild })
+      );
+    }
 
     checkCancelled(provisionInfo);
 
@@ -281,56 +327,87 @@ async function provision(deployment) {
     checkCancelled(provisionInfo);
 
     provisionInfo.phase = "deploying_contracts";
-    emit(id, "phase", { phase: "deploying_contracts", message: "Deploying L1 contracts (bridge, proposer, verifier)..." });
     updateDeployment(id, { phase: "deploying_contracts" });
-    const contractLogLines = [];
-    const contractLogFn = (chunk) => {
-      const lines = chunk.split("\n").filter(Boolean);
-      for (const line of lines) {
-        contractLogLines.push(line);
-        emit(id, "log", { message: line });
-      }
-    };
-    await trackedDockerRun(provisionInfo, () =>
-      docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, contractLogFn)
-    );
 
-    await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
+    // Check for existing contract addresses (skip redeploy when possible)
+    const existingDep = getDeploymentById(id);
+    const hasExistingContracts = existingDep?.bridge_address && existingDep?.proposer_address;
+    let bridgeAddress = null;
+    let proposerAddress = null;
+    let timelockAddress = null;
+    let sp1VerifierAddress = null;
 
     let envVars = {};
-    try {
-      envVars = await docker.extractEnv(projectName, composeFile);
-    } catch (extractErr) {
-      emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
-      await new Promise(r => setTimeout(r, 3000));
+
+    if (hasExistingContracts && !forceRedeploy) {
+      // Reuse existing contracts
+      emit(id, "phase", { phase: "deploying_contracts", message: `Reusing existing contracts — bridge: ${existingDep.bridge_address}` });
+      emit(id, "log", { message: `Skipping contract deployment: bridge=${existingDep.bridge_address}, proposer=${existingDep.proposer_address}` });
+      bridgeAddress = existingDep.bridge_address;
+      proposerAddress = existingDep.proposer_address;
+      timelockAddress = existingDep.timelock_address;
+      sp1VerifierAddress = existingDep.sp1_verifier_address;
+
+      // Try to restore .env from Docker volume for L2 service
       try {
         envVars = await docker.extractEnv(projectName, composeFile);
-      } catch (retryErr) {
-        emit(id, "log", { message: `extractEnv retry failed: ${retryErr.message}` });
+        if (envVars.ETHREX_WATCHER_BRIDGE_ADDRESS) bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS;
+      } catch {
+        // Use DB values (already set above)
       }
-    }
+    } else {
+      // Deploy contracts
+      emit(id, "phase", { phase: "deploying_contracts", message: forceRedeploy
+        ? "Force redeploying L1 contracts..."
+        : "Deploying L1 contracts (bridge, proposer, verifier)..." });
+      const contractLogLines = [];
+      const contractLogFn = (chunk) => {
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          contractLogLines.push(line);
+          emit(id, "log", { message: line });
+        }
+      };
+      await trackedDockerRun(provisionInfo, () =>
+        docker.deployContracts(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, contractLogFn)
+      );
 
-    let bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
-    let proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
-    let timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
-    let sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+      await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
 
-    // Fallback: parse addresses from deployer log output (covers case where .env wasn't written)
-    if (!bridgeAddress || !proposerAddress) {
-      const parsed = parseContractAddressesFromLogs(contractLogLines);
-      if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
-      if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
-      if (!timelockAddress && parsed.timelock) timelockAddress = parsed.timelock;
-      if (!sp1VerifierAddress && parsed.sp1Verifier) sp1VerifierAddress = parsed.sp1Verifier;
-      if (parsed.bridge || parsed.proposer) {
-        emit(id, "log", { message: `Parsed addresses from deployer logs: bridge=${parsed.bridge}, proposer=${parsed.proposer}` });
+      try {
+        envVars = await docker.extractEnv(projectName, composeFile);
+      } catch (extractErr) {
+        emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          envVars = await docker.extractEnv(projectName, composeFile);
+        } catch (retryErr) {
+          emit(id, "log", { message: `extractEnv retry failed: ${retryErr.message}` });
+        }
+      }
+
+      bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+      proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+      timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+      sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+
+      // Fallback: parse addresses from deployer log output
+      if (!bridgeAddress || !proposerAddress) {
+        const parsed = parseContractAddressesFromLogs(contractLogLines);
+        if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
+        if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
+        if (!timelockAddress && parsed.timelock) timelockAddress = parsed.timelock;
+        if (!sp1VerifierAddress && parsed.sp1Verifier) sp1VerifierAddress = parsed.sp1Verifier;
+        if (parsed.bridge || parsed.proposer) {
+          emit(id, "log", { message: `Parsed addresses from deployer logs: bridge=${parsed.bridge}, proposer=${parsed.proposer}` });
+        }
       }
     }
 
     console.log(`[deployment-engine] contract addresses for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}`);
     emit(id, "log", { message: `Contract addresses [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}` });
 
-    // Save whatever addresses we got (even partial) so they can be reused on retry
+    // Save addresses so they can be reused on retry
     if (bridgeAddress || proposerAddress) {
       updateDeployment(id, {
         bridge_address: bridgeAddress,
@@ -573,7 +650,7 @@ async function provisionTestnet(deployment) {
     checkCancelled(provisionInfo);
 
     // Check if contracts were already deployed for this deployment (e.g. retry after partial failure)
-    const existingDep = require("../db/deployments").getDeploymentById(id);
+    const existingDep = getDeploymentById(id);
     let bridgeAddress = existingDep?.bridge_address || null;
     let proposerAddress = existingDep?.proposer_address || null;
     let timelockAddress = existingDep?.timelock_address || null;

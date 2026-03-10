@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { t } from '../i18n'
+import { t, type Lang } from '../i18n'
 import type { Comment } from '../types/comments'
 import type { L2Service } from './OpenL2View'
 import CommentSection from './CommentSection'
@@ -34,7 +34,7 @@ interface OpenL2DetailViewProps {
   l2: L2Service
   onBack: () => void
   ko: boolean
-  lang: string
+  lang: Lang
 }
 
 export default function OpenL2DetailView({ l2, onBack, ko, lang }: OpenL2DetailViewProps) {

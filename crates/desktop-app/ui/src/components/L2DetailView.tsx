@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import { platformAPI } from '../api/platform'
+import { localServerAPI } from '../api/local-server'
 import type { L2Config } from './MyL2View'
 import type { Comment } from '../types/comments'
 import CommentSection from './CommentSection'
@@ -222,6 +223,14 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
             l2={l2} ko={ko} containers={containers ?? []} products={products}
             actionLoading={actionLoading} handleAction={handleAction}
             onRefresh={onRefresh}
+            onRetry={async () => {
+              setActionLoading(true)
+              try {
+                await localServerAPI.provisionDeployment(l2.id)
+                onRefresh?.()
+              } catch (e) { console.error('Retry failed:', e) }
+              finally { setActionLoading(false) }
+            }}
           />
         )}
 

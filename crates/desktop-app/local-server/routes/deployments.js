@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
+const { ethers } = require("ethers");
 
 const {
   provision,
@@ -19,6 +20,7 @@ const docker = require("../lib/docker-local");
 const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
 const rpc = require("../lib/rpc-client");
+const keychain = require("../lib/keychain");
 const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
@@ -100,6 +102,61 @@ const ROLE_GAS_ESTIMATES = {
   },
 };
 
+/** Validate RPC URL: must be http(s), no private IPs or metadata endpoints.
+ *  allowLocal=true permits localhost/127.0.0.1 (for local L1 dev mode). */
+function validateRpcUrl(rpcUrl, { allowLocal = false } = {}) {
+  let parsed;
+  try { parsed = new URL(rpcUrl); } catch { throw new Error("Invalid URL format"); }
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("URL must use http or https");
+  const host = parsed.hostname;
+  // Block cloud metadata endpoints
+  if (host === "169.254.169.254" || host === "metadata.google.internal") throw new Error("Blocked: cloud metadata endpoint");
+  // Block private IPs (RFC1918)
+  if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host)) throw new Error("Blocked: private IP range");
+  // Block loopback unless explicitly allowed (local L1 dev mode)
+  if (!allowLocal && (host === "127.0.0.1" || host === "::1" || host === "0.0.0.0" || host === "localhost")) {
+    throw new Error("Blocked: localhost/loopback address. Use an external RPC URL for testnet.");
+  }
+  return parsed;
+}
+
+// Shared RPC call helper with 10s timeout
+function makeRpcCaller(rpcUrl) {
+  validateRpcUrl(rpcUrl);
+  return async (method, params = []) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const r = await globalThis.fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: controller.signal,
+      });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error.message || "RPC error");
+      return data.result;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+}
+
+const CHAIN_NAMES = { 1: "Ethereum Mainnet", 11155111: "Sepolia", 17000: "Holesky" };
+
+function formatGwei(gasPriceGwei) {
+  return gasPriceGwei < 0.0001 ? gasPriceGwei.toPrecision(4) : gasPriceGwei.toFixed(4);
+}
+
+/** Convert wei BigInt to ETH string with 6 decimal precision (safe for large values) */
+function weiToEth(wei) {
+  const ETH = 1000000000000000000n; // 1e18
+  const whole = wei / ETH;
+  const remainder = wei % ETH;
+  const decimal = remainder * 1000000n / ETH; // 6 decimal places
+  return `${whole}.${decimal.toString().padStart(6, "0")}`;
+}
+
 // POST /api/deployments/testnet/check-balance — check account balance on testnet
 router.post("/testnet/check-balance", async (req, res) => {
   try {
@@ -111,24 +168,7 @@ router.post("/testnet/check-balance", async (req, res) => {
       return res.status(400).json({ error: "Invalid Ethereum address format" });
     }
 
-    const rpcCall = async (method, params = []) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-      try {
-        const r = await globalThis.fetch(rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-          signal: controller.signal,
-        });
-        const data = await r.json();
-        if (data.error) throw new Error(data.error.message || "RPC error");
-        return data.result;
-      } finally {
-        clearTimeout(timeout);
-      }
-    };
-
+    const rpcCall = makeRpcCaller(rpcUrl);
     const [balanceHex, chainIdHex, gasPriceHex] = await Promise.all([
       rpcCall("eth_getBalance", [address, "latest"]),
       rpcCall("eth_chainId"),
@@ -136,32 +176,203 @@ router.post("/testnet/check-balance", async (req, res) => {
     ]);
 
     const balanceWei = BigInt(balanceHex || "0x0");
-    const balanceEth = Number(balanceWei) / 1e18;
     const chainId = parseInt(chainIdHex || "0x0", 16);
     const gasPriceWei = BigInt(gasPriceHex || "0x0");
-    const gasPriceGwei = Number(gasPriceWei) / 1e9;
+    const gasPriceGwei = Number(gasPriceWei / 1000n) / 1e6;
 
     const roleInfo = ROLE_GAS_ESTIMATES[role] || ROLE_GAS_ESTIMATES.deployer;
     const estimatedGas = roleInfo.gas;
     const estimatedCostWei = gasPriceWei * BigInt(estimatedGas);
-    const estimatedCostEth = Number(estimatedCostWei) / 1e18;
     const sufficient = balanceWei >= estimatedCostWei;
 
     res.json({
       address,
       role: role || "deployer",
-      balanceEth: balanceEth.toFixed(6),
+      balanceEth: weiToEth(balanceWei),
       chainId,
-      gasPriceGwei: gasPriceGwei < 0.0001 ? gasPriceGwei.toPrecision(4) : gasPriceGwei.toFixed(4),
+      gasPriceGwei: formatGwei(gasPriceGwei),
       estimatedGas,
       gasLabel: roleInfo.label,
       gasDetail: roleInfo.detail,
       interval: roleInfo.interval || null,
-      estimatedCostEth: estimatedCostEth.toFixed(6),
+      estimatedCostEth: weiToEth(estimatedCostWei),
       sufficient,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/testnet/check-rpc — test L1 RPC connectivity
+router.post("/testnet/check-rpc", async (req, res) => {
+  try {
+    const { rpcUrl } = req.body;
+    if (!rpcUrl) {
+      return res.status(400).json({ error: "rpcUrl is required" });
+    }
+
+    const rpcCall = makeRpcCaller(rpcUrl);
+    const [chainIdHex, blockHex] = await Promise.all([
+      rpcCall("eth_chainId"),
+      rpcCall("eth_blockNumber"),
+    ]);
+
+    const chainId = parseInt(chainIdHex || "0x0", 16);
+    const blockNumber = parseInt(blockHex || "0x0", 16);
+    const chainName = CHAIN_NAMES[chainId] || `Chain ${chainId}`;
+
+    res.json({ ok: true, chainId, chainName, blockNumber });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/deployments/keychain/accounts — list keychain accounts
+router.get("/keychain/accounts", (req, res) => {
+  try {
+    const accounts = keychain.listAccounts();
+    res.json({ accounts });
+  } catch (e) {
+    res.json({ accounts: [] });
+  }
+});
+
+// POST /api/deployments/testnet/resolve-keys — resolve keychain keys to addresses + balances
+router.post("/testnet/resolve-keys", async (req, res) => {
+  try {
+    const { rpcUrl, deployerKey, committerKey, proofCoordinatorKey, bridgeOwnerKey } = req.body;
+    if (!rpcUrl) {
+      return res.status(400).json({ error: "rpcUrl is required" });
+    }
+
+    const resolveRole = (keychainName, label) => {
+      if (!keychainName) return null;
+      let pk = keychain.getSecret(keychainName);
+      if (!pk) return { error: `Key "${keychainName}" not found in Keychain`, label };
+      try {
+        const wallet = new ethers.Wallet(pk);
+        const address = wallet.address;
+        return { address, label, keychainName };
+      } catch {
+        return { error: `Invalid key format for "${keychainName}"`, label };
+      } finally {
+        pk = null; // Best-effort: dereference private key (actual GC timing is V8-controlled)
+      }
+    };
+
+    const roles = {
+      deployer: resolveRole(deployerKey, "Deployer"),
+      committer: resolveRole(committerKey, "Committer") || resolveRole(deployerKey, "Committer"),
+      proofCoordinator: resolveRole(proofCoordinatorKey, "Proof Coordinator") || resolveRole(deployerKey, "Proof Coordinator"),
+      bridgeOwner: resolveRole(bridgeOwnerKey, "Bridge Owner") || resolveRole(deployerKey, "Bridge Owner"),
+    };
+
+    const errors = Object.values(roles).filter(r => r?.error);
+    if (errors.length > 0) {
+      return res.status(400).json({ error: errors[0].error });
+    }
+
+    // Fetch balances in parallel using BigInt for precision
+    const rpcCall = makeRpcCaller(rpcUrl);
+    const uniqueAddresses = [...new Set(Object.values(roles).map(r => r?.address).filter(Boolean))];
+    const balanceWeis = {};
+    const [gasPriceHex] = await Promise.all([
+      rpcCall("eth_gasPrice"),
+      ...uniqueAddresses.map(async (addr) => {
+        const hex = await rpcCall("eth_getBalance", [addr, "latest"]);
+        balanceWeis[addr] = BigInt(hex || "0x0");
+      }),
+    ]);
+
+    const gasPriceWei = BigInt(gasPriceHex || "0x0");
+    const gasPriceGwei = Number(gasPriceWei / 1000n) / 1e6;
+
+    // Estimate total deployment cost using BigInt
+    const deployerGas = ROLE_GAS_ESTIMATES.deployer.gas;
+    const estimatedCostWei = gasPriceWei * BigInt(deployerGas);
+
+    // Enrich roles with balances
+    for (const role of Object.values(roles)) {
+      if (role?.address) {
+        const wei = balanceWeis[role.address] || 0n;
+        role.balance = weiToEth(wei);
+      }
+    }
+
+    const deployerWei = roles.deployer?.address ? (balanceWeis[roles.deployer.address] || 0n) : 0n;
+
+    res.json({
+      roles,
+      gasPriceGwei: formatGwei(gasPriceGwei),
+      estimatedDeployCostEth: weiToEth(estimatedCostWei),
+      deployerSufficient: deployerWei >= estimatedCostWei,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/deployments/testnet/estimate-gas — estimate total deployment + operational costs
+router.post("/testnet/estimate-gas", async (req, res) => {
+  try {
+    const { rpcUrl } = req.body;
+    if (!rpcUrl) {
+      return res.status(400).json({ error: "rpcUrl is required" });
+    }
+
+    const rpcCall = makeRpcCaller(rpcUrl);
+    const [gasPriceHex, chainIdHex] = await Promise.all([
+      rpcCall("eth_gasPrice"),
+      rpcCall("eth_chainId"),
+    ]);
+
+    const gasPriceWei = BigInt(gasPriceHex || "0x0");
+    const gasPriceGwei = Number(gasPriceWei / 1000n) / 1e6;
+    const chainId = parseInt(chainIdHex || "0x0", 16);
+
+    const breakdown = {};
+    let totalGas = 0n;
+    for (const [role, info] of Object.entries(ROLE_GAS_ESTIMATES)) {
+      const gasBI = BigInt(info.gas);
+      const costWei = gasPriceWei * gasBI;
+      totalGas += gasBI;
+      breakdown[role] = {
+        gas: info.gas,
+        label: info.label,
+        detail: info.detail,
+        interval: info.interval || null,
+        costEth: weiToEth(costWei),
+      };
+    }
+
+    const totalCostWei = gasPriceWei * totalGas;
+
+    res.json({
+      chainId,
+      chainName: CHAIN_NAMES[chainId] || `Chain ${chainId}`,
+      gasPriceGwei: formatGwei(gasPriceGwei),
+      breakdown,
+      totalGas: totalGas.toString(),
+      totalCostEth: weiToEth(totalCostWei),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/deployments/active/provisions — list currently running provisions
+// NOTE: Must be defined before /:id to avoid route shadowing
+router.get("/active/provisions", (req, res) => {
+  res.json({ provisions: getActiveProvisions() });
+});
+
+// GET /api/deployments/check-image/:slug — check if Docker image exists for a program
+router.get("/check-image/:slug", (req, res) => {
+  try {
+    const image = docker.findImage(req.params.slug);
+    res.json({ exists: !!image, image: image || null });
+  } catch (e) {
+    res.json({ exists: false, image: null });
   }
 });
 
@@ -583,10 +794,7 @@ router.get("/:id/events/history", (req, res) => {
   }
 });
 
-// GET /api/deployments/active/provisions — list currently running provisions
-router.get("/active/provisions", (req, res) => {
-  res.json({ provisions: getActiveProvisions() });
-});
+// (moved above /:id to avoid route shadowing)
 
 // GET /api/deployments/:id/logs
 router.get("/:id/logs", async (req, res) => {
@@ -696,14 +904,6 @@ router.get("/:id/monitoring", async (req, res) => {
   }
 });
 
-// GET /api/deployments/check-image/:slug — check if Docker image exists for a program
-router.get("/check-image/:slug", (req, res) => {
-  try {
-    const image = docker.findImage(req.params.slug);
-    res.json({ exists: !!image, image: image || null });
-  } catch (e) {
-    res.json({ exists: false, image: null });
-  }
-});
+// (moved above /:id to avoid route shadowing)
 
 module.exports = router;

@@ -69,6 +69,7 @@ export interface L2Config {
   // Testnet fields
   testnetNetwork: string | null  // 'sepolia' | 'holesky' | null
   testnetL1RpcUrl: string | null
+  rawConfig: string | null
 }
 
 function deploymentToL2Config(d: DeploymentFromDB): L2Config {
@@ -115,6 +116,7 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     l2ChainId: null,
     testnetNetwork: isTestnet ? (testnet.network as string ?? null) : null,
     testnetL1RpcUrl: isTestnet ? (testnet.l1RpcUrl as string ?? null) : null,
+    rawConfig: d.config as string | null,
   }
 }
 
@@ -167,7 +169,6 @@ export default function MyL2View() {
   const [l2s, setL2s] = useState<L2Config[]>([])
   const [selectedL2, setSelectedL2] = useState<L2Config | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
@@ -245,10 +246,9 @@ export default function MyL2View() {
       const existing = await WebviewWindow.getByLabel('deploy-manager')
       if (existing) {
         if (editId) {
-          try { await (existing as any).eval(`editConfiguredDeploy('${editId}')`) } catch {}
+          try { await existing.emit('edit-deploy', editId) } catch (e) { console.warn('Failed to emit edit-deploy:', e) }
         } else if (view) {
-          try { await existing.emit('navigate-view', view) } catch {}
-          try { await (existing as any).eval(`showView('${view}')`) } catch {}
+          try { await existing.emit('navigate-view', view) } catch (e) { console.warn('Failed to emit navigate-view:', e) }
         }
         await existing.show()
         await existing.setFocus()
@@ -289,25 +289,6 @@ export default function MyL2View() {
       await loadDeployments()
     } catch (e) {
       console.error('Failed to start:', e)
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation()
-    if (confirmDeleteId !== id) {
-      setConfirmDeleteId(id)
-      setTimeout(() => setConfirmDeleteId(prev => prev === id ? null : prev), 3000)
-      return
-    }
-    setConfirmDeleteId(null)
-    setActionLoading(id)
-    try {
-      await invoke('delete_docker_deployment', { id })
-      await loadDeployments()
-    } catch (e) {
-      console.error('Failed to delete:', e)
     } finally {
       setActionLoading(null)
     }
