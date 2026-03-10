@@ -87,7 +87,8 @@ function getAppProfile(programSlug) {
  * @returns {string} docker-compose.yaml content
  */
 function generateComposeFile(opts) {
-  const { programSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName, gpu = false, dumpFixtures = false } = opts;
+  const { programSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName, gpu = false, dumpFixtures = false, isPublic = false } = opts;
+  const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
@@ -226,9 +227,9 @@ ${deployerExtraEnv}    depends_on:
     image: "${l2Image}"
 ${buildSection}
     ports:
-      - 127.0.0.1:${l2Port}:1729
-      - 127.0.0.1:${proofCoordPort}:3900
-      - 127.0.0.1:${metricsPort}:3702
+      - ${bindAddr}:${l2Port}:1729
+      - ${bindAddr}:${proofCoordPort}:3900
+      - ${bindAddr}:${metricsPort}:3702
     environment:
       - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
       - ETHREX_L2_VALIDIUM=false
@@ -475,8 +476,9 @@ function generateTestnetComposeFile(opts) {
     programSlug, l2Port, proofCoordPort = 3900, metricsPort = 3702,
     projectName, l1RpcUrl, deployerPrivateKey, gpu = false,
     committerPk: committerPkOpt, proofCoordinatorPk: proofCoordinatorPkOpt,
-    bridgeOwnerPk: bridgeOwnerPkOpt,
+    bridgeOwnerPk: bridgeOwnerPkOpt, isPublic = false,
   } = opts;
+  const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
@@ -602,9 +604,9 @@ ${deployerExtraEnv}    entrypoint:
     container_name: ${projectName}-l2
     image: "${l2Image}"
     ports:
-      - 127.0.0.1:${l2Port}:1729
-      - 127.0.0.1:${proofCoordPort}:3900
-      - 127.0.0.1:${metricsPort}:3702
+      - ${bindAddr}:${l2Port}:1729
+      - ${bindAddr}:${proofCoordPort}:3900
+      - ${bindAddr}:${metricsPort}:3702
     environment:
       - ETHREX_ETH_RPC_URL=${l1RpcUrl}
       - ETHREX_L2_VALIDIUM=false

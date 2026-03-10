@@ -1503,6 +1503,117 @@ async function waitForRemoteHealthy(conn, port, timeoutMs, deploymentId) {
   throw new Error(`Timeout waiting for remote port ${port} to become healthy`);
 }
 
+/**
+ * Enable public access: regenerate compose with 0.0.0.0 binding, restart L2 + tools.
+ * Called after DB is already updated with public_domain etc.
+ */
+async function enablePublicAccess(deployment) {
+  const id = deployment.id;
+  const updated = getDeploymentById(id);
+  const dConfig = updated.config ? JSON.parse(updated.config) : {};
+  const isTestnet = dConfig.mode === 'testnet';
+  const deployDir = updated.deploy_dir || null;
+  const composeFile = require("path").join(getDeploymentDir(id, deployDir), "docker-compose.yaml");
+
+  // 1. Regenerate compose with 0.0.0.0 binding
+  let composeContent;
+  if (isTestnet) {
+    const testnetCfg = dConfig.testnet || {};
+    const roleKeys = testnetCfg.roleKeys || {};
+    composeContent = generateTestnetComposeFile({
+      programSlug: updated.program_slug, l2Port: updated.l2_port,
+      proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,
+      projectName: updated.docker_project, l1RpcUrl: testnetCfg.l1RpcUrl,
+      deployerPrivateKey: testnetCfg.deployerPrivateKey, gpu: !!dConfig.gpu,
+      committerPk: roleKeys.committerPk, proofCoordinatorPk: roleKeys.proofCoordinatorPk,
+      bridgeOwnerPk: roleKeys.bridgeOwnerPk, isPublic: true,
+    });
+  } else {
+    composeContent = generateComposeFile({
+      programSlug: updated.program_slug, l1Port: updated.l1_port, l2Port: updated.l2_port,
+      proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,
+      projectName: updated.docker_project, gpu: !!dConfig.gpu,
+      dumpFixtures: !!dConfig.dumpFixtures, isPublic: true,
+    });
+  }
+  writeComposeFile(id, composeContent, deployDir);
+
+  // 2. Restart L2 services (new port binding)
+  await docker.stop(updated.docker_project, composeFile);
+  await docker.start(updated.docker_project, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+
+  // 3. Restart tools with public URLs
+  const envVars = await docker.extractEnv(updated.docker_project, composeFile);
+  const toolsPorts = {
+    toolsL1ExplorerPort: updated.tools_l1_explorer_port,
+    toolsL2ExplorerPort: updated.tools_l2_explorer_port,
+    toolsBridgeUIPort: updated.tools_bridge_ui_port,
+    toolsDbPort: updated.tools_db_port,
+    toolsMetricsPort: updated.tools_metrics_port,
+    l1Port: updated.l1_port,
+    l2Port: updated.l2_port,
+    ...getExternalL1Config(updated),
+    ...getPublicAccessConfig(updated),
+  };
+  await docker.restartTools(`${updated.docker_project}-tools`, envVars, toolsPorts);
+  console.log(`[public-access] Fully enabled for ${id}: L2 RPC bound to 0.0.0.0`);
+}
+
+/**
+ * Disable public access: regenerate compose with 127.0.0.1 binding, restart L2 + tools.
+ * Called after DB is already cleared (is_public=0, public_*=null).
+ */
+async function disablePublicAccess(deployment) {
+  const id = deployment.id;
+  const updated = getDeploymentById(id);
+  const dConfig = updated.config ? JSON.parse(updated.config) : {};
+  const isTestnet = dConfig.mode === 'testnet';
+  const deployDir = updated.deploy_dir || null;
+  const composeFile = require("path").join(getDeploymentDir(id, deployDir), "docker-compose.yaml");
+
+  // 1. Regenerate compose with 127.0.0.1 binding
+  let composeContent;
+  if (isTestnet) {
+    const testnetCfg = dConfig.testnet || {};
+    const roleKeys = testnetCfg.roleKeys || {};
+    composeContent = generateTestnetComposeFile({
+      programSlug: updated.program_slug, l2Port: updated.l2_port,
+      proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,
+      projectName: updated.docker_project, l1RpcUrl: testnetCfg.l1RpcUrl,
+      deployerPrivateKey: testnetCfg.deployerPrivateKey, gpu: !!dConfig.gpu,
+      committerPk: roleKeys.committerPk, proofCoordinatorPk: roleKeys.proofCoordinatorPk,
+      bridgeOwnerPk: roleKeys.bridgeOwnerPk, isPublic: false,
+    });
+  } else {
+    composeContent = generateComposeFile({
+      programSlug: updated.program_slug, l1Port: updated.l1_port, l2Port: updated.l2_port,
+      proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,
+      projectName: updated.docker_project, gpu: !!dConfig.gpu,
+      dumpFixtures: !!dConfig.dumpFixtures, isPublic: false,
+    });
+  }
+  writeComposeFile(id, composeContent, deployDir);
+
+  // 2. Restart L2 services (revert to localhost binding)
+  await docker.stop(updated.docker_project, composeFile);
+  await docker.start(updated.docker_project, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+
+  // 3. Restart tools without public URLs
+  const envVars = await docker.extractEnv(updated.docker_project, composeFile);
+  const toolsPorts = {
+    toolsL1ExplorerPort: updated.tools_l1_explorer_port,
+    toolsL2ExplorerPort: updated.tools_l2_explorer_port,
+    toolsBridgeUIPort: updated.tools_bridge_ui_port,
+    toolsDbPort: updated.tools_db_port,
+    toolsMetricsPort: updated.tools_metrics_port,
+    l1Port: updated.l1_port,
+    l2Port: updated.l2_port,
+    ...getExternalL1Config(updated),
+  };
+  await docker.restartTools(`${updated.docker_project}-tools`, envVars, toolsPorts);
+  console.log(`[public-access] Disabled for ${id}: L2 RPC bound to 127.0.0.1`);
+}
+
 module.exports = {
   provision,
   provisionTestnet,
@@ -1510,6 +1621,8 @@ module.exports = {
   stopDeployment,
   startDeployment,
   destroyDeployment,
+  enablePublicAccess,
+  disablePublicAccess,
   getEmitter,
   isProvisionActive,
   cancelProvision,

@@ -10,6 +10,8 @@ const {
   stopDeployment,
   startDeployment,
   destroyDeployment,
+  enablePublicAccess,
+  disablePublicAccess,
   getEmitter,
   isProvisionActive,
   cancelProvision,
@@ -744,36 +746,12 @@ router.post("/:id/public-access", async (req, res) => {
     const updated = db.prepare("SELECT * FROM deployments WHERE id = ?").get(deployment.id);
     const publicConfig = getPublicAccessConfig(updated);
 
-    // Restart tools with public URLs (async — compose up can take 30s+)
+    // Regenerate compose (0.0.0.0 binding) + restart L2 + tools (async — can take 60s+)
     res.json({ ok: true, message: "Enabling public access...", publicConfig });
 
-    try {
-      let envVars = {};
-      try {
-        const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
-        envVars = await docker.extractEnv(deployment.docker_project, composeFile);
-      } catch {
-        if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
-        if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
-      }
-
-      const toolsPorts = {
-        toolsL1ExplorerPort: updated.tools_l1_explorer_port,
-        toolsL2ExplorerPort: updated.tools_l2_explorer_port,
-        toolsBridgeUIPort: updated.tools_bridge_ui_port,
-        toolsDbPort: updated.tools_db_port,
-        toolsMetricsPort: updated.tools_metrics_port,
-        l1Port: updated.l1_port,
-        l2Port: updated.l2_port,
-        ...getExternalL1Config(updated),
-        ...publicConfig,
-      };
-
-      await docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts);
-      console.log(`[public-access] Enabled for ${deployment.id} at ${publicDomain}`);
-    } catch (e) {
-      console.error(`[public-access] Tools restart failed: ${e.message}`);
-    }
+    enablePublicAccess(deployment).catch(e => {
+      console.error(`[public-access] Enable failed: ${e.message}`);
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -796,36 +774,12 @@ router.delete("/:id/public-access", async (req, res) => {
       public_dashboard_url: null,
     });
 
-    // Restart tools without public URLs (async)
+    // Regenerate compose (127.0.0.1 binding) + restart L2 + tools (async)
     res.json({ ok: true, message: "Disabling public access..." });
 
-    try {
-      let envVars = {};
-      try {
-        const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
-        envVars = await docker.extractEnv(deployment.docker_project, composeFile);
-      } catch {
-        if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
-        if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
-      }
-
-      const updated = db.prepare("SELECT * FROM deployments WHERE id = ?").get(deployment.id);
-      const toolsPorts = {
-        toolsL1ExplorerPort: updated.tools_l1_explorer_port,
-        toolsL2ExplorerPort: updated.tools_l2_explorer_port,
-        toolsBridgeUIPort: updated.tools_bridge_ui_port,
-        toolsDbPort: updated.tools_db_port,
-        toolsMetricsPort: updated.tools_metrics_port,
-        l1Port: updated.l1_port,
-        l2Port: updated.l2_port,
-        ...getExternalL1Config(updated),
-      };
-
-      await docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts);
-      console.log(`[public-access] Disabled for ${deployment.id}`);
-    } catch (e) {
-      console.error(`[public-access] Tools restart failed: ${e.message}`);
-    }
+    disablePublicAccess(deployment).catch(e => {
+      console.error(`[public-access] Disable failed: ${e.message}`);
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
