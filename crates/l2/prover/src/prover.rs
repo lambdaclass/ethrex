@@ -181,7 +181,7 @@ impl<B: ProverBackend> Prover<B> {
             ProofData::ProverTypeNotNeeded { prover_type } => {
                 return Ok(InputRequest::ProverTypeNotNeeded(prover_type));
             }
-            _ => return Err("Expecting ProofData::Response".to_owned()),
+            _ => return Err("Expecting ProofData::BatchResponse".to_owned()),
         };
 
         let (Some(batch_number), Some(input), Some(format)) = (batch_number, input, format) else {
