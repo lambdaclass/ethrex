@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
 
-const DESKTOP_DOWNLOAD_URL = "https://github.com/tokamak-network/ethrex/releases";
+const DESKTOP_DOWNLOAD_URL = "https://github.com/tokamak-network/ethrex/releases/tag/desktop-v0.1.0";
 
 export default function SettingsPage() {
   const { user } = useAuth();

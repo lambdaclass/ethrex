@@ -8,7 +8,7 @@ import { useAuth } from "@/components/auth-provider";
 import { Deployment } from "@/lib/types";
 import { DeploymentStatusBadge } from "@/components/deployment-status";
 
-const DESKTOP_DOWNLOAD_URL = "https://github.com/tokamak-network/ethrex/releases";
+const DESKTOP_DOWNLOAD_URL = "https://github.com/tokamak-network/ethrex/releases/tag/desktop-v0.1.0";
 
 function parseConfig(deployment: Deployment): { mode: string; l1Image: string } {
   try {

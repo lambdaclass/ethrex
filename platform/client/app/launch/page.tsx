@@ -19,7 +19,12 @@ export default function LaunchPage() {
   );
 }
 
-const DESKTOP_DOWNLOAD_URL = "https://github.com/tokamak-network/ethrex/releases";
+const DOWNLOAD_URLS = {
+  macOS_ARM64: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.0/Tokamak.Appchain_0.1.0_aarch64.dmg",
+  macOS_x64: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.0/Tokamak.Appchain_0.1.0_x64.dmg",
+  Windows: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.0/Tokamak.Appchain_0.1.0_x64-setup.exe",
+  allReleases: "https://github.com/tokamak-network/ethrex/releases/tag/desktop-v0.1.0",
+};
 
 function LaunchPageContent() {
   const [programs, setPrograms] = useState<Program[]>([]);
@@ -77,31 +82,59 @@ function LaunchPageContent() {
           The Desktop App is your control center for L2 management.
           Build, deploy, monitor logs, and manage your chain — all from one place.
         </p>
-        <div className="flex justify-center gap-4">
+        <div className="flex flex-col items-center gap-3">
+          <div className="flex justify-center gap-3">
+            <a
+              href={DOWNLOAD_URLS.macOS_ARM64}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-5 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 transition-colors text-sm"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              macOS (Apple Silicon)
+            </a>
+            <a
+              href={DOWNLOAD_URLS.macOS_x64}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-5 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 transition-colors text-sm"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              macOS (Intel)
+            </a>
+            <a
+              href={DOWNLOAD_URLS.Windows}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-5 py-3 bg-white/20 text-white rounded-lg font-semibold hover:bg-white/30 transition-colors text-sm"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Windows
+            </a>
+          </div>
           <a
-            href={DESKTOP_DOWNLOAD_URL}
+            href={DOWNLOAD_URLS.allReleases}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 transition-colors"
+            className="text-blue-200 text-sm hover:text-white transition-colors underline"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Download for macOS
-          </a>
-          <a
-            href={DESKTOP_DOWNLOAD_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-white/20 text-white rounded-lg font-semibold hover:bg-white/30 transition-colors"
-          >
-            Download for Linux
+            View all releases on GitHub
           </a>
         </div>
-        <p className="text-blue-200 text-sm mt-4">
-          macOS and Linux supported
+        <p className="text-blue-200 text-sm mt-3">
+          macOS (Apple Silicon &amp; Intel) and Windows supported
         </p>
       </div>
 
