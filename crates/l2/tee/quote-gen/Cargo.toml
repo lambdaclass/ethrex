@@ -37,4 +37,4 @@ secp256k1 = { version = "0.30.0", default-features = false, features = [
 
 [features]
 default = ["l2"]
-l2 = ["ethrex-guest-program/l2"]
+l2 = ["ethrex-guest-program/l2", "ethrex-guest-program/secp256k1"]

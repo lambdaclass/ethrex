@@ -2,7 +2,6 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
-use crate::errors::EcdsaError;
 use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
@@ -14,6 +13,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
+use ethrex_crypto::{Crypto, CryptoError};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -321,13 +321,16 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
+    pub fn get_transactions_with_sender(
+        &self,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
-            .map(|tx| Ok((tx, tx.sender()?)))
-            .collect::<Result<Vec<(&Transaction, Address)>, EcdsaError>>()
+            .map(|tx| Ok((tx, tx.sender(crypto)?)))
+            .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }
 }
 
@@ -1072,7 +1075,7 @@ mod test {
     #[test]
     fn test_fake_exponential_overflow() {
         // With u64 this overflows
-        assert!(fake_exponential(U256::from(57532635), U256::from(3145728), 3338477).is_ok());
+        assert!(fake_exponential(57532635.into(), 3145728.into(), 3338477).is_ok());
     }
 
     #[test]

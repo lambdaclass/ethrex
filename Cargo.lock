@@ -3959,9 +3959,21 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "c-kzg",
+ "ethereum-types 0.15.1",
+ "ff 0.13.1",
+ "hex-literal 0.4.1",
  "kzg-rs",
+ "malachite 0.6.1",
  "openvm-kzg",
+ "p256",
+ "ripemd",
+ "secp256k1",
+ "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
 ]
@@ -3990,19 +4002,23 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
+ "k256",
  "risc0-build",
  "rkyv",
  "serde",
  "serde_with",
  "sp1-build",
  "sp1-sdk",
+ "substrate-bn",
  "thiserror 2.0.18",
+ "ziskos",
 ]
 
 [[package]]
@@ -4097,6 +4113,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-p2p",
  "ethrex-rlp",
@@ -4121,11 +4138,7 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
  "bitvec",
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
  "colored",
  "datatest-stable",
@@ -4134,24 +4147,17 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
- "k256",
- "lambdaworks-math 0.13.0",
  "lazy_static",
  "malachite 0.6.1",
- "p256",
- "ripemd",
+ "rayon",
  "rustc-hash 2.1.1",
- "secp256k1",
  "serde",
  "serde_json",
- "sha2",
  "sha3",
  "spinoff",
  "strum 0.27.2",
- "substrate-bn",
  "thiserror 2.0.18",
  "walkdir",
- "ziskos",
 ]
 
 [[package]]
@@ -6349,7 +6355,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.5",
- "rayon",
  "serde",
  "serde_json",
 ]
@@ -11299,6 +11304,7 @@ dependencies = [
  "env_logger",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-storage",
  "ethrex-vm",

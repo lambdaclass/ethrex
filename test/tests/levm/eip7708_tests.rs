@@ -19,6 +19,7 @@ use ethrex_common::{
         Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     constants::{SELFDESTRUCT_EVENT_TOPIC, TRANSFER_EVENT_TOPIC},
     db::{Database, gen_db::GeneralizedDatabase},
@@ -180,9 +181,9 @@ impl TestBuilder {
             origin: self.sender,
             gas_limit: GAS_LIMIT,
             config: EVMConfig::new(self.fork, blob_schedule),
-            block_number: U256::from(1),
+            block_number: 1,
             coinbase: Address::from_low_u64_be(0xCCC),
-            timestamp: U256::from(1000),
+            timestamp: 1000,
             prev_randao: Some(H256::zero()),
             difficulty: U256::zero(),
             slot_number: U256::zero(),
@@ -213,7 +214,15 @@ impl TestBuilder {
             ..Default::default()
         });
 
-        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1).unwrap();
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .unwrap();
         vm.execute().unwrap()
     }
 }
