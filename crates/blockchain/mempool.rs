@@ -12,7 +12,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, H160, H256,
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
 };
 use ethrex_storage::error::StoreError;
@@ -78,13 +78,21 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
+    /// Signaled on transaction and blobs bundle insertions so payload
+    /// builders can await new work instead of busy-looping.
+    tx_added: tokio::sync::Notify,
 }
 
 impl Mempool {
     pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
+            tx_added: tokio::sync::Notify::new(),
         }
+    }
+
+    pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
+        &self.tx_added
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
@@ -123,6 +131,9 @@ impl Mempool {
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
+        // Drop the write lock before notifying to avoid holding it while waking waiters
+        drop(inner);
+        self.tx_added.notify_waiters();
 
         Ok(())
     }
@@ -143,8 +154,11 @@ impl Mempool {
         Ok(txs)
     }
 
-    pub fn clear_broadcasted_txs(&self) -> Result<(), StoreError> {
-        self.write()?.broadcast_pool.clear();
+    pub fn remove_broadcasted_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in hashes {
+            inner.broadcast_pool.remove(hash);
+        }
         Ok(())
     }
 
@@ -203,7 +217,9 @@ impl Mempool {
             // Filter by blob gas fee
             if is_blob_tx
                 && let Some(blob_fee) = filter.blob_fee
-                && tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee)
+                && tx
+                    .max_fee_per_blob_gas()
+                    .is_none_or(|fee| fee < blob_fee.into())
             {
                 return false;
             }
@@ -406,7 +422,7 @@ impl Mempool {
 pub struct PendingTxFilter {
     pub min_tip: Option<u64>,
     pub base_fee: Option<u64>,
-    pub blob_fee: Option<U256>,
+    pub blob_fee: Option<u64>,
     pub only_plain_txs: bool,
     pub only_blob_txs: bool,
 }

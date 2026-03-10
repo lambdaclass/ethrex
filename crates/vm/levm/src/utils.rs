@@ -14,6 +14,8 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
+use ethrex_common::constants::SYSTEM_ADDRESS;
+use ethrex_common::types::Log;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -69,6 +71,7 @@ pub fn calculate_create2_address(
 // ================== Backup related functions =======================
 
 /// Restore the state of the cache to the state it in the callframe backup.
+/// Also restores BAL recorder state changes (but not touched_addresses) per EIP-7928.
 pub fn restore_cache_state(
     db: &mut GeneralizedDatabase,
     callframe_backup: CallFrameBackup,
@@ -93,18 +96,25 @@ pub fn restore_cache_state(
         }
     }
 
+    // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)
+    if let Some(checkpoint) = callframe_backup.bal_checkpoint
+        && let Some(recorder) = db.bal_recorder.as_mut()
+    {
+        recorder.restore(checkpoint);
+    }
+
     Ok(())
 }
 
 // ================= Blob hash related functions =====================
 pub fn get_base_fee_per_blob_gas(
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        block_excess_blob_gas.unwrap_or_default(),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        block_excess_blob_gas.unwrap_or_default().into(),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -135,7 +145,7 @@ pub fn get_max_blob_gas_price(
 /// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
@@ -189,81 +199,10 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
-#[cfg(any(
-    feature = "zisk",
-    feature = "risc0",
-    feature = "sp1",
-    not(feature = "secp256k1")
-))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
+    crypto: &dyn ethrex_crypto::Crypto,
 ) -> Result<Option<Address>, VMError> {
-    use ethrex_rlp::encode::RLPEncode;
-    use sha2::Digest;
-    use sha3::Keccak256;
-
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
-        return Ok(None);
-    }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
-        return Ok(None);
-    }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
-        return Ok(None);
-    }
-
-    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
-
-    let mut digest = Keccak256::new();
-    digest.update([MAGIC]);
-    digest.update(rlp_buf);
-
-    let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
-    ]
-    .concat();
-
-    let Ok(recovery_id) = k256::ecdsa::RecoveryId::try_from(
-        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
-    ) else {
-        return Ok(None);
-    };
-
-    let Ok(signature) = k256::ecdsa::Signature::from_slice(&bytes) else {
-        return Ok(None);
-    };
-
-    let Ok(authority) =
-        k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id)
-    else {
-        return Ok(None);
-    };
-
-    let public_key = authority.to_encoded_point(false).to_bytes();
-    let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
-    let address_hash = hasher.finalize();
-
-    // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash
-        .get(12..32)
-        .ok_or(InternalError::Slicing)?
-        .try_into()
-        .map_err(|_| InternalError::TypeConversion)?;
-    Ok(Some(Address::from_slice(&authority_address_bytes)))
-}
-
-#[cfg(all(
-    not(feature = "zisk"),
-    not(feature = "risc0"),
-    not(feature = "sp1"),
-    feature = "secp256k1"
-))]
-pub fn eip7702_recover_address(
-    auth_tuple: &AuthorizationTuple,
-) -> Result<Option<Address>, VMError> {
-    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
 
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
@@ -279,40 +218,20 @@ pub fn eip7702_recover_address(
     let mut rlp_buf = Vec::with_capacity(128);
     rlp_buf.push(MAGIC);
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
-    let bytes = keccak_hash(&rlp_buf);
+    let msg = crypto.keccak256(&rlp_buf);
 
-    let message = secp256k1::Message::from_digest(bytes);
+    let y_parity: u8 =
+        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?;
 
-    let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
-    ]
-    .concat();
+    let mut sig = [0u8; 65];
+    sig[..32].copy_from_slice(&auth_tuple.r_signature.to_big_endian());
+    sig[32..64].copy_from_slice(&auth_tuple.s_signature.to_big_endian());
+    sig[64] = y_parity;
 
-    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(
-        TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
-    ) else {
-        return Ok(None);
-    };
-
-    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(&bytes, recovery_id)
-    else {
-        return Ok(None);
-    };
-
-    //recover
-    let Ok(authority) = signature.recover(&message) else {
-        return Ok(None);
-    };
-
-    let public_key = authority.serialize_uncompressed();
-    let address_hash = keccak_hash(&public_key[1..]);
-
-    // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash[12..]
-        .try_into()
-        .map_err(|_| InternalError::TypeConversion)?;
-    Ok(Some(Address::from_slice(&authority_address_bytes)))
+    match crypto.recover_signer(&sig, &msg) {
+        Ok(address) => Ok(Some(address)),
+        Err(_) => Ok(None),
+    }
 }
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
@@ -345,9 +264,9 @@ pub fn eip7702_get_code(
     let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        WARM_ADDRESS_ACCESS_COST
-    } else {
         COLD_ADDRESS_ACCESS_COST
+    } else {
+        WARM_ADDRESS_ACCESS_COST
     };
 
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
@@ -379,7 +298,7 @@ impl<'a> VM<'a> {
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
+            let Some(authority_address) = eip7702_recover_address(&auth_tuple, self.crypto)? else {
                 continue;
             };
 
@@ -389,8 +308,18 @@ impl<'a> VM<'a> {
             self.substate.add_accessed_address(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
+            // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
             let empty_or_delegated = authority_code.bytecode.is_empty()
                 || code_has_delegation(&authority_code.bytecode)?;
+
+            // Record authority as touched for BAL per EIP-7928, even if validation fails later.
+            // This ensures authority appears in BAL with empty change set when:
+            // - Authority was loaded (above)
+            // - But validation fails (checks below)
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(authority_address);
+            }
+
             if !empty_or_delegated {
                 continue;
             }
@@ -431,7 +360,11 @@ impl<'a> VM<'a> {
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = self
+            .substate
+            .refunded_gas
+            .checked_add(refunded_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
@@ -610,5 +543,46 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
         Ok((0, 0))
     } else {
         Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
+    }
+}
+
+// ==================== EIP-7708 Helper Functions ====================
+
+/// Creates EIP-7708 Transfer log (LOG3) for ETH transfers.
+/// Emitted from SYSTEM_ADDRESS when ETH is transferred.
+#[inline]
+pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
+    let mut from_topic = [0u8; 32];
+    from_topic[12..].copy_from_slice(from.as_bytes());
+
+    let mut to_topic = [0u8; 32];
+    to_topic[12..].copy_from_slice(to.as_bytes());
+
+    let data = value.to_big_endian();
+
+    Log {
+        address: SYSTEM_ADDRESS,
+        topics: vec![
+            TRANSFER_EVENT_TOPIC,
+            H256::from(from_topic),
+            H256::from(to_topic),
+        ],
+        data: Bytes::from(data.to_vec()),
+    }
+}
+
+/// Creates EIP-7708 Selfdestruct log (LOG2) for account destruction.
+/// Emitted from SYSTEM_ADDRESS when a contract is destroyed.
+#[inline]
+pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
+    let mut contract_topic = [0u8; 32];
+    contract_topic[12..].copy_from_slice(contract.as_bytes());
+
+    let data = balance.to_big_endian();
+
+    Log {
+        address: SYSTEM_ADDRESS,
+        topics: vec![SELFDESTRUCT_EVENT_TOPIC, H256::from(contract_topic)],
+        data: Bytes::from(data.to_vec()),
     }
 }

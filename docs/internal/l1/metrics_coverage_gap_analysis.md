@@ -4,7 +4,7 @@
 This note tracks the current state of metrics and dashboard observability for the L1, highlights the gaps against a cross-client baseline. It covers runtime metrics exposed through our crates, the existing Grafana "Ethrex L1 - Perf" dashboard, and supporting exporters already wired in provisioning.
 
 ### At a glance
-- **Covered today**: Block execution timings, detailed execution breakdown, Engine API and JSON-RPC method telemetry, and host/process health are exported and graphed through `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`. The refreshed [L1 Dashboard doc](./dashboards.md) has screenshots and panel descriptions.
+- **Covered today**: Block execution timings, detailed execution breakdown, Engine API and JSON-RPC method telemetry, and host/process health are exported and graphed through `metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json`. The refreshed [L1 Dashboard doc](../../developers/l1/dashboards.md) has screenshots and panel descriptions.
 - **Missing**: Sync/peer awareness, txpool depth, storage IO metrics, and richer error taxonomy are absent or only logged.
 - **Near-term focus**: Ship sync & peer gauges, surface txpool counters we already emit, extend storage instrumentation, and harden alerting before widening coverage further.
 
@@ -70,7 +70,7 @@ Ethrex exposes the metrics API by default when the CLI `--metrics` flag is enabl
 Before addressing the gaps listed below, we should also consider some general improvements in our current metrics setup:
 
 - **Namespace standardisation**: Metric names and labels should follow a consistent naming convention (e.g., `ethrex_l1_` prefix) to avoid collisions and improve clarity. Right now we are not using prefixes.
-- **Panels dependent on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating this key metrics directly into Ethrex.
+- **Panels dependent on `ethereum-metrics-exporter`**: Some metrics are only visible through the external `ethereum-metrics-exporter` (e.g., network, client version, consensus fork), we are already pulling those in our dashboard but this is not ideal. We should consider integrating these key metrics directly into Ethrex.
 - **Label consistency**: We are not using labels consistently, especially in l1. We might need to take a pass to ensure similar metrics use uniform label names and values to facilitate querying and aggregation if needed or decide to not use labels when appropriate.
 - **Exemplars addition**: For histograms, adding exemplars can help trace high-latency events back to specific traces/logs. This is especially useful for latency-sensitive metrics like block execution time or RPC call durations where we could add block hashes as exemplars. This needs to be evaluated on a case-by-case basis and tested.
 
@@ -93,8 +93,8 @@ Before addressing the gaps listed below, we should also consider some general im
 3. Surface txpool metrics by wiring existing counters and charting them.
 4. Add the metrics relying on `ethereum-metrics-exporter` into the existing metrics, and avoid our dashboard dependence on it.
 5. Extend Engine API / JSON-RPC metrics with richer error taxonomy and payload construction latency distributions.
-6. State and Storage metrics, specially related to snapsync, pruning, db and cache.
-7. Process health improvements, specially related to read/write latencies and probably tokio tasks.
+6. State and Storage metrics, especially related to snapsync, pruning, db and cache.
+7. Process health improvements, especially related to read/write latencies and probably tokio tasks.
 8. Review block building metrics.
 9. Revisit histogram buckets and naming conventions once new metrics are merged, then define alert thresholds.
 10. Investigate exemplar usage where appropriate.

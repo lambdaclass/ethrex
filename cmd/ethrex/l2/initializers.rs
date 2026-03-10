@@ -15,9 +15,9 @@ use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer;
 use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -135,8 +135,12 @@ pub fn init_tracing(
     Option<tracing_appender::non_blocking::WorkerGuard>,
 ) {
     if !opts.sequencer_opts.no_monitor {
-        let level_filter = EnvFilter::builder()
-            .parse_lossy("debug,tower_http::trace=debug,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off");
+        let default_filter = "info,reqwest_tracing=off,hyper=off,libsql=off,ethrex::initializers=off,ethrex::l2::initializers=off,ethrex::l2::command=off";
+        let level_filter = EnvFilter::builder().parse_lossy(
+            std::env::var("RUST_LOG")
+                .as_deref()
+                .unwrap_or(default_filter),
+        );
         let subscriber = tracing_subscriber::registry()
             .with(TuiTracingSubscriberLayer)
             .with(level_filter);

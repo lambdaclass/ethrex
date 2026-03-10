@@ -3,10 +3,12 @@ name = "ef_tests-state"
 version = "0.1.0"
 edition = "2024"
 authors = ["LambdaClass"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 ethrex-blockchain = { path = "../../../crates/blockchain" }
 ethrex-common = { path = "../../../crates/common" }
+ethrex-crypto = { path = "../../../crates/common/crypto" }
 ethrex-storage = { path = "../../../crates/storage" }
 ethrex-rlp = { path = "../../../crates/common/rlp" }
 ethrex-vm = { path = "../../../crates/vm" }

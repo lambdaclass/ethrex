@@ -11,9 +11,11 @@ use ethrex_common::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
-        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        block_access_list::BlockAccessList,
+        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+        compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -84,6 +86,7 @@ pub struct BuildPayloadArgs {
     pub random: H256,
     pub withdrawals: Option<Vec<Withdrawal>>,
     pub beacon_root: Option<H256>,
+    pub slot_number: Option<u64>,
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
@@ -170,6 +173,7 @@ pub fn create_payload(
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
+        slot_number: args.slot_number,
         ..Default::default()
     };
 
@@ -208,6 +212,9 @@ pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
 pub struct PayloadBuildContext {
     pub payload: Block,
     pub remaining_gas: u64,
+    /// Cumulative gas spent (post-refund) for receipt tracking.
+    /// Per EIP-7778 this differs from `remaining_gas` which tracks pre-refund gas.
+    pub cumulative_gas_spent: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -217,6 +224,8 @@ pub struct PayloadBuildContext {
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
     pub payload_size: u64,
+    /// Block Access List for EIP-7928
+    pub block_access_list: Option<BlockAccessList>,
 }
 
 impl PayloadBuildContext {
@@ -239,11 +248,19 @@ impl PayloadBuildContext {
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
         let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
-        let vm = new_evm(blockchain_type, vm_db)?;
+        let mut vm = new_evm(blockchain_type, vm_db)?;
+
+        // Enable BAL recording for Amsterdam and later forks (EIP-7928)
+        if config.is_amsterdam_activated(payload.header.timestamp) {
+            vm.enable_bal_recording();
+            // Set index 0 for pre-execution phase (system contracts)
+            vm.set_bal_index(0);
+        }
 
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
+            cumulative_gas_spent: 0,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -256,6 +273,7 @@ impl PayloadBuildContext {
             vm,
             account_updates: Vec::new(),
             payload_size,
+            block_access_list: None,
         })
     }
 
@@ -290,6 +308,8 @@ pub struct PayloadBuildResult {
     pub requests: Vec<EncodedRequests>,
     pub account_updates: Vec<AccountUpdate>,
     pub payload: Block,
+    /// Block Access List for EIP-7928
+    pub block_access_list: Option<BlockAccessList>,
 }
 
 impl From<PayloadBuildContext> for PayloadBuildResult {
@@ -301,6 +321,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             receipts,
             account_updates,
             payload,
+            block_access_list,
             ..
         } = value;
 
@@ -311,6 +332,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             receipts,
             account_updates,
             payload,
+            block_access_list,
         }
     }
 }
@@ -372,6 +394,14 @@ impl Blockchain {
         // TODO(#4997): start with an empty block
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
+            // Wait for new transactions, cancellation, or slot deadline before rebuilding
+            let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
+            let notified = self.mempool.tx_added().notified();
+            tokio::select! {
+                _ = notified => {}
+                _ = cancel_token.cancelled() => break,
+                _ = tokio::time::sleep(remaining) => break,
+            }
             let payload = payload.clone();
             let self_clone = self.clone();
             let building_task =
@@ -404,9 +434,25 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
+        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        if context
+            .chain_config()
+            .is_amsterdam_activated(context.payload.header.timestamp)
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let post_tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            context.vm.set_bal_index(post_tx_index);
+            // Record withdrawal recipients as touched addresses per EIP-7928
+            if let Some(recorder) = context.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &context.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
         self.extract_requests(&mut context)?;
+        self.apply_withdrawals(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
@@ -460,10 +506,13 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
+        let blob_fee: u64 = context.base_fee_per_blob_gas.try_into().map_err(|_| {
+            ChainError::Custom("base_fee_per_blob_gas does not fit in u64".to_owned())
+        })?;
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
             base_fee: context.base_fee_per_gas(),
-            blob_fee: Some(context.base_fee_per_blob_gas),
+            blob_fee: Some(blob_fee),
             ..Default::default()
         };
         let plain_tx_filter = PendingTxFilter {
@@ -573,6 +622,27 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-7928: Snapshot BAL recorder before trying the tx.
+            // If the tx is rejected, restore so only included txs affect the BAL.
+            // TODO: This clones the entire recorder every tx. Add a tx-level
+            // checkpoint/restore that also undoes touched_addresses and storage_reads
+            // (the existing checkpoint only handles inner call reverts).
+            let bal_snapshot = context.vm.db.bal_recorder.clone();
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928)
+            // Index is based on current transaction count + 1
+            #[allow(clippy::cast_possible_truncation)]
+            let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            context.vm.set_bal_index(tx_index);
+
+            // Record tx sender and recipient for BAL
+            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+                recorder.record_touched_address(head_tx.tx.sender());
+                if let TxKind::Call(to) = head_tx.to() {
+                    recorder.record_touched_address(to);
+                }
+            }
+
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
@@ -584,6 +654,9 @@ impl Blockchain {
                 Err(e) => {
                     debug!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                    // Restore BAL recorder to pre-tx state so rejected txs
+                    // don't pollute the block access list.
+                    context.vm.db.bal_recorder = bal_snapshot;
                     txs.pop();
                     continue;
                 }
@@ -657,6 +730,9 @@ impl Blockchain {
     }
 
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        // Take BAL from VM before getting state transitions (which clears state)
+        let block_access_list = context.vm.take_bal();
+
         let account_updates = context.vm.get_state_transitions()?;
 
         let ret_acount_updates_list = self
@@ -677,6 +753,11 @@ impl Blockchain {
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
 
+        // Set BAL hash in block header (EIP-7928)
+        context.payload.header.block_access_list_hash =
+            block_access_list.as_ref().map(|bal| bal.compute_hash());
+        context.block_access_list = block_access_list;
+
         let mut logs = vec![];
         for receipt in context.receipts.iter().cloned() {
             for log in receipt.logs {
@@ -694,14 +775,16 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (report, gas_used) = context.vm.execute_tx(
+    let (receipt, gas_spent) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
         &mut context.remaining_gas,
+        &mut context.cumulative_gas_spent,
         head.tx.sender(),
     )?;
-    context.block_value += U256::from(gas_used) * head.tip;
-    Ok(report)
+    // Block value uses gas_spent (what the user actually pays) for tip calculation
+    context.block_value += U256::from(gas_spent) * head.tip;
+    Ok(receipt)
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block

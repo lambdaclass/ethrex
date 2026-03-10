@@ -1,15 +1,12 @@
 use ethrex_common::{H160, types::Fork, types::Fork::*};
 
+pub use ethrex_common::constants::SYSTEM_ADDRESS;
+
 pub struct SystemContract {
     pub address: H160,
     pub name: &'static str,
     pub active_since_fork: Fork,
 }
-
-pub const SYSTEM_ADDRESS: H160 = H160([
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFE,
-]);
 
 pub const DEPOSIT_CONTRACT_ADDRESS: SystemContract = SystemContract {
     address: H160([

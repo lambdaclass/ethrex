@@ -5,6 +5,15 @@ on:
     # Every day at UTC midnight
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
+    inputs:
+      slack_channel:
+        description: "Slack channel to post to"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - prod
 
 permissions:
   contents: read
@@ -27,12 +36,12 @@ jobs:
 
       - name: Restore cache
         id: cache-loc-report
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: tooling/loc/loc_report.json
-          key: loc-report-${{ github.ref_name }}
+          key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            loc-report-
+            loc-report-${{ github.ref_name }}-
 
       - name: Rename cached loc_report.json to loc_report.json.old
         if: steps.cache-loc-report.outputs.cache-hit != ''
@@ -57,7 +66,7 @@ jobs:
           echo $! > /tmp/ts-ssh.pid
           sleep 2
 
-      - name: Generate the performance report
+      - name: Generate the combined report
         env:
           PERF_PROMETHEUS_URL: http://localhost:9090
           PERF_PROMETHEUS_RANGE: 24h
@@ -67,12 +76,6 @@ jobs:
             or label_replace(avg_over_time(nethermind_mgas_per_sec{instance=~"nethermind-mainnet-1(:[0-9]+)?"}[24h]) / 1000, "client", "nethermind", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1000, "client", "geth", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1000, "client", "geth", "", "")
-        run: |
-          bash .github/scripts/generate_performance_report.sh
-
-      - name: Generate the block time report
-        env:
-          BLOCK_TIME_PROMETHEUS_URL: http://localhost:9090
           BLOCK_TIME_PROMETHEUS_RANGE: 24h
           BLOCK_TIME_PROMETHEUS_QUERY: >-
             label_replace(
@@ -154,7 +157,7 @@ jobs:
               ""
             )
         run: |
-          bash .github/scripts/generate_block_time_report.sh
+          bash .github/scripts/generate_combined_report.sh
 
       - name: Stop Tailscale SSH tunnel
         if: always()
@@ -165,41 +168,31 @@ jobs:
 
       - name: Save new loc_report.json to cache
         if: success()
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: tooling/loc/loc_report.json
-          key: loc-report-${{ github.ref_name }}
+          key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
 
       - name: Post results in summary
         run: |
-          {
-            echo "# 'ethrex' lines of code report"
-            cat tooling/loc/loc_report_github.txt
-            echo ""
-            cat tooling/performance_report/performance_report_github.txt
-            echo ""
-            cat tooling/block_time_report/block_time_report_github.txt
-          } >> "$GITHUB_STEP_SUMMARY"
+          cat tooling/daily_report/daily_report_github.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post results to Slack
         env:
           SLACK_WEBHOOKS: >
-            ${{ github.event_name == 'workflow_dispatch'
-              && secrets.TEST_CHANNEL_SLACK
-              || secrets.ETHREX_GENERAL_SLACK_WEBHOOK
+            ${{ github.event_name == 'schedule' && secrets.ETHREX_GENERAL_SLACK_WEBHOOK
+              || (inputs.slack_channel == 'prod' && secrets.ETHREX_GENERAL_SLACK_WEBHOOK)
+              || secrets.ETHREX_TEST_SLACK_WEBHOOK
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
-            sh .github/scripts/publish_loc.sh "$webhook"
-            bash .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
-            bash .github/scripts/publish_performance.sh "$webhook" tooling/block_time_report/block_time_report_slack.json
+            bash .github/scripts/publish_performance.sh "$webhook" tooling/daily_report/daily_report_slack.json
           done
 
       - name: Post results to Telegram
+        if: github.event_name == 'schedule' || inputs.slack_channel == 'prod'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ETHREX_CHAT_ID: ${{ secrets.TELEGRAM_ETHREX_CHAT_ID }}
         run: |
-          bash .github/scripts/publish_telegram.sh tooling/loc/loc_report_github.txt
-          bash .github/scripts/publish_telegram.sh tooling/performance_report/performance_report_github.txt
-          bash .github/scripts/publish_telegram.sh tooling/block_time_report/block_time_report_github.txt
+          bash .github/scripts/publish_telegram.sh tooling/daily_report/daily_report_github.txt

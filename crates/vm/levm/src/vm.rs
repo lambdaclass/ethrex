@@ -25,9 +25,10 @@ use ethrex_common::{
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use ethrex_crypto::Crypto;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     rc::Rc,
@@ -74,7 +75,7 @@ pub struct Substate {
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -88,7 +89,7 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
@@ -176,6 +177,10 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if self.selfdestruct_set.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -223,20 +228,31 @@ impl Substate {
             .collect()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        if self
+            .accessed_storage_slots
+            .get(&address)
+            .is_some_and(|set| set.contains(&key))
+        {
+            return false;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
             .unwrap_or_default();
 
-        is_present
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
+        !(is_present
             || !self
                 .accessed_storage_slots
                 .entry(address)
                 .or_default()
-                .insert(key)
+                .insert(key))
     }
 
     /// Return whether an address has already been accessed.
@@ -252,15 +268,41 @@ impl Substate {
                 .unwrap_or_default()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Returns all accessed storage slots for a given address.
+    /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
+    /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
+        let mut slots = BTreeSet::new();
+
+        // Collect from current substate
+        if let Some(slot_set) = self.accessed_storage_slots.get(address) {
+            slots.extend(slot_set.iter().copied());
+        }
+
+        // Collect from parent substates recursively
+        if let Some(parent) = self.parent.as_ref() {
+            slots.extend(parent.get_accessed_storage_slots(address));
+        }
+
+        slots
+    }
+
+    /// Mark an address as accessed and return whether the address was cold.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        if self.accessed_addresses.contains(&address) {
+            return false;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
             .unwrap_or_default();
 
-        is_present || !self.accessed_addresses.insert(address)
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
+        !(is_present || !self.accessed_addresses.insert(address))
     }
 
     /// Return whether an address has already been accessed.
@@ -275,6 +317,10 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if self.created_accounts.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -361,7 +407,7 @@ impl Substate {
 /// # Example
 ///
 /// ```ignore
-/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let mut vm = VM::new(env, db, &tx, tracer, vm_type, &NativeCrypto);
 /// let report = vm.execute()?;
 /// if report.is_success() {
 ///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
@@ -385,7 +431,7 @@ pub struct VM<'a> {
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    pub storage_original_values: FxHashMap<(Address, H256), U256>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Debug mode for development diagnostics.
@@ -394,8 +440,11 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
-    /// Opcode dispatch table, built dynamically per fork.
-    pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
+    /// Build dynamically according to the given fork config.
+    pub(crate) opcode_table: [OpCodeFn; 256],
+    /// Crypto provider for cryptographic operations.
+    pub crypto: &'a dyn Crypto,
 }
 
 impl<'a> VM<'a> {
@@ -405,6 +454,7 @@ impl<'a> VM<'a> {
         tx: &Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
+        crypto: &'a dyn Crypto,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -420,7 +470,7 @@ impl<'a> VM<'a> {
             db,
             tx: tx.clone(),
             hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            storage_original_values: FxHashMap::default(),
             tracer,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
@@ -444,6 +494,7 @@ impl<'a> VM<'a> {
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            crypto,
         };
 
         let call_type = if is_create {
@@ -485,6 +536,13 @@ impl<'a> VM<'a> {
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
 
+        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
+        // after prepare_execution (nonce increment, etc.) but before actual execution.
+        // When the top-level call fails, we restore to this checkpoint so that inner call
+        // state changes (like value transfers) are reverted from the BAL.
+        self.current_call_frame.call_frame_backup.bal_checkpoint =
+            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(context_result) = self.handle_create_transaction()? {
@@ -510,6 +568,7 @@ impl<'a> VM<'a> {
             return Ok(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
                 gas_used: self.current_call_frame.gas_limit,
+                gas_spent: self.current_call_frame.gas_limit,
                 output: Bytes::new(),
             });
         }
@@ -529,12 +588,16 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.db.store.precompile_cache(),
+                self.crypto,
             );
 
             call_frame.gas_remaining = gas_remaining as i64;
 
             return result;
         }
+
+        let mut error = OnceCell::<VMError>::new();
 
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
@@ -548,84 +611,7 @@ impl<'a> VM<'a> {
 
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = match opcode {
-                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
-                0x60 => self.op_push::<1>(),
-                0x61 => self.op_push::<2>(),
-                0x62 => self.op_push::<3>(),
-                0x63 => self.op_push::<4>(),
-                0x64 => self.op_push::<5>(),
-                0x65 => self.op_push::<6>(),
-                0x66 => self.op_push::<7>(),
-                0x67 => self.op_push::<8>(),
-                0x68 => self.op_push::<9>(),
-                0x69 => self.op_push::<10>(),
-                0x6a => self.op_push::<11>(),
-                0x6b => self.op_push::<12>(),
-                0x6c => self.op_push::<13>(),
-                0x6d => self.op_push::<14>(),
-                0x6e => self.op_push::<15>(),
-                0x6f => self.op_push::<16>(),
-                0x70 => self.op_push::<17>(),
-                0x71 => self.op_push::<18>(),
-                0x72 => self.op_push::<19>(),
-                0x73 => self.op_push::<20>(),
-                0x74 => self.op_push::<21>(),
-                0x75 => self.op_push::<22>(),
-                0x76 => self.op_push::<23>(),
-                0x77 => self.op_push::<24>(),
-                0x78 => self.op_push::<25>(),
-                0x79 => self.op_push::<26>(),
-                0x7a => self.op_push::<27>(),
-                0x7b => self.op_push::<28>(),
-                0x7c => self.op_push::<29>(),
-                0x7d => self.op_push::<30>(),
-                0x7e => self.op_push::<31>(),
-                0x7f => self.op_push::<32>(),
-                0x80 => self.op_dup::<0>(),
-                0x81 => self.op_dup::<1>(),
-                0x82 => self.op_dup::<2>(),
-                0x83 => self.op_dup::<3>(),
-                0x84 => self.op_dup::<4>(),
-                0x85 => self.op_dup::<5>(),
-                0x86 => self.op_dup::<6>(),
-                0x87 => self.op_dup::<7>(),
-                0x88 => self.op_dup::<8>(),
-                0x89 => self.op_dup::<9>(),
-                0x8a => self.op_dup::<10>(),
-                0x8b => self.op_dup::<11>(),
-                0x8c => self.op_dup::<12>(),
-                0x8d => self.op_dup::<13>(),
-                0x8e => self.op_dup::<14>(),
-                0x8f => self.op_dup::<15>(),
-                0x90 => self.op_swap::<1>(),
-                0x91 => self.op_swap::<2>(),
-                0x92 => self.op_swap::<3>(),
-                0x93 => self.op_swap::<4>(),
-                0x94 => self.op_swap::<5>(),
-                0x95 => self.op_swap::<6>(),
-                0x96 => self.op_swap::<7>(),
-                0x97 => self.op_swap::<8>(),
-                0x98 => self.op_swap::<9>(),
-                0x99 => self.op_swap::<10>(),
-                0x9a => self.op_swap::<11>(),
-                0x9b => self.op_swap::<12>(),
-                0x9c => self.op_swap::<13>(),
-                0x9d => self.op_swap::<14>(),
-                0x9e => self.op_swap::<15>(),
-                0x9f => self.op_swap::<16>(),
-                0x01 => self.op_add(),
-                0x39 => self.op_codecopy(),
-                0x51 => self.op_mload(),
-                0x56 => self.op_jump(),
-                0x57 => self.op_jumpi(),
-                0x5b => self.op_jumpdest(),
-                _ => {
-                    // Call the opcode, using the opcode function lookup table.
-                    // Indexing will not panic as all the opcode values fit within the table.
-                    self.opcode_table[opcode as usize].call(self)
-                }
-            };
+            let op_result = self.opcode_table[opcode as usize].call(self, &mut error);
 
             #[cfg(feature = "perf_opcode_timings")]
             {
@@ -634,9 +620,11 @@ impl<'a> VM<'a> {
             }
 
             let result = match op_result {
-                Ok(OpcodeResult::Continue) => continue,
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
-                Err(error) => self.handle_opcode_error(error)?,
+                OpcodeResult::Continue => continue,
+                OpcodeResult::Halt => match error.take() {
+                    None => self.handle_opcode_result()?,
+                    Some(error) => self.handle_opcode_error(error)?,
+                },
             };
 
             // Return the ExecutionReport if the executed callframe was the first one.
@@ -657,11 +645,18 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        cache: Option<&precompiles::PrecompileCache>,
+        crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
-        let execute_precompile = precompiles::execute_precompile;
-
         Self::handle_precompile_result(
-            execute_precompile(code_address, calldata, gas_remaining, fork),
+            precompiles::execute_precompile(
+                code_address,
+                calldata,
+                gas_remaining,
+                fork,
+                cache,
+                crypto,
+            ),
             gas_limit,
             *gas_remaining,
         )
@@ -701,12 +696,21 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(&ctx_result, true)?;
 
+        // Only include logs if transaction succeeded. When a transaction reverts,
+        // no logs should be emitted (including EIP-7708 Transfer logs).
+        let logs = if ctx_result.is_success() {
+            self.substate.extract_logs()
+        } else {
+            Vec::new()
+        };
+
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
+            gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.extract_logs(),
+            logs,
         };
 
         Ok(report)
@@ -718,7 +722,8 @@ impl Substate {
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
+            FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);

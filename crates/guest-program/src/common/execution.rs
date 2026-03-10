@@ -1,7 +1,8 @@
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{Block, Receipt};
+use ethrex_common::types::{Block, Receipt, validate_block_body};
 use ethrex_common::{
-    H256, U256, validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
+    H256, U256, validate_block_pre_execution, validate_gas_used, validate_receipts_root,
+    validate_requests_hash,
 };
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 
@@ -99,9 +100,15 @@ where
     let mut non_privileged_count: usize = 0;
 
     for (i, block) in blocks.iter().enumerate() {
-        // Validate the block
-        report_cycles("validate_block", || {
-            validate_block(
+        // Validate that the block header and body match (transactions root, withdrawals root)
+        report_cycles("validate_block_body", || {
+            validate_block_body(&block.header, &block.body)
+                .map_err(ExecutionError::BlockBodyValidation)
+        })?;
+
+        // Validate the block header pre-execution
+        report_cycles("validate_block_pre_execution", || {
+            validate_block_pre_execution(
                 block,
                 parent_block_header,
                 &chain_config,
@@ -114,11 +121,12 @@ where
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
 
         // Execute block
-        let result = report_cycles("execute_block", || {
+        let (result, _bal) = report_cycles("execute_block", || {
             vm.execute_block(block).map_err(ExecutionError::Evm)
         })?;
 
         let receipts = result.receipts;
+        let block_gas_used = result.block_gas_used;
 
         let account_updates = report_cycles("get_state_transitions", || {
             vm.get_state_transitions().map_err(ExecutionError::Evm)
@@ -142,7 +150,7 @@ where
 
         // Validate gas and receipts
         report_cycles("validate_gas_and_receipts", || {
-            validate_gas_used(&receipts, &block.header).map_err(ExecutionError::GasValidation)
+            validate_gas_used(block_gas_used, &block.header).map_err(ExecutionError::GasValidation)
         })?;
 
         report_cycles("validate_receipts_root", || {

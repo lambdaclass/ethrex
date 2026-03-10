@@ -16,6 +16,7 @@ use ethrex_common::{
         Account, BlockHeader, Fork, LegacyTransaction, Transaction, TxKind, fee_config::FeeConfig,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment, db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM,
     vm::VMType,
@@ -69,6 +70,7 @@ fn create_legacy_tx(nonce: u64, gas: u64, to: Address, value: U256, data: Bytes)
         r: U256::zero(),
         s: U256::zero(),
         inner_hash: OnceCell::new(),
+        sender_cache: OnceCell::new(),
     })
 }
 
@@ -121,6 +123,7 @@ fn test_privileged_tx_to_precompile_with_insufficient_gas_fails_gracefully() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(FeeConfig::default()),
+        &NativeCrypto,
     )
     .expect("Failed to create VM");
 
@@ -176,6 +179,7 @@ fn test_privileged_tx_to_precompile_with_sufficient_gas_succeeds() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(FeeConfig::default()),
+        &NativeCrypto,
     )
     .expect("Failed to create VM");
 
@@ -227,6 +231,7 @@ fn test_negative_gas_remaining_causes_immediate_failure() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(FeeConfig::default()),
+        &NativeCrypto,
     )
     .expect("Failed to create VM");
 
