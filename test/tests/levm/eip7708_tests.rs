@@ -19,6 +19,7 @@ use ethrex_common::{
         Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     constants::{BURN_EVENT_TOPIC, TRANSFER_EVENT_TOPIC},
     db::{Database, gen_db::GeneralizedDatabase},
@@ -213,7 +214,15 @@ impl TestBuilder {
             ..Default::default()
         });
 
-        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1).unwrap();
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .unwrap();
         vm.execute().unwrap()
     }
 }

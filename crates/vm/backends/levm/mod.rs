@@ -25,6 +25,7 @@ use ethrex_common::{
     },
     validate_block_access_list_size, validate_header_bal_indices,
 };
+use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
@@ -96,6 +97,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -107,7 +109,7 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        Self::prepare_block(block, db, vm_type)?;
+        Self::prepare_block(block, db, vm_type, crypto)?;
 
         let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
@@ -118,9 +120,12 @@ impl LEVM {
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
         let transactions_with_sender =
-            block.body.get_transactions_with_sender().map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+            block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
@@ -139,7 +144,7 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type)?;
+            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
             // EIP-7778: Separate gas tracking
             // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
@@ -191,7 +196,7 @@ impl LEVM {
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
 
@@ -218,15 +223,19 @@ impl LEVM {
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
+        crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
 
         let transactions_with_sender =
-            block.body.get_transactions_with_sender().map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
+            block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
 
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
@@ -239,7 +248,7 @@ impl LEVM {
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             // No BAL recording needed: we have the header BAL, not building a new one
-            Self::prepare_block(block, db, vm_type)?;
+            Self::prepare_block(block, db, vm_type, crypto)?;
 
             // Drain system call state and snapshot for per-tx db seeding
             LEVM::get_state_transitions_tx(db)?;
@@ -254,6 +263,7 @@ impl LEVM {
                 &merkleizer,
                 queue_length,
                 system_seed,
+                crypto,
             );
 
             // If parallel execution failed (e.g. BAL validation), still check system
@@ -269,7 +279,9 @@ impl LEVM {
                         if Self::seed_db_from_bal(db, bal, last_tx_idx).is_ok() {
                             if let VMType::L1 = vm_type {
                                 if let Err(e @ EvmError::SystemContractCallFailed(_)) =
-                                    extract_all_requests_levm(&[], db, &block.header, vm_type)
+                                    extract_all_requests_levm(
+                                        &[], db, &block.header, vm_type, crypto,
+                                    )
                                 {
                                     return Err(e);
                                 }
@@ -289,7 +301,9 @@ impl LEVM {
 
             // Order must match geth: requests (system calls) BEFORE withdrawals.
             let requests = match vm_type {
-                VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+                VMType::L1 => {
+                    extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
+                }
                 VMType::L2(_) => Default::default(),
             };
 
@@ -363,7 +377,7 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        Self::prepare_block(block, db, vm_type)?;
+        Self::prepare_block(block, db, vm_type, crypto)?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -404,6 +418,7 @@ impl LEVM {
                 vm_type,
                 &mut shared_stack_pool,
                 false,
+                crypto,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -474,7 +489,7 @@ impl LEVM {
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
-            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type)?,
+            VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
 
@@ -780,6 +795,7 @@ impl LEVM {
         merkleizer: &Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
+        crypto: &dyn Crypto,
     ) -> Result<
         (
             Vec<Receipt>,
@@ -885,6 +901,7 @@ impl LEVM {
                     vm_type,
                     &mut stack_pool,
                     false,
+                    crypto,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1527,12 +1544,16 @@ impl LEVM {
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        let txs_with_sender = block.body.get_transactions_with_sender().map_err(|error| {
-            EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-        })?;
+        let txs_with_sender = block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
 
         // Group transactions by sender for sequential execution within groups
         let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
@@ -1557,6 +1578,7 @@ impl LEVM {
                         vm_type,
                         stack_pool,
                         true,
+                        crypto,
                     );
                 }
             },
@@ -1711,14 +1733,16 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         vm.execute().map_err(VMError::into)
     }
 
     // Like execute_tx but allows reusing the stack pool
+    #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
@@ -1730,10 +1754,11 @@ impl LEVM {
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let result = vm.execute().map_err(VMError::into);
@@ -1753,6 +1778,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
@@ -1760,7 +1786,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -1811,6 +1837,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1829,6 +1856,7 @@ impl LEVM {
             BEACON_ROOTS_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
         Ok(())
     }
@@ -1837,6 +1865,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1851,6 +1880,7 @@ impl LEVM {
             HISTORY_STORAGE_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
         Ok(())
     }
@@ -1858,6 +1888,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1872,6 +1903,7 @@ impl LEVM {
             WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
 
         match report.result {
@@ -1887,6 +1919,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
         if let VMType::L2(_) = vm_type {
             return Err(EvmError::InvalidEVM(
@@ -1901,6 +1934,7 @@ impl LEVM {
             CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
             SYSTEM_ADDRESS,
             vm_type,
+            crypto,
         )?;
 
         match report.result {
@@ -1917,18 +1951,19 @@ impl LEVM {
         header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env, db, vm_type)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto)?;
 
         let report = vm.stateless_execute()?;
 
@@ -1945,6 +1980,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
@@ -1956,12 +1992,12 @@ impl LEVM {
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            Self::beacon_root_contract_call(block_header, db, vm_type)?;
+            Self::beacon_root_contract_call(block_header, db, vm_type, crypto)?;
         }
 
         if fork >= Fork::Prague {
             //eip 2935: stores parent block hash in system contract
-            Self::process_block_hash_history(block_header, db, vm_type)?;
+            Self::process_block_hash_history(block_header, db, vm_type, crypto)?;
         }
         Ok(())
     }
@@ -1974,6 +2010,7 @@ pub fn generic_system_contract_levm(
     contract_address: Address,
     system_address: Address,
     vm_type: VMType,
+    crypto: &dyn Crypto,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -2026,7 +2063,7 @@ pub fn generic_system_contract_levm(
         recorder.enter_system_call();
     }
 
-    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type)
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
         .and_then(|mut vm| vm.execute())
         .map_err(EvmError::from);
 
@@ -2063,6 +2100,7 @@ pub fn extract_all_requests_levm(
     db: &mut GeneralizedDatabase,
     header: &BlockHeader,
     vm_type: VMType,
+    crypto: &dyn Crypto,
 ) -> Result<Vec<Requests>, EvmError> {
     if let VMType::L2(_) = vm_type {
         return Err(EvmError::InvalidEVM(
@@ -2077,12 +2115,13 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
-    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type)?
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type, crypto)?
         .output
         .into();
-    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db, vm_type)?
-        .output
-        .into();
+    let consolidation_data: Vec<u8> =
+        LEVM::dequeue_consolidation_requests(header, db, vm_type, crypto)?
+            .output
+            .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts)
         .ok_or(EvmError::InvalidDepositRequest)?;
@@ -2231,6 +2270,7 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
+    crypto: &'a dyn Crypto,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -2267,7 +2307,7 @@ fn vm_from_generic<'a>(
     };
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

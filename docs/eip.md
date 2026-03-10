@@ -7,7 +7,7 @@ This document tracks which eips we support for each hard fork.
 | Number | Title | Description | Status | devnet-bal | Supported |
 |--------|-------|-------------|--------|------------|-----------|
 | [7928](https://eips.ethereum.org/EIPS/eip-7928) | Block-Level Access Lists | Record all accessed accounts and storage slots during block execution | SFI | [x] | [x] |
-| [7708](https://eips.ethereum.org/EIPS/eip-7708) | ETH Transfers Emit a Log | All ETH transfers and burns emit Transfer/Burn logs automatically | CFI | [x] | [x] |
+| [7708](https://eips.ethereum.org/EIPS/eip-7708) | ETH Transfers Emit a Log | All ETH transfers emit Transfer/Burn logs automatically | CFI | [x] | [x] |
 | [7778](https://eips.ethereum.org/EIPS/eip-7778) | Block Gas Accounting without Refunds | Gas refunds no longer reduce block gas accounting | CFI | [x] | [x] |
 | [7843](https://eips.ethereum.org/EIPS/eip-7843) | SLOTNUM Opcode | New opcode (0x4b) returning beacon chain slot number | CFI | [x] | [x] |
 | [8024](https://eips.ethereum.org/EIPS/eip-8024) | Backward Compatible SWAPN, DUPN, EXCHANGE | New opcodes for deeper stack access (0xe6, 0xe7, 0xe8) | CFI | [x] | [x] |
@@ -17,7 +17,7 @@ This document tracks which eips we support for each hard fork.
 | [7976](https://eips.ethereum.org/EIPS/eip-7976) | Increase Calldata Floor Cost | Raise floor cost to 15/60 gas per zero/non-zero byte | CFI | [ ] | [ ] |
 | [7981](https://eips.ethereum.org/EIPS/eip-7981) | Increase Access List Cost | Additional data cost for access list entries | CFI | [ ] | [ ] |
 | [7997](https://eips.ethereum.org/EIPS/eip-7997) | Deterministic Factory Predeploy | System contract for deterministic CREATE2 deployments | CFI | [ ] | [ ] |
-| [8037](https://eips.ethereum.org/EIPS/eip-8037) | State Creation Gas Cost Increase | Higher gas for state-creating operations | CFI | [ ] | [ ] |
+| [8037](https://eips.ethereum.org/EIPS/eip-8037) | State Creation Gas Cost Increase | Higher gas for state-creating operations (reservoir model) | CFI | [x] | [x] |
 | [8038](https://eips.ethereum.org/EIPS/eip-8038) | State-Access Gas Cost Update | Updated gas costs for SSTORE, SLOAD, and account access | CFI | [ ] | [ ] |
 | [8070](https://eips.ethereum.org/EIPS/eip-8070) | Sparse Blobpool | Custody-aligned sampling to reduce blob bandwidth | CFI | [ ] | [ ] |
 | [7610](https://eips.ethereum.org/EIPS/eip-7610) | Revert Creation in Case of Non-empty Storage | Prevent contract creation at addresses with existing storage | PFI | [ ] | [ ] |
