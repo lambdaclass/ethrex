@@ -84,6 +84,29 @@ jobs:
           projectPath: crates/desktop-app/ui
           args: --target ${{ matrix.target }}
 
+      - name: Codesign native node modules in bundle (macOS)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          APP_PATH=$(find crates/desktop-app/ui/src-tauri/target/${{ matrix.target }}/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          if [ -z "$APP_PATH" ]; then echo "No .app found"; exit 0; fi
+          echo "Signing native modules in: $APP_PATH"
+          # Sign all .node native addons (e.g. better-sqlite3)
+          find "$APP_PATH/Contents/Resources" -name "*.node" -type f | while read f; do
+            echo "  Signing: $f"
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$f"
+          done
+          # Re-sign the entire app to update the seal
+          codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime "$APP_PATH"
+          echo "Done. Re-creating DMG..."
+          # Re-create DMG with the re-signed app
+          DMG_PATH=$(find crates/desktop-app/ui/src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name "*.dmg" -maxdepth 1 | head -1)
+          if [ -n "$DMG_PATH" ]; then
+            VOLUME_NAME=$(basename "$APP_PATH" .app)
+            hdiutil create -volname "$VOLUME_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH"
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
