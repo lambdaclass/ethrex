@@ -1,11 +1,12 @@
 use bytes::Bytes;
 use ethrex_common::types::Fork;
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::precompiles::ecpairing;
 
 fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
     let calldata = Bytes::from(hex::decode(calldata).unwrap());
     let expected_output = Bytes::from(hex::decode(expected_output).unwrap());
-    let output = ecpairing(&calldata, &mut gas, Fork::Cancun).unwrap();
+    let output = ecpairing(&calldata, &mut gas, Fork::Cancun, &NativeCrypto).unwrap();
     assert_eq!(output, expected_output);
     assert_eq!(gas, 0);
 }
@@ -145,7 +146,7 @@ fn test_ec_pairing_coordinate_out_of_bounds() {
     let calldata = Bytes::from(hex::decode("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd4830644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd49198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa").unwrap());
     let mut gas_remaining = u64::MAX;
     assert_eq!(
-        ecpairing(&calldata, &mut gas_remaining, Fork::Cancun),
+        ecpairing(&calldata, &mut gas_remaining, Fork::Cancun, &NativeCrypto),
         Err(PrecompileError::CoordinateExceedsFieldModulus.into())
     );
 }
