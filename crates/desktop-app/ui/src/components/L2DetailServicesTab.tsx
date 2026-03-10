@@ -52,11 +52,14 @@ interface Props {
   handleAction: (action: 'start' | 'stop') => void
   onRefresh?: () => void
   onRetry?: () => void
+  l1ChainId?: number
+  l2ChainId?: number
+  onOpenManager?: () => void
 }
 
 export default function L2DetailServicesTab({
   l2, ko, containers, products, actionLoading, handleAction,
-  onRefresh, onRetry,
+  onRefresh, onRetry, l1ChainId, l2ChainId, onOpenManager,
 }: Props) {
   const [toolsLoading, setToolsLoading] = useState(false)
   const [bridgeConfig, setBridgeConfig] = useState<BridgeUIConfig | null>(null)
@@ -146,8 +149,20 @@ export default function L2DetailServicesTab({
     <>
       {/* Docker Services */}
       <div className="bg-[var(--color-bg-sidebar)] rounded-xl border border-[var(--color-border)] overflow-hidden">
-        <div className="px-3 pt-3 pb-1">
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between">
           <SectionHeader title={ko ? '서비스 상태' : 'Service Status'} />
+          {onOpenManager && (
+            <button
+              onClick={onOpenManager}
+              className="flex items-center gap-1 text-[10px] text-[#3b82f6] hover:opacity-70 cursor-pointer bg-transparent border-none"
+              title={ko ? '매니저에서 열기' : 'Open in Manager'}
+            >
+              {ko ? '매니저' : 'Manager'}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          )}
         </div>
         {/* Core */}
         <div className="px-3 pb-1">
@@ -161,6 +176,7 @@ export default function L2DetailServicesTab({
                 <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#3b82f6' }} />
                 <span className="text-[12px] font-medium flex-shrink-0">L1 ({testnetNetworkName})</span>
                 <span className="text-[11px] text-[#2563eb]">external</span>
+                {l1ChainId ? <code className="text-[10px] font-mono text-[var(--color-text-secondary)]">ID: {l1ChainId}</code> : null}
                 {l2.testnetL1RpcUrl && (
                   <code className="text-[10px] font-mono text-[var(--color-text-secondary)] ml-auto truncate max-w-[180px]" title={maskRpcUrl(l2.testnetL1RpcUrl)}>
                     {maskRpcUrl(l2.testnetL1RpcUrl).replace(/^https?:\/\//, '').slice(0, 30)}
@@ -173,11 +189,13 @@ export default function L2DetailServicesTab({
           const running = state === 'running'
           const port = svc.portKey ? (l2[svc.portKey] ? `:${l2[svc.portKey]}` : null) : null
           const displayPort = port || svcPort(svc.service)
+          const chainId = svc.service === 'tokamak-app-l1' ? l1ChainId : svc.service === 'tokamak-app-l2' ? l2ChainId : undefined
           return (
             <div key={svc.service} className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]">
               <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor(state) }} />
               <span className="text-[12px] font-medium flex-shrink-0">{svc.label}</span>
               <span className={`text-[11px] ${running ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>{state}</span>
+              {running && chainId ? <code className="text-[10px] font-mono text-[var(--color-text-secondary)]">ID: {chainId}</code> : null}
               {displayPort && <code className="text-[10px] font-mono text-[#3b82f6] ml-auto">{displayPort}</code>}
             </div>
           )

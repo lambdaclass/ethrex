@@ -225,6 +225,10 @@
                   <button type="button" class="btn-secondary" onclick="saveTestnetSettings()" style="font-size:11px">💾 Save Settings</button>
                 </div>
                 <div id="testnet-save-status" style="font-size:11px;margin-bottom:4px"></div>
+                <label style="margin-bottom:8px">Etherscan API Key
+                  <input type="text" id="launch-testnet-etherscan-key" placeholder="(optional) For automatic contract verification">
+                  <p class="form-hint">If provided, deployed contracts will be automatically verified on Etherscan.</p>
+                </label>
               </div>
             </div>
 
@@ -260,7 +264,10 @@
         <div id="launch-step3" class="launch-step" style="display:none">
           <h2>Deploying Your L2</h2>
           <p class="step-desc" id="deploy-info-text"></p>
-          <div id="deploy-config-summary" class="config-summary" style="display:none"></div>
+          <details id="deploy-config-summary" class="config-summary" style="display:none" open>
+            <summary>Configuration</summary>
+            <div id="deploy-config-grid" class="config-grid"></div>
+          </details>
           <div class="deploy-card">
             <div class="elapsed-bar">
               <div>Total elapsed: <span class="time" id="deploy-elapsed">0s</span></div>
@@ -308,6 +315,7 @@
           <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">Logs</button>
           <button class="tab-btn" data-tab="config" onclick="switchTab('config')">Config</button>
         </div>
+        <div id="detail-error-msg" style="display:none;background:var(--red-50,#fef2f2);color:var(--red-700,#b91c1c);border:1px solid var(--red-200,#fecaca);border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:12px"></div>
         <div class="detail-content">
           <div id="tab-overview" class="tab-panel active">
             <div id="container-cards"></div>
@@ -353,6 +361,17 @@
     </footer>
   </div>
 
-  <script src="/app.js?v=20"></script>
+  <!-- Confirm Dialog -->
+  <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--bg-card,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:24px;max-width:360px;width:90%;text-align:center">
+      <p id="confirm-msg" style="margin:0 0 20px;color:var(--text,#e0e0e0);font-size:14px;line-height:1.5"></p>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="confirm-cancel" style="padding:8px 20px;border-radius:8px;border:1px solid var(--border,#444);background:transparent;color:var(--text,#ccc);cursor:pointer">Cancel</button>
+        <button id="confirm-ok" style="padding:8px 20px;border-radius:8px;border:none;background:#e53935;color:#fff;cursor:pointer;font-weight:600">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=30"></script>
 </body>
 </html>

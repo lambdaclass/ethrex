@@ -603,12 +603,22 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
    ============================================================ */
 .config-summary {
   background: var(--blue-50, #eff6ff); border: 1px solid var(--blue-200, #bfdbfe);
-  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; font-size: 12px;
+  border-radius: var(--radius); padding: 0; margin-bottom: 12px; font-size: 12px;
 }
-.config-summary table { width: 100%; border-collapse: collapse; }
-.config-summary td { padding: 2px 8px 2px 0; vertical-align: top; }
-.config-summary td:first-child { color: var(--text-secondary); white-space: nowrap; width: 120px; }
-.config-summary td:last-child { color: var(--text-primary); word-break: break-all; }
+.config-summary summary {
+  padding: 8px 16px; cursor: pointer; font-weight: 600; color: var(--text-secondary);
+  user-select: none; list-style: none; display: flex; align-items: center; gap: 6px;
+}
+.config-summary summary::-webkit-details-marker { display: none; }
+.config-summary summary::before { content: '▸'; font-size: 10px; transition: transform 0.15s; }
+.config-summary[open] summary::before { transform: rotate(90deg); }
+.config-summary .config-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px 24px;
+  padding: 0 16px 10px; line-height: 1.6;
+}
+.config-summary .config-item { display: flex; gap: 6px; }
+.config-summary .config-label { color: var(--text-secondary); white-space: nowrap; min-width: 90px; }
+.config-summary .config-value { color: var(--text-primary); word-break: break-all; }
 .deploy-card {
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 24px; background: var(--bg-card);

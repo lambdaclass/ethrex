@@ -442,8 +442,8 @@
     <div class="nav-links">
       <a href="/">Dashboard</a>
       <a href="/bridge.html">Bridge</a>
-      <a href="http://localhost:8083" target="_blank" id="navL1Explorer">L1 Explorer</a>
-      <a href="http://localhost:8082" target="_blank" id="navL2Explorer">L2 Explorer</a>
+      <a href="#" target="_blank" id="navL1Explorer">L1 Explorer</a>
+      <a href="#" target="_blank" id="navL2Explorer">L2 Explorer</a>
     </div>
   </div>
 
@@ -607,8 +607,8 @@
     const commitEventCache = {};
     const verifyEventCache = {};
 
-    function getL1Explorer() { return CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083'; }
-    function getL2Explorer() { return CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082'; }
+    function getL1Explorer() { return CONFIG ? CONFIG.l1_explorer : ''; }
+    function getL2Explorer() { return CONFIG ? CONFIG.l2_explorer : ''; }
 
     function shortenAddr(addr) {
       if (!addr) return '?';
@@ -661,8 +661,8 @@
       }
 
       if (CONFIG) {
-        document.getElementById('navL1Explorer').href = CONFIG.l1_explorer || 'http://localhost:8083';
-        document.getElementById('navL2Explorer').href = CONFIG.l2_explorer || 'http://localhost:8082';
+        if (CONFIG.l1_explorer) document.getElementById('navL1Explorer').href = CONFIG.l1_explorer;
+        if (CONFIG.l2_explorer) document.getElementById('navL2Explorer').href = CONFIG.l2_explorer;
       }
 
       document.getElementById('loadingState').style.display = 'none';
@@ -670,8 +670,9 @@
     }
 
     function getProviders() {
-      const l1Rpc = CONFIG ? CONFIG.l1_rpc : 'http://localhost:8545';
-      const l2Rpc = CONFIG ? CONFIG.l2_rpc : 'http://localhost:1729';
+      const l1Rpc = CONFIG ? CONFIG.l1_rpc : null;
+      const l2Rpc = CONFIG ? CONFIG.l2_rpc : null;
+      if (!l1Rpc || !l2Rpc) { console.warn('Config not loaded, cannot create providers'); return { l1: null, l2: null }; }
       if (!l1Provider) l1Provider = new ethers.JsonRpcProvider(l1Rpc);
       if (!l2Provider) l2Provider = new ethers.JsonRpcProvider(l2Rpc);
       return { l1: l1Provider, l2: l2Provider };
@@ -710,6 +711,7 @@
     // ── Load all withdrawals ──
     async function loadWithdrawals() {
       const { l1, l2 } = getProviders();
+      if (!l1 || !l2) { console.warn('Providers not available, skipping withdrawal load'); return; }
 
       // Show loading only on first load
       if (allWithdrawals.length === 0) {

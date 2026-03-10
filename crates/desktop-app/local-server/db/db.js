@@ -27,6 +27,9 @@ const migrations = [
   "ALTER TABLE deployments ADD COLUMN hashtags TEXT",
   "ALTER TABLE deployments ADD COLUMN timelock_address TEXT",
   "ALTER TABLE deployments ADD COLUMN sp1_verifier_address TEXT",
+  "ALTER TABLE deployments ADD COLUMN ever_running INTEGER DEFAULT 0",
+  "ALTER TABLE deployments ADD COLUMN guest_program_registry_address TEXT",
+  "ALTER TABLE deployments ADD COLUMN verification_status TEXT",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { if (!e.message.includes('duplicate column name')) { console.error(`Migration failed for "${sql}":`, e); } }

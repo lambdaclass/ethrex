@@ -4,15 +4,13 @@ services:
   # ==========================================================================
   redis-db:
     image: 'redis:alpine'
-    container_name: zk-dex-tools-redis
     command: redis-server
     restart: unless-stopped
 
   db-init:
     image: postgres:17
-    container_name: zk-dex-tools-db-init
     volumes:
-      - zk-dex-tools-blockscout-db:/var/lib/postgresql/data
+      - blockscout-db:/var/lib/postgresql/data
     entrypoint:
       - sh
       - -c
@@ -24,7 +22,7 @@ services:
     user: 2000:2000
     shm_size: 256m
     restart: unless-stopped
-    container_name: zk-dex-tools-db
+
     command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
     environment:
       POSTGRES_DB: 'blockscout'
@@ -34,7 +32,7 @@ services:
       - target: 5432
         published: ${TOOLS_DB_PORT:-7432}
     volumes:
-      - zk-dex-tools-blockscout-db:/var/lib/postgresql/data
+      - blockscout-db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
       interval: 10s
@@ -60,7 +58,7 @@ services:
     links:
       - db:database
     stop_grace_period: 5m
-    container_name: zk-dex-tools-backend-l1
+
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
     extra_hosts:
       - 'host.docker.internal:host-gateway'
@@ -107,7 +105,7 @@ services:
   frontend-l1:
     image: ghcr.io/lambdaclass/frontend-private:test
     platform: linux/amd64
-    container_name: zk-dex-tools-frontend-l1
+
     depends_on:
       - backend-l1
     environment:
@@ -146,7 +144,7 @@ services:
     links:
       - db:database
     stop_grace_period: 5m
-    container_name: zk-dex-tools-backend-l2
+
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
     extra_hosts:
       - 'host.docker.internal:host-gateway'
@@ -193,7 +191,7 @@ services:
   frontend-l2:
     image: ghcr.io/lambdaclass/frontend-private:test
     platform: linux/amd64
-    container_name: zk-dex-tools-frontend-l2
+
     depends_on:
       - backend-l2
     environment:
@@ -222,7 +220,7 @@ services:
   # ==========================================================================
   proxy:
     image: nginx
-    container_name: zk-dex-tools-proxy
+
     depends_on:
       - backend-l1
       - frontend-l1
@@ -245,7 +243,7 @@ services:
   # ==========================================================================
   proxy-l2-only:
     image: nginx
-    container_name: zk-dex-tools-proxy-l2
+
     profiles:
       - external-l1
     depends_on:
@@ -266,14 +264,14 @@ services:
   # ==========================================================================
   function-selectors:
     image: postgres:17
-    container_name: zk-dex-tools-selectors
+
     depends_on:
       - backend-l1
       - backend-l2
     environment:
       POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     env_file:
-      - .zk-dex-deployed.env
+      - ${TOOLS_ENV_FILE:-.zk-dex-deployed.env}
     restart: "no"
     entrypoint:
       - sh
@@ -336,7 +334,7 @@ services:
   # ==========================================================================
   function-selectors-l2:
     image: postgres:17
-    container_name: zk-dex-tools-selectors-l2
+
     profiles:
       - external-l1
     depends_on:
@@ -347,7 +345,7 @@ services:
     environment:
       POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     env_file:
-      - .zk-dex-deployed.env
+      - ${TOOLS_ENV_FILE:-.zk-dex-deployed.env}
     restart: "no"
     entrypoint:
       - sh
@@ -385,10 +383,10 @@ services:
     build:
       context: ./tooling/bridge
       dockerfile: Dockerfile
-    container_name: zk-dex-tools-bridge-ui
+
     restart: unless-stopped
     env_file:
-      - .zk-dex-deployed.env
+      - ${TOOLS_ENV_FILE:-.zk-dex-deployed.env}
     environment:
       TOOLS_L1_RPC_PORT: ${TOOLS_L1_RPC_PORT:-8545}
       TOOLS_L2_RPC_PORT: ${TOOLS_L2_RPC_PORT:-1729}
@@ -518,4 +516,4 @@ configs:
       }
 
 volumes:
-  zk-dex-tools-blockscout-db:
+  blockscout-db:

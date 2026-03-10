@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   proposer_address TEXT,
   timelock_address TEXT,
   sp1_verifier_address TEXT,
+  guest_program_registry_address TEXT,
+  verification_status TEXT,
   error_message TEXT,
   tools_l1_explorer_port INTEGER,
   tools_l2_explorer_port INTEGER,
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   env_updated_at INTEGER,
   is_public INTEGER DEFAULT 0,
   hashtags TEXT,
+  ever_running INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 

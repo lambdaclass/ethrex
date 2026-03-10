@@ -25,11 +25,12 @@ function updateDeployment(id, fields) {
     "name", "chain_id", "rpc_url", "status", "config",
     "docker_project", "deploy_dir",
     "l1_port", "l2_port", "proof_coord_port",
-    "phase", "bridge_address", "proposer_address", "timelock_address", "sp1_verifier_address", "error_message",
+    "phase", "bridge_address", "proposer_address", "timelock_address", "sp1_verifier_address",
+    "guest_program_registry_address", "verification_status", "error_message",
     "host_id", "is_public",
     "tools_l1_explorer_port", "tools_l2_explorer_port",
     "tools_bridge_ui_port", "tools_db_port", "tools_metrics_port",
-    "env_project_id", "env_updated_at",
+    "env_project_id", "env_updated_at", "ever_running",
   ];
   const updates = [];
   const values = [];
