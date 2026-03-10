@@ -125,9 +125,9 @@ P2P options:
           [possible values: true, false]
 
       --p2p.discv5 <DISCV5_ENABLED>
-          Enable discv5 discovery (experimental).
+          Enable discv5 discovery.
 
-          [default: false]
+          [default: true]
           [possible values: true, false]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
