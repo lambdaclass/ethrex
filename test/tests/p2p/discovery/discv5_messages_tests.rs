@@ -222,8 +222,7 @@ fn encode_ping_handshake_packet() {
     let expected_read_key = hex!("4f9fac6de7567d1e3b1241dffe90f662");
     assert_eq!(session.outbound_key, expected_read_key);
 
-    let signature =
-        create_id_signature(&node_a_key, &challenge_data, &ephemeral_pubkey, &dest_id);
+    let signature = create_id_signature(&node_a_key, &challenge_data, &ephemeral_pubkey, &dest_id);
 
     let handshake = Handshake {
         src_id,
@@ -344,8 +343,7 @@ fn encode_ping_handshake_packet_with_enr() {
     let expected_read_key = hex!("53b1c075f41876423154e157470c2f48");
     assert_eq!(session.outbound_key, expected_read_key);
 
-    let signature =
-        create_id_signature(&node_a_key, &challenge_data, &ephemeral_pubkey, &dest_id);
+    let signature = create_id_signature(&node_a_key, &challenge_data, &ephemeral_pubkey, &dest_id);
 
     let sig = "17e1b073918da32d640642c762c0e2781698e4971f8ab39a77746adad83f01e76ffc874c5924808bbe7c50890882c2b8a01287a0b08312d1d53a17d517f5eb27";
     let key = "0313d14211e0287b2361a1615890a9b5212080546d0a257ae4cff96cf534992cb9";

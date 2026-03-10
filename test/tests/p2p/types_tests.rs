@@ -64,8 +64,8 @@ fn parse_node_from_enr_string() {
 async fn encode_node_record_to_enr_url() {
     // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
     let signer = SecretKey::from_slice(&[
-        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
-        87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194, 87,
+        139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
     ])
     .unwrap();
     let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
@@ -96,8 +96,8 @@ async fn encode_node_record_to_enr_url() {
 #[tokio::test]
 async fn encode_decode_node_record_with_forkid() {
     let signer = SecretKey::from_slice(&[
-        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
-        87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194, 87,
+        139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
     ])
     .unwrap();
     let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();

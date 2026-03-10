@@ -17,8 +17,7 @@ fn test_ack_decoding() {
     .unwrap();
 
     let expected_nonce_b =
-        H256::from_str("559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd")
-            .unwrap();
+        H256::from_str("559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd").unwrap();
     let expected_ephemeral_key_b = decompress_pubkey(
         &SecretKey::from_slice(&hex!(
             "e238eb8e04fee6511ab04c6dd3c89ce097b11f25d584863ac2b6d5b35b1847e4"
