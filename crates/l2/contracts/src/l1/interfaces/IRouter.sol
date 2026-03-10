@@ -54,26 +54,26 @@ interface IRouter {
 
     /// @notice Emitted when a message is sent to a chain that is not registered.
     /// @param chainId The ID of the chain that is not registered.
-    error TransferToChainNotRegistered(uint256 chainId);
+    error TransferToChainNotRegistered(uint256 chainId); // 0x6eadd702
 
     /// @notice Error indicating an invalid address was provided.
     /// @param addr The invalid address.
-    error InvalidAddress(address addr);
+    error InvalidAddress(address addr); // 0x8e4c8aa6
 
     /// @notice Error indicating a chain is already registered.
     /// @param chainId The ID of the already registered chain.
-    error ChainAlreadyRegistered(uint256 chainId);
+    error ChainAlreadyRegistered(uint256 chainId); // 0xfcd46323
 
     /// @notice Error indicating the caller is not a registered bridge.
     /// @param caller The address of the caller.
-    error CallerNotBridge(address caller);
+    error CallerNotBridge(address caller); // 0xa052cf8a
 
     /// @notice Error indicating the caller is not the authorized bridge for `senderChainId`.
     /// @param senderChainId The claimed source chain ID.
     /// @param caller The address of the caller.
-    error InvalidSender(uint256 senderChainId, address caller);
+    error InvalidSender(uint256 senderChainId, address caller); // 0x5bce1a02
 
     /// @notice Error indicating a chain is not registered.
     /// @param chainId The ID of the chain that is not registered.
-    error ChainNotRegistered(uint256 chainId);
+    error ChainNotRegistered(uint256 chainId); // 0xf25ca59c
 }
