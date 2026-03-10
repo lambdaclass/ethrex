@@ -410,6 +410,8 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // intrinsic regular gas or calldata floor exceeds the cap (no amount of gas_limit
     // can make the TX valid since excess gas_limit becomes state gas reservoir).
     // Must be checked before the floor check so the correct error is returned.
+    // NOTE: We use IntrinsicGasTooLow (not TxMaxGasLimitExceeded) intentionally —
+    // this matches the EELS exception mapping for this specific case.
     if vm.env.config.fork >= Fork::Amsterdam
         && regular_gas.max(floor_cost_by_tokens) > TX_MAX_GAS_LIMIT_AMSTERDAM
     {
