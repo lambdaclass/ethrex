@@ -3,8 +3,8 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
-  title: "Guest Program Store",
-  description: "Create and share Guest Programs for specialized L2s",
+  title: "Tokamak App Store",
+  description: "Create and share apps for specialized L2s",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

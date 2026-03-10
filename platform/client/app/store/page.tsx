@@ -32,7 +32,7 @@ export default function StorePage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-bold">Guest Program Store</h1>
+        <h1 className="text-3xl font-bold">Tokamak App Store</h1>
         <Link
           href="/creator/new"
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
@@ -74,7 +74,7 @@ export default function StorePage() {
           <p className="text-gray-400">
             Be the first to{" "}
             <Link href="/creator/new" className="text-blue-600 hover:underline">
-              create a Guest Program
+              create an app
             </Link>
           </p>
         </div>

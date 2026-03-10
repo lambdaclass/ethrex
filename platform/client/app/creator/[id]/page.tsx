@@ -247,7 +247,7 @@ export default function ProgramDetailPage() {
               </button>
               {!program.elf_hash && (
                 <p className="text-xs text-gray-400 self-center">
-                  Upload the compiled ELF binary for your guest program
+                  Upload the compiled ELF binary for your app
                 </p>
               )}
             </div>

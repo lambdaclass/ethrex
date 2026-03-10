@@ -16,7 +16,7 @@ export default function GuidePage() {
 
       <h1 className="text-3xl font-bold mb-2">L2 Launch Guide</h1>
       <p className="text-gray-600 mb-8">
-        How to run an ethrex L2 with a guest program.
+        How to run an ethrex L2 with an app.
       </p>
 
       {/* Prerequisites */}
@@ -43,7 +43,7 @@ cd ethrex`}
         </div>
 
         <div>
-          <p className="font-semibold text-gray-800 mb-1">2. Run with guest program</p>
+          <p className="font-semibold text-gray-800 mb-1">2. Run with app</p>
           <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 text-sm">
 {`# Default (evm-l2)
 make -C crates/l2 init-guest-program
@@ -80,7 +80,7 @@ make -C crates/l2 init-guest-program PROGRAM=zk-dex`}
 
       {/* Built-in Programs */}
       <div className="bg-white rounded-xl border p-6 mb-6">
-        <h2 className="font-bold mb-3">Built-in Guest Programs</h2>
+        <h2 className="font-bold mb-3">Built-in Apps</h2>
         <div className="text-sm space-y-2">
           <div className="flex justify-between items-center">
             <div>

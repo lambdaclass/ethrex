@@ -65,7 +65,7 @@ function LaunchPageContent() {
           <div className="w-10 h-10 mx-auto mb-3 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 font-bold">3</div>
           <h3 className="font-semibold mb-2">Browse Programs & Run</h3>
           <p className="text-sm text-gray-600">
-            Explore the Program Store for guest programs, deploy them on your chain, and start building.
+            Explore the App Store for apps, deploy them on your chain, and start building.
           </p>
         </div>
       </div>
@@ -114,7 +114,7 @@ function LaunchPageContent() {
             { title: "Process Lifecycle Management", desc: "Start, stop, and monitor your appchain processes with one click from the Desktop App." },
             { title: "Real-time Log Viewer", desc: "Watch runtime logs in real-time. Debug and monitor your appchain as it runs." },
             { title: "AI Pilot", desc: "AI-powered assistant that understands your appchain state. Get help with configuration, troubleshooting, and more." },
-            { title: "Program Store", desc: "Browse and deploy guest programs on your appchain. Extend functionality with community-built programs." },
+            { title: "App Store", desc: "Browse and deploy apps on your appchain. Extend functionality with community-built apps." },
             { title: "Open Appchain Registry", desc: "Publish your L2 to the Tokamak Open Appchain registry for others to discover and connect." },
           ].map(({ title, desc }) => (
             <div key={title} className="bg-white rounded-xl border p-5">

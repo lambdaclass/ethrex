@@ -17,11 +17,11 @@ export default function Home() {
       {/* Hero */}
       <div className="text-center mb-16">
         <h1 className="text-5xl font-bold text-gray-900 mb-4">
-          Guest Program Store
+          Tokamak App Store
         </h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
           Create your own circuits and contracts, share them with everyone.
-          Build specialized L2s with custom Guest Programs.
+          Build specialized L2s with custom apps.
         </p>
         <div className="mt-8 flex gap-4 justify-center">
           <Link
@@ -53,7 +53,7 @@ export default function Home() {
           </div>
           <h3 className="text-lg font-semibold mb-2">Create</h3>
           <p className="text-gray-600">
-            Build your contract + circuit as a Guest Program.
+            Build your contract + circuit as an app.
             Upload your ELF binary and verification key.
           </p>
         </div>
@@ -129,9 +129,9 @@ export default function Home() {
         <h2 className="text-2xl font-bold mb-6 text-center">Architecture</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div>
-            <h3 className="font-semibold text-lg mb-3">Guest Program Modularization</h3>
+            <h3 className="font-semibold text-lg mb-3">App Modularization</h3>
             <p className="text-gray-600 text-sm mb-4">
-              Each Guest Program is an independent circuit that runs inside a zkVM (SP1, RISC0).
+              Each app is an independent circuit that runs inside a zkVM (SP1, RISC0).
               The GuestProgram trait provides a pluggable abstraction so different L2
               applications can use different proving logic.
             </p>

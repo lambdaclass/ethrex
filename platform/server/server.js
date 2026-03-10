@@ -87,5 +87,5 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Guest Program Store server running on port ${PORT}`);
+  console.log(`Tokamak App Store server running on port ${PORT}`);
 });

@@ -2,7 +2,7 @@
   "name": "ethrex-platform-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Guest Program Store — Platform API Server",
+  "description": "Tokamak App Store — Platform API Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

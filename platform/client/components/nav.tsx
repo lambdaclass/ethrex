@@ -12,7 +12,7 @@ export function Nav() {
         <div className="flex justify-between h-16 items-center">
           <div className="flex items-center gap-8">
             <Link href="/" className="text-xl font-bold text-gray-900">
-              GP Store
+              Tokamak App Store
             </Link>
             <div className="flex gap-4">
               <Link href="/store" className="text-gray-600 hover:text-gray-900">
@@ -27,7 +27,7 @@ export function Nav() {
               {user && (
                 <>
                   <Link href="/creator" className="text-gray-600 hover:text-gray-900">
-                    My Programs
+                    My Apps
                   </Link>
                   <Link href="/deployments" className="text-gray-600 hover:text-gray-900">
                     My L2s

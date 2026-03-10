@@ -51,7 +51,7 @@ export default function NewProgramPage() {
       </Link>
 
       <div className="bg-white rounded-xl shadow-sm border p-8">
-        <h1 className="text-2xl font-bold mb-6">Create New Guest Program</h1>
+        <h1 className="text-2xl font-bold mb-6">Create New App</h1>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
@@ -113,7 +113,7 @@ export default function NewProgramPage() {
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe what your Guest Program does..."
+              placeholder="Describe what your app does..."
               rows={4}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
             />
