@@ -6,6 +6,13 @@ const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
 function getBlockscoutTxUrl(txHash: string): string {
   if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/tx/${txHash}`;
   const { hostname } = window.location;
+  // Convention: explorer lives at the hostname with ".explorer" inserted before the root domain
+  // e.g. demo.eip-8141.ethrex.xyz → demo.eip-8141.explorer.ethrex.xyz
+  const parts = hostname.split('.');
+  if (parts.length >= 3) {
+    parts.splice(-2, 0, 'explorer');
+    return `https://${parts.join('.')}/tx/${txHash}`;
+  }
   return `https://${hostname}:8083/tx/${txHash}`;
 }
 

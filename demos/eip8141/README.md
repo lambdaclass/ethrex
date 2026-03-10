@@ -30,7 +30,7 @@ Browser (React + WebAuthn)         http://localhost:5173
                                |
                                +---> ethrex node (eth_sendRawTransaction)
 
-Blockscout Explorer (optional)     https://localhost:8083
+Blockscout Explorer (optional)     https://localhost:8083 (local) or https://demo.eip-8141.explorer.ethrex.xyz (prod)
     |
     +-- indexes blocks ----> ethrex node
 ```
@@ -102,9 +102,9 @@ cp ethrex-blockscout/frontend/types/api/transaction.ts blockscout-frontend/types
 
 **For remote/HTTPS deployments**, edit `ethrex-blockscout/docker-compose/envs/common-frontend.env` and update the host/protocol settings:
 ```
-NEXT_PUBLIC_API_HOST=your-domain.com:8082
+NEXT_PUBLIC_API_HOST=demo.eip-8141.explorer.ethrex.xyz
 NEXT_PUBLIC_API_PROTOCOL=https
-NEXT_PUBLIC_APP_HOST=your-domain.com:8082
+NEXT_PUBLIC_APP_HOST=demo.eip-8141.explorer.ethrex.xyz
 NEXT_PUBLIC_APP_PROTOCOL=https
 NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=wss
 ```
