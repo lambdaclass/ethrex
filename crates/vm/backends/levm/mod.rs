@@ -245,17 +245,39 @@ impl LEVM {
             LEVM::get_state_transitions_tx(db)?;
             let system_seed = Arc::new(std::mem::take(&mut db.initial_accounts_state));
 
+            let parallel_result = Self::execute_block_parallel(
+                block,
+                &transactions_with_sender,
+                db,
+                vm_type,
+                bal,
+                &merkleizer,
+                queue_length,
+                system_seed,
+            );
+
+            // If parallel execution failed (e.g. BAL validation), still check system
+            // contracts — SystemContractCallFailed takes priority over BAL errors.
+            // The BAL may be inconsistent for blocks that are fundamentally invalid
+            // due to a failing system contract.
             let (receipts, block_gas_used, mut unread_storage_reads, mut unaccessed_pure_accounts) =
-                Self::execute_block_parallel(
-                    block,
-                    &transactions_with_sender,
-                    db,
-                    vm_type,
-                    bal,
-                    &merkleizer,
-                    queue_length,
-                    system_seed,
-                )?;
+                match parallel_result {
+                    Ok(result) => result,
+                    Err(parallel_err) => {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let last_tx_idx = block.body.transactions.len() as u16;
+                        if Self::seed_db_from_bal(db, bal, last_tx_idx).is_ok() {
+                            if let VMType::L1 = vm_type {
+                                if let Err(e @ EvmError::SystemContractCallFailed(_)) =
+                                    extract_all_requests_levm(&[], db, &block.header, vm_type)
+                                {
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        return Err(parallel_err);
+                    }
+                };
 
             // Seed main db with post-tx state (excluding withdrawal effects) so
             // request extraction system calls see user-queued requests on predeploys.
@@ -852,7 +874,8 @@ impl LEVM {
 
                 // Enable accessed_accounts tracker for BAL pure-access validation.
                 // Most txs touch sender + recipient + a few contracts; 16 avoids rehashing.
-                tx_db.accessed_accounts = Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
+                tx_db.accessed_accounts =
+                    Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
 
                 let report = LEVM::execute_tx_in_block(
                     tx,
