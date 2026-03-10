@@ -5,8 +5,8 @@ const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
 
 function getBlockscoutTxUrl(txHash: string): string {
   if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/tx/${txHash}`;
-  const { protocol, hostname } = window.location;
-  return `${protocol}//${hostname}:8082/tx/${txHash}`;
+  const { hostname } = window.location;
+  return `http://${hostname}:8082/tx/${txHash}`;
 }
 
 export default function TxResult({ result }: { result: TxResultType }) {
