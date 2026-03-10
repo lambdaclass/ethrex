@@ -156,17 +156,23 @@ fn finalize_non_privileged_execution(
 
     default_hook::delete_self_destruct_accounts(vm)?;
 
-    let fee_token_ratio: u64 = if let Some(cached) = cached_fee_token_ratio {
-        // Use the ratio cached during prepare to ensure consistency.
-        // Re-fetching here would read post-execution state, which the tx
-        // may have modified — leading to lock/settlement mismatches.
-        cached.try_into().map_err(|_| {
-            VMError::Internal(InternalError::Custom(
-                "Failed to convert fee token ratio".to_owned(),
-            ))
-        })?
-    } else {
-        1u64
+    let fee_token_ratio: u64 = match (cached_fee_token_ratio, use_fee_token) {
+        (Some(cached), _) => {
+            // Use the ratio cached during prepare to ensure consistency.
+            // Re-fetching here would read post-execution state, which the tx
+            // may have modified — leading to lock/settlement mismatches.
+            cached.try_into().map_err(|_| {
+                VMError::Internal(InternalError::Custom(
+                    "Failed to convert fee token ratio".to_owned(),
+                ))
+            })?
+        }
+        (None, true) => {
+            return Err(VMError::Internal(InternalError::Custom(
+                "use_fee_token is true but fee_token_ratio was not cached".to_owned(),
+            )));
+        }
+        (None, false) => 1u64,
     };
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {

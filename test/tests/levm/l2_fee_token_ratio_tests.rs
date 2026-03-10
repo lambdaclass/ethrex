@@ -15,14 +15,15 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        Transaction, TxKind,
-        fee_config::FeeConfig,
+        Transaction, TxKind, fee_config::FeeConfig,
     },
 };
 use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
-    hooks::l2_hook::{COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS},
+    hooks::l2_hook::{
+        COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS,
+    },
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -44,7 +45,10 @@ impl TestDatabase {
 }
 
 impl Database for TestDatabase {
-    fn get_account_state(&self, address: Address) -> Result<AccountState, ethrex_levm::errors::DatabaseError> {
+    fn get_account_state(
+        &self,
+        address: Address,
+    ) -> Result<AccountState, ethrex_levm::errors::DatabaseError> {
         Ok(self
             .accounts
             .get(&address)
@@ -57,7 +61,11 @@ impl Database for TestDatabase {
             .unwrap_or_default())
     }
 
-    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, ethrex_levm::errors::DatabaseError> {
+    fn get_storage_value(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, ethrex_levm::errors::DatabaseError> {
         Ok(self
             .accounts
             .get(&address)
@@ -65,7 +73,10 @@ impl Database for TestDatabase {
             .unwrap_or_default())
     }
 
-    fn get_block_hash(&self, _block_number: u64) -> Result<H256, ethrex_levm::errors::DatabaseError> {
+    fn get_block_hash(
+        &self,
+        _block_number: u64,
+    ) -> Result<H256, ethrex_levm::errors::DatabaseError> {
         Ok(H256::zero())
     }
 
@@ -73,7 +84,10 @@ impl Database for TestDatabase {
         Ok(ChainConfig::default())
     }
 
-    fn get_account_code(&self, code_hash: H256) -> Result<Code, ethrex_levm::errors::DatabaseError> {
+    fn get_account_code(
+        &self,
+        code_hash: H256,
+    ) -> Result<Code, ethrex_levm::errors::DatabaseError> {
         for acc in self.accounts.values() {
             if acc.info.code_hash == code_hash {
                 return Ok(acc.code.clone());
@@ -82,7 +96,10 @@ impl Database for TestDatabase {
         Ok(Code::default())
     }
 
-    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, ethrex_levm::errors::DatabaseError> {
+    fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<CodeMetadata, ethrex_levm::errors::DatabaseError> {
         for acc in self.accounts.values() {
             if acc.info.code_hash == code_hash {
                 return Ok(CodeMetadata {
@@ -256,13 +273,15 @@ fn fee_token_ratio_cached_between_prepare_and_finalize() {
     let mut db = TestDatabase::new();
 
     // Sender with enough ETH balance for gas and enough to pass checks
-    db.accounts.insert(sender, eoa(U256::from(10_000_000_000u64)));
+    db.accounts
+        .insert(sender, eoa(U256::from(10_000_000_000u64)));
 
     // Coinbase
     db.accounts.insert(coinbase, eoa(U256::zero()));
 
     // Fee token registry: always returns true
-    db.accounts.insert(FEE_TOKEN_REGISTRY_ADDRESS, contract(return_true_bytecode()));
+    db.accounts
+        .insert(FEE_TOKEN_REGISTRY_ADDRESS, contract(return_true_bytecode()));
 
     // Fee token ratio contract: returns slot 0 value (initially 2), can be modified
     db.accounts.insert(
@@ -271,13 +290,16 @@ fn fee_token_ratio_cached_between_prepare_and_finalize() {
     );
 
     // Fee token contract: no-op (always succeeds)
-    db.accounts.insert(fee_token_addr, contract(fee_token_bytecode()));
+    db.accounts
+        .insert(fee_token_addr, contract(fee_token_bytecode()));
 
     // The "to" contract: modifies ratio contract slot 0 to U256::MAX during execution
-    db.accounts.insert(to_addr, contract(ratio_modifier_bytecode()));
+    db.accounts
+        .insert(to_addr, contract(ratio_modifier_bytecode()));
 
     // Common bridge needs an account (used as origin in simulate_common_bridge_call)
-    db.accounts.insert(COMMON_BRIDGE_L2_ADDRESS, eoa(U256::from(10_000_000_000u64)));
+    db.accounts
+        .insert(COMMON_BRIDGE_L2_ADDRESS, eoa(U256::from(10_000_000_000u64)));
 
     let gas_limit: u64 = 100_000;
     let gas_price: u64 = 1000;
