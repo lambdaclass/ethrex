@@ -1512,7 +1512,9 @@ testAsync("isHealthy returns false for unreachable host", async () => {
           isPublic: true,
         });
         assert.ok(yaml.includes("0.0.0.0:1729:1729"), "L2 port should bind to 0.0.0.0");
-        assert.ok(yaml.includes("0.0.0.0:3900:3900"), "proof coord port should bind to 0.0.0.0");
+        // Proof coord and metrics are internal-only — always 127.0.0.1
+        assert.ok(yaml.includes("127.0.0.1:3900:3900"), "proof coord port should stay on 127.0.0.1");
+        assert.ok(yaml.includes("127.0.0.1:3702:3702"), "metrics port should stay on 127.0.0.1");
         // L1 should always stay on 127.0.0.1
         assert.ok(yaml.includes("127.0.0.1:8545:8545"), "L1 port should stay on 127.0.0.1");
       });

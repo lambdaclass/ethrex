@@ -90,6 +90,8 @@ function getAppProfile(programSlug) {
 function generateComposeFile(opts) {
   const { programSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName, gpu = false, dumpFixtures = false, isPublic = false } = opts;
   const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
+  // Proof coordinator and metrics are internal-only — never bind to 0.0.0.0
+  const internalBindAddr = '127.0.0.1';
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
@@ -229,8 +231,8 @@ ${deployerExtraEnv}    depends_on:
 ${buildSection}
     ports:
       - ${bindAddr}:${l2Port}:1729
-      - ${bindAddr}:${proofCoordPort}:3900
-      - ${bindAddr}:${metricsPort}:3702
+      - ${internalBindAddr}:${proofCoordPort}:3900
+      - ${internalBindAddr}:${metricsPort}:3702
     environment:
       - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
       - ETHREX_L2_VALIDIUM=false
@@ -480,6 +482,8 @@ function generateTestnetComposeFile(opts) {
     bridgeOwnerPk: bridgeOwnerPkOpt, isPublic = false,
   } = opts;
   const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
+  // Proof coordinator and metrics are internal-only — never bind to 0.0.0.0
+  const internalBindAddr = '127.0.0.1';
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
@@ -606,8 +610,8 @@ ${deployerExtraEnv}    entrypoint:
     image: "${l2Image}"
     ports:
       - ${bindAddr}:${l2Port}:1729
-      - ${bindAddr}:${proofCoordPort}:3900
-      - ${bindAddr}:${metricsPort}:3702
+      - ${internalBindAddr}:${proofCoordPort}:3900
+      - ${internalBindAddr}:${metricsPort}:3702
     environment:
       - ETHREX_ETH_RPC_URL=${l1RpcUrl}
       - ETHREX_L2_VALIDIUM=false
