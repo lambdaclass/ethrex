@@ -4,6 +4,32 @@ import { signChallenge } from '../lib/passkey';
 import * as api from '../lib/api';
 import type { TxResult as TxResultType } from '../lib/api';
 import TxResult from './TxResult';
+import FramePipeline from './FramePipeline';
+import type { FrameConfig, ExecutionState } from './FramePipeline';
+
+const FRAMES: FrameConfig[] = [
+  {
+    mode: 'VERIFY',
+    label: 'scope = 0',
+    target: 'account',
+    tooltip:
+      'Calls verify() on the account. Uses TXPARAMLOAD(0x08) for sig_hash, verifies signature, calls APPROVE(scope=0) — authorizes as sender only.',
+  },
+  {
+    mode: 'VERIFY',
+    label: 'scope = 1',
+    target: 'sponsor',
+    tooltip:
+      'Calls payForTransaction() on the sponsor. Calls APPROVE(scope=1) — authorizes gas payment from sponsor\'s balance.',
+  },
+  {
+    mode: 'SENDER',
+    label: 'execute()',
+    target: 'account',
+    tooltip:
+      'Calls execute(target, value, data) on the account. Routes the ERC20 transfer through the account\'s execution logic.',
+  },
+];
 
 interface Props {
   credential: StoredCredential;
@@ -68,70 +94,85 @@ export default function SponsoredSend({ credential }: Props) {
     }
   };
 
+  const executionState: ExecutionState = (() => {
+    if (error && !loading) return { phase: 'error' as const, errorFrameIndex: 2 };
+    if (!loading && history.length > 0 && history[0].success) return { phase: 'done' as const };
+    if (status === 'Building transaction...') return { phase: 'executing' as const, activeFrameIndex: 0 };
+    if (status === 'Sign with your passkey...') return { phase: 'executing' as const, activeFrameIndex: 1 };
+    if (status === 'Submitting transaction...') return { phase: 'executing' as const, activeFrameIndex: 2 };
+    return { phase: 'idle' as const };
+  })();
+
   return (
-    <div>
-      <h3 className="text-lg font-semibold text-zinc-100 mb-1">Sponsored ERC20 Send</h3>
-      <p className="text-sm text-zinc-500 mb-5">
-        Send ERC20 tokens without paying gas. A sponsor account covers the transaction fee via a frame transaction.
-      </p>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div>
+        <h3 className="text-lg font-semibold text-zinc-100 mb-1">Sponsored ERC20 Send</h3>
+        <p className="text-sm text-zinc-500 mb-5">
+          Send ERC20 tokens without paying gas. A sponsor account covers the transaction fee via a frame transaction.
+        </p>
 
-      <div className="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-3 py-2">
-        <span className="text-xs text-emerald-400">
-          Gas is paid by the backend sponsor account
-        </span>
+        <div className="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-3 py-2">
+          <span className="text-xs text-emerald-400">
+            Gas is paid by the backend sponsor account
+          </span>
+        </div>
+
+        {tokenBalance !== null && (
+          <div className="mb-4 text-xs text-zinc-400">
+            Token balance: <span className="font-mono text-zinc-200">{tokenBalance}</span> DEMO
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1.5">Recipient Address</label>
+            <input
+              type="text"
+              placeholder="0x..."
+              value={to}
+              onChange={e => setTo(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1.5">Amount (DEMO tokens)</label>
+            <input
+              type="text"
+              placeholder="100"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
+
+          <button
+            onClick={handleSend}
+            disabled={loading}
+            className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2.5 text-sm font-medium text-white transition-colors cursor-pointer"
+          >
+            {loading ? 'Processing...' : 'Send (Sponsored)'}
+          </button>
+        </div>
+
+        {status && (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-3 py-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-sm text-emerald-300">{status}</span>
+          </div>
+        )}
+        {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
+        {history.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Transaction History</h4>
+            {history.map((r, i) => <TxResult key={i} result={r} />)}
+          </div>
+        )}
       </div>
 
-      {tokenBalance !== null && (
-        <div className="mb-4 text-xs text-zinc-400">
-          Token balance: <span className="font-mono text-zinc-200">{tokenBalance}</span> DEMO
-        </div>
-      )}
-
-      <div className="space-y-4">
-        <div>
-          <label className="block text-xs text-zinc-400 mb-1.5">Recipient Address</label>
-          <input
-            type="text"
-            placeholder="0x..."
-            value={to}
-            onChange={e => setTo(e.target.value)}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs text-zinc-400 mb-1.5">Amount (DEMO tokens)</label>
-          <input
-            type="text"
-            placeholder="100"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-3 py-2 text-sm text-zinc-200 font-mono placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"
-          />
-        </div>
-
-        <button
-          onClick={handleSend}
-          disabled={loading}
-          className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2.5 text-sm font-medium text-white transition-colors cursor-pointer"
-        >
-          {loading ? 'Processing...' : 'Send (Sponsored)'}
-        </button>
+      <div className="lg:pt-10">
+        <FramePipeline frames={FRAMES} executionState={executionState} />
       </div>
-
-      {status && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/30 px-3 py-2">
-          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-sm text-emerald-300">{status}</span>
-        </div>
-      )}
-      {error && <p className="text-sm text-red-400 mt-3">{error}</p>}
-      {history.length > 0 && (
-        <div className="mt-6 space-y-2">
-          <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Transaction History</h4>
-          {history.map((r, i) => <TxResult key={i} result={r} />)}
-        </div>
-      )}
     </div>
   );
 }

@@ -30,7 +30,7 @@ export default function TabLayout({ credential }: Props) {
             onClick={() => setActive(tab.id)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors cursor-pointer ${
               active === tab.id
-                ? 'text-indigo-400 border-b-2 border-indigo-400 -mb-px'
+                ? 'text-indigo-300 border-b-2 border-indigo-500 -mb-px'
                 : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >

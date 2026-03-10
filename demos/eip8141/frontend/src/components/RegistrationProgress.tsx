@@ -7,13 +7,13 @@ const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
 function getBlockscoutTxUrl(txHash: string): string {
   if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/tx/${txHash}`;
   const { hostname } = window.location;
-  return `http://${hostname}:8082/tx/${txHash}`;
+  return `https://${hostname}:8083/tx/${txHash}`;
 }
 
 function getBlockscoutAddressUrl(address: string): string {
   if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/address/${address}`;
   const { hostname } = window.location;
-  return `http://${hostname}:8082/address/${address}`;
+  return `https://${hostname}:8083/address/${address}`;
 }
 
 type StepId = 'passkey' | 'deploy' | 'fund' | 'mint';

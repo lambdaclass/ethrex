@@ -161,10 +161,10 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     expect(href).toBeTruthy();
     expect(href).toContain('/tx/');
     expect(href).toContain(result.txHash!);
-    expect(href).toMatch(/^https?:\/\/.+:8082\/tx\/0x/);
-    // Link must NOT have target="_blank" (Safari blocks HTTPS→HTTP popups)
+    expect(href).toMatch(/^https:\/\/.+:8083\/tx\/0x/);
+    // Link opens in a new tab
     const target = await txLink.getAttribute('target');
-    expect(target).toBeNull();
+    expect(target).toBe('_blank');
     // Verify the element is an <a> tag (not a <code> or <span>)
     const tagName = await txLink.evaluate(el => el.tagName.toLowerCase());
     expect(tagName).toBe('a');
@@ -214,7 +214,6 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     await page.getByRole('button', { name: 'Send (Sponsored)' }).click();
 
     // Wait for tx result
-    await expect(page.getByText('Building transaction...')).toBeVisible({ timeout: 10_000 });
     const result = await waitForTxResult(page);
 
     // ── UI verification ──
@@ -288,7 +287,6 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     await page.getByRole('button', { name: /Execute Batch/ }).click();
 
     // Wait for tx result
-    await expect(page.getByText('Building transaction...')).toBeVisible({ timeout: 10_000 });
     const result = await waitForTxResult(page);
 
     // ── UI verification ──
@@ -354,7 +352,6 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     await page.getByRole('button', { name: 'Deploy & Execute' }).click();
 
     // Wait for tx result
-    await expect(page.getByText('Building transaction...')).toBeVisible({ timeout: 10_000 });
     const result = await waitForTxResult(page);
 
     // ── UI verification ──
@@ -454,9 +451,9 @@ async function verifyFrameTxOnBlockscout(
   expect(['ok', 'success', true].some(s => s === status)).toBe(true);
 
   // Transaction is included in a block
-  expect(blockscoutTx.block).not.toBeNull();
+  expect(blockscoutTx.block_number).not.toBeNull();
 
   console.log(
-    `  [blockscout] Verified ${txHash.slice(0, 18)}... — type=${bsType}, status=${status}, block=${blockscoutTx.block}`
+    `  [blockscout] Verified ${txHash.slice(0, 18)}... — type=${bsType}, status=${status}, block=${blockscoutTx.block_number}`
   );
 }

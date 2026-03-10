@@ -6,7 +6,7 @@ const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
 function getBlockscoutTxUrl(txHash: string): string {
   if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/tx/${txHash}`;
   const { hostname } = window.location;
-  return `http://${hostname}:8082/tx/${txHash}`;
+  return `https://${hostname}:8083/tx/${txHash}`;
 }
 
 export default function TxResult({ result }: { result: TxResultType }) {
@@ -24,7 +24,7 @@ export default function TxResult({ result }: { result: TxResultType }) {
 
   return (
     <div
-      className={`mt-4 rounded-lg border p-4 ${
+      className={`mt-4 rounded-lg border p-4 shadow-lg shadow-zinc-950/50 ${
         result.success
           ? 'border-emerald-500/30 bg-emerald-950/30'
           : 'border-red-500/30 bg-red-950/30'
@@ -47,6 +47,7 @@ export default function TxResult({ result }: { result: TxResultType }) {
           {txUrl ? (
             <a
               href={txUrl}
+              target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-blue-400 hover:text-blue-300 font-mono truncate max-w-[360px] underline underline-offset-2"
             >

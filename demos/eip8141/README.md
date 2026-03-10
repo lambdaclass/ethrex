@@ -30,7 +30,7 @@ Browser (React + WebAuthn)         http://localhost:5173
                                |
                                +---> ethrex node (eth_sendRawTransaction)
 
-Blockscout Explorer (optional)     http://localhost:8082
+Blockscout Explorer (optional)     https://localhost:8083
     |
     +-- indexes blocks ----> ethrex node
 ```
@@ -80,7 +80,7 @@ cd demos/eip8141
 make start-frontend
 ```
 
-Starts the React frontend (Vite) on port 5173. Open **http://localhost:5173** in your browser. Transaction hashes automatically link to Blockscout at `http://<hostname>:8082`. To override, set `VITE_BLOCKSCOUT_URL` in `frontend/.env`.
+Starts the React frontend (Vite) on HTTPS port 5173. Open **https://localhost:5173** in your browser. Transaction hashes automatically link to Blockscout at `https://<hostname>:8083`. To override, set `VITE_BLOCKSCOUT_URL` in `frontend/.env`.
 
 ### Terminal 4: Blockscout (optional)
 
@@ -115,7 +115,14 @@ cd ethrex-blockscout
 docker compose -f docker-compose/docker-compose.yml up -d --build
 ```
 
-First run pulls images and builds backend + frontend (~10 min). The Docker build requires **8 GB+ RAM** (or swap) for the Next.js frontend compilation. Subsequent starts are fast. Open **http://localhost:8082** once the containers are up. Frame transactions show a **Frames** tab on the transaction detail page.
+First run pulls images and builds backend + frontend (~10 min). The Docker build requires **8 GB+ RAM** (or swap) for the Next.js frontend compilation. Subsequent starts are fast. Open **https://localhost:8083** once the containers are up. Frame transactions show a **Frames** tab on the transaction detail page.
+
+The nginx proxy serves HTTPS on port 8083 using a self-signed certificate. To avoid browser warnings, trust the cert in your OS keychain:
+```bash
+# macOS
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
+  ethrex-blockscout/docker-compose/proxy/certs/selfsigned.crt
+```
 
 To check status:
 ```bash
@@ -212,7 +219,7 @@ The Yul contracts (GasSponsor, WebAuthnP256Account) use `verbatim` custom opcode
 
 | Service | Port | Description |
 |---------|------|-------------|
-| Blockscout frontend (nginx) | 8082 | Web UI |
+| Blockscout frontend (nginx) | 8082 (HTTP), 8083 (HTTPS) | Web UI |
 | Blockscout backend | 4000 (internal) | Indexer + API |
 | Smart contract verifier | 8050 (internal) | Solidity/Vyper verification |
 | PostgreSQL | 7432 (internal) | Blockscout database |

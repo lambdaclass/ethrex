@@ -2,7 +2,7 @@ import type { Page, CDPSession } from '@playwright/test';
 
 // ── Constants ────────────────────────────────────────────────────────
 export const RPC_URL = process.env.RPC_URL ?? 'http://localhost:8545';
-export const BLOCKSCOUT_URL = process.env.BLOCKSCOUT_URL ?? 'http://localhost:8082';
+export const BLOCKSCOUT_URL = process.env.BLOCKSCOUT_URL ?? 'http://localhost:8082'; // HTTP for API calls; browser links use HTTPS on :8083
 export const MOCK_ERC20 = '0x1000000000000000000000000000000000000002';
 export const SPONSOR = '0x1000000000000000000000000000000000000001';
 export const DEPLOYER_PROXY = '0x4e59b44847b379578588920ca78fbf26c0b4956c';
@@ -102,17 +102,18 @@ export interface BlockscoutTx {
   hash: string;
   type: number | string;
   status: string;
-  block: number | null;
+  block_number: number | null;
   tx_types?: string[];
 }
 
-export async function fetchBlockscoutTx(txHash: string, maxRetries = 20): Promise<BlockscoutTx | null> {
+export async function fetchBlockscoutTx(txHash: string, maxRetries = 30): Promise<BlockscoutTx | null> {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const res = await fetch(`${BLOCKSCOUT_URL}/api/v2/transactions/${txHash}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.hash) return data as BlockscoutTx;
+        // Wait until Blockscout has fully indexed the tx (hash, status, and block_number all present)
+        if (data.hash && data.status && data.block_number != null) return data as BlockscoutTx;
       }
     } catch { /* Blockscout not available or still indexing */ }
     await new Promise(r => setTimeout(r, 2000));
