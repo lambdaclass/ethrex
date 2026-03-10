@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { registerPasskey, clearCredential, type StoredCredential, signChallenge, getStoredCredential, setStoredCredential } from '../lib/passkey';
 import * as api from '../lib/api';
 import { getBalance } from '../lib/chain';
+import RegistrationProgress from './RegistrationProgress';
 
 interface Props {
   credential: StoredCredential | null;
@@ -13,6 +14,8 @@ export default function AccountPanel({ credential, onCredentialChange }: Props) 
   const [error, setError] = useState('');
   const [balance, setBalance] = useState<string | null>(null);
   const [tokenBalance, setTokenBalance] = useState<string | null>(null);
+  // Holds the passkey credential during SSE registration (before address is known)
+  const [pendingCredential, setPendingCredential] = useState<StoredCredential | null>(null);
 
   const fetchBalance = useCallback(async () => {
     if (!credential?.address) return;
@@ -42,15 +45,27 @@ export default function AccountPanel({ credential, onCredentialChange }: Props) 
     try {
       const name = `user-${Date.now().toString(36)}`;
       const cred = await registerPasskey(name);
-      const result = await api.registerAccount(cred);
-      cred.address = result.address;
-      setStoredCredential(cred);
-      onCredentialChange(cred);
+      // Passkey created — show progress panel for on-chain steps
+      setPendingCredential(cred);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create account');
-    } finally {
+      setError(e instanceof Error ? e.message : 'Failed to create passkey');
       setLoading(false);
     }
+  };
+
+  const handleRegistrationComplete = (address: string) => {
+    if (!pendingCredential) return;
+    pendingCredential.address = address;
+    setStoredCredential(pendingCredential);
+    onCredentialChange(pendingCredential);
+    setPendingCredential(null);
+    setLoading(false);
+  };
+
+  const handleRegistrationError = (message: string) => {
+    setError(message);
+    setPendingCredential(null);
+    setLoading(false);
   };
 
   const handleSignIn = async () => {
@@ -116,6 +131,22 @@ export default function AccountPanel({ credential, onCredentialChange }: Props) 
         >
           Delete
         </button>
+      </div>
+    );
+  }
+
+  // Show progress panel during registration
+  if (pendingCredential) {
+    return (
+      <div className="flex flex-col items-center gap-6">
+        <RegistrationProgress
+          credential={pendingCredential}
+          onComplete={handleRegistrationComplete}
+          onError={handleRegistrationError}
+        />
+        {error && (
+          <p className="text-sm text-red-400 mt-2">{error}</p>
+        )}
       </div>
     );
   }

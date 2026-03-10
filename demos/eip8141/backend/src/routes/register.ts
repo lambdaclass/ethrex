@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import type { Credential } from "../types.js";
 import { deployAccount, fundAccount, mintTokens, getTokenBalance } from "../dev-account.js";
 
@@ -7,40 +8,51 @@ export const credentials = new Map<string, Credential>();
 
 const app = new Hono();
 
+function sseStep(step: string, status: string, extra?: Record<string, string>) {
+  return { event: "step", data: JSON.stringify({ step, status, ...extra }) };
+}
+
 app.post("/register", async (c) => {
-  try {
-    const body = (await c.req.json()) as {
-      credentialId: string;
-      publicKey: { x: string; y: string };
-    };
+  const body = await c.req.json().catch(() => null) as {
+    credentialId: string;
+    publicKey: { x: string; y: string };
+  } | null;
 
-    if (!body.credentialId || !body.publicKey?.x || !body.publicKey?.y) {
-      return c.json({ error: "Missing required fields" }, 400);
-    }
+  if (!body?.credentialId || !body?.publicKey?.x || !body?.publicKey?.y) {
+    return c.json({ error: "Missing required fields" }, 400);
+  }
 
-    const pubKeyX = BigInt(body.publicKey.x);
-    const pubKeyY = BigInt(body.publicKey.y);
+  const pubKeyX = BigInt(body.publicKey.x);
+  const pubKeyY = BigInt(body.publicKey.y);
 
-    // Deploy a new WebAuthnP256Account via the factory (CREATE2, deterministic from pubkey)
+  return streamSSE(c, async (stream) => {
+    // Step 1: Deploy account
+    await stream.writeSSE(sseStep("deploy", "pending"));
     console.log(`[register] Deploying new account for pubkey...`);
     console.log(`[register]   x = ${body.publicKey.x}`);
     console.log(`[register]   y = ${body.publicKey.y}`);
 
-    const address = await deployAccount(pubKeyX, pubKeyY);
+    const { address, txHash: deployTxHash } = await deployAccount(pubKeyX, pubKeyY);
     console.log(`[register] Account deployed at ${address}`);
+    await stream.writeSSE(sseStep("deploy", "done", { address, txHash: deployTxHash }));
 
-    // Fund the new account with ETH
-    const fundTx = await fundAccount(address);
-    console.log(`[register] Funded with 10 ETH, tx: ${fundTx}`);
+    // Step 2: Fund with ETH
+    await stream.writeSSE(sseStep("fund", "pending"));
+    const fundTxHash = await fundAccount(address);
+    console.log(`[register] Funded with 10 ETH, tx: ${fundTxHash}`);
+    await stream.writeSSE(sseStep("fund", "done", { txHash: fundTxHash }));
 
-    // Mint demo ERC20 tokens to the account (1,000,000 tokens)
+    // Step 3: Mint demo tokens
     const currentBalance = await getTokenBalance(address);
     if (currentBalance === 0n) {
+      await stream.writeSSE(sseStep("mint", "pending"));
       const INITIAL_TOKENS = 1_000_000n * 10n ** 18n;
-      const mintTx = await mintTokens(address, INITIAL_TOKENS);
-      console.log(`[register] Minted 1,000,000 demo tokens, tx: ${mintTx}`);
+      const mintTxHash = await mintTokens(address, INITIAL_TOKENS);
+      console.log(`[register] Minted 1,000,000 demo tokens, tx: ${mintTxHash}`);
+      await stream.writeSSE(sseStep("mint", "done", { txHash: mintTxHash }));
     } else {
       console.log(`[register] Account already has tokens: ${currentBalance}`);
+      await stream.writeSSE(sseStep("mint", "done", { skipped: "true" }));
     }
 
     // Store credential in-memory
@@ -49,16 +61,16 @@ app.post("/register", async (c) => {
       publicKey: body.publicKey,
       address: address.toLowerCase(),
     };
-
     credentials.set(address.toLowerCase(), credential);
     console.log(`[register] Credential stored for ${address}`);
 
-    return c.json({ success: true, address: address.toLowerCase() });
-  } catch (err) {
+    // Complete
+    await stream.writeSSE({ event: "complete", data: JSON.stringify({ address: address.toLowerCase() }) });
+  }, async (err, stream) => {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[register] Error: ${msg}`);
-    return c.json({ error: msg }, 500);
-  }
+    await stream.writeSSE({ event: "error", data: JSON.stringify({ message: msg }) });
+  });
 });
 
 app.get("/token-balance/:address", async (c) => {

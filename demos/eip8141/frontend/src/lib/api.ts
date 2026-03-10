@@ -70,6 +70,27 @@ export async function registerAccount(
   });
 }
 
+export async function registerAccountStream(
+  credential: StoredCredential
+): Promise<Response> {
+  const res = await fetch(`${API_BASE}/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify({
+      credentialId: credential.id,
+      publicKey: credential.publicKey,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Request failed: ${res.status}`);
+  }
+  return res;
+}
+
 export async function getSigHash(
   demoType: string,
   params: Record<string, unknown>

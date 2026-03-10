@@ -146,12 +146,12 @@ export async function ensureFactoryInitialized(): Promise<void> {
 
 /**
  * Deploy a new WebAuthnP256Account via the factory.
- * Returns the deployed account address.
+ * Returns the deployed account address and the deploy transaction hash.
  */
 export async function deployAccount(
   pubKeyX: bigint,
   pubKeyY: bigint
-): Promise<`0x${string}`> {
+): Promise<{ address: `0x${string}`; txHash: `0x${string}` }> {
   const data = encodeFunctionData({
     abi: factoryAbi,
     functionName: "deploy",
@@ -178,7 +178,7 @@ export async function deployAccount(
 
   // Topic 1 is the indexed address, padded to 32 bytes
   const accountAddress = ("0x" + deployLog.topics[1].slice(26)) as `0x${string}`;
-  return accountAddress;
+  return { address: accountAddress, txHash };
 }
 
 /**

@@ -23,6 +23,8 @@ import {
   parseEther,
   getCreate2Address,
   numberToHex,
+  keccak256,
+  encodePacked,
 } from "viem";
 
 // Default gas limit per frame
@@ -146,8 +148,11 @@ async function buildSkeleton(
       ) as `0x${string}`;
       const initCode = hexToBytes(initCodeHex);
 
-      // Use nonce as CREATE2 salt (unique per sender transaction)
-      const saltHex = numberToHex(nonce, { size: 32 });
+      // Salt = keccak256(sender || nonce) to avoid collisions across accounts
+      const saltHex = keccak256(encodePacked(
+        ['address', 'uint256'],
+        [from as `0x${string}`, nonce],
+      ));
       const salt = hexToBytes(saltHex);
 
       // Calldata for deployer proxy: 32-byte salt + init code
