@@ -43,12 +43,19 @@ impl LocalServer {
 
         // 2. Relative to the executable (production bundle)
         if let Ok(exe) = std::env::current_exe() {
-            // macOS: .app/Contents/MacOS/tokamak-desktop → .app/Contents/Resources/local-server/
+            // macOS: .app/Contents/MacOS/exe → .app/Contents/Resources/
             if let Some(parent) = exe.parent() {
-                let resources = parent.parent().map(|p| p.join("Resources/local-server"));
-                if let Some(ref dir) = resources {
-                    if dir.join("server.js").exists() {
-                        return resources;
+                if let Some(contents) = parent.parent() {
+                    let resources = contents.join("Resources");
+                    // Tauri converts "../../" in resource paths to "_up_/_up_/"
+                    let candidates = [
+                        resources.join("_up_/_up_/local-server"),
+                        resources.join("local-server"),
+                    ];
+                    for candidate in &candidates {
+                        if candidate.join("server.js").exists() {
+                            return Some(candidate.clone());
+                        }
                     }
                 }
             }
@@ -76,8 +83,11 @@ impl LocalServer {
         None
     }
 
-    /// Find the node binary
+    /// Find the node binary.
+    /// macOS GUI apps (.app bundles) don't inherit the user's shell PATH,
+    /// so we probe well-known installation paths in addition to `which`.
     fn find_node() -> Option<PathBuf> {
+        // 1. Explicit env var override
         if let Ok(node) = std::env::var("NODE_BIN") {
             let p = PathBuf::from(&node);
             if p.exists() {
@@ -85,7 +95,38 @@ impl LocalServer {
             }
         }
 
-        // Check PATH
+        // 2. Well-known paths (macOS .app bundles lack shell PATH)
+        let well_known: &[&str] = &[
+            "/usr/local/bin/node",           // Homebrew (Intel) / official installer
+            "/opt/homebrew/bin/node",         // Homebrew (Apple Silicon)
+        ];
+        for path in well_known {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        // 3. nvm — check common nvm directories for any installed version
+        if let Ok(home) = std::env::var("HOME") {
+            let nvm_dir = PathBuf::from(&home).join(".nvm/versions/node");
+            if nvm_dir.is_dir() {
+                // Pick the latest version directory
+                if let Ok(entries) = std::fs::read_dir(&nvm_dir) {
+                    let mut versions: Vec<PathBuf> = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .filter(|p| p.join("bin/node").exists())
+                        .collect();
+                    versions.sort();
+                    if let Some(latest) = versions.last() {
+                        return Some(latest.join("bin/node"));
+                    }
+                }
+            }
+        }
+
+        // 4. Fallback: `which node` (works in dev / terminal launches)
         if let Ok(output) = std::process::Command::new("which").arg("node").output() {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -111,9 +152,21 @@ impl LocalServer {
 
         // Auto-install dependencies if node_modules is missing
         if !server_dir.join("node_modules").exists() {
-            log::info!("node_modules not found, running npm install...");
-            let npm = if cfg!(target_os = "windows") { "npm.cmd" } else { "npm" };
-            let install = std::process::Command::new(npm)
+            log::info!(
+                "node_modules not found in {}, running npm install...",
+                server_dir.display()
+            );
+            // Derive npm path from node binary (npm lives in the same bin directory)
+            let npm = {
+                let npm_name = if cfg!(target_os = "windows") { "npm.cmd" } else { "npm" };
+                let sibling = node.parent().map(|p| p.join(npm_name));
+                match sibling {
+                    Some(ref p) if p.exists() => p.clone(),
+                    _ => PathBuf::from(npm_name), // fallback to PATH
+                }
+            };
+            log::info!("Using npm: {}", npm.display());
+            let install = std::process::Command::new(&npm)
                 .arg("install")
                 .current_dir(&server_dir)
                 .output();
