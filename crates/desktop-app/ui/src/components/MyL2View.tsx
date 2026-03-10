@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useLang } from '../App'
 import { t } from '../i18n'
@@ -232,11 +233,26 @@ export default function MyL2View() {
     }
   }, [lang])
 
+  // Debounced refresh: coalesce rapid events into a single loadDeployments call
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debouncedLoad = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => { loadDeployments() }, 500)
+  }, [loadDeployments])
+
   useEffect(() => {
     loadDeployments()
-    const interval = setInterval(loadDeployments, 5000)
-    return () => clearInterval(interval)
-  }, [loadDeployments])
+    // Fallback polling at 30s (primary refresh is event-driven)
+    const interval = setInterval(loadDeployments, 30000)
+    // Listen for real-time state changes from UnifiedL2State (debounced)
+    let unlisten: UnlistenFn | undefined
+    listen('l2-state-changed', debouncedLoad).then(fn => { unlisten = fn })
+    return () => {
+      clearInterval(interval)
+      unlisten?.()
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [loadDeployments, debouncedLoad])
 
   const openDeployManager = async (view?: string, editId?: string, detailId?: string) => {
     try {
@@ -249,21 +265,19 @@ export default function MyL2View() {
       const url = qs ? `${baseUrl}?${qs}` : baseUrl
       const existing = await WebviewWindow.getByLabel('deploy-manager')
       if (existing) {
-        // Navigate by changing URL (Tauri emit doesn't reach plain webview)
-        try { await existing.setUrl(url) } catch (e) { console.warn('Failed to set URL:', e) }
         await existing.show()
         await existing.setFocus()
-      } else {
-        new WebviewWindow('deploy-manager', {
-          url,
-          title: 'Tokamak L2 Manager',
-          width: 1100,
-          height: 800,
-          minWidth: 800,
-          minHeight: 600,
-          center: true,
-        })
+        return
       }
+      new WebviewWindow('deploy-manager', {
+        url,
+        title: 'Tokamak L2 Manager',
+        width: 1100,
+        height: 800,
+        minWidth: 800,
+        minHeight: 600,
+        center: true,
+      })
     } catch (e) {
       console.error('Failed to open deployment manager:', e)
     }

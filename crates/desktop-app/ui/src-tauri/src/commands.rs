@@ -7,6 +7,7 @@ use crate::local_server::LocalServer;
 use crate::process_manager::{NodeInfo, ProcessManager, ProcessStatus};
 use crate::runner::ProcessRunner;
 use crate::telegram_bot::TelegramBotManager;
+use crate::unified_state::{L2Info, UnifiedL2State};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -334,10 +335,16 @@ pub fn update_appchain_public(
     Ok(())
 }
 
-/// Returns current app state as context for AI chat
+/// Returns current app state as context for AI chat (unified: appchains + deployments)
 #[tauri::command]
-pub fn get_chat_context(am: State<Arc<AppchainManager>>) -> serde_json::Value {
-    crate::telegram_bot::build_appchain_context(&am)
+pub fn get_chat_context(state: State<Arc<UnifiedL2State>>) -> serde_json::Value {
+    state.to_context_json()
+}
+
+/// Returns all L2 instances (appchains + deployments) as unified list
+#[tauri::command]
+pub fn get_all_l2(state: State<Arc<UnifiedL2State>>) -> Vec<L2Info> {
+    state.get_all()
 }
 
 // ============================================================================
@@ -389,14 +396,31 @@ pub async fn get_local_server_status(
 pub async fn open_deployment_ui(
     server: State<'_, Arc<LocalServer>>,
 ) -> Result<String, String> {
-    // Ensure server is running
-    if !server.is_running().await {
-        server.start().await?;
-        // Wait briefly for server to be ready
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let url = format!("http://127.0.0.1:{}", server.port());
+
+    // If port already has a healthy server (e.g. started separately), skip start
+    if server.health_check().await {
+        return Ok(url);
     }
 
-    Ok(format!("http://127.0.0.1:{}", server.port()))
+    // Try to start if not running
+    if !server.is_running().await {
+        match server.start().await {
+            Ok(_) => {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+            Err(e) => {
+                log::warn!("Failed to start local-server: {e}");
+                // Even if start fails, port might already be in use by another server
+                if server.health_check().await {
+                    return Ok(url);
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(url)
 }
 
 // ============================================================================
@@ -499,6 +523,7 @@ pub async fn start_platform_login(app: tauri::AppHandle) -> Result<LoginStartRes
     let login_url = format!("{base_url}/login?desktop_code={code}");
 
     // Try to open browser (best-effort)
+    #[allow(deprecated)]
     let _ = app.shell().open(&login_url, None);
 
     Ok(LoginStartResult {

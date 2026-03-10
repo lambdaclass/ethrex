@@ -82,21 +82,24 @@ async function getNextAvailablePorts() {
             MAX(tools_l1_explorer_port) as max_tl1, MAX(tools_l2_explorer_port) as max_tl2,
             MAX(tools_bridge_ui_port) as max_tbridge, MAX(tools_db_port) as max_tdb,
             MAX(tools_metrics_port) as max_tmetrics
-     FROM deployments WHERE l1_port IS NOT NULL`
+     FROM deployments`
   ).get();
 
-  // Start from DB max + 1, then verify each port is actually free
-  const [l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort] =
+  // Non-overlapping port groups can be allocated in parallel
+  const [l1Port, l2Port, proofCoordPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort] =
     await Promise.all([
       findFreePort((result.max_l1 || 8544) + 1),
       findFreePort((result.max_l2 || 1728) + 1),
       findFreePort((result.max_pc || 3899) + 1),
-      findFreePort((result.max_tl1 || 8083) + 1),
-      findFreePort((result.max_tl2 || 8082) + 1),
       findFreePort((result.max_tbridge || 3009) + 1),
       findFreePort((result.max_tdb || 7432) + 1),
       findFreePort((result.max_tmetrics || 3701) + 1),
     ]);
+
+  // Explorer ports share the 808x range — allocate sequentially to avoid collisions
+  const maxExplorer = Math.max(result.max_tl1 || 8083, result.max_tl2 || 8082);
+  const toolsL2ExplorerPort = await findFreePort(maxExplorer + 1);
+  const toolsL1ExplorerPort = await findFreePort(toolsL2ExplorerPort + 1);
 
   return { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort };
 }

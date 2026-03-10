@@ -42,6 +42,7 @@ pub struct EventRecord {
 
 /// Loaded context for AI prompt injection
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct PilotContext {
     pub recent_messages: Vec<SessionRecord>,
     pub recent_events: Vec<EventRecord>,

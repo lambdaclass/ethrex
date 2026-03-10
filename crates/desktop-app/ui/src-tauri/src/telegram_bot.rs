@@ -12,10 +12,11 @@
 //! - Background health monitoring
 
 use crate::ai_provider::{AiProvider, ChatMessage};
-use crate::appchain_manager::{AppchainManager, AppchainStatus, StepStatus};
+use crate::appchain_manager::{AppchainManager, AppchainStatus};
 use crate::deployment_db::{self, DeploymentProxy};
 use crate::pilot_memory::PilotMemory;
 use crate::runner::ProcessRunner;
+use crate::unified_state::UnifiedL2State;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -44,6 +45,7 @@ pub struct TelegramBot {
     appchain_manager: Arc<AppchainManager>,
     runner: Arc<ProcessRunner>,
     memory: Arc<PilotMemory>,
+    unified_state: Arc<UnifiedL2State>,
     chat_history: Mutex<HashMap<i64, Vec<ChatMessage>>>,
     /// Pending destructive actions per chat_id (backend-enforced confirmation)
     pending_confirms: Mutex<HashMap<i64, PendingAction>>,
@@ -103,6 +105,7 @@ impl TelegramBot {
         appchain_manager: Arc<AppchainManager>,
         runner: Arc<ProcessRunner>,
         memory: Arc<PilotMemory>,
+        unified_state: Arc<UnifiedL2State>,
     ) -> Option<Self> {
         let (token, allowed_ids_str, enabled) =
             Self::load_from_file().unwrap_or_else(|| Self::load_from_env());
@@ -124,6 +127,7 @@ impl TelegramBot {
             appchain_manager,
             runner,
             memory,
+            unified_state,
             chat_history: Mutex::new(HashMap::new()),
             pending_confirms: Mutex::new(HashMap::new()),
         })
@@ -163,6 +167,7 @@ impl TelegramBot {
             appchain_manager,
             runner,
             memory,
+            unified_state: Arc::new(UnifiedL2State::new()),
             chat_history: Mutex::new(HashMap::new()),
             pending_confirms: Mutex::new(HashMap::new()),
         }
@@ -210,7 +215,7 @@ impl TelegramBot {
 
     // ── Long-polling loop ──
 
-    pub async fn run(self: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
+    pub async fn run(self: Arc<Self>, shutdown: watch::Receiver<bool>) {
         log::info!("Telegram bot started (polling mode)");
         let mut offset: i64 = 0;
 
@@ -338,6 +343,9 @@ impl TelegramBot {
             .map(|u| u.first_name.as_str())
             .unwrap_or("there");
 
+        // Refresh state before showing status
+        self.unified_state.refresh_now(&self.appchain_manager, &self.runner).await;
+
         // Generate a brief status summary
         let chains = self.appchain_manager.list_appchains();
         let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
@@ -409,8 +417,11 @@ impl TelegramBot {
         // Save user message to memory
         self.memory.append_message(chat_id, "user", text);
 
-        // Build context (live = real Docker container state + monitoring + contracts)
-        let deployment_context = build_deployment_context_live().await;
+        // Refresh state before responding so user always sees latest
+        self.unified_state.refresh_now(&self.appchain_manager, &self.runner).await;
+
+        // Build context from unified state (freshly refreshed)
+        let unified_context = self.unified_state.to_context_json();
         let pilot_context = self.memory.load_recent_context(chat_id, 20, 20);
 
         // Build chat history for AI
@@ -427,10 +438,8 @@ impl TelegramBot {
         drop(history_lock);
 
         // Build telegram system prompt and call AI
-        let appchain_context = build_appchain_context(&self.appchain_manager);
-        let system_prompt = AiProvider::build_telegram_prompt(
-            &appchain_context,
-            &deployment_context,
+        let system_prompt = AiProvider::build_telegram_prompt_unified(
+            &unified_context,
             &pilot_context,
         );
         let ai_response = match self.ai.chat_with_system_prompt(messages, &system_prompt).await {
@@ -462,6 +471,10 @@ impl TelegramBot {
                 &result,
             );
             action_results.push(result);
+        }
+        // Immediately refresh unified state after actions so next query sees latest
+        if !actions.is_empty() {
+            self.unified_state.refresh_now(&self.appchain_manager, &self.runner).await;
         }
 
         // Build final response
@@ -524,12 +537,9 @@ impl TelegramBot {
     /// Execute action without confirmation (called after confirmation or for non-destructive ops)
     async fn execute_action_unchecked(&self, chat_id: i64, action: &ParsedAction) -> String {
         match action.name.as_str() {
-            "start_appchain" => self.action_start_appchain(chat_id, &action.params).await,
-            "stop_appchain" => self.action_stop_appchain(chat_id, &action.params).await,
-            "delete_appchain" => self.action_delete_appchain(&action.params).await,
-            "start_deployment" => self.action_start_deployment(&action.params).await,
-            "stop_deployment" => self.action_stop_deployment(&action.params).await,
-            "delete_deployment" => self.action_delete_deployment(&action.params).await,
+            "start_appchain" | "start_deployment" => self.action_start_appchain(chat_id, &action.params).await,
+            "stop_appchain" | "stop_deployment" => self.action_stop_appchain(chat_id, &action.params).await,
+            "delete_appchain" | "delete_deployment" => self.action_delete_appchain(&action.params).await,
             "create_appchain" => self.action_create_appchain(chat_id, &action.params).await,
             "update_summary" => {
                 if let Some(content) = action.params.get("content") {
@@ -549,43 +559,38 @@ impl TelegramBot {
         }
     }
 
-    async fn action_start_appchain(&self, chat_id: i64, params: &HashMap<String, String>) -> String {
-        let chain_id = match self.resolve_chain_id(params) {
-            Ok(id) => id,
+    async fn action_start_appchain(&self, _chat_id: i64, params: &HashMap<String, String>) -> String {
+        let l2 = match self.resolve_l2_id(params) {
+            Ok(l2) => l2,
             Err(e) => return format!("❌ {e}"),
         };
 
-        let config = match self.appchain_manager.get_appchain(&chain_id) {
-            Some(c) => c,
-            None => return "❌ 앱체인을 찾을 수 없습니다.".to_string(),
-        };
-
-        if matches!(config.status, AppchainStatus::Running) {
-            return format!("ℹ️ {} 은(는) 이미 실행 중입니다.", config.name);
+        use crate::unified_state::{L2Source, L2Status};
+        if l2.status == L2Status::Running {
+            return format!("ℹ️ {} 은(는) 이미 실행 중입니다.", l2.name);
         }
 
-        let chain_name = config.name.clone();
-        let has_prover = config.prover_type != "none";
-
-        // Initialize setup
-        self.appchain_manager.init_setup_progress(&chain_id, &config.network_mode, has_prover);
-        self.appchain_manager.update_status(&chain_id, AppchainStatus::SettingUp);
-        self.appchain_manager.update_step_status(&chain_id, "config", StepStatus::Done);
-
-        self.memory.append_event("started", &chain_name, &chain_id, "", "telegram");
-
-        // Start process in background
-        let runner = self.runner.clone();
-        let am = self.appchain_manager.clone();
-        let cid = chain_id.clone();
-        tokio::spawn(async move {
-            ProcessRunner::start_local_dev(runner, am, cid).await;
-        });
-
-        // Poll progress and report
-        self.poll_setup_progress(chat_id, &chain_id, &chain_name).await
+        match l2.source {
+            L2Source::Deployment => {
+                // Docker deployment → use local-server API
+                let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
+                match proxy.start_deployment(&l2.id).await {
+                    Ok(()) => {
+                        self.memory.append_event("started", &l2.name, &l2.id, "", "telegram");
+                        self.unified_state.refresh_now(&self.appchain_manager, &self.runner).await;
+                        format!("✅ {} 시작됨.", l2.name)
+                    }
+                    Err(e) => format!("❌ {} 시작 실패: {e}", l2.name),
+                }
+            }
+            L2Source::Appchain => {
+                // Legacy local process — not actively used
+                format!("⚠️ {} 은(는) 레거시 로컬 프로세스 앱체인입니다. L2 매니저에서 새로 생성해주세요.", l2.name)
+            }
+        }
     }
 
+    #[allow(dead_code)]
     async fn poll_setup_progress(&self, chat_id: i64, chain_id: &str, chain_name: &str) -> String {
         let mut last_step = String::new();
 
@@ -642,59 +647,64 @@ impl TelegramBot {
     }
 
     async fn action_stop_appchain(&self, _chat_id: i64, params: &HashMap<String, String>) -> String {
-        let chain_id = match self.resolve_chain_id(params) {
-            Ok(id) => id,
+        let l2 = match self.resolve_l2_id(params) {
+            Ok(l2) => l2,
             Err(e) => return format!("❌ {e}"),
         };
 
-        let config = match self.appchain_manager.get_appchain(&chain_id) {
-            Some(c) => c,
-            None => return "❌ 앱체인을 찾을 수 없습니다.".to_string(),
-        };
-
-        if matches!(config.status, AppchainStatus::Stopped) {
-            return format!("ℹ️ {} 은(는) 이미 중지되어 있습니다.", config.name);
+        use crate::unified_state::{L2Source, L2Status};
+        if l2.status == L2Status::Stopped {
+            return format!("ℹ️ {} 은(는) 이미 중지되어 있습니다.", l2.name);
         }
 
-        let chain_name = config.name.clone();
-        match self.runner.stop_chain(&chain_id).await {
-            Ok(()) => {
-                self.appchain_manager.update_status(&chain_id, AppchainStatus::Stopped);
-                self.appchain_manager.add_log(&chain_id, "Stopped via Telegram.".to_string());
-                self.memory.append_event("stopped", &chain_name, &chain_id, "", "telegram");
-                format!("✅ {} 중지 완료.", chain_name)
+        match l2.source {
+            L2Source::Deployment => {
+                let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
+                match proxy.stop_deployment(&l2.id).await {
+                    Ok(()) => {
+                        self.memory.append_event("stopped", &l2.name, &l2.id, "", "telegram");
+                        self.unified_state.refresh_now(&self.appchain_manager, &self.runner).await;
+                        format!("✅ {} 중지 완료.", l2.name)
+                    }
+                    Err(e) => format!("❌ {} 중지 실패: {e}", l2.name),
+                }
             }
-            Err(e) => {
-                // If process not found, just update status
-                self.appchain_manager.update_status(&chain_id, AppchainStatus::Stopped);
-                self.memory.append_event("stopped", &chain_name, &chain_id, &e, "telegram");
-                format!("⚠️ {} 프로세스가 이미 종료된 상태입니다. 상태를 Stopped로 변경했습니다.", chain_name)
+            L2Source::Appchain => {
+                format!("⚠️ {} 은(는) 레거시 로컬 프로세스 앱체인입니다. L2 매니저에서 관리해주세요.", l2.name)
             }
         }
     }
 
     async fn action_delete_appchain(&self, params: &HashMap<String, String>) -> String {
-        let chain_id = match self.resolve_chain_id(params) {
-            Ok(id) => id,
+        let l2 = match self.resolve_l2_id(params) {
+            Ok(l2) => l2,
             Err(e) => return format!("❌ {e}"),
         };
 
-        let config = match self.appchain_manager.get_appchain(&chain_id) {
-            Some(c) => c,
-            None => return "❌ 앱체인을 찾을 수 없습니다.".to_string(),
-        };
-
-        let chain_name = config.name.clone();
-
-        // Stop if running
-        let _ = self.runner.stop_chain(&chain_id).await;
-
-        match self.appchain_manager.delete_appchain(&chain_id) {
-            Ok(()) => {
-                self.memory.append_event("deleted", &chain_name, &chain_id, "", "telegram");
-                format!("✅ {} 삭제 완료.", chain_name)
+        use crate::unified_state::L2Source;
+        match l2.source {
+            L2Source::Deployment => {
+                let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
+                match proxy.destroy_deployment(&l2.id).await {
+                    Ok(()) => {
+                        self.memory.append_event("deleted", &l2.name, &l2.id, "", "telegram");
+                        self.unified_state.refresh_now(&self.appchain_manager, &self.runner).await;
+                        format!("✅ {} 삭제 완료.", l2.name)
+                    }
+                    Err(e) => format!("❌ {} 삭제 실패: {e}", l2.name),
+                }
             }
-            Err(e) => format!("❌ 삭제 실패: {e}"),
+            L2Source::Appchain => {
+                // Legacy — just remove from AppchainManager
+                let _ = self.runner.stop_chain(&l2.id).await;
+                match self.appchain_manager.delete_appchain(&l2.id) {
+                    Ok(()) => {
+                        self.memory.append_event("deleted", &l2.name, &l2.id, "", "telegram");
+                        format!("✅ {} 삭제 완료.", l2.name)
+                    }
+                    Err(e) => format!("❌ 삭제 실패: {e}"),
+                }
+            }
         }
     }
 
@@ -764,64 +774,20 @@ impl TelegramBot {
         }
     }
 
-    async fn action_start_deployment(&self, params: &HashMap<String, String>) -> String {
-        let id = match params.get("id") {
-            Some(id) => id.clone(),
-            None => return "❌ 배포 ID가 필요합니다.".to_string(),
-        };
-        let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
-        match proxy.start_deployment(&id).await {
-            Ok(()) => {
-                self.memory.append_event("deployment_started", &id, &id, "", "telegram");
-                format!("✅ 배포 {} 시작됨.", id)
-            }
-            Err(e) => format!("❌ 배포 시작 실패: {e}"),
-        }
-    }
-
-    async fn action_stop_deployment(&self, params: &HashMap<String, String>) -> String {
-        let id = match params.get("id") {
-            Some(id) => id.clone(),
-            None => return "❌ 배포 ID가 필요합니다.".to_string(),
-        };
-        let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
-        match proxy.stop_deployment(&id).await {
-            Ok(()) => {
-                self.memory.append_event("deployment_stopped", &id, &id, "", "telegram");
-                format!("✅ 배포 {} 중지됨.", id)
-            }
-            Err(e) => format!("❌ 배포 중지 실패: {e}"),
-        }
-    }
-
-    async fn action_delete_deployment(&self, params: &HashMap<String, String>) -> String {
-        let id = match params.get("id") {
-            Some(id) => id.clone(),
-            None => return "❌ 배포 ID가 필요합니다.".to_string(),
-        };
-        let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
-        match proxy.destroy_deployment(&id).await {
-            Ok(()) => {
-                self.memory.append_event("deployment_deleted", &id, &id, "", "telegram");
-                format!("✅ 배포 {} 삭제됨.", id)
-            }
-            Err(e) => format!("❌ 배포 삭제 실패: {e}"),
-        }
-    }
-
     // ── Helpers ──
 
-    fn resolve_chain_id(&self, params: &HashMap<String, String>) -> Result<String, String> {
+    /// Resolve L2 instance by id or name from UnifiedL2State (covers all sources)
+    fn resolve_l2_id(&self, params: &HashMap<String, String>) -> Result<crate::unified_state::L2Info, String> {
+        let all = self.unified_state.get_all();
         if let Some(id) = params.get("id") {
-            return Ok(id.clone());
+            return all.into_iter()
+                .find(|l| l.id == *id)
+                .ok_or_else(|| format!("앱체인 ID '{id}'을(를) 찾을 수 없습니다."));
         }
         if let Some(name) = params.get("name") {
-            let chains = self.appchain_manager.list_appchains();
-            let chain = chains
-                .iter()
-                .find(|c| c.name.to_lowercase() == name.to_lowercase())
-                .ok_or_else(|| format!("앱체인 '{name}'을(를) 찾을 수 없습니다."))?;
-            return Ok(chain.id.clone());
+            return all.into_iter()
+                .find(|l| l.name.to_lowercase() == name.to_lowercase())
+                .ok_or_else(|| format!("앱체인 '{name}'을(를) 찾을 수 없습니다."));
         }
         Err("앱체인 id 또는 name이 필요합니다.".to_string())
     }
@@ -831,9 +797,9 @@ impl TelegramBot {
     async fn generate_briefing(&self, since: chrono::DateTime<chrono::Utc>) -> String {
         let events = self.memory.events_since(since);
 
-        // Use live deployment context (Docker + monitoring) for accurate status
-        let live_ctx = build_deployment_context_live().await;
-        let live_deployments = live_ctx["deployments"].as_array();
+        // Use unified state for accurate status (cached, no HTTP)
+        let live_ctx = self.unified_state.to_context_json();
+        let live_deployments = live_ctx["my_appchains"].as_array();
 
         let now = chrono::Utc::now();
         let gap = now.signed_duration_since(since);
@@ -885,6 +851,9 @@ impl TelegramBot {
                     "running" => "🟢",
                     "stopped" => "🔴",
                     "partial" => "🟡",
+                    "settingup" => "🔧",
+                    "error" => "💥",
+                    "created" => "🆕",
                     _ => "⚪",
                 };
                 // Show container breakdown for partial status
@@ -896,6 +865,8 @@ impl TelegramBot {
                     } else {
                         String::new()
                     }
+                } else if status == "error" {
+                    dep["error_message"].as_str().map(|e| format!(" — {}", e)).unwrap_or_default()
                 } else {
                     String::new()
                 };
@@ -1037,117 +1008,6 @@ fn status_emoji(status: &AppchainStatus) -> &'static str {
     }
 }
 
-// ── Shared context builders ──
-
-pub fn build_appchain_context(am: &AppchainManager) -> serde_json::Value {
-    let chains = am.list_appchains();
-    let summaries: Vec<serde_json::Value> = chains
-        .iter()
-        .map(|c| {
-            serde_json::json!({
-                "id": c.id,
-                "name": c.name,
-                "chain_id": c.chain_id,
-                "status": format!("{:?}", c.status),
-                "network_mode": format!("{:?}", c.network_mode),
-                "rpc_port": c.l2_rpc_port,
-                "is_public": c.is_public,
-                "native_token": c.native_token,
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "appchains": summaries,
-        "total_count": chains.len(),
-    })
-}
-
-/// Build deployment context with live container status, monitoring, and contract data.
-/// This is async because it queries the local-server for real-time state.
-pub async fn build_deployment_context_live() -> serde_json::Value {
-    let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
-    let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
-
-    let mut summaries = Vec::new();
-    for d in &deployments {
-        // Fetch live container status
-        let containers = proxy.get_containers(&d.id).await.unwrap_or_default();
-        let container_info: Vec<serde_json::Value> = containers
-            .iter()
-            .map(|c| {
-                serde_json::json!({
-                    "service": c.service,
-                    "state": c.state,
-                    "status": c.status,
-                })
-            })
-            .collect();
-
-        // Determine live status from containers (reconcile like Manager/Messenger)
-        let live_status = if containers.is_empty() {
-            // No containers but DB says running → actually stopped
-            if d.status == "running" || d.status == "active" {
-                "stopped".to_string()
-            } else {
-                d.status.clone()
-            }
-        } else if containers.iter().all(|c| c.state == "running") {
-            "running".to_string()
-        } else if containers.iter().all(|c| c.state == "exited" || c.state == "dead") {
-            "stopped".to_string()
-        } else {
-            "partial".to_string() // some running, some not
-        };
-
-        // Fetch monitoring data (chain IDs, block numbers)
-        let monitoring = proxy.get_monitoring(&d.id).await.ok();
-        let monitoring_json = if let Some(ref mon) = monitoring {
-            serde_json::json!({
-                "l1": mon.l1.as_ref().map(|l| serde_json::json!({
-                    "healthy": l.healthy,
-                    "chainId": l.chain_id,
-                    "blockNumber": l.block_number,
-                })),
-                "l2": mon.l2.as_ref().map(|l| serde_json::json!({
-                    "healthy": l.healthy,
-                    "chainId": l.chain_id,
-                    "blockNumber": l.block_number,
-                })),
-            })
-        } else {
-            serde_json::Value::Null
-        };
-
-        // Contract addresses
-        let mut contracts = serde_json::json!({});
-        if let Some(ref addr) = d.bridge_address { contracts["bridge"] = serde_json::json!(addr); }
-        if let Some(ref addr) = d.proposer_address { contracts["proposer"] = serde_json::json!(addr); }
-        if let Some(ref addr) = d.timelock_address { contracts["timelock"] = serde_json::json!(addr); }
-        if let Some(ref addr) = d.sp1_verifier_address { contracts["sp1_verifier"] = serde_json::json!(addr); }
-
-        summaries.push(serde_json::json!({
-            "id": d.id,
-            "name": d.name,
-            "program": d.program_slug,
-            "status": live_status,
-            "chain_id": d.chain_id,
-            "l1_port": d.l1_port,
-            "l2_port": d.l2_port,
-            "phase": d.phase,
-            "error": d.error_message,
-            "containers": container_info,
-            "monitoring": monitoring_json,
-            "contracts": contracts,
-        }));
-    }
-
-    serde_json::json!({
-        "deployments": summaries,
-        "total_count": deployments.len(),
-    })
-}
-
 // ── TelegramBotManager ──
 
 pub struct TelegramBotManager {
@@ -1156,6 +1016,7 @@ pub struct TelegramBotManager {
     appchain_manager: Arc<AppchainManager>,
     runner: Arc<ProcessRunner>,
     memory: Arc<PilotMemory>,
+    unified_state: Arc<UnifiedL2State>,
     notify_config: std::sync::Mutex<Option<NotifyConfig>>,
 }
 
@@ -1171,6 +1032,7 @@ impl TelegramBotManager {
         appchain_manager: Arc<AppchainManager>,
         runner: Arc<ProcessRunner>,
         memory: Arc<PilotMemory>,
+        unified_state: Arc<UnifiedL2State>,
     ) -> Self {
         Self {
             shutdown_tx: std::sync::Mutex::new(None),
@@ -1178,6 +1040,7 @@ impl TelegramBotManager {
             appchain_manager,
             runner,
             memory,
+            unified_state,
             notify_config: std::sync::Mutex::new(None),
         }
     }
@@ -1196,6 +1059,7 @@ impl TelegramBotManager {
             self.appchain_manager.clone(),
             self.runner.clone(),
             self.memory.clone(),
+            self.unified_state.clone(),
         )
         .ok_or("Telegram bot config not found or disabled")?;
 
@@ -1248,7 +1112,7 @@ impl TelegramBotManager {
         let chat_ids = config.chat_ids.clone();
         let message = message.to_string();
         let client = config.client.clone();
-        drop(config);
+        let _ = config;
 
         tauri::async_runtime::spawn(async move {
             for chat_id in chat_ids {
@@ -1265,10 +1129,10 @@ impl TelegramBotManager {
         });
     }
 
-    /// Background health monitor — checks process/container/RPC health periodically
+    /// Background health monitor — uses UnifiedL2State events + periodic log scanning
     pub async fn health_monitor(
-        am: Arc<AppchainManager>,
-        runner: Arc<ProcessRunner>,
+        _am: Arc<AppchainManager>,
+        _runner: Arc<ProcessRunner>,
         memory: Arc<PilotMemory>,
         notify_tx: Arc<TelegramBotManager>,
     ) {
@@ -1280,171 +1144,110 @@ impl TelegramBotManager {
         });
 
         log::info!("Health monitor started");
+
+        // Subscribe to unified state events for status/health changes
+        let mut event_rx = notify_tx.unified_state.subscribe_events();
         let proxy = DeploymentProxy::new(LOCAL_SERVER_URL);
-        // Track already-alerted issues to avoid notification spam.
-        // Key format: "type:entity_id:detail" — cleared when issue resolves.
-        let mut alerted: HashSet<String> = HashSet::new();
+        let mut log_alerted: HashSet<String> = HashSet::new();
 
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS)).await;
-
-            if !notify_tx.is_running() {
-                continue;
-            }
-
-            // Track current issues this cycle to detect resolved ones
-            let mut current_issues: HashSet<String> = HashSet::new();
-
-            // ── 1. Check appchain processes ──
-            let chains = am.list_appchains();
-            for chain in &chains {
-                if matches!(chain.status, AppchainStatus::Running)
-                    && !runner.is_running(&chain.id).await
-                {
-                    let key = format!("process_crashed:{}", chain.id);
-                    current_issues.insert(key.clone());
-                    // update_status prevents re-detection (Running→Error),
-                    // but we still deduplicate for safety
-                    if !alerted.contains(&key) {
-                        am.update_status(&chain.id, AppchainStatus::Error);
-                        memory.append_event(
-                            "process_crashed",
-                            &chain.name,
-                            &chain.id,
-                            "Process not found",
-                            "system",
-                        );
-                        notify_tx.notify(&format!(
-                            "⚠️ {} 프로세스가 비정상 종료되었습니다.",
-                            chain.name
-                        ));
-                        alerted.insert(key);
+            tokio::select! {
+                // React to state change events from UnifiedL2State
+                Ok(event) = event_rx.recv() => {
+                    if !notify_tx.is_running() {
+                        continue;
                     }
-                }
-            }
-
-            // ── 2. Check Docker deployments ──
-            let deployments = deployment_db::list_deployments_from_db().unwrap_or_default();
-            for dep in &deployments {
-                if dep.phase != "running" {
-                    continue;
-                }
-
-                // 2a. Container health — check for exited/restarting containers
-                if let Ok(containers) = proxy.get_containers(&dep.id).await {
-                    for c in &containers {
-                        let is_down = c.state == "exited" || c.state == "dead";
-                        let is_restarting = c.state == "restarting";
-                        if is_down || is_restarting {
-                            let key = format!("container:{}:{}", dep.id, c.service);
-                            current_issues.insert(key.clone());
-                            if !alerted.contains(&key) {
-                                let detail = format!(
-                                    "service={} state={} status={}",
-                                    c.service, c.state, c.status
-                                );
-                                memory.append_event(
-                                    "container_exited",
-                                    &dep.name,
-                                    &dep.id,
-                                    &detail,
-                                    "system",
-                                );
-                                let emoji = if is_restarting { "🔄" } else { "💀" };
-                                notify_tx.notify(&format!(
-                                    "{} 🐳 {} — 컨테이너 {} {}({})",
-                                    emoji, dep.name, c.service, c.state, c.status
-                                ));
-                                alerted.insert(key);
-                            }
-                        }
-                    }
-                }
-
-                // 2b. RPC health — check L1/L2 node responsiveness
-                if let Ok(mon) = proxy.get_monitoring(&dep.id).await {
-                    if let Some(l1) = &mon.l1 {
-                        let key = format!("rpc:{}:l1", dep.id);
-                        if !l1.healthy {
-                            current_issues.insert(key.clone());
-                            if !alerted.contains(&key) {
-                                memory.append_event(
-                                    "rpc_unhealthy",
-                                    &dep.name,
-                                    &dep.id,
-                                    "L1 RPC not responding",
-                                    "system",
-                                );
-                                notify_tx.notify(&format!(
-                                    "🔴 🐳 {} — L1 RPC가 응답하지 않습니다.",
-                                    dep.name
-                                ));
-                                alerted.insert(key);
-                            }
-                        }
-                    }
-                    if let Some(l2) = &mon.l2 {
-                        let key = format!("rpc:{}:l2", dep.id);
-                        if !l2.healthy {
-                            current_issues.insert(key.clone());
-                            if !alerted.contains(&key) {
-                                memory.append_event(
-                                    "rpc_unhealthy",
-                                    &dep.name,
-                                    &dep.id,
-                                    "L2 RPC not responding",
-                                    "system",
-                                );
-                                notify_tx.notify(&format!(
-                                    "🔴 🐳 {} — L2 RPC가 응답하지 않습니다.",
-                                    dep.name
-                                ));
-                                alerted.insert(key);
-                            }
-                        }
-                    }
-                }
-
-                // 2c. Log error detection — scan recent logs for critical errors
-                if let Ok(logs) = proxy.get_logs(&dep.id, None, 50).await {
-                    let errors: Vec<&str> = logs
-                        .lines()
-                        .filter(|line| ERROR_RE.is_match(line))
-                        .collect();
-                    if !errors.is_empty() {
-                        // Use hash of error content to detect new vs stale errors
-                        let sample = errors.last().unwrap_or(&"unknown error");
-                        let hash = {
-                            use sha2::Digest;
-                            let mut h = sha2::Sha256::new();
-                            h.update(sample.as_bytes());
-                            hex::encode(&h.finalize()[..8])
-                        };
-                        let key = format!("log_error:{}:{}", dep.id, hash);
-                        current_issues.insert(key.clone());
-                        if !alerted.contains(&key) {
-                            let truncated = truncate_utf8(sample, 200);
-                            memory.append_event(
-                                "log_error",
-                                &dep.name,
-                                &dep.id,
-                                &truncated,
-                                "system",
-                            );
+                    match event.event_type.as_str() {
+                        "status_changed" => {
+                            // Notify on important status changes
+                            let emoji = if event.detail.contains("Running") && !event.detail.starts_with("Running") {
+                                "🟢"
+                            } else if event.detail.contains("Error") {
+                                "⚠️"
+                            } else if event.detail.contains("Stopped") {
+                                "🔴"
+                            } else {
+                                "🔄"
+                            };
+                            let source_icon = if event.source_type == "deployment" { " 🐳" } else { "" };
                             notify_tx.notify(&format!(
-                                "⚠️ 🐳 {} — 로그에서 에러 감지 ({}건):\n{}",
-                                dep.name,
-                                errors.len(),
-                                truncated
+                                "{}{} {} — {}",
+                                emoji, source_icon, event.l2_name, event.detail
                             ));
-                            alerted.insert(key);
                         }
+                        "health_changed" => {
+                            if event.detail.contains("false") {
+                                let source_icon = if event.source_type == "deployment" { " 🐳" } else { "" };
+                                notify_tx.notify(&format!(
+                                    "🔴{} {} — RPC 헬스 변경: {}",
+                                    source_icon, event.l2_name, event.detail
+                                ));
+                            }
+                        }
+                        _ => {} // created/deleted events are informational
                     }
                 }
-            }
 
-            // Clear alerts for resolved issues so they can re-fire if they recur
-            alerted.retain(|key| current_issues.contains(key));
+                // Periodic log scanning (runs every 5 minutes, only for running deployments)
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS)) => {
+                    if !notify_tx.is_running() {
+                        continue;
+                    }
+
+                    // Use unified state to find running deployments
+                    let all_l2 = notify_tx.unified_state.get_all();
+                    let mut current_log_issues: HashSet<String> = HashSet::new();
+
+                    for l2 in &all_l2 {
+                        if l2.source != crate::unified_state::L2Source::Deployment {
+                            continue;
+                        }
+                        if l2.status != crate::unified_state::L2Status::Running
+                            && l2.status != crate::unified_state::L2Status::Partial {
+                            continue;
+                        }
+
+                        // Log error detection
+                        if let Ok(logs) = proxy.get_logs(&l2.id, None, 50).await {
+                            let errors: Vec<&str> = logs
+                                .lines()
+                                .filter(|line| ERROR_RE.is_match(line))
+                                .collect();
+                            if !errors.is_empty() {
+                                let sample = errors.last().unwrap_or(&"unknown error");
+                                let hash = {
+                                    use sha2::Digest;
+                                    let mut h = sha2::Sha256::new();
+                                    h.update(sample.as_bytes());
+                                    hex::encode(&h.finalize()[..8])
+                                };
+                                let key = format!("log_error:{}:{}", l2.id, hash);
+                                current_log_issues.insert(key.clone());
+                                if !log_alerted.contains(&key) {
+                                    let truncated = truncate_utf8(sample, 200);
+                                    memory.append_event(
+                                        "log_error",
+                                        &l2.name,
+                                        &l2.id,
+                                        &truncated,
+                                        "system",
+                                    );
+                                    notify_tx.notify(&format!(
+                                        "⚠️ 🐳 {} — 로그에서 에러 감지 ({}건):\n{}",
+                                        l2.name,
+                                        errors.len(),
+                                        truncated
+                                    ));
+                                    log_alerted.insert(key);
+                                }
+                            }
+                        }
+                    }
+
+                    // Clear resolved log alerts
+                    log_alerted.retain(|key| current_log_issues.contains(key));
+                }
+            }
         }
     }
 }

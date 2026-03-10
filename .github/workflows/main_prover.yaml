@@ -27,7 +27,7 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: gpu
     steps:
       - name: Checkout sources

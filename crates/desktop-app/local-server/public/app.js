@@ -1170,6 +1170,18 @@ async function resumeDeployProgress(id) {
           message: ev.message,
           timestamp: ev.created_at,
         });
+        // Restore extra data (imageFound, contract addresses) from stored events
+        if (ev.data) {
+          try {
+            const extra = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+            if (extra.imageFound) buildingImageFound = extra.imageFound;
+            if (extra.bridgeAddress) deployedContracts['CommonBridge'] = extra.bridgeAddress;
+            if (extra.proposerAddress) deployedContracts['OnChainProposer'] = extra.proposerAddress;
+            if (extra.timelockAddress) deployedContracts['Timelock'] = extra.timelockAddress;
+            if (extra.sp1VerifierAddress) deployedContracts['SP1Verifier'] = extra.sp1VerifierAddress;
+            if (extra.guestProgramRegistryAddress) deployedContracts['GuestProgramRegistry'] = extra.guestProgramRegistryAddress;
+          } catch {}
+        }
         if (ev.phase && ev.phase !== lastPhase) {
           if (lastPhase !== 'configured') {
             phaseDurations[lastPhase] = Math.floor((ev.created_at - lastPhaseTime) / 1000);

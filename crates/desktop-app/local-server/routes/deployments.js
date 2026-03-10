@@ -540,7 +540,7 @@ router.post("/:id/stop", async (req, res) => {
         const composeFile = path.join(getDeploymentDir(deployment.id), "docker-compose.yaml");
         const docker = require("../lib/docker-local");
         // Stop tools first, then core services
-        try { await docker.stopTools(); } catch { /* tools may not be running */ }
+        try { await docker.stopTools(`${deployment.docker_project}-tools`); } catch { /* tools may not be running */ }
         await docker.stop(deployment.docker_project, composeFile);
       } catch (e) {
         console.log(`[stop] docker stop failed: ${e.message}`);

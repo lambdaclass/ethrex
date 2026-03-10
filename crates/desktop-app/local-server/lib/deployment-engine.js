@@ -397,11 +397,11 @@ async function provision(deployment) {
     }
     if (!forceRebuild && hasL1Image && hasL2Image) {
       // Both project-specific images exist — skip build entirely
-      emit(id, "phase", { phase: "building", message: `Docker images found — skipping build` });
+      emit(id, "phase", { phase: "building", message: `Docker images found — skipping build`, imageFound: `${l1Tag}, ${l2Tag}` });
       emit(id, "log", { message: `Reusing existing images: L1=${l1Tag}, L2=${l2Tag}` });
     } else if (existingImage && !forceRebuild) {
       // Shared image exists but project tags missing — tag and skip build
-      emit(id, "phase", { phase: "building", message: `Docker image found (${existingImage}) — skipping build` });
+      emit(id, "phase", { phase: "building", message: `Docker image found (${existingImage}) — skipping build`, imageFound: existingImage });
       emit(id, "log", { message: `Reusing existing image: ${existingImage}` });
       try { execSync(`docker tag "${existingImage}" "${l1Tag}"`, { stdio: "pipe" }); } catch {}
       try { execSync(`docker tag "${existingImage}" "${l2Tag}"`, { stdio: "pipe" }); } catch {}

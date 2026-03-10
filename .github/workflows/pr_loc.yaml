@@ -19,10 +19,8 @@ env:
 jobs:
   report-loc-changes:
     name: Report PR Line Changes
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') && github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
-    # Skip the job if the PR is from a fork since it doesn't have permissions to post comments
-    if: github.event.pull_request.head.repo.fork == false
     steps:
       - name: Checkout PR Code
         uses: actions/checkout@v4
@@ -39,7 +37,7 @@ jobs:
           git fetch --depth=100000 origin $BASE_REF
           MERGE_BASE=$(git merge-base origin/$HEAD_REF origin/$BASE_REF)
           echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
-      
+
       - name: Checkout merge base commit
         uses: actions/checkout@v4
         with:

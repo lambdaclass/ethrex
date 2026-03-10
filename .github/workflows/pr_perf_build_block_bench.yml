@@ -19,8 +19,7 @@ env:
 
 jobs:
   build-block-benchmark:
-    if: contains(github.event.pull_request.labels.*.name, 'performance')
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'performance') && !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

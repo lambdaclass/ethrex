@@ -297,6 +297,7 @@ pub struct MonitoringInfo {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct RpcHealth {
     pub healthy: bool,
     pub block_number: Option<serde_json::Value>,

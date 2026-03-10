@@ -7,6 +7,7 @@ mod pilot_memory;
 mod process_manager;
 mod runner;
 mod telegram_bot;
+mod unified_state;
 
 use commands::*;
 use std::sync::Arc;
@@ -37,6 +38,11 @@ pub fn run() {
             let server = Arc::new(local_server::LocalServer::new());
             app.manage(server.clone());
             tauri::async_runtime::spawn(async move {
+                // Skip start if port already has a healthy server
+                if server.health_check().await {
+                    log::info!("Local server already running on port {}", server.port());
+                    return;
+                }
                 if let Err(e) = server.start().await {
                     log::warn!("Failed to auto-start local server: {e}");
                 }
@@ -72,12 +78,17 @@ pub fn run() {
             // Pilot memory (persistent chat/event storage)
             let memory = Arc::new(pilot_memory::PilotMemory::new());
 
+            // Unified L2 state (single source of truth for all L2 instances)
+            let unified = Arc::new(unified_state::UnifiedL2State::new());
+            app.manage(unified.clone());
+
             // Telegram bot manager (dynamic start/stop from Settings)
             let ai = app.state::<Arc<ai_provider::AiProvider>>().inner().clone();
             let am = app.state::<Arc<appchain_manager::AppchainManager>>().inner().clone();
             let runner = app.state::<Arc<runner::ProcessRunner>>().inner().clone();
             let tg_manager = Arc::new(telegram_bot::TelegramBotManager::new(
                 ai, am.clone(), runner.clone(), memory.clone(),
+                unified.clone(),
             ));
             // Auto-start if configured
             if let Ok(()) = tg_manager.start() {
@@ -87,10 +98,17 @@ pub fn run() {
             let tg_monitor = tg_manager.clone();
             tauri::async_runtime::spawn(
                 telegram_bot::TelegramBotManager::health_monitor(
-                    am, runner, memory, tg_monitor,
+                    am.clone(), runner.clone(), memory.clone(), tg_monitor,
                 )
             );
             app.manage(tg_manager);
+
+            // Start background L2 state refresh (5s interval)
+            tauri::async_runtime::spawn(
+                unified_state::spawn_state_refresh(
+                    unified, am, runner, memory, app.handle().clone(),
+                )
+            );
 
             Ok(())
         })
@@ -146,6 +164,7 @@ pub fn run() {
             toggle_telegram_bot,
             get_telegram_bot_status,
             send_telegram_notification,
+            get_all_l2,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
