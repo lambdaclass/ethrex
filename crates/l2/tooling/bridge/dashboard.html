@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TokamakAppL2 ZK-DEX Localnet</title>
+  <title>TokamakAppL2 ZK-DEX Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
   <style>
     :root {
@@ -319,7 +319,7 @@
   <div class="header">
     <div class="header-left">
       <div class="logo"><span>TokamakAppL2</span> ZK-DEX</div>
-      <span class="badge">Localnet</span>
+      <span class="badge" id="networkBadge">Localnet</span>
     </div>
     <div class="header-status" id="overallStatus">
       <div class="status-dot checking"></div>
@@ -362,7 +362,7 @@
     <div class="chain-stats">
       <div class="chain-stat-card l1">
         <div class="chain-stat-header">
-          <div class="chain-stat-title l1">L1 (Chain ID: 9)</div>
+          <div class="chain-stat-title l1" id="l1ChainTitle">L1 (Chain ID: 9)</div>
           <div class="service-status checking" id="l1ChainStatus">
             <div class="dot"></div>
             <span>checking</span>
@@ -379,7 +379,7 @@
           </div>
           <div class="stat-item">
             <div class="stat-label">RPC</div>
-            <div class="stat-value" style="font-size:12px;">localhost:8545</div>
+            <div class="stat-value" style="font-size:12px;" id="l1RpcDisplay">localhost:8545</div>
           </div>
           <div class="stat-item">
             <div class="stat-label">Peers</div>
@@ -389,7 +389,7 @@
       </div>
       <div class="chain-stat-card l2">
         <div class="chain-stat-header">
-          <div class="chain-stat-title l2">L2 (Chain ID: 65536999)</div>
+          <div class="chain-stat-title l2" id="l2ChainTitle">L2 (Chain ID: 65536999)</div>
           <div class="service-status checking" id="l2ChainStatus">
             <div class="dot"></div>
             <span>checking</span>
@@ -419,9 +419,9 @@
     <!-- Services -->
     <div class="section-title">Services</div>
     <div class="services-grid">
-      <div class="service-card">
+      <div class="service-card" id="svcL1BlockscoutCard">
         <div class="service-header">
-          <div class="service-name">L1 Blockscout Explorer</div>
+          <div class="service-name" id="svcL1ExplorerName">L1 Blockscout Explorer</div>
           <div class="service-status checking" id="svcL1Blockscout">
             <div class="dot"></div>
             <span>checking</span>
@@ -510,7 +510,8 @@
     <div class="section-title">L2 Genesis Contracts (ZK-DEX)</div>
     <div class="contracts-card" id="genesisZkDexSection"></div>
 
-    <!-- Test Accounts -->
+    <!-- Test Accounts (hidden for external L1) -->
+    <div id="testAccountsSection">
     <div class="section-title">Test Accounts (1B ETH each)</div>
     <div class="contracts-card">
       <div style="font-size:12px;color:var(--text-dim);padding:0 0 10px;border-bottom:1px solid var(--border);margin-bottom:4px;">
@@ -590,6 +591,8 @@
       </div>
     </div>
 
+    </div><!-- /testAccountsSection -->
+
     <!-- MetaMask Network Config -->
     <div class="section-title">MetaMask Network Config</div>
     <div class="network-configs">
@@ -597,7 +600,7 @@
         <h4 style="color: var(--l1-color);">L1 Network</h4>
         <div class="config-row">
           <span class="label">Network Name</span>
-          <span class="value">TokamakAppL2 L1 Local</span>
+          <span class="value" id="netL1Name">TokamakAppL2 L1 Local</span>
         </div>
         <div class="config-row">
           <span class="label">RPC URL</span>
@@ -605,7 +608,7 @@
         </div>
         <div class="config-row">
           <span class="label">Chain ID</span>
-          <span class="value">9</span>
+          <span class="value" id="netL1ChainId">9</span>
         </div>
         <div class="config-row">
           <span class="label">Currency</span>
@@ -615,7 +618,7 @@
           <span class="label">Explorer</span>
           <span class="value" id="netL1Explorer">http://localhost:8083</span>
         </div>
-        <button class="btn-add-network" id="btnAddL1" onclick="addNetwork(9, 'http://localhost:8545', 'TokamakAppL2 L1 Local', 'http://localhost:8083')">
+        <button class="btn-add-network" id="btnAddL1" data-chain-id="9" data-rpc="http://localhost:8545" data-name="TokamakAppL2 L1 Local" data-explorer="http://localhost:8083">
           Add to MetaMask
         </button>
       </div>
@@ -641,7 +644,7 @@
           <span class="label">Explorer</span>
           <span class="value" id="netL2Explorer">http://localhost:8082</span>
         </div>
-        <button class="btn-add-network" id="btnAddL2" onclick="addNetwork(65536999, 'http://localhost:1729', 'TokamakAppL2 L2 Local', 'http://localhost:8082')">
+        <button class="btn-add-network" id="btnAddL2" data-chain-id="65536999" data-rpc="http://localhost:1729" data-name="TokamakAppL2 L2 Local" data-explorer="http://localhost:8082">
           Add to MetaMask
         </button>
       </div>
@@ -649,7 +652,7 @@
   </div>
 
   <div class="footer">
-    TokamakAppL2 ZK-DEX Localnet Dashboard &middot; <a href="https://github.com/lambdaclass/ethrex" target="_blank">GitHub</a>
+    TokamakAppL2 ZK-DEX Dashboard &middot; <a href="https://github.com/lambdaclass/ethrex" target="_blank">GitHub</a>
   </div>
 
   <script>
@@ -697,20 +700,60 @@
           if (CONFIG.l1_rpc) L1_RPC = CONFIG.l1_rpc;
           if (CONFIG.l2_rpc) L2_RPC = CONFIG.l2_rpc;
 
+          const isExternalL1 = CONFIG.is_external_l1 === true;
+          const l1NetworkName = CONFIG.l1_network_name || 'Local';
+
+          // Update badge
+          if (isExternalL1) {
+            document.getElementById('networkBadge').textContent = l1NetworkName;
+          }
+
+          // Update page title
+          document.title = 'TokamakAppL2 ZK-DEX ' + (isExternalL1 ? l1NetworkName : 'Localnet');
+
+          // Hide test accounts for external L1
+          if (isExternalL1) {
+            document.getElementById('testAccountsSection').style.display = 'none';
+          }
+
+          // Update chain titles with actual chain IDs
+          if (CONFIG.l1_chain_id) {
+            document.getElementById('l1ChainTitle').textContent = 'L1 (Chain ID: ' + CONFIG.l1_chain_id + ')';
+          }
+          if (CONFIG.l2_chain_id) {
+            document.getElementById('l2ChainTitle').textContent = 'L2 (Chain ID: ' + CONFIG.l2_chain_id + ')';
+          }
+
           // Update quick links
           const l1Exp = CONFIG.l1_explorer || 'http://localhost:8083';
           const l2Exp = CONFIG.l2_explorer || 'http://localhost:8082';
           document.getElementById('linkL1Explorer').href = l1Exp;
-          document.getElementById('linkL1Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l1Exp).port;
+          let l1ExpLabel = 'Blockscout';
+          try {
+            l1ExpLabel = isExternalL1 ? l1NetworkName + ' Explorer' : 'Blockscout :' + new URL(l1Exp).port;
+          } catch (e) {
+            console.warn('Could not parse L1 explorer URL for label:', l1Exp);
+            if (isExternalL1) l1ExpLabel = l1NetworkName + ' Explorer';
+          }
+          document.getElementById('linkL1Explorer').querySelector('.quick-link-sub').textContent = l1ExpLabel;
           document.getElementById('linkL2Explorer').href = l2Exp;
           document.getElementById('linkL2Explorer').querySelector('.quick-link-sub').textContent = 'Blockscout :' + new URL(l2Exp).port;
 
-          // Update service cards
-          const svcL1Link = document.querySelector('#svcL1Blockscout')?.closest('.service-card');
-          if (svcL1Link) {
-            const links = svcL1Link.querySelectorAll('.service-detail .value');
-            if (links[0]) links[0].innerHTML = '<a href="' + l1Exp + '" target="_blank">localhost:' + new URL(l1Exp).port + '</a>';
-            if (links[1]) links[1].textContent = ':' + new URL(l1Exp).port + '/api';
+          // Update L1 service card
+          const svcL1Card = document.getElementById('svcL1BlockscoutCard');
+          if (svcL1Card) {
+            if (isExternalL1) {
+              // Replace L1 Blockscout with external explorer info
+              document.getElementById('svcL1ExplorerName').textContent = 'L1 Explorer (' + l1NetworkName + ')';
+              setStatus('svcL1Blockscout', 'online', 'external');
+              const links = svcL1Card.querySelectorAll('.service-detail .value');
+              if (links[0]) links[0].innerHTML = '<a href="' + l1Exp + '" target="_blank">' + new URL(l1Exp).host + '</a>';
+              if (links[1]) links[1].textContent = 'External';
+            } else {
+              const links = svcL1Card.querySelectorAll('.service-detail .value');
+              if (links[0]) links[0].innerHTML = '<a href="' + l1Exp + '" target="_blank">localhost:' + new URL(l1Exp).port + '</a>';
+              if (links[1]) links[1].textContent = ':' + new URL(l1Exp).port + '/api';
+            }
           }
           const svcL2Link = document.querySelector('#svcL2Blockscout')?.closest('.service-card');
           if (svcL2Link) {
@@ -720,11 +763,11 @@
           }
 
           // Update chain stat RPC display
-          const l1RpcPort = new URL(L1_RPC).port || '8545';
+          try {
+            const l1RpcHost = new URL(L1_RPC).host;
+            document.getElementById('l1RpcDisplay').textContent = l1RpcHost;
+          } catch {}
           const l2RpcPort = new URL(L2_RPC).port || '1729';
-          document.querySelectorAll('.chain-stat-card.l1 .stat-value').forEach(el => {
-            if (el.textContent.includes('localhost:')) el.textContent = 'localhost:' + l1RpcPort;
-          });
           document.querySelectorAll('.chain-stat-card.l2 .stat-value').forEach(el => {
             if (el.textContent.includes('localhost:')) el.textContent = 'localhost:' + l2RpcPort;
           });
@@ -738,14 +781,30 @@
           }
 
           // Update MetaMask network config
+          const l1ChainId = CONFIG.l1_chain_id || 9;
+          const l2ChainId = CONFIG.l2_chain_id || 65536999;
+          const l1NetName = isExternalL1 ? ('TokamakAppL2 L1 ' + l1NetworkName) : 'TokamakAppL2 L1 Local';
+          const l2NetName = isExternalL1 ? ('TokamakAppL2 L2 ' + l1NetworkName) : 'TokamakAppL2 L2 Local';
+
+          document.getElementById('netL1Name').textContent = l1NetName;
           document.getElementById('netL1Rpc').textContent = L1_RPC;
+          document.getElementById('netL1ChainId').textContent = String(l1ChainId);
           document.getElementById('netL1Explorer').textContent = l1Exp;
-          document.getElementById('btnAddL1').setAttribute('onclick', "addNetwork(9, '" + L1_RPC + "', 'TokamakAppL2 L1 Local', '" + l1Exp + "')");
+
+          const btnL1 = document.getElementById('btnAddL1');
+          btnL1.dataset.chainId = l1ChainId;
+          btnL1.dataset.rpc = L1_RPC;
+          btnL1.dataset.name = l1NetName;
+          btnL1.dataset.explorer = l1Exp;
 
           document.getElementById('netL2Rpc').textContent = L2_RPC;
           document.getElementById('netL2Explorer').textContent = l2Exp;
-          document.getElementById('btnAddL2').setAttribute('onclick', "addNetwork(65536999, '" + L2_RPC + "', 'TokamakAppL2 L2 Local', '" + l2Exp + "')");
 
+          const btnL2 = document.getElementById('btnAddL2');
+          btnL2.dataset.chainId = l2ChainId;
+          btnL2.dataset.rpc = L2_RPC;
+          btnL2.dataset.name = l2NetName;
+          btnL2.dataset.explorer = l2Exp;
 
           // Update metrics links
           if (CONFIG.metrics_url) {
@@ -766,13 +825,15 @@
             }
           }
 
-          // Update test account explorer links
-          document.querySelectorAll('.contract-addr a').forEach(a => {
-            const href = a.getAttribute('href');
-            if (href && href.includes('localhost:8083')) {
-              a.setAttribute('href', href.replace('http://localhost:8083', l1Exp));
-            }
-          });
+          // Update test account explorer links (only visible for local L1)
+          if (!isExternalL1) {
+            document.querySelectorAll('#testAccountsSection .contract-addr a').forEach(a => {
+              const href = a.getAttribute('href');
+              if (href && href.includes('localhost:8083')) {
+                a.setAttribute('href', href.replace('http://localhost:8083', l1Exp));
+              }
+            });
+          }
         }
       } catch (err) {
         console.warn('Failed to load config.json:', err);
@@ -862,7 +923,8 @@
         const gasGwei = (parseInt(gasPriceHex, 16) / 1e9).toFixed(1);
         document.getElementById('l1Block').textContent = block.toLocaleString();
         document.getElementById('l1Gas').textContent = gasGwei + ' Gwei';
-        document.getElementById('l1Peers').textContent = 'dev';
+        const isExtL1 = CONFIG && CONFIG.is_external_l1 === true;
+        document.getElementById('l1Peers').textContent = isExtL1 ? 'external' : 'dev';
         setStatus('l1ChainStatus', 'online', 'online');
       } catch {
         setStatus('l1ChainStatus', 'offline', 'offline');
@@ -888,16 +950,22 @@
       const l1Exp = CONFIG ? CONFIG.l1_explorer : 'http://localhost:8083';
       const l2Exp = CONFIG ? CONFIG.l2_explorer : 'http://localhost:8082';
 
-      // L1 Blockscout
-      try {
-        const resp = await fetch(l1Exp + '/api/v2/stats');
-        if (resp.ok) {
-          setStatus('svcL1Blockscout', 'online', 'online');
-        } else {
-          setStatus('svcL1Blockscout', 'offline', 'starting');
+      // L1 Explorer status
+      const isExternalL1 = CONFIG && CONFIG.is_external_l1 === true;
+      if (isExternalL1) {
+        // External L1 explorer is always "online" (we don't manage it)
+        setStatus('svcL1Blockscout', 'online', 'external');
+      } else {
+        try {
+          const resp = await fetch(l1Exp + '/api/v2/stats');
+          if (resp.ok) {
+            setStatus('svcL1Blockscout', 'online', 'online');
+          } else {
+            setStatus('svcL1Blockscout', 'offline', 'starting');
+          }
+        } catch {
+          setStatus('svcL1Blockscout', 'offline', 'offline');
         }
-      } catch {
-        setStatus('svcL1Blockscout', 'offline', 'offline');
       }
 
       // L2 Blockscout
@@ -962,6 +1030,18 @@
         console.error('Failed to add network:', err);
       }
     }
+
+    // MetaMask "Add Network" buttons via data attributes (no inline onclick)
+    document.querySelectorAll('.btn-add-network').forEach(btn => {
+      btn.addEventListener('click', () => {
+        addNetwork(
+          Number(btn.dataset.chainId),
+          btn.dataset.rpc,
+          btn.dataset.name,
+          btn.dataset.explorer
+        );
+      });
+    });
 
     // Initialize
     loadConfig();

@@ -67,7 +67,7 @@ services:
     environment:
       ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:${TOOLS_L1_RPC_PORT:-8545}/
       ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:${TOOLS_L1_RPC_PORT:-8545}/
-      CHAIN_ID: '9'
+      CHAIN_ID: '${L1_CHAIN_ID:-9}'
       ETHEREUM_JSONRPC_VARIANT: geth
       INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: true
       INDEXER_DISABLE_EMPTY_BLOCKS_SANITIZER: true
@@ -153,7 +153,7 @@ services:
     environment:
       ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:${TOOLS_L2_RPC_PORT:-1729}/
       ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:${TOOLS_L2_RPC_PORT:-1729}/
-      CHAIN_ID: '65536999'
+      CHAIN_ID: '${L2_CHAIN_ID:-65536999}'
       ETHEREUM_JSONRPC_VARIANT: geth
       INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: true
       INDEXER_DISABLE_EMPTY_BLOCKS_SANITIZER: true
@@ -201,7 +201,7 @@ services:
       NEXT_PUBLIC_API_PROTOCOL: http
       NEXT_PUBLIC_NETWORK_NAME: TokamakAppL2 ZK-DEX L2
       NEXT_PUBLIC_NETWORK_SHORT_NAME: TokamakAppL2 ZK-DEX L2
-      NEXT_PUBLIC_NETWORK_ID: 65536999
+      NEXT_PUBLIC_NETWORK_ID: ${L2_CHAIN_ID:-65536999}
       NEXT_PUBLIC_NETWORK_CURRENCY_NAME: Ether
       NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: ETH
       NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
@@ -239,6 +239,27 @@ services:
         published: ${TOOLS_L2_EXPLORER_PORT:-8082}
       - target: 8083
         published: ${TOOLS_L1_EXPLORER_PORT:-8083}
+
+  # ==========================================================================
+  # Nginx Proxy — L2 only (for external L1: testnet/mainnet)
+  # ==========================================================================
+  proxy-l2-only:
+    image: nginx
+    container_name: zk-dex-tools-proxy-l2
+    profiles:
+      - external-l1
+    depends_on:
+      - backend-l2
+      - frontend-l2
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    configs:
+      - source: nginx_conf_l2_only
+        target: /etc/nginx/conf.d/default.conf
+    restart: unless-stopped
+    ports:
+      - target: 8082
+        published: ${TOOLS_L2_EXPLORER_PORT:-8082}
 
   # ==========================================================================
   # Function Selectors (insert known ABI into Blockscout DB)
@@ -309,6 +330,53 @@ services:
         echo "  Proposer: $$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS"
 
   # ==========================================================================
+  # Function Selectors — L2 only (for external L1: testnet/mainnet)
+  # ==========================================================================
+  function-selectors-l2:
+    image: postgres:17
+    container_name: zk-dex-tools-selectors-l2
+    profiles:
+      - external-l1
+    depends_on:
+      db:
+        condition: service_healthy
+      backend-l2:
+        condition: service_started
+    environment:
+      POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
+    env_file:
+      - .zk-dex-deployed.env
+    restart: "no"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "Waiting for L2 Blockscout database to be ready..."
+        sleep 30
+
+        echo "Inserting L2 function selectors..."
+
+        psql "postgresql://blockscout:$${POSTGRES_PASSWORD}@db:5432/blockscout_l2" <<'EOF'
+        INSERT INTO contract_methods (identifier, type, inserted_at, updated_at, abi) VALUES
+          (((x'51cff8d9')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"withdraw","inputs":[{"name":"_receiverOnL1","type":"address"}],"outputs":[],"stateMutability":"payable"}'),
+          (((x'd23061db')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"withdrawERC20","inputs":[{"name":"tokenL1","type":"address"},{"name":"tokenL2","type":"address"},{"name":"destination","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[],"stateMutability":"nonpayable"}'),
+          (((x'b0f4d395')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"mintETH","inputs":[{"name":"to","type":"address"}],"outputs":[],"stateMutability":"payable"}'),
+          (((x'79204fe0')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"mintERC20","inputs":[{"name":"tokenL1","type":"address"},{"name":"tokenL2","type":"address"},{"name":"destination","type":"address"},{"name":"amount","type":"uint256"}],"outputs":[],"stateMutability":"nonpayable"}'),
+          (((x'00cffbe5')::bit(32))::int, '', NOW(), NOW(), '{"type":"function","name":"sendMessageToL1","inputs":[{"name":"data","type":"bytes32"}],"outputs":[],"stateMutability":"nonpayable"}')
+        ON CONFLICT DO NOTHING;
+        EOF
+
+        echo "Inserting L2 address names..."
+
+        psql "postgresql://blockscout:$${POSTGRES_PASSWORD}@db:5432/blockscout_l2" <<'EOF'
+        INSERT INTO address_names (address_hash, name, inserted_at, updated_at) VALUES
+          (decode('000000000000000000000000000000000000FFFF', 'hex'), 'CommonBridgeL2', NOW(), NOW())
+        ON CONFLICT DO NOTHING;
+        EOF
+
+        echo "L2 function selectors and address names inserted."
+
+  # ==========================================================================
   # Bridge UI + Dashboard
   # ==========================================================================
   bridge-ui:
@@ -325,6 +393,13 @@ services:
       TOOLS_L1_EXPLORER_PORT: ${TOOLS_L1_EXPLORER_PORT:-8083}
       TOOLS_L2_EXPLORER_PORT: ${TOOLS_L2_EXPLORER_PORT:-8082}
       TOOLS_METRICS_PORT: ${TOOLS_METRICS_PORT:-3702}
+      # External L1 support (testnet/mainnet)
+      L1_RPC_URL: ${L1_RPC_URL:-}
+      L1_CHAIN_ID: ${L1_CHAIN_ID:-}
+      L1_EXPLORER_URL: ${L1_EXPLORER_URL:-}
+      L1_NETWORK_NAME: ${L1_NETWORK_NAME:-}
+      L2_CHAIN_ID: ${L2_CHAIN_ID:-}
+      IS_EXTERNAL_L1: ${IS_EXTERNAL_L1:-}
     ports:
       - target: 80
         published: ${TOOLS_BRIDGE_UI_PORT:-3000}
@@ -391,6 +466,44 @@ configs:
 
           location / {
               proxy_pass            http://frontend-l1:3000;
+              proxy_http_version    1.1;
+              proxy_set_header      Host "$$host";
+              proxy_set_header      X-Real-IP "$$remote_addr";
+              proxy_set_header      X-Forwarded-For "$$proxy_add_x_forwarded_for";
+              proxy_set_header      X-Forwarded-Proto "$$scheme";
+              proxy_set_header      Upgrade "$$http_upgrade";
+              proxy_set_header      Connection $$connection_upgrade;
+              proxy_cache_bypass    $$http_upgrade;
+          }
+      }
+
+  nginx_conf_l2_only:
+    content: |
+      map $$http_upgrade $$connection_upgrade {
+        default upgrade;
+        ''      close;
+      }
+
+      # L2 Blockscout only (external L1 mode — no L1 Blockscout)
+      server {
+          listen 8082;
+          server_name localhost;
+          proxy_http_version 1.1;
+
+          location ~ ^/(api(?!-docs$$)|socket|sitemap.xml|auth/auth0|auth/auth0/callback|auth/logout) {
+              proxy_pass            http://backend-l2:4000;
+              proxy_http_version    1.1;
+              proxy_set_header      Host "$$host";
+              proxy_set_header      X-Real-IP "$$remote_addr";
+              proxy_set_header      X-Forwarded-For "$$proxy_add_x_forwarded_for";
+              proxy_set_header      X-Forwarded-Proto "$$scheme";
+              proxy_set_header      Upgrade "$$http_upgrade";
+              proxy_set_header      Connection $$connection_upgrade;
+              proxy_cache_bypass    $$http_upgrade;
+          }
+
+          location / {
+              proxy_pass            http://frontend-l2:3000;
               proxy_http_version    1.1;
               proxy_set_header      Host "$$host";
               proxy_set_header      X-Real-IP "$$remote_addr";

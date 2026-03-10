@@ -186,15 +186,18 @@ export default function L2DetailServicesTab({
         <div className="px-3 pt-2 pb-1 border-t border-[var(--color-border)] flex items-center justify-between">
           <span className="text-[9px] uppercase tracking-wider text-[var(--color-text-secondary)] font-medium">Tools</span>
           {(() => {
-            const toolsAnyRunning = TOOLS_SERVICES.some(svc => svcState(svc.service) === 'running')
-            const toolsAllStopped = TOOLS_SERVICES.every(svc => svcState(svc.service) !== 'running')
+            // For testnet mode, skip localOnly services (frontend-l1) when checking tools status
+            const relevantTools = isTestnet ? TOOLS_SERVICES.filter(svc => !svc.localOnly) : TOOLS_SERVICES
+            const toolsAnyRunning = relevantTools.some(svc => svcState(svc.service) === 'running')
+            const toolsAllStopped = relevantTools.every(svc => svcState(svc.service) !== 'running')
             if (!l2.dockerProject) return null
+            // Use bridge-ui as the trigger service — it exists in both local and external L1 modes
             return toolsAllStopped ? (
               <button disabled={toolsLoading} onClick={async () => {
                 setToolsLoading(true)
                 try {
                   const base = `http://127.0.0.1:${import.meta.env.VITE_LOCAL_SERVER_PORT || 5002}`
-                  await fetch(`${base}/api/deployments/${l2.id}/service/frontend-l1/start`, { method: 'POST' })
+                  await fetch(`${base}/api/deployments/${l2.id}/service/bridge-ui/start`, { method: 'POST' })
                   onRefresh?.()
                 } catch (e) { console.error('Tools start failed:', e) }
                 finally { setToolsLoading(false) }
@@ -207,7 +210,7 @@ export default function L2DetailServicesTab({
                 setToolsLoading(true)
                 try {
                   const base = `http://127.0.0.1:${import.meta.env.VITE_LOCAL_SERVER_PORT || 5002}`
-                  await fetch(`${base}/api/deployments/${l2.id}/service/frontend-l1/stop`, { method: 'POST' })
+                  await fetch(`${base}/api/deployments/${l2.id}/service/bridge-ui/stop`, { method: 'POST' })
                   onRefresh?.()
                 } catch (e) { console.error('Tools stop failed:', e) }
                 finally { setToolsLoading(false) }

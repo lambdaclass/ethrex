@@ -25,6 +25,23 @@ const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
 
+/** Build external L1 config props from deployment config (DRY helper for start/restart tools) */
+function getExternalL1Config(deployment) {
+  const depConfig = deployment.config ? JSON.parse(deployment.config) : {};
+  const isExternal = depConfig.mode === 'testnet';
+  const testnetCfg = depConfig.testnet || {};
+  return {
+    skipL1Explorer: isExternal,
+    ...(isExternal && {
+      l1RpcUrl: testnetCfg.l1RpcUrl,
+      l1ChainId: testnetCfg.l1ChainId,
+      l1ExplorerUrl: testnetCfg.l1ExplorerUrl,
+      l1NetworkName: testnetCfg.network,
+      isExternalL1: true,
+    }),
+  };
+}
+
 // ==========================================
 // CRUD (local — no auth required)
 // ==========================================
@@ -578,7 +595,7 @@ router.post("/:id/destroy", async (req, res) => {
 });
 
 // Tools services live in a separate compose file
-const TOOLS_SERVICES = new Set(["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui"]);
+const TOOLS_SERVICES = new Set(["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "proxy-l2-only", "function-selectors", "function-selectors-l2", "bridge-ui"]);
 
 // POST /api/deployments/:id/service/:service/stop — stop a single service
 router.post("/:id/service/:service/stop", async (req, res) => {
@@ -617,6 +634,7 @@ router.post("/:id/service/:service/start", async (req, res) => {
         l1Port: deployment.l1_port,
         l2Port: deployment.l2_port,
         toolsMetricsPort: deployment.tools_metrics_port,
+        ...getExternalL1Config(deployment),
       });
       return res.json({ ok: true, message: `Tools started` });
     }
@@ -669,7 +687,6 @@ router.post("/:id/restart-tools", async (req, res) => {
       if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
     }
 
-    const depConfig = deployment.config ? JSON.parse(deployment.config) : {};
     const toolsPorts = {
       toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
       toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
@@ -678,7 +695,7 @@ router.post("/:id/restart-tools", async (req, res) => {
       toolsMetricsPort: deployment.tools_metrics_port,
       l1Port: deployment.l1_port,
       l2Port: deployment.l2_port,
-      skipL1Explorer: depConfig.mode === 'testnet',
+      ...getExternalL1Config(deployment),
     };
 
     await docker.restartTools(envVars, toolsPorts);

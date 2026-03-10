@@ -380,8 +380,8 @@
 
     // Fallback constants (used only if config.json fails to load)
     const COMMON_BRIDGE_L2 = '0x000000000000000000000000000000000000ffff';
-    const L1_CHAIN_ID = 9;
-    const L2_CHAIN_ID = 65536999;
+    let L1_CHAIN_ID = 9;
+    let L2_CHAIN_ID = 65536999;
     const L1_RPC = 'http://localhost:8545';
     const L2_RPC = 'http://localhost:1729';
 
@@ -389,6 +389,8 @@
     let connectedAddress = null;
     let l1Provider = null;
     let l2Provider = null;
+    let L1_NET_NAME = 'TokamakAppL2 L1 Local';
+    let L2_NET_NAME = 'TokamakAppL2 L2 Local';
 
     function getBridgeAddress() {
       return CONFIG ? CONFIG.bridge_address : '';
@@ -423,6 +425,16 @@
       } else {
         document.getElementById('infoBridgeAddr').textContent = 'not configured';
         document.getElementById('infoBridgeAddr').style.color = '#ef4444';
+      }
+
+      // Update chain IDs and network names from config
+      if (CONFIG) {
+        if (CONFIG.l1_chain_id) L1_CHAIN_ID = CONFIG.l1_chain_id;
+        if (CONFIG.l2_chain_id) L2_CHAIN_ID = CONFIG.l2_chain_id;
+        if (CONFIG.l1_network_name && CONFIG.l1_network_name !== 'Local') {
+          L1_NET_NAME = 'TokamakAppL2 L1 ' + CONFIG.l1_network_name;
+          L2_NET_NAME = 'TokamakAppL2 L2 ' + CONFIG.l1_network_name;
+        }
       }
 
       // Update nav links and RPC info
@@ -592,9 +604,9 @@
       if (chainId !== requiredChain) {
         try {
           if (currentTab === 'deposit') {
-            await switchNetwork(L1_CHAIN_ID, CONFIG ? CONFIG.l1_rpc : L1_RPC, 'ethrex L1 Local');
+            await switchNetwork(L1_CHAIN_ID, CONFIG ? CONFIG.l1_rpc : L1_RPC, L1_NET_NAME);
           } else {
-            await switchNetwork(L2_CHAIN_ID, CONFIG ? CONFIG.l2_rpc : L2_RPC, 'ethrex L2 Local');
+            await switchNetwork(L2_CHAIN_ID, CONFIG ? CONFIG.l2_rpc : L2_RPC, L2_NET_NAME);
           }
           await updateBridgeButton();
           // Verify network was actually switched

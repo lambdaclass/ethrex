@@ -249,10 +249,10 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       console.log("\n=== Control Logic Tests ===");
 
       // -- TOOLS_SERVICES routing --
-      const TOOLS_SERVICES = new Set(["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui"]);
+      const TOOLS_SERVICES = new Set(["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "proxy-l2-only", "function-selectors", "function-selectors-l2", "bridge-ui"]);
 
       test("TOOLS_SERVICES contains all expected tools services", () => {
-        const expected = ["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "function-selectors", "bridge-ui"];
+        const expected = ["frontend-l1", "backend-l1", "frontend-l2", "backend-l2", "db", "db-init", "redis-db", "proxy", "proxy-l2-only", "function-selectors", "function-selectors-l2", "bridge-ui"];
         for (const svc of expected) {
           assert.ok(TOOLS_SERVICES.has(svc), `Missing tools service: ${svc}`);
         }
