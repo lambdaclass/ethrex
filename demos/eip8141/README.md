@@ -309,7 +309,29 @@ The VERIFY frame likely failed — check that the passkey account was registered
 Blockscout needs a few seconds to catch up. Wait 10-15 seconds after submitting a transaction, then refresh.
 
 **Blockscout 502 Bad Gateway**
-The backend container may still be starting. Check with `docker compose ps` and wait for the backend to show "Up". If it persists, restart the proxy: `docker compose restart proxy`.
+The nginx proxy container resolves other containers by Docker-internal IP. If you rebuild or recreate a container (e.g., `docker compose up -d --force-recreate frontend`), the proxy still has the old IP cached. Fix by restarting the proxy after any container recreate:
+```bash
+cd ethrex-blockscout
+docker compose -f docker-compose/docker-compose.yml restart proxy
+```
+If the 502 persists, check that the backend and frontend containers are actually running (`docker compose ps`) and inspect their logs (`docker logs frontend`, `docker logs backend`).
+
+**Blockscout frontend env changes not taking effect**
+The Next.js frontend bakes `NEXT_PUBLIC_*` env vars at build time. Changing `common-frontend.env` and restarting the container is **not enough** — you must rebuild the image:
+```bash
+cd ethrex-blockscout
+docker compose -f docker-compose/docker-compose.yml build --no-cache frontend
+docker compose -f docker-compose/docker-compose.yml up -d --force-recreate frontend
+docker compose -f docker-compose/docker-compose.yml restart proxy  # required after recreate
+```
+
+**ethrex stuck / not mining blocks**
+If the demo is stuck at "Deploying smart account" or similar, check if blocks are advancing:
+```bash
+curl -s -X POST http://localhost:8545 -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+```
+If the block number doesn't change, restart ethrex. Also check `txpool_content` for stuck pending transactions. After restarting ethrex, any pending transactions from before the restart will need to be resubmitted (refresh the demo page).
 
 **"Exceeded max amount of blocks to re-execute for tracing"**
 ethrex limitation for `debug_traceTransaction` on old blocks. Non-blocking — Blockscout still indexes transactions, just can't show internal transaction details for older blocks.
