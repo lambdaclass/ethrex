@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-prover"
+name = "ethrex-l2-prover"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -39,7 +39,7 @@ ethrex-sdk.workspace = true
 ethrex-guest-program = { path = "../../guest-program" }
 
 # shared prover infrastructure
-ethrex-prover-core = { workspace = true }
+ethrex-prover = { workspace = true }
 
 risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 risc0-zkp = { version = "=3.0.2", optional = true }
@@ -59,7 +59,7 @@ openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", pa
 ethrex-storage.workspace = true
 
 [lib]
-name = "ethrex_prover_lib"
+name = "ethrex_l2_prover"
 path = "src/lib.rs"
 
 [features]
@@ -67,28 +67,28 @@ path = "src/lib.rs"
 default = ["l2"]
 # prover backends
 risc0 = [
-    "ethrex-prover-core/risc0",
+    "ethrex-prover/risc0",
     "ethrex-guest-program/risc0",
     "dep:risc0-zkvm",
     "dep:risc0-zkp",
     "ethrex-common/risc0",
 ]
-sp1 = ["ethrex-prover-core/sp1", "ethrex-guest-program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
-zisk = ["ethrex-prover-core/zisk", "ethrex-guest-program/zisk"]
+sp1 = ["ethrex-prover/sp1", "ethrex-guest-program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
+zisk = ["ethrex-prover/zisk", "ethrex-guest-program/zisk"]
 openvm = [
-    "ethrex-prover-core/openvm",
+    "ethrex-prover/openvm",
     "ethrex-guest-program/openvm",
     "dep:openvm-sdk",
     "dep:openvm-stark-sdk",
     "dep:openvm-continuations",
 ]
-profiling = ["sp1-sdk?/profiling", "ethrex-prover-core/profiling"]
+profiling = ["sp1-sdk?/profiling", "ethrex-prover/profiling"]
 
-gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda", "ethrex-prover-core/gpu"]
-l2 = ["ethrex-prover-core/l2", "ethrex-guest-program/l2", "ethrex-l2/l2"]
+gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda", "ethrex-prover/gpu"]
+l2 = ["ethrex-prover/l2", "ethrex-guest-program/l2", "ethrex-l2/l2"]
 
 # temporary feature until we fix cargo-zisk setup-rom from failing in the CI
-ci = ["ethrex-prover-core/ci", "ethrex-guest-program/ci"]
+ci = ["ethrex-prover/ci", "ethrex-guest-program/ci"]
 
 [lints.clippy]
 unwrap_used = "deny"

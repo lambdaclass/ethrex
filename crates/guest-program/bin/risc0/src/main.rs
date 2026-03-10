@@ -2,8 +2,10 @@ use std::io::Read;
 
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
-#[cfg(not(feature = "l2"))]
+#[cfg(all(not(feature = "l2"), not(feature = "eip-8025")))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
+#[cfg(all(not(feature = "l2"), feature = "eip-8025"))]
+use ethrex_guest_program::l1::{decode_eip8025, execution_program};
 
 use risc0_zkvm::guest::env;
 
@@ -14,7 +16,7 @@ fn main() {
     env::stdin().read_to_end(&mut input).unwrap();
 
     #[cfg(feature = "eip-8025")]
-    let input = ProgramInput::decode(&input).unwrap();
+    let (new_payload_request, execution_witness) = decode_eip8025(&input).unwrap();
     #[cfg(not(feature = "eip-8025"))]
     let input = {
         use rkyv::rancor::Error;
@@ -24,6 +26,9 @@ fn main() {
     println!("end reading input, cycles: {}", end - start);
 
     println!("start execution");
+    #[cfg(feature = "eip-8025")]
+    let output = execution_program(new_payload_request, execution_witness).unwrap();
+    #[cfg(not(feature = "eip-8025"))]
     let output = execution_program(input).unwrap();
     let end_exec = env::cycle_count();
     println!("end execution, cycles: {}", end_exec - end);

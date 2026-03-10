@@ -1,4 +1,5 @@
 use crate::common::{ExecutionError, execute_blocks};
+#[cfg(not(feature = "eip-8025"))]
 use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
@@ -51,16 +52,17 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
 ///
 /// This transforms the SSZ `NewPayloadRequest` into a `Block`, validates it,
 /// executes it statelessly, and produces the `hash_tree_root` commitment.
+///
+/// Takes the raw `NewPayloadRequest` and `ExecutionWitness` decoded from the
+/// EIP-8025 wire format (see [`decode_eip8025`](super::decode_eip8025)).
 #[cfg(feature = "eip-8025")]
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, ExecutionError> {
+pub fn execution_program(
+    new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
+) -> Result<ProgramOutput, ExecutionError> {
     use ethrex_common::types::ELASTICITY_MULTIPLIER;
     use ethrex_vm::Evm;
     use ssz_merkle::HashTreeRoot;
-
-    let ProgramInput {
-        new_payload_request,
-        execution_witness,
-    } = input;
 
     // Compute the hash_tree_root before consuming the payload.
     let request_root = new_payload_request.hash_tree_root();

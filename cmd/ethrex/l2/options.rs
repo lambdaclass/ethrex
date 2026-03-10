@@ -11,7 +11,7 @@ use ethrex_l2::{
     sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
+use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };

@@ -135,3 +135,4 @@ core.*
 *.log
 
 __pycache__/
+openspec/

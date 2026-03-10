@@ -71,8 +71,8 @@ ethrex-metrics = { path = "./crates/blockchain/metrics" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
-ethrex-prover = { path = "./crates/l2/prover" }
-ethrex-prover-core = { path = "./crates/prover" }
+ethrex-l2-prover = { path = "./crates/l2/prover" }
+ethrex-prover = { path = "./crates/prover" }
 ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }

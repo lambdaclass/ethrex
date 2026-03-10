@@ -4,7 +4,7 @@ pub mod prover;
 
 pub use crate::backend::{BackendError, BackendType, ExecBackend, ProverBackend};
 pub use crate::protocol::ProofData;
-pub use crate::prover::{Prover, ProverPullConfig};
+pub use crate::prover::{InMessage as ProverInMessage, Prover, ProverPullConfig};
 
 #[cfg(feature = "sp1")]
 pub use crate::backend::Sp1Backend;

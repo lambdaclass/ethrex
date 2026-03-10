@@ -5,11 +5,12 @@ use crate::{
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use serde::{Serialize, de::DeserializeOwned};
+use spawned_concurrency::messages::Unused;
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    time::sleep,
 };
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -40,7 +41,21 @@ pub struct ProverPullConfig {
     pub commit_hash: String,
 }
 
+/// Messages the prover GenServer accepts via `cast`.
+#[derive(Clone)]
+pub enum InMessage {
+    /// Poll all coordinator endpoints for work, prove, and submit.
+    /// After completing one cycle, reschedules itself via `send_after`.
+    Poll,
+    /// Stop the prover gracefully.
+    Abort,
+}
+
 /// Generic prover that polls coordinator endpoints for work, proves, and submits.
+///
+/// Implements `GenServer` with a periodic polling loop: each `Poll` message triggers
+/// one cycle across all configured endpoints, then schedules the next `Poll` after
+/// the configured delay. Send `Abort` to stop the prover cleanly.
 ///
 /// - `B` is the backend (SP1, RISC0, Exec, etc.)
 /// - `I` is the input type received from the coordinator (e.g., `ProverInputData` for L2,
@@ -53,7 +68,7 @@ pub struct Prover<B: ProverBackend, I> {
 
 impl<B: ProverBackend, I> Prover<B, I>
 where
-    I: Into<ProgramInput> + Serialize + DeserializeOwned,
+    I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     pub fn new(backend: B, config: ProverPullConfig) -> Self {
         Self {
@@ -63,74 +78,64 @@ where
         }
     }
 
-    pub async fn start(&self) {
-        info!(
-            "Prover started for {:?}",
-            self.config
-                .proof_coordinator_endpoints
-                .iter()
-                .map(|url| url.to_string())
-                .collect::<Vec<String>>()
-        );
-        loop {
-            sleep(Duration::from_millis(self.config.proving_time_ms)).await;
-
-            for endpoint in &self.config.proof_coordinator_endpoints {
-                let prover_data = match self.request_new_input(endpoint).await {
-                    Ok(InputRequest::Batch(data)) => *data,
-                    Ok(InputRequest::RetryLater) => continue,
-                    Ok(InputRequest::ProverTypeNotNeeded(prover_type)) => {
-                        error!(
-                            %endpoint,
-                            "Proof coordinator does not need {prover_type} proofs. \
-                             This prover's backend is not in the required proof types \
-                             for this deployment."
-                        );
-                        continue;
-                    }
-                    Err(e) => {
-                        error!(%endpoint, "Failed to request new data: {e}");
-                        continue;
-                    }
-                };
-
-                let batch_proof = if self.config.timed {
-                    self.backend
-                        .prove_timed(prover_data.input, prover_data.format)
-                        .and_then(|(output, elapsed)| {
-                            info!(
-                                batch = prover_data.batch_number,
-                                proving_time_s = elapsed.as_secs(),
-                                proving_time_ms =
-                                    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-                                "Proved batch {} in {:.2?}",
-                                prover_data.batch_number,
-                                elapsed
-                            );
-                            self.backend.to_batch_proof(output, prover_data.format)
-                        })
-                } else {
-                    self.backend
-                        .prove(prover_data.input, prover_data.format)
-                        .and_then(|output| {
-                            info!(
-                                batch = prover_data.batch_number,
-                                "Proved batch {}", prover_data.batch_number
-                            );
-                            self.backend.to_batch_proof(output, prover_data.format)
-                        })
-                };
-                let Ok(batch_proof) = batch_proof.inspect_err(|e| error!("{e}")) else {
+    /// Run one polling cycle: iterate all coordinator endpoints, request work,
+    /// prove, and submit results.
+    async fn poll_endpoints(&self) {
+        for endpoint in &self.config.proof_coordinator_endpoints {
+            let prover_data = match self.request_new_input(endpoint).await {
+                Ok(InputRequest::Batch(data)) => *data,
+                Ok(InputRequest::RetryLater) => continue,
+                Ok(InputRequest::ProverTypeNotNeeded(prover_type)) => {
+                    error!(
+                        %endpoint,
+                        "Proof coordinator does not need {prover_type} proofs. \
+                         This prover's backend is not in the required proof types \
+                         for this deployment."
+                    );
                     continue;
-                };
+                }
+                Err(e) => {
+                    error!(%endpoint, "Failed to request new data: {e}");
+                    continue;
+                }
+            };
 
-                let _ = self
-                    .submit_proof(endpoint, prover_data.batch_number, batch_proof)
-                    .await
-                    .inspect_err(|e|
-                    // TODO: Retry?
-                    warn!(%endpoint, "Failed to submit proof: {e}"));
-            }
+            let batch_proof = if self.config.timed {
+                self.backend
+                    .prove_timed(prover_data.input, prover_data.format)
+                    .and_then(|(output, elapsed)| {
+                        info!(
+                            batch = prover_data.batch_number,
+                            proving_time_s = elapsed.as_secs(),
+                            proving_time_ms =
+                                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                            "Proved batch {} in {:.2?}",
+                            prover_data.batch_number,
+                            elapsed
+                        );
+                        self.backend.to_batch_proof(output, prover_data.format)
+                    })
+            } else {
+                self.backend
+                    .prove(prover_data.input, prover_data.format)
+                    .and_then(|output| {
+                        info!(
+                            batch = prover_data.batch_number,
+                            "Proved batch {}", prover_data.batch_number
+                        );
+                        self.backend.to_batch_proof(output, prover_data.format)
+                    })
+            };
+            let Ok(batch_proof) = batch_proof.inspect_err(|e| error!("{e}")) else {
+                continue;
+            };
+
+            let _ = self
+                .submit_proof(endpoint, prover_data.batch_number, batch_proof)
+                .await
+                .inspect_err(|e|
+                // TODO: Retry?
+                warn!(%endpoint, "Failed to submit proof: {e}"));
         }
     }
 
@@ -200,43 +205,90 @@ where
     }
 }
 
+impl<B, I> GenServer for Prover<B, I>
+where
+    B: ProverBackend + Send + Sync + 'static,
+    I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    type CallMsg = Unused;
+    type CastMsg = InMessage;
+    type OutMsg = Unused;
+    type Error = crate::BackendError;
+
+    async fn handle_cast(
+        &mut self,
+        message: Self::CastMsg,
+        handle: &GenServerHandle<Self>,
+    ) -> CastResponse {
+        match message {
+            InMessage::Poll => {
+                self.poll_endpoints().await;
+                send_after(
+                    Duration::from_millis(self.config.proving_time_ms),
+                    handle.clone(),
+                    InMessage::Poll,
+                );
+                CastResponse::NoReply
+            }
+            InMessage::Abort => {
+                // start_blocking keeps the prover loop alive even if the caller aborts the task.
+                // Returning CastResponse::Stop ends the blocking runner cleanly.
+                CastResponse::Stop
+            }
+        }
+    }
+}
+
 /// Starts the prover with the appropriate backend based on the given config.
 ///
 /// The caller provides the `ProverPullConfig` and the type parameter `I` determines
 /// the input type used in the protocol.
+///
+/// The prover runs as a GenServer on a blocking thread (via `start_blocking`) since
+/// proving is CPU-intensive. This function blocks until the prover is stopped.
 pub async fn start_prover<I>(backend_type: BackendType, config: ProverPullConfig)
 where
-    I: Into<ProgramInput> + Serialize + DeserializeOwned,
+    I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     match backend_type {
         BackendType::Exec => {
             let prover: Prover<ExecBackend, I> = Prover::new(ExecBackend::new(), config);
-            prover.start().await;
+            let mut handle = prover.start_blocking();
+            let _ = handle.cast(InMessage::Poll).await;
+            handle.cancellation_token().cancelled().await;
         }
         #[cfg(feature = "sp1")]
         BackendType::SP1 => {
             use crate::backend::sp1::{PROVER_SETUP, Sp1Backend, init_prover_setup};
             PROVER_SETUP.get_or_init(|| init_prover_setup(None));
             let prover: Prover<Sp1Backend, I> = Prover::new(Sp1Backend::new(), config);
-            prover.start().await;
+            let mut handle = prover.start_blocking();
+            let _ = handle.cast(InMessage::Poll).await;
+            handle.cancellation_token().cancelled().await;
         }
         #[cfg(feature = "risc0")]
         BackendType::RISC0 => {
             use crate::backend::Risc0Backend;
             let prover: Prover<Risc0Backend, I> = Prover::new(Risc0Backend::new(), config);
-            prover.start().await;
+            let mut handle = prover.start_blocking();
+            let _ = handle.cast(InMessage::Poll).await;
+            handle.cancellation_token().cancelled().await;
         }
         #[cfg(feature = "zisk")]
         BackendType::ZisK => {
             use crate::backend::ZiskBackend;
             let prover: Prover<ZiskBackend, I> = Prover::new(ZiskBackend::new(), config);
-            prover.start().await;
+            let mut handle = prover.start_blocking();
+            let _ = handle.cast(InMessage::Poll).await;
+            handle.cancellation_token().cancelled().await;
         }
         #[cfg(feature = "openvm")]
         BackendType::OpenVM => {
             use crate::backend::OpenVmBackend;
             let prover: Prover<OpenVmBackend, I> = Prover::new(OpenVmBackend::new(), config);
-            prover.start().await;
+            let mut handle = prover.start_blocking();
+            let _ = handle.cast(InMessage::Poll).await;
+            handle.cancellation_token().cancelled().await;
         }
     }
 }

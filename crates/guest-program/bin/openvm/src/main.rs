@@ -1,7 +1,9 @@
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
-#[cfg(not(feature = "l2"))]
+#[cfg(all(not(feature = "l2"), not(feature = "eip-8025")))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
+#[cfg(all(not(feature = "l2"), feature = "eip-8025"))]
+use ethrex_guest_program::l1::{decode_eip8025, execution_program};
 
 use openvm_keccak256::keccak256;
 
@@ -12,7 +14,7 @@ pub fn main() {
     let input = openvm::io::read_vec();
 
     #[cfg(feature = "eip-8025")]
-    let input = ProgramInput::decode(&input).unwrap();
+    let (new_payload_request, execution_witness) = decode_eip8025(&input).unwrap();
     #[cfg(not(feature = "eip-8025"))]
     let input = {
         use rkyv::rancor::Error;
@@ -21,6 +23,9 @@ pub fn main() {
     openvm::io::println("finish reading input");
 
     openvm::io::println("start execution");
+    #[cfg(feature = "eip-8025")]
+    let output = execution_program(new_payload_request, execution_witness).unwrap();
+    #[cfg(not(feature = "eip-8025"))]
     let output = execution_program(input).unwrap();
     openvm::io::println("finish execution");
 

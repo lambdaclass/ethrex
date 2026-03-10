@@ -2,8 +2,10 @@
 
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
-#[cfg(not(feature = "l2"))]
+#[cfg(all(not(feature = "l2"), not(feature = "eip-8025")))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
+#[cfg(all(not(feature = "l2"), feature = "eip-8025"))]
+use ethrex_guest_program::l1::{decode_eip8025, execution_program};
 
 use sha2::{Digest, Sha256};
 
@@ -14,7 +16,7 @@ pub fn main() {
     let input = ziskos::read_input();
 
     #[cfg(feature = "eip-8025")]
-    let input = ProgramInput::decode(&input).unwrap();
+    let (new_payload_request, execution_witness) = decode_eip8025(&input).unwrap();
     #[cfg(not(feature = "eip-8025"))]
     let input = {
         use rkyv::rancor::Error;
@@ -23,6 +25,9 @@ pub fn main() {
     println!("finish reading input");
 
     println!("start execution");
+    #[cfg(feature = "eip-8025")]
+    let output = execution_program(new_payload_request, execution_witness).unwrap();
+    #[cfg(not(feature = "eip-8025"))]
     let output = execution_program(input).unwrap();
     println!("finish execution");
 

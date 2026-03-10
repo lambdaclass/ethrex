@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-prover-core"
+name = "ethrex-prover"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -17,6 +17,7 @@ clap.workspace = true
 rkyv.workspace = true
 bincode = "1.3.3"
 url.workspace = true
+spawned-concurrency.workspace = true
 
 # ethrex
 ethrex-common.workspace = true
@@ -43,7 +44,7 @@ openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", packa
 openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.2.1", optional = true }
 
 [lib]
-name = "ethrex_prover_core"
+name = "ethrex_prover"
 path = "src/lib.rs"
 
 [features]

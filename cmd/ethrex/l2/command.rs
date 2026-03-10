@@ -289,7 +289,7 @@ impl Command {
         match self {
             Command::Prover {
                 prover_client_options,
-            } => ethrex_prover_lib::init_client(prover_client_options.into()).await,
+            } => ethrex_l2_prover::init_client(prover_client_options.into()).await,
             Self::RemoveDB { datadir, force } => {
                 remove_db(&datadir, force);
             }

@@ -2990,7 +2990,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
  "ethrex-guest-program",
- "ethrex-prover",
+ "ethrex-l2-prover",
  "ethrex-rlp 9.0.0",
  "ethrex-storage 9.0.0",
  "ethrex-vm",
@@ -3289,10 +3289,10 @@ dependencies = [
  "ethrex-dev",
  "ethrex-l2",
  "ethrex-l2-common",
+ "ethrex-l2-prover",
  "ethrex-l2-rpc",
  "ethrex-metrics",
  "ethrex-p2p",
- "ethrex-prover",
  "ethrex-repl",
  "ethrex-rlp 9.0.0",
  "ethrex-rpc",
@@ -3545,6 +3545,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-l2-prover"
+version = "9.0.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bytes",
+ "clap 4.5.54",
+ "ethereum-types",
+ "ethrex-blockchain",
+ "ethrex-common 9.0.0",
+ "ethrex-guest-program",
+ "ethrex-l2",
+ "ethrex-l2-common",
+ "ethrex-prover",
+ "ethrex-rlp 9.0.0",
+ "ethrex-sdk",
+ "ethrex-storage 9.0.0",
+ "ethrex-vm",
+ "hex",
+ "kzg-rs",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "sp1-prover",
+ "sp1-sdk",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
+]
+
+[[package]]
 name = "ethrex-l2-rpc"
 version = "9.0.0"
 dependencies = [
@@ -3703,32 +3737,23 @@ dependencies = [
 name = "ethrex-prover"
 version = "9.0.0"
 dependencies = [
- "anyhow",
  "bincode",
  "bytes",
  "clap 4.5.54",
- "ethereum-types",
- "ethrex-blockchain",
  "ethrex-common 9.0.0",
  "ethrex-guest-program",
- "ethrex-l2",
  "ethrex-l2-common",
  "ethrex-rlp 9.0.0",
- "ethrex-sdk",
- "ethrex-storage 9.0.0",
  "ethrex-vm",
- "hex",
- "kzg-rs",
  "rkyv",
  "serde",
  "serde_json",
  "sp1-prover",
  "sp1-sdk",
+ "spawned-concurrency",
  "thiserror 2.0.18",
  "tokio",
- "tokio-util",
  "tracing",
- "tracing-subscriber 0.3.22",
  "url",
 ]
 
