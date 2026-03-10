@@ -407,8 +407,14 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     // NOT CHECKED: contracts can also send privileged transactions
 
     // (10) GAS_ALLOWANCE_EXCEEDED
-    // CHECKED: we don't want to exceed block limits
-    default_hook::validate_gas_allowance(vm)?;
+    // CHANGED: privileged txs must always be included, even if gas_limit > block_gas_limit.
+    // If it exceeds, force the tx to revert and cap gas to block_gas_limit.
+    if default_hook::validate_gas_allowance(vm).is_err() {
+        tx_should_fail = true;
+        let capped = vm.env.block_gas_limit;
+        vm.env.gas_limit = capped;
+        vm.current_call_frame.gas_limit = capped;
+    }
 
     // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
     // NOT CHECKED: privileged transactions are not type 3

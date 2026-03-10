@@ -143,7 +143,8 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough gas to run the transaction
-        if context.remaining_gas < head_tx.tx.gas_limit() {
+        // Privileged txs are exempt: they must always be included (as reverts if needed)
+        if !head_tx.is_privileged() && context.remaining_gas < head_tx.tx.gas_limit() {
             debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
@@ -151,7 +152,10 @@ pub async fn fill_transactions(
         }
 
         // Check if we have enough gas to run the transaction within the configured block_gas_limit
-        if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
+        // Privileged txs are exempt: they must always be included (as reverts if needed)
+        if !head_tx.is_privileged()
+            && context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit
+        {
             debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
