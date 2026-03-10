@@ -1,19 +1,16 @@
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
-use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, sync::Arc};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
-
-const BLOOM_SIZE: usize = 1_000_000;
-const FALSE_POSITIVE_RATE: f64 = 0.02;
+type AccountHashSet = FxHashSet<H256>;
 
 #[derive(Debug, Clone)]
-struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
-    parent: H256,
-    id: usize,
+pub(crate) struct TrieLayer {
+    pub(crate) nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    pub(crate) destroyed_accounts: AccountHashSet,
+    pub(crate) parent: H256,
+    pub(crate) id: usize,
 }
 
 /// In-memory cache of trie diff-layers, one per block (or per batch of blocks in full sync).
@@ -100,28 +97,34 @@ impl TrieLayerCache {
     /// Returns `Some(value)` from the first (newest) layer that contains the key, or `None`
     /// if no layer has it. A bloom filter is checked first to skip the walk entirely when the
     /// key is guaranteed absent from all layers (callers then fall through to the on-disk trie).
-    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
-        // Fast check to know if any layer may contain the given key.
-        // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
-        if !self.bloom.contains(key) {
-            // TrieWrapper goes to db when returning None.
+    pub fn get(&self, state_root: H256, key: &[u8], account_hash: Option<H256>) -> Option<Vec<u8>> {
+        // Fast check: if neither key nor account hash is in bloom, we certainly don't have it.
+        let in_bloom = self.bloom.contains(key)
+            || account_hash
+                .map(|h| self.bloom.contains(h.as_bytes()))
+                .unwrap_or(false);
+
+        if !in_bloom {
             return None;
         }
 
         let mut current_state_root = state_root;
 
         while let Some(layer) = self.layers.get(&current_state_root) {
+            // Check for account destruction first
+            if let Some(hash) = account_hash {
+                if layer.destroyed_accounts.contains(&hash) {
+                    // Signaling that the account (and its storage) was deleted.
+                    return Some(vec![]);
+                }
+            }
+
             if let Some(value) = layer.nodes.get(key) {
                 return Some(value.clone());
             }
+
             current_state_root = layer.parent;
             if current_state_root == state_root {
-                // TODO: check if this is possible in practice
-                // This can't happen in L1, due to system contracts irreversibly modifying state
-                // at each block.
-                // On L2, if no transactions are included in a block, the state root remains the same,
-                // but we handle that case in put_batch. It may happen, however, if someone modifies
-                // state with a privileged tx and later reverts it (since it doesn't update nonce).
                 panic!("State cycle found");
             }
         }
@@ -177,14 +180,12 @@ impl TrieLayerCache {
         parent: H256,
         state_root: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
+        destroyed_accounts: AccountHashSet,
     ) {
-        if parent == state_root && key_values.is_empty() {
+        if parent == state_root && key_values.is_empty() && destroyed_accounts.is_empty() {
             return;
         } else if parent == state_root {
-            // L1 always changes the state root (system contracts run even on empty blocks), so
-            // this should not happen there. L2 can legitimately keep the same root on empty blocks
-            // because it has no system contract calls.
-            tracing::trace!("parent == state_root but key_values not empty");
+            tracing::trace!("parent == state_root but updates not empty");
             return;
         }
         if self.layers.contains_key(&state_root) {
@@ -196,6 +197,9 @@ impl TrieLayerCache {
         for (p, _) in &key_values {
             self.bloom.insert(p.as_ref());
         }
+        for h in &destroyed_accounts {
+            self.bloom.insert(h.as_bytes());
+        }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
@@ -205,6 +209,7 @@ impl TrieLayerCache {
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
+            destroyed_accounts,
             parent,
             id: self.last_id,
         };
@@ -217,7 +222,10 @@ impl TrieLayerCache {
     /// keys from the removed layers (producing unnecessary false positives).
     pub fn rebuild_bloom(&mut self) {
         // Pre-compute total keys for optimal filter sizing
-        let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
+        let total_keys: usize = self.layers
+            .values()
+            .map(|layer| layer.nodes.len() + layer.destroyed_accounts.len())
+            .sum();
 
         let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
 
@@ -225,6 +233,9 @@ impl TrieLayerCache {
         self.layers.par_iter().for_each(|(_, layer)| {
             for path in layer.nodes.keys() {
                 filter.insert(path);
+            }
+            for hash in &layer.destroyed_accounts {
+                filter.insert(hash.as_bytes());
             }
         });
 
@@ -241,7 +252,7 @@ impl TrieLayerCache {
     ///
     /// After removal, any orphaned layers (older than the committed ones) are pruned, and
     /// the bloom filter is rebuilt to remove stale entries.
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    pub fn commit(&mut self, state_root: H256) -> Option<(Vec<(Vec<u8>, Vec<u8>)>, AccountHashSet)> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -253,12 +264,15 @@ impl TrieLayerCache {
         // older layers are useless
         self.layers.retain(|_, item| item.id > top_layer_id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        let nodes_to_commit = layers_to_commit
-            .into_iter()
-            .rev()
-            .flat_map(|layer| layer.nodes)
-            .collect();
-        Some(nodes_to_commit)
+        let mut nodes_to_commit = Vec::new();
+        let mut destroyed_accounts_to_commit = AccountHashSet::default();
+
+        for layer in layers_to_commit.into_iter().rev() {
+            nodes_to_commit.extend(layer.nodes);
+            destroyed_accounts_to_commit.extend(layer.destroyed_accounts);
+        }
+
+        Some((nodes_to_commit, destroyed_accounts_to_commit))
     }
 }
 
@@ -271,9 +285,9 @@ pub struct TrieWrapper {
     pub state_root: H256,
     pub inner: Arc<TrieLayerCache>,
     pub db: Box<dyn TrieDB>,
+    /// Hashed account address if this is a storage trie.
+    pub account_hash: Option<H256>,
     /// Pre-computed prefix nibbles for storage tries.
-    /// For state tries this is None; for storage tries this is
-    /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
     prefix_nibbles: Option<Nibbles>,
 }
 
@@ -282,13 +296,15 @@ impl TrieWrapper {
         state_root: H256,
         inner: Arc<TrieLayerCache>,
         db: Box<dyn TrieDB>,
-        prefix: Option<H256>,
+        account_hash: Option<H256>,
     ) -> Self {
-        let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
+        let prefix_nibbles =
+            account_hash.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
             state_root,
             inner,
             db,
+            account_hash,
             prefix_nibbles,
         }
     }
@@ -322,10 +338,15 @@ impl TrieDB for TrieWrapper {
             Some(prefix) => prefix.concat(&key),
             None => key,
         };
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
-            return Ok(Some(value));
+
+        match self
+            .inner
+            .get(self.state_root, key.as_ref(), self.account_hash)
+        {
+            Some(value) if value.is_empty() => Ok(None),
+            Some(value) => Ok(Some(value)),
+            None => self.db.get(key),
         }
-        self.db.get(key)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

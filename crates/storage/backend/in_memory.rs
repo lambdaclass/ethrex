@@ -181,6 +181,23 @@ impl StorageWriteBatch for InMemoryWriteTx {
         Ok(())
     }
 
+    fn delete_range_with_prefix(
+        &mut self,
+        table: &'static str,
+        prefix: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
+            table_ref.retain(|k, _| !k.starts_with(prefix));
+        }
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // FIXME: in-memory writes aren't atomic
         Ok(())

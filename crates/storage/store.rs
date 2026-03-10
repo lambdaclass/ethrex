@@ -18,6 +18,7 @@ use crate::{
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
+    layering::AccountHashSet,
 };
 
 use bytes::Bytes;
@@ -237,6 +238,8 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Accounts destroyed in this batch.
+    pub destroyed_accounts: AccountHashSet,
     /// Whether this batch comes from full sync (batch execution mode).
     /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
     /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
@@ -259,6 +262,8 @@ pub struct AccountUpdatesList {
     pub storage_updates: StorageUpdates,
     /// New contract bytecode deployments.
     pub code_updates: Vec<(H256, Code)>,
+    /// Accounts destroyed in this list.
+    pub destroyed_accounts: AccountHashSet,
 }
 
 impl Store {
@@ -1381,6 +1386,7 @@ impl Store {
         let UpdateBatch {
             account_updates,
             storage_updates,
+            destroyed_accounts,
             ..
         } = update_batch;
 
@@ -1391,6 +1397,7 @@ impl Store {
             parent_state_root,
             account_updates,
             storage_updates,
+            destroyed_accounts,
             result_sender: notify_tx,
             child_state_root: last_state_root,
             is_batch,
@@ -1715,12 +1722,14 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
+        let mut destroyed_accounts = AccountHashSet::default();
         let state_root = state_trie.hash_no_commit();
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(hashed_address.as_bytes())?;
+                destroyed_accounts.insert(hashed_address);
                 continue;
             }
             // Add or update AccountState in the trie
@@ -1731,6 +1740,7 @@ impl Store {
             };
             if update.removed_storage {
                 account_state.storage_root = *EMPTY_TRIE_HASH;
+                destroyed_accounts.insert(hashed_address);
             }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
@@ -1770,6 +1780,7 @@ impl Store {
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
+            destroyed_accounts,
         })
     }
 
@@ -2280,7 +2291,6 @@ impl Store {
         let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
-        Ok(Some(self.open_storage_trie(
             hashed_address,
             header.state_root,
             storage_root,
@@ -2373,13 +2383,15 @@ impl Store {
                 value: U256::zero(),
             }));
         }
-        let account = account_opt.unwrap_or_default();
-        let account_proof = AccountProof {
+        let storage_proof = storage_proof
+            .into_iter()
+            .collect::<Result<Vec<_>, TrieError>>()?;
+
+        Ok(Some(AccountProof {
             proof,
-            account,
+            account: account_opt.unwrap_or_default(),
             storage_proof,
-        };
-        Ok(Some(account_proof))
+        }))
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
@@ -2816,6 +2828,7 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    destroyed_accounts: AccountHashSet,
     is_batch: bool,
 }
 
@@ -2833,6 +2846,7 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
+        destroyed_accounts,
         is_batch,
     } = trie_update;
 
@@ -2852,7 +2866,12 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
-    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+    trie_mut.put_batch(
+        parent_state_root,
+        child_state_root,
+        new_layer,
+        destroyed_accounts,
+    );
     let trie = Arc::new(trie_mut);
     *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
@@ -2888,7 +2907,14 @@ fn apply_trie_updates(
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
     // Commit removes the bottom layer and returns it, this is the mutation step.
-    let nodes = trie_mut.commit(root).unwrap_or_default();
+    let (nodes, destroyed_accounts) = trie_mut.commit(root).unwrap_or_default();
+
+    // Clean up flattened storage and storage trie nodes for destroyed accounts
+    for account_hash in destroyed_accounts {
+        write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, account_hash.as_bytes())?;
+        write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, account_hash.as_bytes())?;
+    }
+
     let mut result = Ok(());
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;

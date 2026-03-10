@@ -88,6 +88,13 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
+    /// Removes all key-value pairs from the specified table that start with the given prefix.
+    fn delete_range_with_prefix(
+        &mut self,
+        table: &'static str,
+        prefix: &[u8],
+    ) -> Result<(), StoreError>;
+
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
 }
