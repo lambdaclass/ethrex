@@ -32,7 +32,7 @@ k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k2
 substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0" }
 
 [patch."https://github.com/lambdaclass/bls12_381"]
-bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = "expose-fp-struct" }
+bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = "expose-affine-constructors" }
 
 [features]
 l2 = ["ethrex-guest-program/l2", "sp1-zkvm/embedded"]
