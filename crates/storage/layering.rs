@@ -1,13 +1,38 @@
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
+use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    num::NonZeroUsize,
+    sync::{Arc, RwLock},
+};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
+
+/// Maximum number of entries in the trie read cache.
+/// Caches trie nodes read from disk to avoid repeated RocksDB lookups
+/// for frequently-accessed but unmodified nodes.
+const READ_CACHE_CAPACITY: usize = 200_000;
+
+/// LRU cache for trie nodes read from disk.
+///
+/// Sits between the [`TrieLayerCache`] (which only stores diffs) and the on-disk
+/// backend, caching nodes that were read during execution regardless of whether
+/// they were modified. This avoids repeated disk I/O for hot, unmodified data.
+pub type TrieReadCache = Arc<RwLock<LruCache<Vec<u8>, Vec<u8>, FxBuildHasher>>>;
+
+/// Creates a new [`TrieReadCache`] with the default capacity.
+pub fn new_trie_read_cache() -> TrieReadCache {
+    Arc::new(RwLock::new(LruCache::with_hasher(
+        NonZeroUsize::new(READ_CACHE_CAPACITY).unwrap(),
+        FxBuildHasher,
+    )))
+}
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -275,6 +300,8 @@ pub struct TrieWrapper {
     /// For state tries this is None; for storage tries this is
     /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
     prefix_nibbles: Option<Nibbles>,
+    /// LRU cache for trie nodes read from disk, shared across all trie accesses.
+    read_cache: TrieReadCache,
 }
 
 impl TrieWrapper {
@@ -283,6 +310,7 @@ impl TrieWrapper {
         inner: Arc<TrieLayerCache>,
         db: Box<dyn TrieDB>,
         prefix: Option<H256>,
+        read_cache: TrieReadCache,
     ) -> Self {
         let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
@@ -290,6 +318,7 @@ impl TrieWrapper {
             inner,
             db,
             prefix_nibbles,
+            read_cache,
         }
     }
 }
@@ -322,10 +351,30 @@ impl TrieDB for TrieWrapper {
             Some(prefix) => prefix.concat(&key),
             None => key,
         };
+
+        // Level 1: Check in-memory diff layers (bloom filter + layer chain walk)
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
-        self.db.get(key)
+
+        // Level 2: Check the LRU read cache for recently-read disk nodes
+        if let Ok(mut cache) = self.read_cache.write() {
+            if let Some(value) = cache.get(key.as_ref()) {
+                return Ok(Some(value.clone()));
+            }
+        }
+
+        // Level 3: Read from disk (RocksDB)
+        let result = self.db.get(key.clone())?;
+
+        // Populate the read cache on a disk hit
+        if let Some(ref value) = result {
+            if let Ok(mut cache) = self.read_cache.write() {
+                cache.put(key.into_vec(), value.clone());
+            }
+        }
+
+        Ok(result)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
