@@ -23,7 +23,7 @@ const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
 const rpc = require("../lib/rpc-client");
 const keychain = require("../lib/keychain");
-const { getExternalL1Config, getPublicAccessConfig } = require("../lib/tools-config");
+const { getExternalL1Config, getPublicAccessConfig, getToolsPorts } = require("../lib/tools-config");
 const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
@@ -620,16 +620,7 @@ router.post("/:id/service/:service/start", async (req, res) => {
       // Tools use separate compose — start all tools together (they depend on each other)
       const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
       const envVars = await docker.extractEnv(deployment.docker_project, composeFile);
-      await docker.startTools(`${deployment.docker_project}-tools`, envVars, {
-        toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
-        toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
-        toolsBridgeUIPort: deployment.tools_bridge_ui_port,
-        toolsDbPort: deployment.tools_db_port,
-        l1Port: deployment.l1_port,
-        l2Port: deployment.l2_port,
-        toolsMetricsPort: deployment.tools_metrics_port,
-        ...getExternalL1Config(deployment),
-      });
+      await docker.startTools(`${deployment.docker_project}-tools`, envVars, getToolsPorts(deployment));
       return res.json({ ok: true, message: `Tools started` });
     }
     const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
@@ -647,17 +638,7 @@ router.post("/:id/build-tools", async (req, res) => {
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
     if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
 
-    const toolsPorts = {
-      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
-      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
-      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
-      toolsDbPort: deployment.tools_db_port,
-      toolsMetricsPort: deployment.tools_metrics_port,
-      l1Port: deployment.l1_port,
-      l2Port: deployment.l2_port,
-    };
-
-    await docker.buildTools(`${deployment.docker_project}-tools`, toolsPorts);
+    await docker.buildTools(`${deployment.docker_project}-tools`, getToolsPorts(deployment));
     res.json({ ok: true, message: "Tools images rebuilt" });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -682,21 +663,9 @@ router.post("/:id/restart-tools", async (req, res) => {
       if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
     }
 
-    const toolsPorts = {
-      toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
-      toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
-      toolsBridgeUIPort: deployment.tools_bridge_ui_port,
-      toolsDbPort: deployment.tools_db_port,
-      toolsMetricsPort: deployment.tools_metrics_port,
-      l1Port: deployment.l1_port,
-      l2Port: deployment.l2_port,
-      ...getExternalL1Config(deployment),
-      ...getPublicAccessConfig(deployment),
-    };
-
     // Respond immediately — docker compose up can take 30s+ and WebKit times out
     res.json({ ok: true, message: "Tools starting..." });
-    docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts).catch(e => {
+    docker.restartTools(`${deployment.docker_project}-tools`, envVars, getToolsPorts(deployment)).catch(e => {
       console.error("Tools restart failed:", e.message);
     });
   } catch (e) {

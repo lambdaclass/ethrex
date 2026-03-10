@@ -40,4 +40,19 @@ function getPublicAccessConfig(deployment) {
   };
 }
 
-module.exports = { getExternalL1Config, getPublicAccessConfig };
+/** Build toolsPorts object from deployment DB row (shared by routes + engine) */
+function getToolsPorts(deployment) {
+  return {
+    toolsL1ExplorerPort: deployment.tools_l1_explorer_port,
+    toolsL2ExplorerPort: deployment.tools_l2_explorer_port,
+    toolsBridgeUIPort: deployment.tools_bridge_ui_port,
+    toolsDbPort: deployment.tools_db_port,
+    toolsMetricsPort: deployment.tools_metrics_port,
+    l1Port: deployment.l1_port,
+    l2Port: deployment.l2_port,
+    ...getExternalL1Config(deployment),
+    ...getPublicAccessConfig(deployment),
+  };
+}
+
+module.exports = { getExternalL1Config, getPublicAccessConfig, getToolsPorts };
