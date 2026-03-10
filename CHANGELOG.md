@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-10
+
+- Set high thread priority on block execution pipeline threads [#6302](https://github.com/lambdaclass/ethrex/pull/6302)
+
 ### 2026-03-02
 
 - SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
