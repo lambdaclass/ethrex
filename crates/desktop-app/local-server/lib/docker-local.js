@@ -259,6 +259,30 @@ function buildToolsEnv(toolsPorts) {
   if (toolsPorts.l1NetworkName) env.L1_NETWORK_NAME = toolsPorts.l1NetworkName;
   if (toolsPorts.l2ChainId) env.L2_CHAIN_ID = String(toolsPorts.l2ChainId);
   if (toolsPorts.isExternalL1) env.IS_EXTERNAL_L1 = 'true';
+
+  // Public access config (external domain/IP)
+  if (toolsPorts.publicDomain) {
+    env.PUBLIC_DOMAIN = toolsPorts.publicDomain;
+    env.PUBLIC_BASE_URL = toolsPorts.publicBaseUrl || `http://${toolsPorts.publicDomain}`;
+    if (toolsPorts.publicL2RpcUrl) env.PUBLIC_L2_RPC_URL = toolsPorts.publicL2RpcUrl;
+    if (toolsPorts.publicL2ExplorerUrl) env.PUBLIC_L2_EXPLORER_URL = toolsPorts.publicL2ExplorerUrl;
+    if (toolsPorts.publicL1ExplorerUrl) env.PUBLIC_L1_EXPLORER_URL = toolsPorts.publicL1ExplorerUrl;
+    if (toolsPorts.publicDashboardUrl) env.PUBLIC_DASHBOARD_URL = toolsPorts.publicDashboardUrl;
+    // Blockscout frontend HOST + PROTOCOL (extract from full URL)
+    for (const [urlKey, hostKey, protoKey, wsKey] of [
+      ['publicL2ExplorerUrl', 'PUBLIC_L2_EXPLORER_HOST', 'PUBLIC_L2_EXPLORER_PROTOCOL', 'PUBLIC_L2_WS_PROTOCOL'],
+      ['publicL1ExplorerUrl', 'PUBLIC_L1_EXPLORER_HOST', 'PUBLIC_L1_EXPLORER_PROTOCOL', 'PUBLIC_L1_WS_PROTOCOL'],
+    ]) {
+      if (toolsPorts[urlKey]) {
+        try {
+          const u = new URL(toolsPorts[urlKey]);
+          env[hostKey] = u.host;
+          env[protoKey] = u.protocol.replace(':', '');
+          env[wsKey] = u.protocol === 'https:' ? 'wss' : 'ws';
+        } catch {}
+      }
+    }
+  }
   return env;
 }
 

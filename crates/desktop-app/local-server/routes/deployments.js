@@ -21,7 +21,7 @@ const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
 const rpc = require("../lib/rpc-client");
 const keychain = require("../lib/keychain");
-const { getExternalL1Config } = require("../lib/tools-config");
+const { getExternalL1Config, getPublicAccessConfig } = require("../lib/tools-config");
 const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
@@ -689,6 +689,7 @@ router.post("/:id/restart-tools", async (req, res) => {
       l1Port: deployment.l1_port,
       l2Port: deployment.l2_port,
       ...getExternalL1Config(deployment),
+      ...getPublicAccessConfig(deployment),
     };
 
     // Respond immediately — docker compose up can take 30s+ and WebKit times out
@@ -711,6 +712,120 @@ router.post("/:id/stop-tools", async (req, res) => {
     docker.stopTools(`${deployment.docker_project}-tools`).catch(e => {
       console.error("Tools stop failed:", e.message);
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==========================================
+// External Access (Public Domain/IP)
+// ==========================================
+
+// POST /api/deployments/:id/public-access
+router.post("/:id/public-access", async (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+
+    const { publicDomain } = req.body;
+    if (!publicDomain) return res.status(400).json({ error: "publicDomain is required" });
+
+    // Save to DB
+    updateDeployment(deployment.id, {
+      is_public: 1,
+      public_domain: publicDomain,
+      public_l2_rpc_url: req.body.l2RpcUrl || null,
+      public_l2_explorer_url: req.body.l2ExplorerUrl || null,
+      public_l1_explorer_url: req.body.l1ExplorerUrl || null,
+      public_dashboard_url: req.body.dashboardUrl || null,
+    });
+
+    const updated = db.prepare("SELECT * FROM deployments WHERE id = ?").get(deployment.id);
+    const publicConfig = getPublicAccessConfig(updated);
+
+    // Restart tools with public URLs (async — compose up can take 30s+)
+    res.json({ ok: true, message: "Enabling public access...", publicConfig });
+
+    try {
+      let envVars = {};
+      try {
+        const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
+        envVars = await docker.extractEnv(deployment.docker_project, composeFile);
+      } catch {
+        if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
+        if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
+      }
+
+      const toolsPorts = {
+        toolsL1ExplorerPort: updated.tools_l1_explorer_port,
+        toolsL2ExplorerPort: updated.tools_l2_explorer_port,
+        toolsBridgeUIPort: updated.tools_bridge_ui_port,
+        toolsDbPort: updated.tools_db_port,
+        toolsMetricsPort: updated.tools_metrics_port,
+        l1Port: updated.l1_port,
+        l2Port: updated.l2_port,
+        ...getExternalL1Config(updated),
+        ...publicConfig,
+      };
+
+      await docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts);
+      console.log(`[public-access] Enabled for ${deployment.id} at ${publicDomain}`);
+    } catch (e) {
+      console.error(`[public-access] Tools restart failed: ${e.message}`);
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/deployments/:id/public-access
+router.delete("/:id/public-access", async (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+    if (!deployment.docker_project) return res.status(400).json({ error: "Not provisioned yet" });
+
+    // Clear public access in DB
+    updateDeployment(deployment.id, {
+      is_public: 0,
+      public_domain: null,
+      public_l2_rpc_url: null,
+      public_l2_explorer_url: null,
+      public_l1_explorer_url: null,
+      public_dashboard_url: null,
+    });
+
+    // Restart tools without public URLs (async)
+    res.json({ ok: true, message: "Disabling public access..." });
+
+    try {
+      let envVars = {};
+      try {
+        const composeFile = path.join(getDeploymentDir(deployment.id, deployment.deploy_dir), "docker-compose.yaml");
+        envVars = await docker.extractEnv(deployment.docker_project, composeFile);
+      } catch {
+        if (deployment.bridge_address) envVars.ETHREX_WATCHER_BRIDGE_ADDRESS = deployment.bridge_address;
+        if (deployment.proposer_address) envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS = deployment.proposer_address;
+      }
+
+      const updated = db.prepare("SELECT * FROM deployments WHERE id = ?").get(deployment.id);
+      const toolsPorts = {
+        toolsL1ExplorerPort: updated.tools_l1_explorer_port,
+        toolsL2ExplorerPort: updated.tools_l2_explorer_port,
+        toolsBridgeUIPort: updated.tools_bridge_ui_port,
+        toolsDbPort: updated.tools_db_port,
+        toolsMetricsPort: updated.tools_metrics_port,
+        l1Port: updated.l1_port,
+        l2Port: updated.l2_port,
+        ...getExternalL1Config(updated),
+      };
+
+      await docker.restartTools(`${deployment.docker_project}-tools`, envVars, toolsPorts);
+      console.log(`[public-access] Disabled for ${deployment.id}`);
+    } catch (e) {
+      console.error(`[public-access] Tools restart failed: ${e.message}`);
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

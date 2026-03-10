@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS deployments (
   env_project_id TEXT,
   env_updated_at INTEGER,
   is_public INTEGER DEFAULT 0,
+  public_domain TEXT,
+  public_l2_rpc_url TEXT,
+  public_l2_explorer_url TEXT,
+  public_l1_explorer_url TEXT,
+  public_dashboard_url TEXT,
   hashtags TEXT,
   ever_running INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL

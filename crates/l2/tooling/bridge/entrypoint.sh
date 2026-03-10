@@ -48,16 +48,22 @@ fi
 PUBLIC_BASE=$(echo "${PUBLIC_BASE_URL:-}" | tr -d '"\\' | sed 's:/*$::')
 if [ -n "$PUBLIC_BASE" ]; then
   IS_PUBLIC="true"
-  # For public mode: proxy L1 RPC through server to protect API keys
+  PUBLIC_DOMAIN_RESOLVED=$(echo "${PUBLIC_DOMAIN:-}" | tr -d '"\\')
+  # Per-service custom URLs (from Manager), falling back to PUBLIC_BASE + port
   L1_RPC_PUBLIC="${PUBLIC_BASE}/api/l1-rpc"
-  L2_RPC_PUBLIC="${PUBLIC_BASE}/rpc"
-  L2_EXPLORER_PUBLIC="${PUBLIC_BASE}/explorer"
-  METRICS_PUBLIC="${PUBLIC_BASE}/metrics"
+  L2_RPC_PUBLIC="${PUBLIC_L2_RPC_URL:-http://localhost:${TOOLS_L2_RPC_PORT:-1729}}"
+  L2_EXPLORER_PUBLIC="${PUBLIC_L2_EXPLORER_URL:-http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}}"
+  L1_EXPLORER_PUBLIC="${PUBLIC_L1_EXPLORER_URL:-${L1_EXPLORER_RESOLVED}}"
+  DASHBOARD_PUBLIC="${PUBLIC_DASHBOARD_URL:-${PUBLIC_BASE}}"
+  METRICS_PUBLIC="http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
 else
   IS_PUBLIC="false"
+  PUBLIC_DOMAIN_RESOLVED=""
   L1_RPC_PUBLIC="${L1_RPC_RESOLVED}"
   L2_RPC_PUBLIC="http://localhost:${TOOLS_L2_RPC_PORT:-1729}"
   L2_EXPLORER_PUBLIC="http://localhost:${TOOLS_L2_EXPLORER_PORT:-8082}"
+  L1_EXPLORER_PUBLIC="${L1_EXPLORER_RESOLVED}"
+  DASHBOARD_PUBLIC=""
   METRICS_PUBLIC="http://localhost:${TOOLS_METRICS_PORT:-3702}/metrics"
 fi
 
@@ -70,13 +76,15 @@ cat > /usr/share/nginx/html/config.json << EOF
   "bridge_l2_address": "0x000000000000000000000000000000000000ffff",
   "l1_rpc": "${L1_RPC_PUBLIC}",
   "l2_rpc": "${L2_RPC_PUBLIC}",
-  "l1_explorer": "${L1_EXPLORER_RESOLVED}",
+  "l1_explorer": "${L1_EXPLORER_PUBLIC}",
   "l2_explorer": "${L2_EXPLORER_PUBLIC}",
   "l1_chain_id": ${L1_CHAIN_ID_RESOLVED},
   "l2_chain_id": ${L2_CHAIN_ID_RESOLVED},
   "l1_network_name": "${L1_NETWORK_NAME_RESOLVED}",
   "is_external_l1": ${IS_EXTERNAL_L1_RESOLVED},
   "is_public": ${IS_PUBLIC},
+  "public_domain": "${PUBLIC_DOMAIN_RESOLVED}",
+  "dashboard_url": "${DASHBOARD_PUBLIC}",
   "metrics_url": "${METRICS_PUBLIC}"
 }
 EOF
@@ -101,5 +109,13 @@ PROXYEOF
   fi
   echo "[entrypoint] Public mode: L1 RPC proxy enabled at /api/l1-rpc"
 fi
+
+# Cache-busting for config.json — prevent browsers from serving stale URLs after mode switch
+cat > /etc/nginx/conf.d/config-cache.conf << 'CACHEEOF'
+location = /config.json {
+    expires -1;
+    add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+}
+CACHEEOF
 
 exec nginx -g "daemon off;"

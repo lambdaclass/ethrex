@@ -31,7 +31,7 @@ const { isHealthy } = require("./rpc-client");
 const { updateDeployment, getDeploymentById, getNextAvailablePorts, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
 const { getHostById } = require("../db/hosts");
 const keychain = require("./keychain");
-const { getExternalL1Config } = require("./tools-config");
+const { getExternalL1Config, getPublicAccessConfig } = require("./tools-config");
 const { verifyAllContracts, SUPPORTED_CHAIN_IDS } = require("./etherscan-verify");
 
 // Active deployments event emitters (keyed by deployment ID)
@@ -1325,6 +1325,7 @@ async function startDeployment(deployment) {
       l2Port: deployment.l2_port,
       toolsMetricsPort: deployment.tools_metrics_port,
       ...getExternalL1Config(deployment),
+      ...getPublicAccessConfig(deployment),
     });
   } catch (e) {
     console.log(`[start] Tools start skipped: ${e.message}`);

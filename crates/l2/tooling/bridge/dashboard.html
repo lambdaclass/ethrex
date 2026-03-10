@@ -759,8 +759,10 @@
               if (l1Api) l1Api.textContent = 'External';
             } else if (l1Exp) {
               try {
-                if (l1Link) { l1Link.href = l1Exp; l1Link.textContent = 'localhost:' + new URL(l1Exp).port; }
-                if (l1Api) l1Api.textContent = ':' + new URL(l1Exp).port + '/api';
+                const l1Url = new URL(l1Exp);
+                const l1Display = l1Url.hostname + (l1Url.port ? ':' + l1Url.port : '');
+                if (l1Link) { l1Link.href = l1Exp; l1Link.textContent = l1Display; }
+                if (l1Api) l1Api.textContent = ':' + l1Url.port + '/api';
               } catch {}
             }
           }
@@ -769,24 +771,28 @@
           const l2Api = document.getElementById('svcL2Api');
           if (l2Exp) {
             try {
-              if (l2Link) { l2Link.href = l2Exp; l2Link.textContent = 'localhost:' + new URL(l2Exp).port; }
-              if (l2Api) l2Api.textContent = ':' + new URL(l2Exp).port + '/api';
+              const l2Url = new URL(l2Exp);
+              const l2Display = l2Url.hostname + (l2Url.port ? ':' + l2Url.port : '');
+              if (l2Link) { l2Link.href = l2Exp; l2Link.textContent = l2Display; }
+              if (l2Api) l2Api.textContent = ':' + l2Url.port + '/api';
             } catch {}
           }
 
           // Chain stat RPC display
           try { document.getElementById('l1RpcDisplay').textContent = new URL(L1_RPC).host; } catch {}
           try {
-            document.getElementById('l2RpcDisplay').textContent = 'localhost:' + (new URL(L2_RPC).port || '1729');
+            const l2RpcUrl = new URL(L2_RPC);
+            document.getElementById('l2RpcDisplay').textContent = l2RpcUrl.hostname + ':' + (l2RpcUrl.port || '1729');
             document.getElementById('l2CoordDisplay').textContent = ':3900';
           } catch {}
 
           // Bridge UI service card URL
           const bridgePort = window.location.port || '3000';
+          const bridgeHost = window.location.hostname || 'localhost';
           const svcBridge = document.querySelector('#svcBridge')?.closest('.service-card');
           if (svcBridge) {
             const link = svcBridge.querySelector('.service-detail .value a');
-            if (link) link.textContent = 'localhost:' + bridgePort + '/bridge.html';
+            if (link) link.textContent = bridgeHost + ':' + bridgePort + '/bridge.html';
           }
 
           // MetaMask network config
@@ -825,7 +831,10 @@
               const svcMetricsLink = document.getElementById('svcMetricsLink');
               if (svcMetricsLink) {
                 svcMetricsLink.href = CONFIG.metrics_url;
-                svcMetricsLink.textContent = 'localhost:' + metricsPort;
+                try {
+                  const mUrl = new URL(CONFIG.metrics_url);
+                  svcMetricsLink.textContent = mUrl.hostname + ':' + metricsPort;
+                } catch { svcMetricsLink.textContent = 'localhost:' + metricsPort; }
               }
             } catch {}
           }
