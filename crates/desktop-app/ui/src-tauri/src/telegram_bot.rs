@@ -1018,6 +1018,7 @@ pub struct TelegramBotManager {
     memory: Arc<PilotMemory>,
     unified_state: Arc<UnifiedL2State>,
     notify_config: std::sync::Mutex<Option<NotifyConfig>>,
+    system_alerts_enabled: std::sync::atomic::AtomicBool,
 }
 
 struct NotifyConfig {
@@ -1034,6 +1035,8 @@ impl TelegramBotManager {
         memory: Arc<PilotMemory>,
         unified_state: Arc<UnifiedL2State>,
     ) -> Self {
+        // Load initial system_alerts_enabled from config file
+        let alerts_enabled = Self::load_alerts_setting();
         Self {
             shutdown_tx: std::sync::Mutex::new(None),
             ai,
@@ -1042,7 +1045,26 @@ impl TelegramBotManager {
             memory,
             unified_state,
             notify_config: std::sync::Mutex::new(None),
+            system_alerts_enabled: std::sync::atomic::AtomicBool::new(alerts_enabled),
         }
+    }
+
+    fn load_alerts_setting() -> bool {
+        match crate::commands::read_telegram_config() {
+            Ok(config) => config.system_alerts_enabled,
+            Err(e) => {
+                log::warn!("[TG] Failed to load alerts setting: {e}");
+                true
+            }
+        }
+    }
+
+    pub fn set_system_alerts_enabled(&self, enabled: bool) {
+        self.system_alerts_enabled.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_system_alerts_enabled(&self) -> bool {
+        self.system_alerts_enabled.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn is_running(&self) -> bool {
@@ -1154,7 +1176,7 @@ impl TelegramBotManager {
             tokio::select! {
                 // React to state change events from UnifiedL2State
                 Ok(event) = event_rx.recv() => {
-                    if !notify_tx.is_running() {
+                    if !notify_tx.is_running() || !notify_tx.is_system_alerts_enabled() {
                         continue;
                     }
                     match event.event_type.as_str() {
@@ -1190,7 +1212,7 @@ impl TelegramBotManager {
 
                 // Periodic log scanning (runs every 5 minutes, only for running deployments)
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(HEALTH_CHECK_INTERVAL_SECS)) => {
-                    if !notify_tx.is_running() {
+                    if !notify_tx.is_running() || !notify_tx.is_system_alerts_enabled() {
                         continue;
                     }
 

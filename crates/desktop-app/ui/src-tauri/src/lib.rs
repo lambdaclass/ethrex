@@ -164,6 +164,7 @@ pub fn run() {
             toggle_telegram_bot,
             get_telegram_bot_status,
             send_telegram_notification,
+            toggle_system_alerts,
             get_all_l2,
         ])
         .run(tauri::generate_context!())

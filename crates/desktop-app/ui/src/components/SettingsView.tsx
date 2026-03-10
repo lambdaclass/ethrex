@@ -58,10 +58,11 @@ export default function SettingsView() {
 
   const loadTelegramConfig = async () => {
     try {
-      const cfg = await invoke<{ bot_token: string; allowed_chat_ids: string; enabled: boolean }>('get_telegram_config')
+      const cfg = await invoke<{ bot_token: string; allowed_chat_ids: string; enabled: boolean; system_alerts_enabled?: boolean }>('get_telegram_config')
       setTgMaskedToken(cfg.bot_token || '')
       setTgChatIds(cfg.allowed_chat_ids)
       setTgEnabled(cfg.enabled)
+      setTgSystemAlerts(cfg.system_alerts_enabled ?? true)
       const running = await invoke<boolean>('get_telegram_bot_status')
       setTgBotRunning(running)
     } catch {
@@ -84,6 +85,21 @@ export default function SettingsView() {
       setTgResult({ ok: false, msg: `${e}` })
     } finally {
       setTgToggling(false)
+    }
+  }
+
+  const [tgAlertsToggling, setTgAlertsToggling] = useState(false)
+
+  const handleSystemAlertsToggle = async (enabled: boolean) => {
+    if (tgAlertsToggling) return
+    setTgAlertsToggling(true)
+    try {
+      await invoke<boolean>('toggle_system_alerts', { enabled })
+      setTgSystemAlerts(enabled)
+    } catch (e) {
+      setTgResult({ ok: false, msg: `${e}` })
+    } finally {
+      setTgAlertsToggling(false)
     }
   }
 
@@ -180,6 +196,7 @@ export default function SettingsView() {
   const [tgToggling, setTgToggling] = useState(false)
   const [tgSaving, setTgSaving] = useState(false)
   const [tgResult, setTgResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [tgSystemAlerts, setTgSystemAlerts] = useState(true)
 
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -463,6 +480,20 @@ export default function SettingsView() {
                 ? (lang === 'ko' ? '● 실행 중' : '● Running')
                 : (lang === 'ko' ? '○ 중지됨' : '○ Stopped')}
             </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className={`relative inline-flex items-center ${!tgEnabled ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+              <input
+                type="checkbox"
+                checked={tgSystemAlerts}
+                onChange={e => handleSystemAlertsToggle(e.target.checked)}
+                disabled={!tgEnabled || tgAlertsToggling}
+                aria-label="System alerts toggle"
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:bg-[var(--color-accent)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+            </label>
+            <span className="text-[12px]">{t('settings.systemAlerts', lang)}</span>
           </div>
           <div>
             <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">
