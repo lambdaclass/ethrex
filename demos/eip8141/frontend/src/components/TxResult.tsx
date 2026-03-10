@@ -3,11 +3,9 @@ import type { TxResult as TxResultType } from '../lib/api';
 
 const BLOCKSCOUT_URL: string | undefined = import.meta.env.VITE_BLOCKSCOUT_URL;
 
-// Derive Blockscout URL: env var > same-origin on port 8082 for remote deployments > nothing for localhost
-function getBlockscoutTxUrl(txHash: string): string | null {
+function getBlockscoutTxUrl(txHash: string): string {
   if (BLOCKSCOUT_URL) return `${BLOCKSCOUT_URL}/tx/${txHash}`;
   const { protocol, hostname } = window.location;
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return null;
   return `${protocol}//${hostname}:8082/tx/${txHash}`;
 }
 
