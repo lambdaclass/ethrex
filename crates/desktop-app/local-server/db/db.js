@@ -30,6 +30,7 @@ const migrations = [
   "ALTER TABLE deployments ADD COLUMN ever_running INTEGER DEFAULT 0",
   "ALTER TABLE deployments ADD COLUMN guest_program_registry_address TEXT",
   "ALTER TABLE deployments ADD COLUMN verification_status TEXT",
+  "ALTER TABLE deployments ADD COLUMN is_public INTEGER DEFAULT 0",
   "ALTER TABLE deployments ADD COLUMN public_domain TEXT",
   "ALTER TABLE deployments ADD COLUMN public_l2_rpc_url TEXT",
   "ALTER TABLE deployments ADD COLUMN public_l2_explorer_url TEXT",
