@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 ethrex-levm = { path = "../" }
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 hex.workspace = true

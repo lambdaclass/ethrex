@@ -29,11 +29,19 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
+    /// Shared read-only base state (e.g. post-system-call snapshot for parallel groups).
+    /// Checked on load_account between initial_accounts_state and store lookups.
+    /// Accounts are cloned into initial_accounts_state on first access (lazy, per-account).
+    pub shared_base: Option<Arc<CacheDB>>,
     pub codes: FxHashMap<H256, Code>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// When true, skip cloning accounts into `initial_accounts_state` on load.
+    /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
+    /// (state transitions come from BAL instead).
+    skip_initial_tracking: bool,
 }
 
 impl GeneralizedDatabase {
@@ -42,10 +50,43 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: Default::default(),
             initial_accounts_state: Default::default(),
+            shared_base: None,
             tx_backup: None,
             codes: Default::default(),
             code_metadata: Default::default(),
             bal_recorder: None,
+            skip_initial_tracking: false,
+        }
+    }
+
+    /// Creates a new GeneralizedDatabase with a shared read-only base state.
+    /// Used for parallel execution groups that share post-system-call state.
+    /// Skips initial_accounts_state tracking since parallel per-tx DBs never
+    /// call get_state_transitions_tx (state comes from BAL instead).
+    pub fn new_with_shared_base(store: Arc<dyn Database>, shared_base: Arc<CacheDB>) -> Self {
+        Self::new_with_shared_base_and_capacity(store, shared_base, 0)
+    }
+
+    /// Like `new_with_shared_base` but pre-allocates account/code maps to
+    /// `capacity` entries, avoiding rehashing during BAL seeding.
+    pub fn new_with_shared_base_and_capacity(
+        store: Arc<dyn Database>,
+        shared_base: Arc<CacheDB>,
+        capacity: usize,
+    ) -> Self {
+        Self {
+            store,
+            current_accounts_state: FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            ),
+            initial_accounts_state: Default::default(),
+            shared_base: Some(shared_base),
+            tx_backup: None,
+            codes: FxHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
+            code_metadata: Default::default(),
+            bal_recorder: None,
+            skip_initial_tracking: true,
         }
     }
 
@@ -97,10 +138,12 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
+            shared_base: None,
             tx_backup: None,
             codes,
             code_metadata: Default::default(),
             bal_recorder: None,
+            skip_initial_tracking: false,
         }
     }
 
@@ -114,9 +157,20 @@ impl GeneralizedDatabase {
                 if let Some(account) = self.initial_accounts_state.get(&address) {
                     return Ok(entry.insert(account.clone()));
                 }
+                // Check shared_base (read-only post-system-call snapshot) before hitting store.
+                if let Some(ref base) = self.shared_base
+                    && let Some(account) = base.get(&address)
+                {
+                    if !self.skip_initial_tracking {
+                        self.initial_accounts_state.insert(address, account.clone());
+                    }
+                    return Ok(entry.insert(account.clone()));
+                }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
-                self.initial_accounts_state.insert(address, account.clone());
+                if !self.skip_initial_tracking {
+                    self.initial_accounts_state.insert(address, account.clone());
+                }
                 Ok(entry.insert(account))
             }
         }
@@ -206,6 +260,9 @@ impl GeneralizedDatabase {
         key: H256,
     ) -> Result<U256, InternalError> {
         let value = self.store.get_storage_value(address, key)?;
+        if self.skip_initial_tracking {
+            return Ok(value);
+        }
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {
@@ -601,31 +658,6 @@ impl<'a> VM<'a> {
         Ok(new_nonce)
     }
 
-    /// Accesses to an account's storage slot and returns the value in it.
-    ///
-    /// Accessed storage slots are stored in the `accessed_storage_slots` set.
-    /// Accessed storage slots take place in some gas cost computation.
-    ///
-    /// Note: This function does NOT record to BAL. Per EIP-7928, BAL recording
-    /// must happen after gas checks pass. Use `record_storage_slot_to_bal()`
-    /// separately after the gas check succeeds.
-    pub fn access_storage_slot(
-        &mut self,
-        address: Address,
-        key: H256,
-    ) -> Result<(U256, bool), InternalError> {
-        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
-
-        let storage_slot = self.get_storage_value(address, key)?;
-
-        // Note: BAL recording is NOT done here per EIP-7928.
-        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
-        // Call record_storage_slot_to_bal() after gas check passes.
-
-        Ok((storage_slot, storage_slot_was_cold))
-    }
-
     /// SSTORE-specialized storage access path that returns current and original values together.
     /// This keeps the SSTORE hot path tighter by avoiding extra method-level plumbing.
     #[inline(always)]
@@ -634,7 +666,7 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
     ) -> Result<(U256, U256, bool), InternalError> {
-        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
+        let storage_slot_was_cold = self.substate.add_accessed_slot(address, key);
         let current_value = self.get_storage_value(address, key)?;
         let original_value = match self
             .storage_original_values
