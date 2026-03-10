@@ -701,6 +701,10 @@ router.post("/:id/public-access", async (req, res) => {
 
     const { publicDomain } = req.body;
     if (!publicDomain) return res.status(400).json({ error: "publicDomain is required" });
+    // Validate domain/IP: only allow safe hostname characters
+    if (!/^[a-zA-Z0-9._:-]+$/.test(publicDomain)) {
+      return res.status(400).json({ error: "publicDomain contains invalid characters" });
+    }
 
     // Save to DB
     updateDeployment(deployment.id, {

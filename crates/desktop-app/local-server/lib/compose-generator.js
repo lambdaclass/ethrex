@@ -84,6 +84,7 @@ function getAppProfile(programSlug) {
  * @param {string} opts.projectName - Docker Compose project name (e.g. tokamak-08cab1ae)
  * @param {boolean} [opts.gpu=false] - Enable NVIDIA GPU for SP1 prover
  * @param {boolean} [opts.dumpFixtures=false] - Enable ETHREX_DUMP_FIXTURES for offline test data collection
+ * @param {boolean} [opts.isPublic=false] - Bind L2 ports to 0.0.0.0 for public access (default: 127.0.0.1)
  * @returns {string} docker-compose.yaml content
  */
 function generateComposeFile(opts) {

@@ -2203,12 +2203,12 @@ function renderOverviewTab() {
     html += urlRow('L2 RPC', publicCfg.l2Rpc);
     if (publicCfg.l1Explorer) html += urlRow('L1 Explorer', publicCfg.l1Explorer);
     html += '<div style="display:flex;gap:6px;margin-top:8px">';
-    html += '<button class="btn-secondary" style="padding:3px 10px;font-size:10px" onclick="showPublicAccessModal(\'' + d.id + '\',\'' + esc(d.public_domain) + '\')">Edit</button>';
-    html += '<button class="btn-secondary" style="padding:3px 10px;font-size:10px;color:var(--orange-600,#ea580c)" onclick="disablePublicAccess(\'' + d.id + '\',this)">Disable</button>';
+    html += '<button class="btn-secondary pa-edit-btn" style="padding:3px 10px;font-size:10px" data-id="' + d.id + '" data-domain="' + esc(d.public_domain) + '">Edit</button>';
+    html += '<button class="btn-secondary pa-disable-btn" style="padding:3px 10px;font-size:10px;color:var(--orange-600,#ea580c)" data-id="' + d.id + '">Disable</button>';
     html += '</div>';
   } else {
     html += '<p style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Allow external users to access Dashboard, Bridge, Explorer, and L2 RPC via public domain or IP.</p>';
-    html += '<button class="btn-secondary" style="padding:4px 12px;font-size:11px" ' + (isProvisioned ? '' : 'disabled title="Deploy first"') + ' onclick="showPublicAccessModal(\'' + d.id + '\')">Enable Public Access</button>';
+    html += '<button class="btn-secondary pa-edit-btn" style="padding:4px 12px;font-size:11px" ' + (isProvisioned ? '' : 'disabled title="Deploy first"') + ' data-id="' + d.id + '">Enable Public Access</button>';
   }
   html += '</div>';
 
@@ -2562,8 +2562,12 @@ function toggleRpcUrl(uid, btn) {
 // External Access (Public Domain/IP)
 // ============================================================
 
-// Delegated click handler for copy buttons (avoids inline onclick with URLs)
+// Delegated click handlers for public access buttons (avoids inline onclick with user data)
 document.addEventListener('click', (e) => {
+  const editBtn = e.target.closest('.pa-edit-btn');
+  if (editBtn) { showPublicAccessModal(editBtn.dataset.id, editBtn.dataset.domain); return; }
+  const disableBtn = e.target.closest('.pa-disable-btn');
+  if (disableBtn) { disablePublicAccess(disableBtn.dataset.id, disableBtn); return; }
   const btn = e.target.closest('.pa-copy-btn');
   if (!btn) return;
   const url = btn.dataset.url;
@@ -2625,9 +2629,10 @@ async function enablePublicAccess(deploymentId, btn) {
     if (l2Explorer) body.l2ExplorerUrl = l2Explorer;
     if (l1Explorer) body.l1ExplorerUrl = l1Explorer;
     if (dashboard) body.dashboardUrl = dashboard;
-    await fetch(`${API}/deployments/${deploymentId}/public-access`, {
+    const resp = await fetch(`${API}/deployments/${deploymentId}/public-access`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
+    if (!resp.ok) { const err = await resp.json(); throw new Error(err.error || 'Server error'); }
     document.getElementById('public-access-modal')?.remove();
     await loadDeployments();
     if (currentDeploymentId === deploymentId) showDeploymentDetail(deploymentId);
@@ -2643,7 +2648,8 @@ async function disablePublicAccess(deploymentId, btn) {
   btn.disabled = true;
   btn.textContent = 'Disabling...';
   try {
-    await fetch(`${API}/deployments/${deploymentId}/public-access`, { method: 'DELETE' });
+    const resp = await fetch(`${API}/deployments/${deploymentId}/public-access`, { method: 'DELETE' });
+    if (!resp.ok) { const err = await resp.json(); throw new Error(err.error || 'Server error'); }
     await loadDeployments();
     if (currentDeploymentId === deploymentId) showDeploymentDetail(deploymentId);
   } catch (e) {

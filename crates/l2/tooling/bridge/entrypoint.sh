@@ -93,26 +93,26 @@ echo "[entrypoint] Generated config.json: bridge=${ETHREX_WATCHER_BRIDGE_ADDRESS
 
 # If public mode, generate nginx reverse proxy config for L1 RPC API key protection
 if [ "$IS_PUBLIC" = "true" ]; then
-  cat > /etc/nginx/conf.d/l1-rpc-proxy.conf << PROXYEOF
-# L1 RPC proxy: protects API key from client-side exposure
-location /api/l1-rpc {
-    proxy_pass ${L1_RPC_RESOLVED};
-    proxy_set_header Content-Type application/json;
-    proxy_method POST;
-    # Rate limit: 10 req/s per IP
-    limit_req zone=l1rpc burst=20 nodelay;
-}
-PROXYEOF
+  # Store L1 RPC proxy location for inclusion in the server block below
+  L1_RPC_PROXY_BLOCK="
+    location /api/l1-rpc {
+        proxy_pass ${L1_RPC_RESOLVED};
+        proxy_set_header Content-Type application/json;
+        proxy_method POST;
+        limit_req zone=l1rpc burst=20 nodelay;
+    }"
   # Add rate limit zone to nginx.conf if not present
   if ! grep -q "limit_req_zone.*l1rpc" /etc/nginx/nginx.conf 2>/dev/null; then
     sed -i 's/http {/http {\n    limit_req_zone $binary_remote_addr zone=l1rpc:10m rate=10r\/s;/' /etc/nginx/nginx.conf 2>/dev/null || true
   fi
   echo "[entrypoint] Public mode: L1 RPC proxy enabled at /api/l1-rpc"
+else
+  L1_RPC_PROXY_BLOCK=""
 fi
 
-# Cache-busting for config.json — prevent browsers from serving stale URLs after mode switch
+# Single server block: cache-busting for config.json + optional L1 RPC proxy
 # Must be a server block since conf.d/*.conf is included at http level
-cat > /etc/nginx/conf.d/config-cache.conf << 'CACHEEOF'
+cat > /etc/nginx/conf.d/app-server.conf << SERVEREOF
 server {
     listen 80;
     server_name _;
@@ -122,13 +122,13 @@ server {
         expires -1;
         add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
     }
-
+${L1_RPC_PROXY_BLOCK}
     location / {
         root /usr/share/nginx/html;
         index index.html;
     }
 }
-CACHEEOF
+SERVEREOF
 # Remove default server to avoid port conflict
 rm -f /etc/nginx/conf.d/default.conf
 

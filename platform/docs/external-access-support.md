@@ -103,7 +103,7 @@ l2Rpc: `http://127.0.0.1:${l2Port}`  // 테스트넷 포함
 │   L2 RPC URL:      [자동: http://domain:1729  ]     │
 │   L2 Explorer URL: [자동: http://domain:8082  ]     │
 │   L1 Explorer URL: [자동: http://domain:8083  ]     │
-│   Dashboard URL:   [자동: http://domain:3702  ]     │
+│   Dashboard URL:   [자동: http://domain:3000  ]     │
 │                                                     │
 │              [Enable Public Access]                  │
 │                                                     │
@@ -118,8 +118,8 @@ l2Rpc: `http://127.0.0.1:${l2Port}`  // 테스트넷 포함
 │ Public Domain: l2.example.com                       │
 │                                                     │
 │ External URLs:                                      │
-│  Dashboard:   http://l2.example.com:3702   [Copy]   │
-│  Bridge:      http://l2.example.com:3702/… [Copy]   │
+│  Dashboard:   http://l2.example.com:3000   [Copy]   │
+│  Bridge:      http://l2.example.com:3000/… [Copy]   │
 │  L2 Explorer: http://l2.example.com:8082   [Copy]   │
 │  L2 RPC:      http://l2.example.com:1729   [Copy]   │
 │  L1 Explorer: http://l2.example.com:8083   [Copy]   │
@@ -560,7 +560,7 @@ Blockscout 프론트엔드의 `NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL`:
 |------|--------|----------|
 | `${l2Port}` (기본 1729) | L2 RPC | 필수 |
 | `${toolsL2ExplorerPort}` (기본 8082) | L2 Explorer | 필수 |
-| `${toolsBridgeUIPort}` (기본 3702) | Dashboard/Bridge UI | 필수 |
+| `${toolsBridgeUIPort}` (기본 3000) | Dashboard/Bridge UI | 필수 |
 | `${toolsL1ExplorerPort}` (기본 8083) | L1 Explorer | 로컬 L1일 때만 |
 | `${metricsPort}` (기본 3702) | Metrics | 선택 (보안 주의) |
 

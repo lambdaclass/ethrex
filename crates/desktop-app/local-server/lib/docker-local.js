@@ -260,7 +260,15 @@ function buildToolsEnv(toolsPorts) {
   if (toolsPorts.l2ChainId) env.L2_CHAIN_ID = String(toolsPorts.l2ChainId);
   if (toolsPorts.isExternalL1) env.IS_EXTERNAL_L1 = 'true';
 
-  // Public access config (external domain/IP)
+  // Always set Blockscout HOST/PROTOCOL defaults (avoids nested variable substitution in compose)
+  env.PUBLIC_L2_EXPLORER_HOST = `localhost:${toolsPorts.toolsL2ExplorerPort || 8082}`;
+  env.PUBLIC_L2_EXPLORER_PROTOCOL = 'http';
+  env.PUBLIC_L2_WS_PROTOCOL = 'ws';
+  env.PUBLIC_L1_EXPLORER_HOST = `localhost:${toolsPorts.toolsL1ExplorerPort || 8083}`;
+  env.PUBLIC_L1_EXPLORER_PROTOCOL = 'http';
+  env.PUBLIC_L1_WS_PROTOCOL = 'ws';
+
+  // Public access config (external domain/IP) — overrides defaults above
   if (toolsPorts.publicDomain) {
     env.PUBLIC_DOMAIN = toolsPorts.publicDomain;
     env.PUBLIC_BASE_URL = toolsPorts.publicBaseUrl || `http://${toolsPorts.publicDomain}`;
@@ -279,7 +287,9 @@ function buildToolsEnv(toolsPorts) {
           env[hostKey] = u.host;
           env[protoKey] = u.protocol.replace(':', '');
           env[wsKey] = u.protocol === 'https:' ? 'wss' : 'ws';
-        } catch {}
+        } catch (e) {
+          console.warn(`[docker-local] Failed to parse public URL for ${urlKey}: ${e.message}`);
+        }
       }
     }
   }
