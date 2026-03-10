@@ -1,6 +1,9 @@
-# Release Test — runs after a release candidate is published by the "Ethrex Release" workflow.
+# Release Test — runs after a release candidate is published by the "Ethrex Release" workflow,
+# or can be triggered manually for an existing RC tag.
 #
-# Trigger: workflow_run on "Ethrex Release" (tag_release.yaml), filtered to rc tags only.
+# Triggers:
+#   - workflow_run on "Ethrex Release" (tag_release.yaml), filtered to rc tags only
+#   - workflow_dispatch with a tag input (e.g., v8.1.0-rc.1) for manual reruns
 #
 # Jobs:
 #   1. extract-info  — parse the rc tag, derive version/rc number
@@ -14,6 +17,12 @@ on:
   workflow_run:
     workflows: ["Ethrex Release"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "RC tag to test (e.g., v8.1.0-rc.1). Must already have a published release with artifacts."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -32,19 +41,30 @@ jobs:
   # --------------------------------------------------------------------------
   extract-info:
     runs-on: ubuntu-latest
-    # Skip if the release workflow failed or wasn't triggered by an rc tag
-    if: github.event.workflow_run.conclusion == 'success'
+    # For workflow_run: skip if the release workflow failed.
+    # For workflow_dispatch: always run (the condition is vacuously true).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     outputs:
       tag: ${{ steps.parse.outputs.tag }}
       version: ${{ steps.parse.outputs.version }}
       rc_number: ${{ steps.parse.outputs.rc_number }}
     steps:
-      - name: Parse tag from triggering workflow
+      - name: Parse tag
         id: parse
         env:
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          # workflow_dispatch: use the explicit input; workflow_run: use head_branch
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
+          INPUT_TAG: ${{ inputs.tag || '' }}
         run: |
-          TAG="${HEAD_BRANCH}"
+          if [[ -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
+            echo "Source: workflow_dispatch input"
+          else
+            TAG="$HEAD_BRANCH"
+            echo "Source: workflow_run head_branch"
+          fi
           echo "Raw tag: ${TAG}"
 
           # Only proceed for rc tags (e.g., v8.1.0-rc.1)

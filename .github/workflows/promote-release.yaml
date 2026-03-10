@@ -1,10 +1,10 @@
 # Promote Release Candidate to Final Release
 #
 # Triggered automatically when the "Release Testing" workflow completes successfully
-# for a release candidate tag (e.g., v8.1.0-rc.1).
+# for a release candidate tag (e.g., v8.1.0-rc.1), or can be triggered manually.
 #
 # This workflow:
-#   1. Extracts the rc tag from the triggering workflow run
+#   1. Extracts the rc tag from the triggering workflow run (or manual input)
 #   2. Derives the final version by stripping the -rc.N suffix
 #   3. Creates a final vX.Y.Z tag on the same commit
 #   4. Edits the GitHub release: updates tag, title, removes pre-release flag, marks as latest
@@ -20,6 +20,12 @@ on:
     workflows: ["Release Testing"]
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "RC tag to promote (e.g., v8.1.0-rc.1). Release tests must have passed."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -27,10 +33,12 @@ permissions:
 
 jobs:
   promote:
-    # Only promote when tests passed and the triggering ref is an rc tag
+    # workflow_run: only promote when tests passed and the triggering ref is an rc tag
+    # workflow_dispatch: always run (user explicitly chose to promote)
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      contains(github.event.workflow_run.head_branch, '-rc.')
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       contains(github.event.workflow_run.head_branch, '-rc.'))
     runs-on: ubuntu-latest
 
     steps:
@@ -42,9 +50,17 @@ jobs:
       - name: Extract RC tag and derive final version
         id: version
         env:
-          # Use env var to avoid direct interpolation of workflow_run input in run: block
-          RC_TAG: ${{ github.event.workflow_run.head_branch }}
+          # workflow_dispatch: use the explicit input; workflow_run: use head_branch
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || '' }}
+          INPUT_TAG: ${{ inputs.tag || '' }}
         run: |
+          if [[ -n "$INPUT_TAG" ]]; then
+            RC_TAG="$INPUT_TAG"
+            echo "Source: workflow_dispatch input"
+          else
+            RC_TAG="$HEAD_BRANCH"
+            echo "Source: workflow_run head_branch"
+          fi
           # Validate the RC tag matches expected pattern (vX.Y.Z-rc.N)
           if ! echo "$RC_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'; then
             echo "::error::Invalid RC tag format: $RC_TAG"
