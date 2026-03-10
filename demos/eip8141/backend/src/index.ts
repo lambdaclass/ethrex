@@ -7,6 +7,7 @@ import simpleSendRoute from "./routes/simple-send.js";
 import sponsoredSendRoute from "./routes/sponsored-send.js";
 import batchOpsRoute from "./routes/batch-ops.js";
 import deployExecuteRoute from "./routes/deploy-execute.js";
+import { ensureFactoryInitialized } from "./dev-account.js";
 
 const app = new Hono();
 
@@ -29,6 +30,19 @@ const port = parseInt(process.env.PORT ?? "3000", 10);
 console.log(`[eip8141-backend] Starting on port ${port}`);
 console.log(`[eip8141-backend] RPC_URL=${process.env.RPC_URL ?? "http://localhost:8545"}`);
 
-serve({ fetch: app.fetch, port }, () => {
-  console.log(`[eip8141-backend] Listening on http://localhost:${port}`);
-});
+// Initialize factory before accepting requests
+async function start() {
+  try {
+    await ensureFactoryInitialized();
+  } catch (err) {
+    console.error(`[eip8141-backend] Factory init failed: ${err}`);
+    console.error("[eip8141-backend] Make sure ethrex is running and 'make genesis' was run");
+    process.exit(1);
+  }
+
+  serve({ fetch: app.fetch, port }, () => {
+    console.log(`[eip8141-backend] Listening on http://localhost:${port}`);
+  });
+}
+
+start();

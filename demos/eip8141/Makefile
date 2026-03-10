@@ -7,6 +7,7 @@ compile-contracts:
 		--base-path . @solady/=contracts/deps/solady/ \
 		contracts/src/MockERC20.sol \
 		contracts/src/WebAuthnVerifier.sol \
+		contracts/src/WebAuthnP256AccountFactory.sol \
 		-o contracts/out --overwrite 2>/dev/null
 	@echo "Compiling Yul contracts (with verbatim for EIP-8141 opcodes)..."
 	@solc --strict-assembly contracts/yul/GasSponsor.yul > /dev/null 2>&1

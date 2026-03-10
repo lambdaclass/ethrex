@@ -2,7 +2,7 @@
  * EIP-8141 Frame Transaction — Playwright E2E Tests
  *
  * Tests all 4 demo flows through the browser UI:
- *   1. Account registration (passkey via virtual authenticator)
+ *   1. Account registration (passkey via virtual authenticator + account deployment)
  *   2. Simple Send (ETH transfer)
  *   3. Sponsored ERC20 Send (gas paid by sponsor)
  *   4. Batch Operations (multiple transfers in one tx)
@@ -36,6 +36,7 @@ import {
   switchToTab,
   formatEth,
   formatTokens,
+  setAccount,
   ACCOUNT,
   SPONSOR,
   DEAD,
@@ -74,23 +75,38 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     // Should show "Connect with Passkey" when not logged in
     await expect(page.getByText('Connect with Passkey')).toBeVisible();
 
-    // Click "Create Account"
+    // Click "Create Account" — this creates a passkey AND deploys a per-user account
     await page.getByRole('button', { name: 'Create Account' }).click();
 
     // Wait for the account panel to show the connected state (address + ETH balance)
-    // The header shows: [green dot] 0x1000...0003  X.XXXX ETH  XXX.XX DEMO
-    await expect(page.locator('code.font-mono').first()).toBeVisible({ timeout: 30_000 });
+    // Registration now deploys a new account via factory, so the address is dynamic
+    await expect(page.locator('code.font-mono').first()).toBeVisible({ timeout: 60_000 });
 
-    // The address in the header should match the expected account
+    // Capture the deployed account address from the UI
     const addressText = await page.locator('code.font-mono').first().textContent();
-    expect(addressText).toContain('0x1000');
-    expect(addressText).toContain('0003');
+    expect(addressText).toBeTruthy();
+    expect(addressText).toMatch(/^0x[0-9a-fA-F]{4}\.\.\..*$/);
 
-    // Balance should appear in the header (e.g., "99.9901 ETH" and "997800.00 DEMO")
+    // Extract full address from localStorage (the UI shows truncated)
+    const fullAddress = await page.evaluate(() => {
+      const raw = localStorage.getItem('eip8141_credential');
+      if (!raw) return null;
+      return JSON.parse(raw).address;
+    });
+    expect(fullAddress).toBeTruthy();
+    expect(fullAddress).toMatch(/^0x[0-9a-fA-F]{40}$/);
+
+    // Set the dynamic account address for use in subsequent tests
+    setAccount(fullAddress!);
+    console.log(`[test] Account deployed at: ${ACCOUNT}`);
+
+    // Balance should appear in the header (e.g., "9.9901 ETH" and "1000000.00 DEMO")
     await expect(page.locator('header').getByText(/[\d.]+ ETH/)).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('header').getByText(/[\d.]+ DEMO/)).toBeVisible({ timeout: 15_000 });
 
-    // Verify via RPC that the account has tokens (funded during registration)
+    // Verify via RPC that the account has ETH and tokens (funded during registration)
+    const ethBal = await getEthBalance(ACCOUNT);
+    expect(ethBal).toBeGreaterThan(0n);
     const tokenBal = await getTokenBalance(ACCOUNT);
     expect(tokenBal).toBeGreaterThan(0n);
 
@@ -419,12 +435,6 @@ async function verifyFrameTxOnBlockscout(
   }
 
   // ── Verify RPC tx has no legacy fields (EIP-8141 spec compliance) ──
-  // Frame transactions have sender (not from), no to, no value, no input, no gas
-  // The RPC response for type 6 should have:
-  //   - type: "0x6"
-  //   - sender field (the tx.sender from the frame tx)
-  //   - frames array or equivalent
-  // Note: exact field names depend on ethrex's JSON-RPC implementation
   expect(rpcTx.type).toBe('0x6');
 
   // ── Blockscout API verification (if available) ──

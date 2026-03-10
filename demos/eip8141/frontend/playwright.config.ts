@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
-const baseURL = process.env.BASE_URL ?? 'http://localhost:5173';
+// Vite always serves over HTTPS (basicSsl plugin or real certs)
+const baseURL = process.env.BASE_URL ?? 'https://localhost:5173';
 const isRemote = !!process.env.BASE_URL;
 
 export default defineConfig({

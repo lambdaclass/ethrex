@@ -4,6 +4,10 @@
 ///   slot 0: P256 public key X coordinate
 ///   slot 1: P256 public key Y coordinate
 ///
+/// Constructor args (appended after initcode):
+///   pubKeyX (uint256) — P256 public key X coordinate
+///   pubKeyY (uint256) — P256 public key Y coordinate
+///
 /// Functions:
 ///   verify(sig, metadata)        0x182ffd20 — Verify WebAuthn sig, APPROVE scope=0
 ///   verifyAndPay(sig, metadata)  0x5a27d2e0 — Verify WebAuthn sig, APPROVE scope=2
@@ -11,7 +15,6 @@
 ///   execute(address,uint256,bytes) 0xb61d27f6 — Arbitrary call
 ///   publicKeyX()                 0xfa6df55d — Read pubkey X
 ///   publicKeyY()                 0xd7a6f6e8 — Read pubkey Y
-///   setPublicKey(uint256,uint256) 0x8eb764b8 — Set pubkey (demo only)
 ///   receive()                    (no selector) — Accept ETH
 ///
 /// External dependency:
@@ -20,6 +23,14 @@
 ///   selector: 0x3d5e14a0
 object "WebAuthnP256Account" {
     code {
+        // Constructor: read pubKeyX and pubKeyY from the end of the initcode.
+        // During CREATE2, codesize() = initcode + appended args (64 bytes).
+        let argsOffset := sub(codesize(), 64)
+        codecopy(0, argsOffset, 64)
+        sstore(0, mload(0))    // slot 0 = pubKeyX
+        sstore(1, mload(0x20)) // slot 1 = pubKeyY
+
+        // Deploy runtime
         datacopy(0, dataoffset("runtime"), datasize("runtime"))
         return(0, datasize("runtime"))
     }
@@ -95,14 +106,6 @@ object "WebAuthnP256Account" {
             case 0xd7a6f6e8 {
                 mstore(0, sload(1))
                 return(0, 0x20)
-            }
-
-            // ── setPublicKey(uint256,uint256) ─────────────────────────
-            // Demo only — no access control
-            case 0x8eb764b8 {
-                sstore(0, calldataload(4))
-                sstore(1, calldataload(0x24))
-                stop()
             }
 
             default {

@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { Credential } from "../types.js";
-import { ACCOUNT_ADDRESS } from "../types.js";
-import { setPublicKey, mintTokens, getTokenBalance } from "../dev-account.js";
+import { deployAccount, fundAccount, mintTokens, getTokenBalance } from "../dev-account.js";
 
 // In-memory credential store keyed by account address
 export const credentials = new Map<string, Credential>();
@@ -19,19 +18,20 @@ app.post("/register", async (c) => {
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    // The demo uses a single pre-deployed account contract
-    const address = ACCOUNT_ADDRESS.toLowerCase();
-
-    // Set the public key on-chain via a regular TX from the dev account
     const pubKeyX = BigInt(body.publicKey.x);
     const pubKeyY = BigInt(body.publicKey.y);
 
-    console.log(`[register] Setting public key on ${address}...`);
+    // Deploy a new WebAuthnP256Account via the factory (CREATE2, deterministic from pubkey)
+    console.log(`[register] Deploying new account for pubkey...`);
     console.log(`[register]   x = ${body.publicKey.x}`);
     console.log(`[register]   y = ${body.publicKey.y}`);
 
-    const txHash = await setPublicKey(pubKeyX, pubKeyY);
-    console.log(`[register] Public key set on-chain, tx: ${txHash}`);
+    const address = await deployAccount(pubKeyX, pubKeyY);
+    console.log(`[register] Account deployed at ${address}`);
+
+    // Fund the new account with ETH
+    const fundTx = await fundAccount(address);
+    console.log(`[register] Funded with 10 ETH, tx: ${fundTx}`);
 
     // Mint demo ERC20 tokens to the account (1,000,000 tokens)
     const currentBalance = await getTokenBalance(address);
@@ -47,13 +47,13 @@ app.post("/register", async (c) => {
     const credential: Credential = {
       credentialId: body.credentialId,
       publicKey: body.publicKey,
-      address,
+      address: address.toLowerCase(),
     };
 
-    credentials.set(address, credential);
+    credentials.set(address.toLowerCase(), credential);
     console.log(`[register] Credential stored for ${address}`);
 
-    return c.json({ success: true, address });
+    return c.json({ success: true, address: address.toLowerCase() });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[register] Error: ${msg}`);

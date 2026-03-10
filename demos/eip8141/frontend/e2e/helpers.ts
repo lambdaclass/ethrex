@@ -3,12 +3,18 @@ import type { Page, CDPSession } from '@playwright/test';
 // ── Constants ────────────────────────────────────────────────────────
 export const RPC_URL = process.env.RPC_URL ?? 'http://localhost:8545';
 export const BLOCKSCOUT_URL = process.env.BLOCKSCOUT_URL ?? 'http://localhost:8082';
-export const ACCOUNT = '0x1000000000000000000000000000000000000003';
 export const MOCK_ERC20 = '0x1000000000000000000000000000000000000002';
 export const SPONSOR = '0x1000000000000000000000000000000000000001';
 export const DEPLOYER_PROXY = '0x4e59b44847b379578588920ca78fbf26c0b4956c';
 export const DEAD = '0x000000000000000000000000000000000000dEaD';
 export const ADDR_0001 = '0x0000000000000000000000000000000000000001';
+
+// Per-user account address (set during registration test, used by all subsequent tests)
+export let ACCOUNT = '';
+
+export function setAccount(address: string) {
+  ACCOUNT = address.toLowerCase();
+}
 
 // ── RPC helpers ──────────────────────────────────────────────────────
 async function rpc(method: string, params: unknown[] = []) {
