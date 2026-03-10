@@ -171,7 +171,6 @@ async function seedOfficialPrograms() {
   const programs = [
     { programId: "evm-l2", typeId: 1, name: "EVM L2", category: "defi", description: "Default Ethereum execution environment. Full EVM compatibility for general-purpose L2 chains." },
     { programId: "zk-dex", typeId: 2, name: "ZK-DEX", category: "defi", description: "Decentralized exchange circuits optimized for on-chain order matching and settlement." },
-    { programId: "tokamon", typeId: 3, name: "Tokamon", category: "gaming", description: "Gaming application circuits for provable game state transitions and on-chain gaming." },
   ];
 
   for (const p of programs) {

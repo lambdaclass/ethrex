@@ -138,7 +138,6 @@ export default function Home() {
             <ul className="text-sm text-gray-600 space-y-1">
               <li>- EVM-L2: Default Ethereum execution (Type ID 1)</li>
               <li>- ZK-DEX: Decentralized exchange circuits (Type ID 2)</li>
-              <li>- Tokamon: Gaming application circuits (Type ID 3)</li>
               <li>- Custom: Build your own (Type ID 10+)</li>
             </ul>
           </div>

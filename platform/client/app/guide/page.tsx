@@ -94,12 +94,6 @@ make -C crates/l2 init-guest-program PROGRAM=zk-dex`}
               <span className="text-gray-500 ml-2">DEX order matching circuits</span>
             </div>
           </div>
-          <div className="flex justify-between items-center">
-            <div>
-              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-bold">tokamon</code>
-              <span className="text-gray-500 ml-2">Gaming state transitions</span>
-            </div>
-          </div>
         </div>
       </div>
 

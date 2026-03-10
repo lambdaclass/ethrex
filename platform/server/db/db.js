@@ -69,14 +69,6 @@ function seedOfficialPrograms(database) {
       description:
         "Decentralized exchange circuits optimized for on-chain order matching and settlement.",
     },
-    {
-      programId: "tokamon",
-      typeId: 3,
-      name: "Tokamon",
-      category: "gaming",
-      description:
-        "Gaming application circuits for provable game state transitions and on-chain gaming.",
-    },
   ];
 
   // Ensure 'system' user exists for creator_id
