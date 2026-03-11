@@ -3,6 +3,7 @@ mod eip7708_tests;
 mod eip7778_tests;
 mod eip7928_tests;
 mod l2_hook_tests;
+mod l2_privileged_tx_tests;
 mod memory_tests;
 mod precompile_tests;
 mod stack_tests;
