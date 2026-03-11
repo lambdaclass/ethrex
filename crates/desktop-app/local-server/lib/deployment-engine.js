@@ -22,6 +22,7 @@ const {
   generateComposeFile,
   generateTestnetComposeFile,
   generateRemoteComposeFile,
+  generateRemoteTestnetComposeFile,
   generateProgramsToml,
   writeComposeFile,
   writeCustomGenesis,
@@ -1338,6 +1339,209 @@ async function provisionRemote(deployment, hostId) {
 }
 
 // ============================================================
+// REMOTE + TESTNET PROVISIONING
+// ============================================================
+
+async function provisionRemoteTestnet(deployment, hostId) {
+  const { id, program_slug: programSlug } = deployment;
+  const host = getHostById(hostId);
+  if (!host) throw new Error("Host not found");
+
+  const depConfig = deployment.config ? JSON.parse(deployment.config) : {};
+  const testnetCfg = depConfig.testnet || {};
+
+  const provisionInfo = { startedAt: Date.now(), phase: "pulling" };
+  activeProvisions.set(id, provisionInfo);
+  clearDeployEvents(id);
+
+  const { l2Port, proofCoordPort } = await getNextAvailablePorts();
+  const projectName = `tokamak-${id.slice(0, 8)}`;
+  const remoteDir = `/opt/tokamak/${id}`;
+
+  // Allocate tools ports
+  const toolsL2ExplorerPort = 8082;
+  const toolsL1ExplorerPort = 8083;
+  const toolsBridgeUIPort = 3000;
+  const toolsDbPort = 7432;
+  const toolsMetricsPort = 3702;
+
+  updateDeployment(id, {
+    host_id: hostId,
+    docker_project: projectName,
+    l2_port: l2Port,
+    proof_coord_port: proofCoordPort,
+    tools_l2_explorer_port: toolsL2ExplorerPort,
+    tools_l1_explorer_port: toolsL1ExplorerPort,
+    tools_bridge_ui_port: toolsBridgeUIPort,
+    tools_db_port: toolsDbPort,
+    tools_metrics_port: toolsMetricsPort,
+    phase: "pulling",
+    error_message: null,
+  });
+
+  emit(id, "phase", { phase: "pulling", message: `Connecting to ${host.hostname}...` });
+
+  // Resolve keys from Keychain
+  let deployerPk, committerPk, proofCoordinatorPk, bridgeOwnerPk;
+  try {
+    const keychainKeyName = testnetCfg.keychainKeyName;
+    if (!keychainKeyName) throw new Error("No deployer Keychain key specified");
+    deployerPk = await keychain.getPrivateKey(keychainKeyName);
+
+    committerPk = testnetCfg.committerKeychainKey
+      ? await keychain.getPrivateKey(testnetCfg.committerKeychainKey)
+      : deployerPk;
+    proofCoordinatorPk = testnetCfg.proofCoordinatorKeychainKey
+      ? await keychain.getPrivateKey(testnetCfg.proofCoordinatorKeychainKey)
+      : deployerPk;
+    bridgeOwnerPk = testnetCfg.bridgeOwnerKeychainKey
+      ? await keychain.getPrivateKey(testnetCfg.bridgeOwnerKeychainKey)
+      : deployerPk;
+  } catch (err) {
+    throw new Error(`Failed to resolve Keychain keys: ${err.message}`);
+  }
+
+  const l1RpcUrl = testnetCfg.l1RpcUrl || deployment.rpc_url;
+  if (!l1RpcUrl) throw new Error("L1 RPC URL is required for remote testnet deployment");
+
+  let conn;
+  try {
+    conn = await remote.connect(host);
+
+    const composeContent = generateRemoteTestnetComposeFile({
+      programSlug,
+      l2Port,
+      proofCoordPort,
+      projectName,
+      dataDir: remoteDir,
+      l1RpcUrl,
+      deployerPrivateKey: deployerPk,
+      committerPk,
+      proofCoordinatorPk,
+      bridgeOwnerPk,
+      l2ChainId: deployment.chain_id,
+    });
+
+    writeComposeFile(id, composeContent);
+
+    provisionInfo.phase = "pulling";
+    emit(id, "phase", { phase: "pulling", message: "Uploading configuration and pulling images..." });
+
+    await remote.exec(conn, `mkdir -p ${remoteDir}`);
+    await remote.uploadFile(conn, composeContent, `${remoteDir}/docker-compose.yaml`);
+
+    const profile = getAppProfile(programSlug);
+    if (profile.programsToml) {
+      const tomlContent = generateProgramsToml(programSlug);
+      await remote.uploadFile(conn, tomlContent, `${remoteDir}/programs.toml`);
+    }
+
+    await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} pull`, {
+      timeout: 300000,
+    });
+
+    // No L1 startup needed — external L1 is already running
+
+    provisionInfo.phase = "deploying_contracts";
+    emit(id, "phase", { phase: "deploying_contracts", message: "Deploying contracts to external L1..." });
+    updateDeployment(id, { phase: "deploying_contracts" });
+    await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up tokamak-app-deployer`, {
+      timeout: 600000,
+    });
+
+    let envVars = {};
+    try { envVars = await remote.extractEnvRemote(conn, projectName); } catch {}
+    const bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+    const proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+
+    if (!bridgeAddress || !proposerAddress) {
+      throw new Error(
+        `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
+        "The deployer may have exited before writing contract addresses."
+      );
+    }
+
+    updateDeployment(id, { bridge_address: bridgeAddress, proposer_address: proposerAddress });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress });
+
+    provisionInfo.phase = "l2_starting";
+    emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node on remote..." });
+    updateDeployment(id, { phase: "l2_starting" });
+    await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d tokamak-app-l2`, {
+      timeout: 60000,
+    });
+    await waitForRemoteHealthy(conn, l2Port, 120000, id);
+    emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
+
+    provisionInfo.phase = "starting_prover";
+    emit(id, "phase", { phase: "starting_prover", message: "Starting prover on remote..." });
+    updateDeployment(id, { phase: "starting_prover" });
+    await remote.exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d tokamak-app-prover`, {
+      timeout: 60000,
+    });
+
+    // Start tools (Explorer + Dashboard)
+    provisionInfo.phase = "starting_tools";
+    emit(id, "phase", { phase: "starting_tools", message: "Starting Explorer and Dashboard on remote..." });
+    updateDeployment(id, { phase: "starting_tools" });
+
+    const l1ChainId = testnetCfg.l1ChainId;
+    const isExternalL1 = true;
+
+    try {
+      await remote.startToolsRemote(conn, `${projectName}-tools`, remoteDir, envVars, {
+        toolsL2ExplorerPort,
+        toolsL1ExplorerPort,
+        toolsBridgeUIPort,
+        toolsDbPort,
+        toolsMetricsPort,
+        l1Port: 8545,
+        l2Port,
+        l2ChainId: deployment.chain_id,
+        l1ChainId,
+        l1RpcUrl,
+        l1NetworkName: testnetCfg.network,
+        isExternalL1,
+        hostname: host.hostname,
+      }, { skipL1Explorer: isExternalL1 });
+      emit(id, "phase", { phase: "starting_tools", message: "Tools started" });
+    } catch (err) {
+      // Tools failure is non-fatal — L2 is still running
+      emit(id, "warning", { message: `Tools failed to start: ${err.message}` });
+    }
+
+    // Auto-set public access with the remote host's IP/hostname
+    const publicDomain = host.hostname;
+    updateDeployment(id, {
+      is_public: 1,
+      public_domain: publicDomain,
+      public_l2_rpc_url: `http://${publicDomain}:${l2Port}`,
+      public_l2_explorer_url: `http://${publicDomain}:${toolsL2ExplorerPort}`,
+      public_dashboard_url: `http://${publicDomain}:${toolsBridgeUIPort}`,
+    });
+
+    const l2Rpc = `http://${host.hostname}:${l2Port}`;
+    emit(id, "phase", {
+      phase: "running",
+      message: `Deployment running on ${host.hostname}!`,
+      l2Rpc,
+      bridgeAddress,
+      proposerAddress,
+    });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null, ever_running: 1 });
+    activeProvisions.delete(id);
+    conn.end();
+    return updateDeployment(id, {});
+  } catch (err) {
+    emit(id, "error", { message: err.message });
+    updateDeployment(id, { error_message: err.message });
+    activeProvisions.delete(id);
+    if (conn) conn.end();
+    throw err;
+  }
+}
+
+// ============================================================
 // SHARED LIFECYCLE (local + remote)
 // ============================================================
 
@@ -1803,6 +2007,7 @@ module.exports = {
   provision,
   provisionTestnet,
   provisionRemote,
+  provisionRemoteTestnet,
   stopDeployment,
   startDeployment,
   destroyDeployment,

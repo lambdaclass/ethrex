@@ -243,10 +243,40 @@
             <div id="docker-status-area"></div>
 
             <div id="remote-host-area" style="display:none">
-              <label>Target Server
+              <label style="margin-bottom:8px">Target Server
                 <select id="launch-host-select"><option value="">Select a server...</option></select>
               </label>
-              <div class="remote-info-box">
+              <label style="margin-bottom:8px">L1 Source
+                <select id="remote-l1-source" onchange="onRemoteL1SourceChange()">
+                  <option value="local">Built-in L1 (Docker on remote)</option>
+                  <option value="testnet">Testnet (Sepolia, Holesky, etc.)</option>
+                </select>
+              </label>
+              <div id="remote-testnet-fields" style="display:none">
+                <div class="testnet-info-box" style="background:var(--blue-50,#eff6ff);border:1px solid var(--blue-200,#bfdbfe);border-radius:8px;padding:10px 14px;margin-bottom:12px">
+                  <p style="font-weight:600;color:var(--blue-700,#1d4ed8);margin-bottom:4px;font-size:13px">Remote + Testnet</p>
+                  <p style="color:var(--blue-600,#2563eb);font-size:11px;line-height:1.5">
+                    No L1 container on the remote server. L2 contracts will be deployed to the external L1.<br>
+                    Select a deployer key from Keychain. The account must be funded with testnet ETH.
+                  </p>
+                </div>
+                <label style="margin-bottom:8px">L1 Network
+                  <select id="remote-l1-network" onchange="onRemoteL1NetworkChange()">
+                    <option value="sepolia">Sepolia (Chain ID: 11155111)</option>
+                    <option value="holesky">Holesky (Chain ID: 17000)</option>
+                    <option value="custom-l1">Custom L1 Network</option>
+                  </select>
+                </label>
+                <label style="margin-bottom:8px">L1 RPC URL *
+                  <input type="text" id="remote-testnet-rpc" placeholder="https://sepolia.infura.io/v3/YOUR_KEY">
+                </label>
+                <label style="margin-bottom:8px">Deployer Key (Keychain) *
+                  <select id="remote-testnet-keychain-key">
+                    <option value="">Select key...</option>
+                  </select>
+                </label>
+              </div>
+              <div class="remote-info-box" id="remote-info-box">
                 <p style="font-weight:500;margin-bottom:4px">Remote deployment</p>
                 <p>Pre-built Docker images will be pulled on the remote server.</p>
               </div>

@@ -7,6 +7,7 @@ const {
   provision,
   provisionTestnet,
   provisionRemote,
+  provisionRemoteTestnet,
   stopDeployment,
   startDeployment,
   destroyDeployment,
@@ -512,9 +513,16 @@ router.post("/:id/provision", async (req, res) => {
 
     res.json({ ok: true, message: "Provisioning started", remote: !!hostId, mode: deployMode });
 
-    const provisionFn = hostId
-      ? () => provisionRemote(deployment, hostId)
-      : (deployMode === 'testnet' ? () => provisionTestnet(deployment) : () => provision(deployment));
+    let provisionFn;
+    if (hostId && deployMode === 'testnet') {
+      provisionFn = () => provisionRemoteTestnet(deployment, hostId);
+    } else if (hostId) {
+      provisionFn = () => provisionRemote(deployment, hostId);
+    } else if (deployMode === 'testnet') {
+      provisionFn = () => provisionTestnet(deployment);
+    } else {
+      provisionFn = () => provision(deployment);
+    }
 
     provisionFn().catch((err) => {
       console.error(`Provision failed for ${deployment.id}:`, err.message);

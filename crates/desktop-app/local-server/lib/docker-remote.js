@@ -234,6 +234,109 @@ async function testConnection(host) {
   }
 }
 
+/**
+ * Deploy and start tools (Blockscout, Bridge UI, Dashboard) on a remote server.
+ *
+ * Strategy: upload the tools compose file + env, then docker compose up.
+ * Bridge UI is built from a Dockerfile, so we need the tooling/bridge context
+ * available on the remote. Instead, we use a pre-built bridge-ui image or
+ * build it on the remote from a minimal context.
+ *
+ * @param {Client} conn - SSH connection
+ * @param {string} projectName - Tools project name (e.g. "tokamak-12345678-tools")
+ * @param {string} remoteDir - Remote directory for the deployment
+ * @param {Object} envVars - Deployed contract addresses from deployer
+ * @param {Object} toolsPorts - Port configuration from getToolsPorts()
+ * @param {Object} [opts] - Optional settings
+ * @param {boolean} [opts.skipL1Explorer] - Skip L1 Blockscout (external L1)
+ */
+async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPorts, opts = {}) {
+  const toolsDir = `${remoteDir}/tools`;
+  await exec(conn, `mkdir -p ${toolsDir}`);
+
+  // Write the deployed .env file for tools (contract addresses etc.)
+  const envContent = Object.entries(envVars || {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n") + "\n";
+  await uploadFile(conn, envContent, `${toolsDir}/deployed.env`);
+
+  // Build tools environment variables
+  const toolsEnv = {
+    TOOLS_L1_EXPLORER_PORT: String(toolsPorts.toolsL1ExplorerPort || 8083),
+    TOOLS_L2_EXPLORER_PORT: String(toolsPorts.toolsL2ExplorerPort || 8082),
+    TOOLS_BRIDGE_UI_PORT: String(toolsPorts.toolsBridgeUIPort || 3000),
+    TOOLS_DB_PORT: String(toolsPorts.toolsDbPort || 7432),
+    TOOLS_L1_RPC_PORT: String(toolsPorts.l1Port || 8545),
+    TOOLS_L2_RPC_PORT: String(toolsPorts.l2Port || 1729),
+    TOOLS_METRICS_PORT: String(toolsPorts.toolsMetricsPort || 3702),
+    TOOLS_BIND_ADDR: "0.0.0.0",
+    TOOLS_ENV_FILE: `${toolsDir}/deployed.env`,
+  };
+  if (toolsPorts.l2ChainId) toolsEnv.L2_CHAIN_ID = String(toolsPorts.l2ChainId);
+  if (toolsPorts.l1ChainId) toolsEnv.L1_CHAIN_ID = String(toolsPorts.l1ChainId);
+  if (toolsPorts.l1RpcUrl) toolsEnv.L1_RPC_URL = toolsPorts.l1RpcUrl;
+  if (toolsPorts.l1NetworkName) toolsEnv.L1_NETWORK_NAME = toolsPorts.l1NetworkName;
+  if (toolsPorts.isExternalL1) toolsEnv.IS_EXTERNAL_L1 = "true";
+
+  // Blockscout HOST defaults (remote = use hostname:port)
+  const hostname = toolsPorts.hostname || "localhost";
+  toolsEnv.PUBLIC_L2_EXPLORER_HOST = `${hostname}:${toolsPorts.toolsL2ExplorerPort || 8082}`;
+  toolsEnv.PUBLIC_L2_EXPLORER_PROTOCOL = "http";
+  toolsEnv.PUBLIC_L2_WS_PROTOCOL = "ws";
+  toolsEnv.PUBLIC_L1_EXPLORER_HOST = `${hostname}:${toolsPorts.toolsL1ExplorerPort || 8083}`;
+  toolsEnv.PUBLIC_L1_EXPLORER_PROTOCOL = "http";
+  toolsEnv.PUBLIC_L1_WS_PROTOCOL = "ws";
+
+  // Download tools compose file from the container's ethrex source
+  // The tools compose references a build context (tooling/bridge) which isn't available remotely.
+  // We download it from the repository and use it directly.
+  // For bridge-ui, we'll clone just the needed files.
+  const toolsComposeUrl = "https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/crates/l2/docker-compose-zk-dex-tools.yaml";
+  await exec(conn, `curl -fsSL "${toolsComposeUrl}" -o ${toolsDir}/docker-compose-tools.yaml`, {
+    timeout: 30000,
+  });
+
+  // Clone the bridge tooling directory for the build context
+  await exec(conn, `
+    if [ ! -d ${toolsDir}/tooling ]; then
+      git clone --depth=1 --filter=blob:none --sparse https://github.com/tokamak-network/ethrex.git ${toolsDir}/ethrex-sparse 2>/dev/null || true
+      cd ${toolsDir}/ethrex-sparse && git sparse-checkout set crates/l2/tooling/bridge 2>/dev/null || true
+      cp -r ${toolsDir}/ethrex-sparse/crates/l2/tooling ${toolsDir}/tooling 2>/dev/null || true
+      rm -rf ${toolsDir}/ethrex-sparse
+    fi
+  `.trim(), { timeout: 60000, ignoreError: true });
+
+  // Fix the tools compose build context to use our cloned path
+  await exec(conn, `sed -i 's|context: ./tooling/bridge|context: ${toolsDir}/tooling/bridge|g' ${toolsDir}/docker-compose-tools.yaml`, {
+    ignoreError: true,
+  });
+
+  // Build env export for docker compose
+  const envExport = Object.entries(toolsEnv).map(([k, v]) => `${k}=${v}`).join(" ");
+
+  // Build + start tools
+  const profile = opts.skipL1Explorer ? "--profile external-l1" : "";
+  const services = opts.skipL1Explorer
+    ? "frontend-l2 backend-l2 db db-init redis-db function-selectors-l2 bridge-ui proxy-l2-only"
+    : "";
+
+  await exec(conn, `cd ${toolsDir} && env ${envExport} docker compose -f docker-compose-tools.yaml -p ${projectName} ${profile} build`, {
+    timeout: 300000,
+  });
+
+  await exec(conn, `cd ${toolsDir} && env ${envExport} docker compose -f docker-compose-tools.yaml -p ${projectName} ${profile} up -d ${services}`, {
+    timeout: 120000,
+  });
+}
+
+/** Stop tools on remote */
+async function stopToolsRemote(conn, projectName, remoteDir) {
+  const toolsDir = `${remoteDir}/tools`;
+  await exec(conn, `cd ${toolsDir} && docker compose -f docker-compose-tools.yaml -p ${projectName} stop`, {
+    ignoreError: true, timeout: 60000,
+  });
+}
+
 module.exports = {
   connect,
   exec,
@@ -247,4 +350,6 @@ module.exports = {
   getLogsRemote,
   streamLogsRemote,
   testConnection,
+  startToolsRemote,
+  stopToolsRemote,
 };

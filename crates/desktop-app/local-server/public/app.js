@@ -375,8 +375,35 @@ function setLaunchMode(mode) {
   btn.textContent = mode === 'ai-deploy' ? 'Generate AI Prompt' : 'Deploy L2';
 
   if (mode === 'local') checkDocker();
-  if (mode === 'remote') loadHostsForLaunch();
+  if (mode === 'remote') { loadHostsForLaunch(); loadRemoteKeychainKeys(); }
   if (mode === 'ai-deploy') loadAIPresets();
+}
+
+function onRemoteL1SourceChange() {
+  const src = document.getElementById('remote-l1-source').value;
+  document.getElementById('remote-testnet-fields').style.display = src === 'testnet' ? 'block' : 'none';
+}
+
+function onRemoteL1NetworkChange() {
+  // Could add custom chain ID field here if needed
+}
+
+async function loadRemoteKeychainKeys() {
+  try {
+    const res = await fetch(`${API}/deployments/keychain/accounts`);
+    if (!res.ok) return;
+    const { keys } = await res.json();
+    const sel = document.getElementById('remote-testnet-keychain-key');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Select key...</option>';
+    (keys || []).forEach(k => {
+      const opt = document.createElement('option');
+      opt.value = k.name; opt.textContent = k.name;
+      if (k.name === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch {}
 }
 
 function onL1NodeChange() {
@@ -791,6 +818,25 @@ async function handleLaunchDeploy() {
     if (launchMode === 'remote') {
       const hostId = document.getElementById('launch-host-select').value;
       if (hostId) body.hostId = hostId;
+
+      // Remote + Testnet configuration
+      const remoteL1Source = document.getElementById('remote-l1-source')?.value;
+      if (remoteL1Source === 'testnet') {
+        const remoteRpc = (document.getElementById('remote-testnet-rpc')?.value || '').trim();
+        const remoteKey = (document.getElementById('remote-testnet-keychain-key')?.value || '').trim();
+        const remoteNetwork = document.getElementById('remote-l1-network')?.value || 'sepolia';
+        if (!remoteRpc) { showLaunchError('L1 RPC URL is required for remote testnet deployment'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
+        if (!remoteKey) { showLaunchError('Select a deployer key from Keychain'); btn.disabled = false; btn.textContent = 'Deploy L2'; return; }
+        const remoteNetInfo = TESTNET_NETWORKS[remoteNetwork] || {};
+        body.config.mode = 'testnet';
+        body.config.testnet = {
+          l1RpcUrl: remoteRpc,
+          keychainKeyName: remoteKey,
+          l1ChainId: remoteNetInfo.chainId,
+          network: remoteNetwork === 'custom-l1' ? 'custom' : remoteNetwork,
+        };
+        body.rpcUrl = remoteRpc;
+      }
     }
     const deployDir = document.getElementById('launch-deploy-dir')?.value?.trim();
     if (deployDir) body.deployDir = deployDir;
