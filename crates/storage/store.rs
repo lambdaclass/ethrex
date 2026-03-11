@@ -14,7 +14,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
-    layering::{TrieLayerCache, TrieWrapper},
+    layering::{TrieLayerCache, TrieReadCache, TrieWrapper, new_trie_read_cache},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -162,6 +162,9 @@ pub struct Store {
     chain_config: ChainConfig,
     /// Cache for trie nodes from recent blocks.
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    /// LRU cache for trie nodes read from disk, avoiding repeated RocksDB lookups
+    /// for frequently-accessed but unmodified nodes.
+    trie_read_cache: TrieReadCache,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
@@ -1489,6 +1492,7 @@ impl Store {
             chain_config: Default::default(),
             latest_block_header: Default::default(),
             trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_read_cache: new_trie_read_cache(),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
@@ -1518,6 +1522,7 @@ impl Store {
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
+        let trie_read_cache = store.trie_read_cache.clone();
         /*
             When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
             This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
@@ -1548,6 +1553,7 @@ impl Store {
                             backend.as_ref(),
                             &flatkeyvalue_control_tx,
                             &trie_cache,
+                            &trie_read_cache,
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
@@ -2533,6 +2539,7 @@ impl Store {
                 self.last_written()?,
             )?),
             None,
+            self.trie_read_cache.clone(),
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
@@ -2565,6 +2572,7 @@ impl Store {
                 self.last_written()?,
             )?),
             None,
+            self.trie_read_cache.clone(),
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
@@ -2588,6 +2596,7 @@ impl Store {
                 self.last_written()?,
             )?),
             Some(account_hash),
+            self.trie_read_cache.clone(),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
@@ -2611,6 +2620,7 @@ impl Store {
                 last_written,
             )?),
             None,
+            self.trie_read_cache.clone(),
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
@@ -2634,6 +2644,7 @@ impl Store {
                 last_written,
             )?),
             Some(account_hash),
+            self.trie_read_cache.clone(),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
@@ -2674,6 +2685,7 @@ impl Store {
                 self.last_written()?,
             )?),
             Some(account_hash),
+            self.trie_read_cache.clone(),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
@@ -2815,6 +2827,7 @@ fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_read_cache: &TrieReadCache,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2827,7 +2840,7 @@ fn apply_trie_updates(
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
-    let new_layer = storage_updates
+    let new_layer: Vec<(Nibbles, Vec<u8>)> = storage_updates
         .into_iter()
         .flat_map(|(account_hash, nodes)| {
             nodes
@@ -2836,6 +2849,15 @@ fn apply_trie_updates(
         })
         .chain(account_updates)
         .collect();
+    // Invalidate read cache entries for keys that are now in the diff layers,
+    // preventing stale reads after layers are committed and pruned.
+    if let Ok(mut read_cache) = trie_read_cache.write() {
+        for (path, _value) in new_layer.iter() {
+            let key = AsRef::<[u8]>::as_ref(path).to_vec();
+            read_cache.pop(&key);
+        }
+    }
+
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
         .read()
