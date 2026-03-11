@@ -56,19 +56,19 @@ zkevm-vectors: $(ZKEVM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors ## 📥 Download test vectors
+download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT)
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(ZKEVM_ARTIFACT)
 
-test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
+test-levm: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-with-debug
 
-test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
+test-sp1: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
 	cargo test --profile release-with-debug --features sp1
 
-test-stateless: $(VECTORS_TARGETS) amsterdam-vectors
+test-stateless: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
 	cargo test --profile release-with-debug --features stateless
 
 test-stateless-zkevm: $(VECTORS_TARGETS) zkevm-vectors
