@@ -50,6 +50,7 @@ sp1 = [
 zisk = [
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
     "dep:k256", "dep:substrate-bn", "dep:ziskos",
+    "ethrex-crypto/kzg-rs",
 ]
 openvm = [
     "dep:k256",

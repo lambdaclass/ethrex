@@ -918,7 +918,6 @@ dependencies = [
  "ethereum-types",
  "ff",
  "hex-literal 0.4.1",
- "kzg-rs",
  "malachite",
  "openvm-kzg",
  "p256",

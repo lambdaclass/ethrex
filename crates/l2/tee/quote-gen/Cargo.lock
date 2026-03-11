@@ -1444,7 +1444,6 @@ dependencies = [
  "ethereum-types",
  "ff 0.13.1",
  "hex-literal",
- "kzg-rs",
  "malachite",
  "p256",
  "ripemd",
