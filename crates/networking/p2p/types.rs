@@ -359,6 +359,8 @@ impl NodeRecordPairs {
     }
 }
 
+pub const INITIAL_ENR_SEQ: u64 = 1;
+
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md#record-structure)
 #[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
 pub struct NodeRecord {
@@ -702,8 +704,6 @@ mod tests {
 
         let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
         record.set_fork_id(fork_id.clone(), &signer).unwrap();
-
-        record.sign_record(&signer).unwrap();
 
         let enr_url = record.enr_url().unwrap();
         let base64_decoded = ethrex_common::base64::decode(&enr_url.as_bytes()[4..]);
