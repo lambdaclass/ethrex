@@ -48,7 +48,7 @@ name = "ethrex_prover"
 path = "src/lib.rs"
 
 [features]
-default = ["l2"]
+default = []
 risc0 = [
     "ethrex-guest-program/risc0",
     "dep:risc0-zkvm",

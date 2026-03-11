@@ -77,23 +77,28 @@ pub fn execution_witness_from_rpc_chain_config(
         }
         let address = Address::from_slice(key);
         let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-            continue; // empty account, doesn't have a storage trie
+        // Use match instead of ? to gracefully handle partial witnesses where
+        // not all address paths are fully present in the trie.
+        let encoded_account = match state_trie.get(&hashed_address) {
+            Ok(Some(encoded)) => encoded,
+            Ok(None) => continue, // empty account
+            Err(_) => continue,   // address path not in partial witness
         };
-        let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
+        let storage_root_hash = match AccountState::decode(&encoded_account) {
+            Ok(state) => state.storage_root,
+            Err(_) => continue,
+        };
         if storage_root_hash == *EMPTY_TRIE_HASH {
             continue; // empty storage trie
         }
         if !nodes.contains_key(&storage_root_hash) {
             continue; // storage trie isn't relevant to this execution
         }
-        let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
-        let NodeRef::Node(node, _) = node else {
-            return Err(GuestProgramStateError::Custom(
-                "execution witness does not contain non-empty storage trie".to_string(),
-            ));
+        let node = match Trie::get_embedded_root(&nodes, storage_root_hash) {
+            Ok(NodeRef::Node(node, _)) => (*node).clone(),
+            _ => continue,
         };
-        storage_trie_roots.insert(address, (*node).clone());
+        storage_trie_roots.insert(address, node);
     }
 
     let witness = ExecutionWitness {

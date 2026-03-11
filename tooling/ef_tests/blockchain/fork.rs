@@ -108,6 +108,30 @@ lazy_static! {
         ..*BPO2_TO_AMSTERDAM_AT_15K_CONFIG
     };
 
+    /// Chain config for zkevm@v0.2.0 "for_amsterdam" fixtures.
+    /// These fixtures define Amsterdam as Osaka + EIP-7928 only,
+    /// without EIP-7708 (Transfer logs), EIP-7778 (gas accounting),
+    /// or EIP-7843 (SLOTNUM). We use Osaka config since the extra
+    /// EIPs in ethrex's Amsterdam would cause validation mismatches.
+    /// BAL (EIP-7928) validation is skipped because amsterdam_time
+    /// is not set, but this is acceptable since the standard
+    /// eest/amsterdam/ tests already exercise BAL validation.
+    ///
+    /// TODO(zkevm): When a future zkevm release includes EIP-7708/7778/7843
+    /// in its Amsterdam fork definition, remove this config and the
+    /// `is_zkevm` plumbing in test_runner.rs:
+    ///   1. Delete this `ZKEVM_AMSTERDAM_CONFIG`.
+    ///   2. In `parse_and_execute`, remove the `is_zkevm` detection.
+    ///   3. In `run_ef_test`, remove the `is_zkevm` parameter and the
+    ///      `!is_zkevm` guard on `run_two_pass_parallel`.
+    ///   4. In `build_store_for_test`, remove the `is_zkevm` parameter
+    ///      and the config swap + blob schedule remapping block.
+    ///   5. All for_amsterdam tests should then run with `AMSTERDAM_CONFIG`
+    ///      like any other Amsterdam test.
+    pub static ref ZKEVM_AMSTERDAM_CONFIG: ChainConfig = ChainConfig {
+        ..*OSAKA_CONFIG
+    };
+
 }
 
 /// Most of the fork variants are just for parsing the tests

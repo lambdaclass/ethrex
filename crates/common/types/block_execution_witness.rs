@@ -98,6 +98,7 @@ pub struct RpcExecutionWitness {
     )]
     pub state: Vec<Bytes>,
     #[serde(
+        default,
         serialize_with = "serde_utils::bytes::vec::serialize",
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
