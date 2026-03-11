@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256,
+    H256,
     types::{
         AccountState, BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError, RpcExecutionWitness},
@@ -10,8 +10,7 @@ use ethrex_common::{
     utils::keccak,
 };
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
-use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie};
 use serde_json::Value;
 use tracing::debug;
 
@@ -64,36 +63,28 @@ pub fn execution_witness_from_rpc_chain_config(
         None
     };
 
-    // get all storage trie roots and embed the rest of the trie into it
-    let state_trie = if let Some(state_trie_root) = &state_trie_root {
-        Trie::new_temp_with_root(state_trie_root.clone().into())
-    } else {
-        Trie::new_temp()
-    };
+    // Walk the state trie to discover accounts and their storage roots,
+    // instead of relying on the keys field which is being removed from the RPC spec.
     let mut storage_trie_roots = BTreeMap::new();
-    for key in &rpc_witness.keys {
-        if key.len() != 20 {
-            continue; // not an address
+    if let Some(state_trie_root) = &state_trie_root {
+        let mut accounts = Vec::new();
+        collect_accounts_from_node(state_trie_root, Nibbles::from_bytes(&[]), &mut accounts);
+
+        for (hashed_address, storage_root_hash) in accounts {
+            if storage_root_hash == *EMPTY_TRIE_HASH {
+                continue; // empty storage trie
+            }
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(GuestProgramStateError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(hashed_address, (*node).clone());
         }
-        let address = Address::from_slice(key);
-        let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-            continue; // empty account, doesn't have a storage trie
-        };
-        let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-        if storage_root_hash == *EMPTY_TRIE_HASH {
-            continue; // empty storage trie
-        }
-        if !nodes.contains_key(&storage_root_hash) {
-            continue; // storage trie isn't relevant to this execution
-        }
-        let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
-        let NodeRef::Node(node, _) = node else {
-            return Err(GuestProgramStateError::Custom(
-                "execution witness does not contain non-empty storage trie".to_string(),
-            ));
-        };
-        storage_trie_roots.insert(address, (*node).clone());
     }
 
     let witness = ExecutionWitness {
@@ -107,10 +98,38 @@ pub fn execution_witness_from_rpc_chain_config(
             .collect(),
         state_trie_root,
         storage_trie_roots,
-        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 
     Ok(witness)
+}
+
+/// Recursively walks an embedded state trie node and collects
+/// `(hashed_address, storage_root)` pairs from leaf nodes.
+fn collect_accounts_from_node(node: &Node, path: Nibbles, accounts: &mut Vec<(H256, H256)>) {
+    match node {
+        Node::Branch(branch) => {
+            for (i, child) in branch.choices.iter().enumerate() {
+                if let NodeRef::Node(child_node, _) = child {
+                    collect_accounts_from_node(child_node, path.append_new(i as u8), accounts);
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            if let NodeRef::Node(child_node, _) = &ext.child {
+                collect_accounts_from_node(child_node, path.concat(&ext.prefix), accounts);
+            }
+        }
+        Node::Leaf(leaf) => {
+            let full_path = path.concat(&leaf.partial);
+            let path_bytes = full_path.to_bytes();
+            if path_bytes.len() == 32 {
+                let hashed_address = H256::from_slice(&path_bytes);
+                if let Ok(account_state) = AccountState::decode(&leaf.value) {
+                    accounts.push((hashed_address, account_state.storage_root));
+                }
+            }
+        }
+    }
 }
 
 pub struct ExecutionWitnessRequest {

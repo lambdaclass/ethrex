@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
 
-use crate::rkyv_utils::H160Wrapper;
+use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
 use crate::{
@@ -42,17 +42,17 @@ pub struct GuestProgramState {
     pub first_block_number: u64,
     /// The chain configuration.
     pub chain_config: ChainConfig,
-    /// Map of storage root hashes to their corresponding storage tries.
-    pub storage_tries: BTreeMap<Address, Trie>,
+    /// Map of hashed addresses to their corresponding storage tries.
+    pub storage_tries: BTreeMap<H256, Trie>,
     /// Map of account addresses to their corresponding hashed addresses.
     /// This is a convenience map to avoid recomputing the hashed address
     /// multiple times during guest program execution.
     /// It is built on-demand during guest program execution, inside the zkVM.
-    pub account_hashes_by_address: BTreeMap<Address, Vec<u8>>,
-    /// Map of account addresses to booleans, indicating whose account's storage tries were
+    pub account_hashes_by_address: BTreeMap<Address, H256>,
+    /// Map of hashed addresses to booleans, indicating whose account's storage tries were
     /// verified.
     /// Verification is done by hashing the trie and comparing the root hash with the account's storage root.
-    pub verified_storage_roots: BTreeMap<Address, bool>,
+    pub verified_storage_roots: BTreeMap<H256, bool>,
 }
 
 /// Witness data produced by the client and consumed by the guest program
@@ -76,13 +76,10 @@ pub struct ExecutionWitness {
     pub chain_config: ChainConfig,
     /// Root node embedded with the rest of the trie's nodes
     pub state_trie_root: Option<Node>,
-    /// Root nodes per account storage embedded with the rest of the trie's nodes
-    #[rkyv(with = MapKV<H160Wrapper, Identity>)]
-    pub storage_trie_roots: BTreeMap<Address, Node>,
-    /// Flattened map of account addresses and storage keys whose values
-    /// are needed for stateless execution.
-    #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
-    pub keys: Vec<Vec<u8>>,
+    /// Root nodes per account storage embedded with the rest of the trie's nodes,
+    /// keyed by the keccak256 hash of the account address.
+    #[rkyv(with = MapKV<H256Wrapper, Identity>)]
+    pub storage_trie_roots: BTreeMap<H256, Node>,
 }
 
 /// RPC-friendly representation of an execution witness.
@@ -98,6 +95,7 @@ pub struct RpcExecutionWitness {
     )]
     pub state: Vec<Bytes>,
     #[serde(
+        default,
         serialize_with = "serde_utils::bytes::vec::serialize",
         deserialize_with = "serde_utils::bytes::vec::deserialize"
     )]
@@ -127,7 +125,7 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         }
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
-            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            keys: Vec::new(),
             codes: value.codes.into_iter().map(Bytes::from).collect(),
             headers: value
                 .block_headers_bytes
@@ -199,11 +197,11 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         state_trie.hash_no_commit();
 
         let mut storage_tries = BTreeMap::new();
-        for (address, storage_trie_root) in value.storage_trie_roots {
+        for (hashed_address, storage_trie_root) in value.storage_trie_roots {
             // hash storage trie nodes
             let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
             storage_trie.hash_no_commit();
-            storage_tries.insert(address, storage_trie);
+            storage_tries.insert(hashed_address, storage_trie);
         }
 
         // hash codes
@@ -242,18 +240,18 @@ impl GuestProgramState {
         account_updates: &[AccountUpdate],
     ) -> Result<(), GuestProgramStateError> {
         for update in account_updates.iter() {
-            let hashed_address = self
+            let hashed_address = *self
                 .account_hashes_by_address
                 .entry(update.address)
                 .or_insert_with(|| hash_address(&update.address));
 
             if update.removed {
                 // Remove account from trie
-                self.state_trie.remove(hashed_address)?;
+                self.state_trie.remove(hashed_address.as_bytes())?;
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match self.state_trie.get(hashed_address)? {
+                let mut account_state = match self.state_trie.get(hashed_address.as_bytes())? {
                     Some(encoded_state) => AccountState::decode(&encoded_state)?,
                     None => AccountState::default(),
                 };
@@ -271,7 +269,7 @@ impl GuestProgramState {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let storage_trie = self.storage_tries.entry(update.address).or_default();
+                    let storage_trie = self.storage_tries.entry(hashed_address).or_default();
 
                     // Inserts must come before deletes, otherwise deletes might require extra nodes
                     // Example:
@@ -295,8 +293,10 @@ impl GuestProgramState {
                     account_state.storage_root = storage_root;
                 }
 
-                self.state_trie
-                    .insert(hashed_address.clone(), account_state.encode_to_vec())?;
+                self.state_trie.insert(
+                    hashed_address.as_bytes().to_vec(),
+                    account_state.encode_to_vec(),
+                )?;
             }
         }
         Ok(())
@@ -362,12 +362,12 @@ impl GuestProgramState {
         &mut self,
         address: Address,
     ) -> Result<Option<AccountState>, GuestProgramStateError> {
-        let hashed_address = self
+        let hashed_address = *self
             .account_hashes_by_address
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
+        let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address.as_bytes()) else {
             return Ok(None);
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
@@ -500,16 +500,24 @@ impl GuestProgramState {
         &mut self,
         address: Address,
     ) -> Result<Option<&Trie>, GuestProgramStateError> {
-        let is_storage_verified = *self.verified_storage_roots.get(&address).unwrap_or(&false);
+        let hashed_address = *self
+            .account_hashes_by_address
+            .entry(address)
+            .or_insert_with(|| hash_address(&address));
+
+        let is_storage_verified = *self
+            .verified_storage_roots
+            .get(&hashed_address)
+            .unwrap_or(&false);
         if is_storage_verified {
-            Ok(self.storage_tries.get(&address))
+            Ok(self.storage_tries.get(&hashed_address))
         } else {
             let Some(storage_root) = self.get_account_state(address)?.map(|a| a.storage_root)
             else {
                 // empty account
                 return Ok(None);
             };
-            let storage_trie = match self.storage_tries.get(&address) {
+            let storage_trie = match self.storage_tries.get(&hashed_address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) if trie.hash_no_commit() == storage_root => trie,
                 _ => {
@@ -518,14 +526,14 @@ impl GuestProgramState {
                     )));
                 }
             };
-            self.verified_storage_roots.insert(address, true);
+            self.verified_storage_roots.insert(hashed_address, true);
             Ok(Some(storage_trie))
         }
     }
 }
 
-fn hash_address(address: &Address) -> Vec<u8> {
-    keccak_hash(address.to_fixed_bytes()).to_vec()
+fn hash_address(address: &Address) -> H256 {
+    H256(keccak_hash(address.to_fixed_bytes()))
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
