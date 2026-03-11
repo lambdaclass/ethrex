@@ -22,7 +22,7 @@ function getAllDeployments() {
 
 function updateDeployment(id, fields) {
   const allowed = [
-    "name", "chain_id", "rpc_url", "status", "config",
+    "name", "chain_id", "l1_chain_id", "rpc_url", "status", "config",
     "docker_project", "deploy_dir",
     "l1_port", "l2_port", "proof_coord_port",
     "phase", "bridge_address", "proposer_address", "timelock_address", "sp1_verifier_address",
@@ -166,9 +166,42 @@ function getNextAvailableL2ChainId() {
   return chainId;
 }
 
+function getNextAvailableL1ChainId() {
+  const BASE = 900;
+  const existing = db.prepare(
+    `SELECT l1_chain_id FROM deployments WHERE l1_chain_id IS NOT NULL`
+  ).all().map(r => r.l1_chain_id);
+  const usedSet = new Set(existing);
+  usedSet.add(9); // exclude the hardcoded default
+
+  const RANGE = 9000;
+  let chainId;
+  let attempts = 0;
+  do {
+    chainId = BASE + Math.floor(Math.random() * RANGE);
+    attempts++;
+  } while (usedSet.has(chainId) && attempts < 10000);
+
+  if (usedSet.has(chainId)) {
+    for (let i = 0; i < RANGE; i++) {
+      const candidate = BASE + i;
+      if (!usedSet.has(candidate)) return candidate;
+    }
+    throw new Error("No available L1 chain IDs in range");
+  }
+  return chainId;
+}
+
+function isL1ChainIdTaken(chainId, excludeDeploymentId) {
+  const row = db.prepare(
+    `SELECT id FROM deployments WHERE l1_chain_id = ? AND id != ?`
+  ).get(chainId, excludeDeploymentId);
+  return !!row;
+}
+
 module.exports = {
   createDeployment, getDeploymentById, getAllDeployments,
   updateDeployment, deleteDeployment, getNextAvailablePorts,
-  getNextAvailableL2ChainId,
+  getNextAvailableL2ChainId, getNextAvailableL1ChainId, isL1ChainIdTaken,
   insertDeployEvent, getDeployEvents, clearDeployEvents,
 };

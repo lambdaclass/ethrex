@@ -376,6 +376,14 @@ pub struct DeployerOptions {
     )]
     pub initial_fee_token: Option<Address>,
     #[arg(
+        long = "l2-chain-id",
+        value_name = "CHAIN_ID",
+        env = "ETHREX_L2_CHAIN_ID",
+        help_heading = "Deployer options",
+        help = "Override the L2 chain ID from genesis. When set, this value replaces genesis.config.chain_id."
+    )]
+    pub l2_chain_id: Option<u64>,
+    #[arg(
         long = "register-guest-programs",
         value_delimiter = ',',
         value_name = "PROGRAM_IDS",
@@ -473,6 +481,7 @@ impl Default for DeployerOptions {
             router: None,
             deploy_router: false,
             initial_fee_token: None,
+            l2_chain_id: None,
             register_guest_programs: Vec::new(),
             zk_dex_sp1_vk_path: None,
         }
@@ -629,7 +638,7 @@ pub async fn deploy_l1_contracts(
 
     info!("Deploying contracts");
 
-    let genesis: Genesis = if opts.use_compiled_genesis {
+    let mut genesis: Genesis = if opts.use_compiled_genesis {
         serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS).map_err(|_| DeployerError::Genesis)?
     } else {
         read_genesis_file(
@@ -638,6 +647,12 @@ pub async fn deploy_l1_contracts(
                 .ok_or(DeployerError::FailedToGetStringFromPath)?,
         )
     };
+
+    // Override chain ID if explicitly set (e.g., per-deployment unique chain ID)
+    if let Some(chain_id) = opts.l2_chain_id {
+        info!("Overriding L2 chain ID: {} -> {}", genesis.config.chain_id, chain_id);
+        genesis.config.chain_id = chain_id;
+    }
 
     let (contract_addresses, _) =
         deploy_contracts(&eth_client, &opts, &signer).await?;

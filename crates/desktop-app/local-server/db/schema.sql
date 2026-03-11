@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   program_slug TEXT NOT NULL DEFAULT 'evm-l2',
   name TEXT NOT NULL,
   chain_id INTEGER,
+  l1_chain_id INTEGER,
   rpc_url TEXT,
   status TEXT DEFAULT 'configured',
   deploy_method TEXT DEFAULT 'docker',

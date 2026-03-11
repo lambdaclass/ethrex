@@ -14,10 +14,10 @@ interface Props {
   initialNetwork?: NetworkMode
 }
 
-const networkPresets: Record<NetworkMode, { l1Rpc: string; chainId: string; proverType: string }> = {
-  local: { l1Rpc: 'http://localhost:8545', chainId: '17001', proverType: 'sp1' },
-  testnet: { l1Rpc: 'https://rpc.sepolia.org', chainId: '17001', proverType: 'sp1' },
-  mainnet: { l1Rpc: 'https://eth.llamarpc.com', chainId: '17001', proverType: 'sp1' },
+const networkPresets: Record<NetworkMode, { l1Rpc: string; chainId: string; l1ChainId: string; proverType: string }> = {
+  local: { l1Rpc: 'http://localhost:8545', chainId: '17001', l1ChainId: '9', proverType: 'sp1' },
+  testnet: { l1Rpc: 'https://rpc.sepolia.org', chainId: '17001', l1ChainId: '11155111', proverType: 'sp1' },
+  mainnet: { l1Rpc: 'https://eth.llamarpc.com', chainId: '17001', l1ChainId: '1', proverType: 'sp1' },
 }
 
 interface RpcStatus {
@@ -48,7 +48,7 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
   const [config, setConfig] = useState(() => {
     const preset = initialNetwork ? networkPresets[initialNetwork] : networkPresets.local
     return {
-      name: '', chainId: preset.chainId, description: '', icon: '🔗',
+      name: '', chainId: preset.chainId, l1ChainId: preset.l1ChainId, description: '', icon: '🔗',
       l1Rpc: preset.l1Rpc, rpcPort: '8550',
       sequencerMode: 'standalone', proverType: preset.proverType,
       nativeToken: 'TON',
@@ -56,6 +56,8 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
       deployerKeychainKey: '', committerKeychainKey: '', proofCoordinatorKeychainKey: '', bridgeOwnerKeychainKey: '',
     }
   })
+  const [chainIdLoading, setChainIdLoading] = useState(true)
+  const [chainIdError, setChainIdError] = useState(false)
   const [rpcStatus, setRpcStatus] = useState<RpcStatus>({ state: 'idle' })
   const [keychainAccounts, setKeychainAccounts] = useState<string[]>([])
   const [keysResolution, setKeysResolution] = useState<KeysResolution>({ state: 'idle' })
@@ -88,10 +90,22 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
   const selectNetwork = (mode: NetworkMode) => {
     const preset = networkPresets[mode]
     setNetworkMode(mode)
-    setConfig(prev => ({ ...prev, l1Rpc: preset.l1Rpc, chainId: preset.chainId, proverType: preset.proverType }))
+    setConfig(prev => ({ ...prev, l1Rpc: preset.l1Rpc, chainId: preset.chainId, l1ChainId: preset.l1ChainId, proverType: preset.proverType }))
     setRpcStatus({ state: 'idle' })
     setKeysResolution({ state: 'idle' })
   }
+
+  // Auto-fetch next available L2 chain ID
+  useEffect(() => {
+    if (networkMode) {
+      setChainIdLoading(true)
+      setChainIdError(false)
+      localServerAPI.getNextChainId()
+        .then((r: { chainId: number; l1ChainId: number }) => setConfig(prev => ({ ...prev, chainId: String(r.chainId), l1ChainId: String(r.l1ChainId) })))
+        .catch(() => setChainIdError(true))
+        .finally(() => setChainIdLoading(false))
+    }
+  }, [networkMode])
 
   // Load keychain accounts when entering wallet step
   const isWalletStep = isTestnetOrMainnet && getStepContent(step) === 'wallet'
@@ -157,7 +171,7 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
 
   const canNext = () => {
     const content = getStepContent(step)
-    if (content === 'basic') return config.name && config.chainId
+    if (content === 'basic') return !!config.name
     if (content === 'wallet') return !!config.deployerKeychainKey
     return true
   }
@@ -333,8 +347,26 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">Chain ID *</label>
               <input value={config.chainId} onChange={e => update('chainId', e.target.value)}
-                placeholder="17001" type="number"
+                placeholder={chainIdLoading ? '...' : 'Auto-assigned on deploy'} type="number"
                 className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm outline-none placeholder-[var(--color-text-secondary)] border border-[var(--color-border)]" />
+              {chainIdError ? (
+                <p className="text-[10px] text-[var(--color-error)] mt-1">
+                  {lang === 'ko' ? '서버에서 Chain ID를 가져올 수 없습니다. 서버가 실행 중인지 확인해주세요.' : 'Could not fetch Chain ID. Please ensure the server is running.'}
+                </p>
+              ) : (
+                <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">
+                  {lang === 'ko' ? '자동 생성된 고유 번호입니다. 변경 가능합니다.' : 'Auto-generated unique ID. You can change it.'}
+                </p>
+              )}
+            </div>
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
+              <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">L1 Chain ID</label>
+              <div className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm border border-[var(--color-border)] text-[var(--color-text-primary)]">
+                {config.l1ChainId}
+                <span className="text-[var(--color-text-secondary)] ml-2 text-[11px]">
+                  {config.l1ChainId === '9' ? '(Local Anvil)' : config.l1ChainId === '11155111' ? '(Sepolia)' : config.l1ChainId === '17000' ? '(Holesky)' : config.l1ChainId === '1' ? '(Mainnet)' : ''}
+                </span>
+              </div>
             </div>
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">{t('myl2.wizard.icon', lang)}</label>

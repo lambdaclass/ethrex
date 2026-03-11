@@ -1,6 +1,6 @@
 [package]
 name = "tokamak-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tokamak L2 Desktop App - AI-powered node management"
 authors = ["Tokamak Network"]
 license = "MIT OR Apache-2.0"

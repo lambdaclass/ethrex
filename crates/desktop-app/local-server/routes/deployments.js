@@ -17,7 +17,7 @@ const {
   cancelProvision,
   getActiveProvisions,
 } = require("../lib/deployment-engine");
-const { getDeployEvents, getNextAvailableL2ChainId } = require("../db/deployments");
+const { getDeployEvents, getNextAvailableL2ChainId, getNextAvailableL1ChainId } = require("../db/deployments");
 const docker = require("../lib/docker-local");
 const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
@@ -32,10 +32,10 @@ const fs = require("fs");
 // CRUD (local — no auth required)
 // ==========================================
 
-// GET /api/deployments/next-chain-id — get a unique L2 chain ID
+// GET /api/deployments/next-chain-id — get unique L1 and L2 chain IDs
 router.get("/next-chain-id", (req, res) => {
   try {
-    res.json({ chainId: getNextAvailableL2ChainId() });
+    res.json({ chainId: getNextAvailableL2ChainId(), l1ChainId: getNextAvailableL1ChainId() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -409,7 +409,7 @@ router.put("/:id", (req, res) => {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
-    const allowedFields = ["name", "chain_id", "rpc_url", "config", "is_public", "hashtags"];
+    const allowedFields = ["name", "chain_id", "l1_chain_id", "rpc_url", "config", "is_public", "hashtags"];
     const updates = [];
     const values = [];
 

@@ -173,6 +173,10 @@ class LocalServerAPI {
     })
   }
 
+  getNextChainId() {
+    return this.fetch<{ chainId: number; l1ChainId: number }>('/api/deployments/next-chain-id')
+  }
+
   checkImage(slug: string) {
     return this.fetch<{ exists: boolean; image: string | null }>(`/api/deployments/check-image/${encodeURIComponent(slug)}`)
   }

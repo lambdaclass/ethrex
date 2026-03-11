@@ -25,11 +25,12 @@ const {
   generateProgramsToml,
   writeComposeFile,
   writeCustomGenesis,
+  writeCustomL1Genesis,
   getDeploymentDir,
   getAppProfile,
 } = require("./compose-generator");
 const { isHealthy } = require("./rpc-client");
-const { updateDeployment, getDeploymentById, getNextAvailablePorts, getNextAvailableL2ChainId, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
+const { updateDeployment, getDeploymentById, getNextAvailablePorts, getNextAvailableL2ChainId, getNextAvailableL1ChainId, isL1ChainIdTaken, getAllDeployments, insertDeployEvent, clearDeployEvents } = require("../db/deployments");
 const { getHostById } = require("../db/hosts");
 const keychain = require("./keychain");
 const { getExternalL1Config, getPublicAccessConfig, getToolsPorts } = require("./tools-config");
@@ -320,8 +321,10 @@ function getActiveProvisions() {
  * Ensure the deployment has a unique L2 chain ID and write a
  * deployment-specific genesis file with that chain ID.
  */
-async function ensureL2ChainId(deployment, deployDir) {
+async function ensureChainIds(deployment, deployDir, { includeL1 = false } = {}) {
   const { id, program_slug: programSlug } = deployment;
+
+  // L2 Chain ID
   let l2ChainId = deployment.chain_id;
   if (!l2ChainId) {
     l2ChainId = getNextAvailableL2ChainId();
@@ -329,7 +332,28 @@ async function ensureL2ChainId(deployment, deployDir) {
   }
   const customGenesisPath = await writeCustomGenesis(programSlug, l2ChainId, id, deployDir);
   emit(id, "log", { message: `L2 Chain ID: ${l2ChainId}` });
-  return customGenesisPath;
+
+  // L1 Chain ID (local deployments only — each gets its own L1 node)
+  let customL1GenesisPath = null;
+  let l1ChainId = null;
+  if (includeL1) {
+    // Check if config already has l1ChainId
+    try {
+      const config = deployment.config ? JSON.parse(deployment.config) : {};
+      l1ChainId = config.l1ChainId || null;
+    } catch (e) {
+      console.error(`[deploy-engine] Failed to parse deployment config for ${id}:`, e.message);
+    }
+    l1ChainId = l1ChainId || deployment.l1_chain_id;
+    if (!l1ChainId || isL1ChainIdTaken(l1ChainId, id)) {
+      l1ChainId = getNextAvailableL1ChainId();
+    }
+    updateDeployment(id, { l1_chain_id: l1ChainId });
+    customL1GenesisPath = await writeCustomL1Genesis(l1ChainId, id, deployDir);
+    emit(id, "log", { message: `L1 Chain ID: ${l1ChainId}` });
+  }
+
+  return { customGenesisPath, l2ChainId, customL1GenesisPath, l1ChainId };
 }
 
 // ============================================================
@@ -393,12 +417,12 @@ async function provision(deployment) {
   provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
 
-  const customGenesisPath = await ensureL2ChainId(deployment, deployDir);
+  const { customGenesisPath, l2ChainId, customL1GenesisPath } = await ensureChainIds(deployment, deployDir, { includeL1: true });
 
   let composeFile = null;
   try {
     const gpu = docker.hasNvidiaGpu();
-    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures, customGenesisPath });
+    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures, customGenesisPath, l2ChainId, customL1GenesisPath });
     composeFile = writeComposeFile(id, composeContent, deployDir);
 
     // Check for existing images to skip rebuild (unless forceRebuild)
@@ -776,7 +800,7 @@ async function provisionTestnet(deployment) {
   provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration (testnet mode)..." });
 
-  const customGenesisPath = await ensureL2ChainId(deployment, deployDir);
+  const { customGenesisPath, l2ChainId } = await ensureChainIds(deployment, deployDir);
 
   let composeFile = null;
   const contractLogLines = []; // Track deployer logs for address recovery on cancel
@@ -788,7 +812,7 @@ async function provisionTestnet(deployment) {
       committerPk: roleKeys.committerPk,
       proofCoordinatorPk: roleKeys.proofCoordinatorPk,
       bridgeOwnerPk: roleKeys.bridgeOwnerPk,
-      customGenesisPath,
+      customGenesisPath, l2ChainId,
     });
     composeFile = writeComposeFile(id, composeContent, deployDir);
     emit(id, "log", { message: `Docker Compose file: ${composeFile}` });
@@ -1538,14 +1562,22 @@ async function setPublicAccess(deployment, isPublic) {
       projectName: updated.docker_project, l1RpcUrl: testnetCfg.l1RpcUrl,
       deployerPrivateKey: testnetCfg.deployerPrivateKey, gpu: !!dConfig.gpu,
       committerPk: roleKeys.committerPk, proofCoordinatorPk: roleKeys.proofCoordinatorPk,
-      bridgeOwnerPk: roleKeys.bridgeOwnerPk, isPublic,
+      bridgeOwnerPk: roleKeys.bridgeOwnerPk, isPublic, l2ChainId: updated.chain_id,
     });
   } else {
+    // Resolve custom genesis paths from deployment dir (if they exist)
+    const depDir = getDeploymentDir(id, deployDir);
+    const profile = getAppProfile(updated.program_slug);
+    const customGenesisPath = require("fs").existsSync(require("path").join(depDir, profile.genesisFile))
+      ? require("path").join(depDir, profile.genesisFile) : undefined;
+    const customL1GenesisPath = require("fs").existsSync(require("path").join(depDir, "l1.json"))
+      ? require("path").join(depDir, "l1.json") : undefined;
     composeContent = generateComposeFile({
       programSlug: updated.program_slug, l1Port: updated.l1_port, l2Port: updated.l2_port,
       proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,
       projectName: updated.docker_project, gpu: !!dConfig.gpu,
-      dumpFixtures: !!dConfig.dumpFixtures, isPublic,
+      dumpFixtures: !!dConfig.dumpFixtures, isPublic, l2ChainId: updated.chain_id,
+      customGenesisPath, customL1GenesisPath,
     });
   }
   writeComposeFile(id, composeContent, deployDir);

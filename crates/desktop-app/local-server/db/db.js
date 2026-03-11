@@ -36,6 +36,7 @@ const migrations = [
   "ALTER TABLE deployments ADD COLUMN public_l2_explorer_url TEXT",
   "ALTER TABLE deployments ADD COLUMN public_l1_explorer_url TEXT",
   "ALTER TABLE deployments ADD COLUMN public_dashboard_url TEXT",
+  "ALTER TABLE deployments ADD COLUMN l1_chain_id INTEGER",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { if (!e.message.includes('duplicate column name')) { console.error(`Migration failed for "${sql}":`, e); } }

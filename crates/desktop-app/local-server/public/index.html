@@ -116,9 +116,9 @@
               <label style="margin-bottom:8px">L2 Name *
                 <input type="text" id="launch-name" placeholder="My L2 Chain">
               </label>
-              <label style="margin-bottom:8px">Chain ID
+              <label style="margin-bottom:8px">L2 Chain ID
                 <input type="number" id="launch-chain-id" placeholder="auto-generated">
-                <p class="form-hint">Auto-generated.</p>
+                <p class="form-hint">Auto-generated unique ID. Editable.</p>
               </label>
             </div>
 
@@ -132,20 +132,28 @@
             </div>
 
             <div id="l1-node-area">
-              <label style="margin-bottom:8px">L1 Node
-                <select id="launch-l1-image" onchange="onL1NodeChange()">
-                  <optgroup label="Local (built-in)">
-                    <option value="ethrex">ethrex (Tokamak)</option>
-                    <option value="geth">Geth (go-ethereum)</option>
-                    <option value="reth">Reth</option>
-                  </optgroup>
-                  <optgroup label="Testnet (external L1)">
-                    <option value="sepolia">Sepolia (Chain ID: 11155111)</option>
-                    <option value="holesky">Holesky (Chain ID: 17000)</option>
-                    <option value="custom-l1">Custom L1 Network</option>
-                  </optgroup>
-                </select>
-              </label>
+              <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                <label style="margin-bottom:8px;flex:1;min-width:200px">L1 Node
+                  <select id="launch-l1-image" onchange="onL1NodeChange()">
+                    <optgroup label="Local (built-in)">
+                      <option value="ethrex">ethrex (Tokamak)</option>
+                      <option value="geth">Geth (go-ethereum)</option>
+                      <option value="reth">Reth</option>
+                    </optgroup>
+                    <optgroup label="Testnet (external L1)">
+                      <option value="sepolia">Sepolia (Chain ID: 11155111)</option>
+                      <option value="holesky">Holesky (Chain ID: 17000)</option>
+                      <option value="custom-l1">Custom L1 Network</option>
+                    </optgroup>
+                  </select>
+                </label>
+                <div id="l1-chain-id-area" style="display:none;min-width:160px">
+                  <label style="margin-bottom:8px">L1 Chain ID
+                    <input type="number" id="launch-l1-chain-id" placeholder="auto-generated">
+                    <p class="form-hint">Unique per deployment.</p>
+                  </label>
+                </div>
+              </div>
 
               <div id="testnet-fields" style="display:none">
                 <div class="testnet-info-box" style="background:var(--blue-50,#eff6ff);border:1px solid var(--blue-200,#bfdbfe);border-radius:8px;padding:10px 14px;margin-bottom:12px">
@@ -372,6 +380,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=30"></script>
+  <script src="/app.js?v=32"></script>
 </body>
 </html>
