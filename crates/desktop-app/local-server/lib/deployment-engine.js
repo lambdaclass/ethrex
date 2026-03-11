@@ -1449,6 +1449,205 @@ async function destroyDeploymentRemote(deployment) {
 }
 
 // ============================================================
+// DEPLOYER RECOVERY (re-attach or recover from deploying_contracts)
+// ============================================================
+
+/**
+ * Smart recovery for deployments stuck in "deploying_contracts" phase.
+ * Checks deployer container state:
+ *   - If deployer finished successfully: recover addresses & auto-resume L2 startup
+ *   - If deployer still running: re-attach to logs, wait for completion, then auto-resume
+ *   - If deployer failed: mark as error (normal path)
+ * Returns true if recovery was handled (caller should skip default error marking).
+ */
+async function recoverDeployingContracts(dep) {
+  const id = dep.id;
+  const projectName = dep.docker_project;
+  try {
+    const composeFile = require("path").join(getDeploymentDir(id), "docker-compose.yaml");
+    const containers = await docker.getStatus(projectName, composeFile);
+    const deployer = containers.find(c => (c.Service || c.Name || "").includes("deployer"));
+    const deployerRunning = deployer && (deployer.State || "").toLowerCase() === "running";
+
+    if (deployerRunning) {
+      // Deployer still running — re-attach and wait for completion
+      console.log(`[recovery] Deployer for ${id} still running — re-attaching...`);
+      insertDeployEvent(id, "log", "deploying_contracts", "Server restarted. Re-attaching to deployer...", null);
+      // Run continuation in background (don't block other recoveries)
+      resumeDeployAfterDeployer(dep, composeFile).catch(e => {
+        console.error(`[recovery] resumeDeployAfterDeployer failed for ${id}: ${e.message}`);
+        updateDeployment(id, { error_message: `Recovery failed: ${e.message}` });
+        insertDeployEvent(id, "error", "deploying_contracts", `Recovery failed: ${e.message}`, null);
+      });
+      return true;
+    }
+
+    // Deployer not running — check if it completed successfully via logs
+    const logs = await docker.getLogs(projectName, composeFile, "tokamak-app-deployer", 500);
+    const logLines = logs.split("\n");
+    const parsed = parseContractAddressesFromLogs(logLines);
+    if (parsed.bridge && parsed.proposer) {
+      console.log(`[recovery] Deployer for ${id} already completed! Recovering addresses & auto-resuming...`);
+      saveRecoveredAddresses(id, parsed);
+      // Also try env volume
+      try {
+        const envVars = await docker.extractEnv(projectName, composeFile);
+        const envUpdates = {};
+        if (!parsed.timelock && envVars.ETHREX_TIMELOCK_ADDRESS) envUpdates.timelock_address = envVars.ETHREX_TIMELOCK_ADDRESS;
+        if (!parsed.sp1Verifier && envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS) envUpdates.sp1_verifier_address = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS;
+        if (Object.keys(envUpdates).length > 0) updateDeployment(id, envUpdates);
+      } catch {}
+      // Auto-resume: start L2, prover, tools
+      resumePostDeployer(dep, composeFile).catch(e => {
+        console.error(`[recovery] resumePostDeployer failed for ${id}: ${e.message}`);
+        updateDeployment(id, { error_message: `Recovery failed after deployer completed: ${e.message}` });
+        insertDeployEvent(id, "error", "deploying_contracts", `Recovery failed: ${e.message}`, null);
+      });
+      return true;
+    }
+
+    // Deployer finished but no addresses found — real failure
+    return false;
+  } catch (e) {
+    console.log(`[recovery] Could not check deployer for ${dep.id}: ${e.message}`);
+    return false;
+  }
+}
+
+/** Save recovered contract addresses to DB */
+function saveRecoveredAddresses(id, parsed) {
+  const updates = {
+    bridge_address: parsed.bridge,
+    proposer_address: parsed.proposer,
+    error_message: null,
+  };
+  if (parsed.timelock) updates.timelock_address = parsed.timelock;
+  if (parsed.sp1Verifier) updates.sp1_verifier_address = parsed.sp1Verifier;
+  if (parsed.guestProgramRegistry) updates.guest_program_registry_address = parsed.guestProgramRegistry;
+  updateDeployment(id, updates);
+  insertDeployEvent(id, "log", "deploying_contracts", `Recovered contract addresses: bridge=${parsed.bridge}, proposer=${parsed.proposer}`, null);
+}
+
+/**
+ * Re-attach to a still-running deployer, wait for it to finish,
+ * then continue with L2 startup.
+ */
+async function resumeDeployAfterDeployer(dep, composeFile) {
+  const id = dep.id;
+  const projectName = dep.docker_project;
+
+  // Stream deployer logs and collect for address parsing
+  const contractLogLines = [];
+  const tracker = createContractTracker(id);
+  const logProcess = docker.streamLogs(projectName, composeFile, "tokamak-app-deployer");
+
+  await new Promise((resolve, reject) => {
+    let stdout = "";
+    logProcess.stdout?.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      const lines = text.split("\n").filter(Boolean);
+      for (const line of lines) {
+        contractLogLines.push(line);
+        emit(id, "log", { message: line });
+      }
+      tracker.logFn(text);
+    });
+    logProcess.stderr?.on("data", (chunk) => {
+      const lines = chunk.toString().split("\n").filter(Boolean);
+      for (const line of lines) emit(id, "log", { message: line });
+    });
+    logProcess.on("close", () => resolve(stdout));
+    logProcess.on("error", reject);
+    // Safety timeout: 10 minutes
+    setTimeout(() => { try { logProcess.kill(); } catch {} reject(new Error("Deployer re-attach timeout (10min)")); }, 600000);
+  });
+
+  // Deployer finished — get addresses
+  const tracked = tracker.getAddresses();
+  let bridgeAddress = tracked.bridge;
+  let proposerAddress = tracked.proposer;
+
+  // Fallback to log parsing
+  if (!bridgeAddress || !proposerAddress) {
+    const parsed = parseContractAddressesFromLogs(contractLogLines);
+    if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
+    if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
+  }
+
+  if (!bridgeAddress || !proposerAddress) {
+    // Also try full logs
+    const logs = await docker.getLogs(projectName, composeFile, "tokamak-app-deployer", 500);
+    const parsed = parseContractAddressesFromLogs(logs.split("\n"));
+    if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
+    if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
+    if (parsed.bridge) saveRecoveredAddresses(id, parsed);
+  }
+
+  if (!bridgeAddress || !proposerAddress) {
+    throw new Error(`Deployer finished but addresses not found: bridge=${bridgeAddress}, proposer=${proposerAddress}`);
+  }
+
+  saveRecoveredAddresses(id, { bridge: bridgeAddress, proposer: proposerAddress, ...tracker.getAddresses() });
+  console.log(`[recovery] Deployer for ${id} completed after re-attach. Starting L2 services...`);
+  await resumePostDeployer(dep, composeFile);
+}
+
+/**
+ * After deployer is done and addresses are in DB, start L2 → Prover → Tools.
+ */
+async function resumePostDeployer(dep, composeFile) {
+  const id = dep.id;
+  const projectName = dep.docker_project;
+  const freshDep = getDeploymentById(id);
+
+  // Stop deployer container (might already be stopped)
+  try { await docker.stopService(projectName, composeFile, "tokamak-app-deployer"); } catch {}
+
+  // Start L2
+  emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node..." });
+  updateDeployment(id, { phase: "l2_starting" });
+  insertDeployEvent(id, "log", "l2_starting", "Starting L2 node...", null);
+  await docker.startL2(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+  const l2Port = freshDep.l2_port;
+  if (l2Port) await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
+  emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
+  insertDeployEvent(id, "log", "l2_starting", "L2 node is running", null);
+
+  // Start Prover
+  emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
+  updateDeployment(id, { phase: "starting_prover" });
+  insertDeployEvent(id, "log", "starting_prover", "Starting prover...", null);
+  await docker.startProver(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" });
+
+  // Start Tools
+  emit(id, "phase", { phase: "starting_tools", message: "Starting support tools..." });
+  updateDeployment(id, { phase: "starting_tools" });
+  insertDeployEvent(id, "log", "starting_tools", "Starting support tools...", null);
+  try {
+    const envVars = await docker.extractEnv(projectName, composeFile);
+    await docker.startTools(`${projectName}-tools`, envVars, {
+      toolsL1ExplorerPort: freshDep.tools_l1_explorer_port,
+      toolsL2ExplorerPort: freshDep.tools_l2_explorer_port,
+      toolsBridgeUIPort: freshDep.tools_bridge_ui_port,
+      toolsDbPort: freshDep.tools_db_port,
+      l1Port: freshDep.l1_port,
+      l2Port: freshDep.l2_port,
+      toolsMetricsPort: freshDep.tools_metrics_port,
+    });
+    insertDeployEvent(id, "log", "starting_tools", "Support tools started", null);
+  } catch (toolsErr) {
+    insertDeployEvent(id, "log", "starting_tools", `Tools setup skipped: ${toolsErr.message}`, null);
+  }
+
+  // Done!
+  emit(id, "phase", { phase: "running", message: "Deployment recovered and running!" });
+  updateDeployment(id, { phase: "running", status: "active", error_message: null, ever_running: 1 });
+  insertDeployEvent(id, "log", "running", "Deployment recovered and running!", null);
+  console.log(`[recovery] Deployment ${id} fully recovered and running`);
+}
+
+// ============================================================
 // SERVER STARTUP RECOVERY
 // ============================================================
 
@@ -1461,8 +1660,13 @@ async function recoverStuckDeployments() {
   try {
     const deployments = getAllDeployments();
     for (const dep of deployments) {
-      // Mark stuck active-phase deployments as error
+      // Mark stuck active-phase deployments as error (with smart recovery for deploying_contracts)
       if (ACTIVE_PHASES.includes(dep.phase) && !activeProvisions.has(dep.id)) {
+        // If stuck in deploying_contracts and we have a docker_project, try smart recovery
+        if (dep.phase === "deploying_contracts" && dep.docker_project) {
+          const recovered = await recoverDeployingContracts(dep);
+          if (recovered) continue;
+        }
         console.log(`[recovery] Deployment ${dep.id} (${dep.name}) stuck in phase "${dep.phase}" -- marking as error`);
         const errMsg = `Server restarted while deployment was in "${dep.phase}" phase. The build process was lost. Please retry.`;
         updateDeployment(dep.id, { error_message: errMsg });
