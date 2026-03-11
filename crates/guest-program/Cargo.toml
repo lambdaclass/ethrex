@@ -36,22 +36,33 @@ methods = ["bin/risc0"]
 
 [features]
 default = ["secp256k1"]
+
+# Crypto-only features: enable the zkVM crypto modules without build tooling.
+# Guest binaries use these to get their Crypto implementation without triggering
+# the build script (which would cause infinite recursion).
+sp1-crypto = ["dep:k256", "dep:substrate-bn"]
+risc0-crypto = ["dep:k256", "dep:substrate-bn"]
+zisk-crypto = ["dep:k256", "dep:substrate-bn", "dep:ziskos"]
+openvm-crypto = ["dep:k256"]
+
+# Full features: crypto + build tooling + feature propagation.
+# Used by the prover host to compile guest ELFs via the build script.
 risc0 = [
+    "risc0-crypto",
     "dep:risc0-build",
-    "dep:k256", "dep:substrate-bn",
     "ethrex-l2-common/secp256k1",
 ]
 sp1 = [
+    "sp1-crypto",
     "dep:sp1-build", "dep:sp1-sdk",
-    "dep:k256", "dep:substrate-bn",
     "ethrex-l2-common/secp256k1",
 ]
 zisk = [
+    "zisk-crypto",
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
-    "dep:k256", "dep:substrate-bn", "dep:ziskos",
 ]
 openvm = [
-    "dep:k256",
+    "openvm-crypto",
     "ethrex-l2-common/secp256k1",
 ]
 l2 = []
