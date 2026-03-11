@@ -30,6 +30,7 @@ services:
       POSTGRES_PASSWORD: 'ceWb1MeLBEeOIfk65gU8EjF8'
     ports:
       - target: 5432
+        host_ip: ${TOOLS_BIND_ADDR:-127.0.0.1}
         published: ${TOOLS_DB_PORT:-7432}
     volumes:
       - blockscout-db:/var/lib/postgresql/data
@@ -234,8 +235,10 @@ services:
     restart: unless-stopped
     ports:
       - target: 8082
+        host_ip: ${TOOLS_BIND_ADDR:-127.0.0.1}
         published: ${TOOLS_L2_EXPLORER_PORT:-8082}
       - target: 8083
+        host_ip: ${TOOLS_BIND_ADDR:-127.0.0.1}
         published: ${TOOLS_L1_EXPLORER_PORT:-8083}
 
   # ==========================================================================
@@ -257,6 +260,7 @@ services:
     restart: unless-stopped
     ports:
       - target: 8082
+        host_ip: ${TOOLS_BIND_ADDR:-127.0.0.1}
         published: ${TOOLS_L2_EXPLORER_PORT:-8082}
 
   # ==========================================================================
@@ -409,6 +413,7 @@ services:
       PUBLIC_DASHBOARD_URL: ${PUBLIC_DASHBOARD_URL:-}
     ports:
       - target: 80
+        host_ip: ${TOOLS_BIND_ADDR:-127.0.0.1}
         published: ${TOOLS_BRIDGE_UI_PORT:-3000}
 
 # ==========================================================================

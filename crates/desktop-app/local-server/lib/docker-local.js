@@ -278,6 +278,11 @@ function buildToolsEnv(toolsPorts) {
   env.PUBLIC_L1_EXPLORER_PROTOCOL = 'http';
   env.PUBLIC_L1_WS_PROTOCOL = 'ws';
 
+  // Public access — bind to 0.0.0.0 when enabled (default: 127.0.0.1 = localhost only)
+  if (toolsPorts.isPublic) {
+    env.TOOLS_BIND_ADDR = '0.0.0.0';
+  }
+
   // Public access config (external domain/IP) — overrides defaults above
   if (toolsPorts.publicDomain) {
     env.PUBLIC_DOMAIN = toolsPorts.publicDomain;
