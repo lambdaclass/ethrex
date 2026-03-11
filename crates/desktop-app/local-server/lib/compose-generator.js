@@ -306,8 +306,8 @@ function imageRef(name) {
 }
 
 const PULL_IMAGES = {
-  "tokamak-appchain:main": imageRef("tokamak-appchain:main"),
-  "tokamak-appchain:main-l2": imageRef("tokamak-appchain:main-l2"),
+  "tokamak-appchain:l1": imageRef("tokamak-appchain:l1"),
+  "tokamak-appchain:l2": imageRef("tokamak-appchain:l2"),
   "tokamak-appchain:sp1": imageRef("tokamak-appchain:sp1"),
 };
 
@@ -333,9 +333,9 @@ function generateRemoteComposeFile(opts) {
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
-  const l1Image = PULL_IMAGES["tokamak-appchain:main"];
+  const l1Image = PULL_IMAGES["tokamak-appchain:l1"];
   // Map profile to the correct pre-built image name for remote
-  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:main-l2";
+  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:l2";
   const l2Image = PULL_IMAGES[remoteImageKey];
 
   const l2Genesis = profile.genesisFile !== "l2.json"

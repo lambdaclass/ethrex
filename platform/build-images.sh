@@ -6,8 +6,9 @@
 #   ./build-images.sh --push   # Build and push to registry
 #
 # Images built:
-#   tokamak-app-l1:latest  — L1 node
-#   tokamak-app-l2:latest  — L2 node + deployer + prover
+#   tokamak-appchain:l1    — L1 node
+#   tokamak-appchain:l2    — L2 node + deployer + prover
+#   tokamak-appchain:sp1   — L2 node with SP1 prover
 
 set -euo pipefail
 
@@ -33,12 +34,14 @@ image_name() {
   fi
 }
 
-L1_IMAGE=$(image_name "tokamak-app-l1:latest")
-L2_IMAGE=$(image_name "tokamak-app-l2:latest")
+L1_IMAGE=$(image_name "tokamak-appchain:l1")
+L2_IMAGE=$(image_name "tokamak-appchain:l2")
+SP1_IMAGE=$(image_name "tokamak-appchain:sp1")
 
 echo "==> Building platform images from $ETHREX_ROOT"
-echo "    L1: $L1_IMAGE"
-echo "    L2: $L2_IMAGE"
+echo "    L1:  $L1_IMAGE"
+echo "    L2:  $L2_IMAGE"
+echo "    SP1: $SP1_IMAGE"
 echo ""
 
 echo "==> Building L1 image..."
@@ -55,16 +58,25 @@ docker build \
   -t "$L2_IMAGE" \
   "$ETHREX_ROOT"
 
+echo "==> Building SP1 image..."
+docker build \
+  -f "$SCRIPT_DIR/Dockerfile" \
+  --target sp1 \
+  -t "$SP1_IMAGE" \
+  "$ETHREX_ROOT"
+
 echo ""
 echo "==> Images built successfully!"
 echo "    $L1_IMAGE"
 echo "    $L2_IMAGE"
+echo "    $SP1_IMAGE"
 
 if $PUSH; then
   echo ""
   echo "==> Pushing images to $REGISTRY..."
   docker push "$L1_IMAGE"
   docker push "$L2_IMAGE"
+  docker push "$SP1_IMAGE"
   echo "==> Push complete!"
 fi
 
