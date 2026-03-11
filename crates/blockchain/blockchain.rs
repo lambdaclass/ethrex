@@ -191,6 +191,18 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Persistent thread pool for merkleization operations.
+    ///
+    /// Uses 17 threads (16 workers + 1 for coordination/overhead) to handle
+    /// 16-way sharding of accounts by address prefix. Eliminates per-block
+    /// thread creation overhead (~1.6ms per block).
+    ///
+    /// The extra thread prevents deadlock when using blocking channel-based
+    /// workers inside rayon::scope() - without it, all 16 pool threads would
+    /// be consumed by workers, leaving no thread for coordination.
+    ///
+    /// Each Blockchain instance has its own pool to ensure test isolation.
+    merkle_pool: Arc<rayon::ThreadPool>,
 }
 
 /// Configuration options for the blockchain.
@@ -291,22 +303,40 @@ struct BalStateWorkItem {
 
 impl Blockchain {
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let merkle_pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(17) // 16 workers + 1 for coordination/overhead
+                .thread_name(|i| format!("merkle-worker-{i}"))
+                .build()
+                .expect("Failed to create merkle pool"),
+        );
+
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            merkle_pool,
         }
     }
 
     pub fn default_with_store(store: Store) -> Self {
+        let merkle_pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(17) // 16 workers + 1 for coordination/overhead
+                .thread_name(|i| format!("merkle-worker-{i}"))
+                .build()
+                .expect("Failed to create merkle pool"),
+        );
+
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            merkle_pool,
         }
     }
 
@@ -482,7 +512,6 @@ impl Blockchain {
                             )?
                         } else {
                             self.handle_merkleization(
-                                s,
                                 rx,
                                 parent_header_ref,
                                 queue_length_ref,
@@ -545,31 +574,26 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization<'a, 's, 'b>(
-        &'a self,
-        scope: &'s std::thread::Scope<'s, '_>,
+    fn handle_merkleization(
+        &self,
         rx: Receiver<Vec<AccountUpdate>>,
-        parent_header: &'b BlockHeader,
+        parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError>
-    where
-        'a: 's,
-        'b: 's,
-    {
+    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let mut workers_tx = Vec::with_capacity(16);
-        let mut workers_handles = Vec::with_capacity(16);
-        for i in 0..16 {
-            let (tx, rx) = channel();
-            let handle = std::thread::Builder::new()
-                .name(format!("block_executor_merkleization_shard_worker_{i}"))
-                .spawn_scoped(scope, move || {
-                    self.handle_merkleization_subtrie(rx, parent_header, i)
-                })
-                .map_err(|e| StoreError::Custom(format!("spawn failed: {e:?}",)))?;
-            workers_handles.push(handle);
-            workers_tx.push(tx);
-        }
+
+        self.merkle_pool.scope(|s| -> Result<_, StoreError> {
+            for i in 0..16 {
+                let (tx, worker_rx) = channel();
+
+                s.spawn(move |_| {
+                    let _ = self.handle_merkleization_subtrie(worker_rx, parent_header, i);
+                });
+
+                workers_tx.push(tx);
+            }
+
 
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
@@ -726,6 +750,8 @@ impl Blockchain {
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
 
+        drop(workers_tx);
+
         Ok((
             AccountUpdatesList {
                 state_trie_hash,
@@ -735,6 +761,7 @@ impl Blockchain {
             },
             accumulated_updates,
         ))
+        })
     }
 
     /// BAL-specific merkleization handler.
