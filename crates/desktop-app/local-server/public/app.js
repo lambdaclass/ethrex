@@ -367,15 +367,16 @@ function setLaunchMode(mode) {
   });
   document.getElementById('remote-host-area').style.display = mode === 'remote' ? 'block' : 'none';
   document.getElementById('docker-status-area').style.display = mode === 'local' ? 'block' : 'none';
-  document.getElementById('manual-rpc-area').style.display = mode === 'manual' ? 'block' : 'none';
+  document.getElementById('ai-deploy-area').style.display = mode === 'ai-deploy' ? 'block' : 'none';
   document.getElementById('l1-node-area').style.display = mode === 'local' ? 'block' : 'none';
-  document.getElementById('deploy-dir-area').style.display = mode === 'manual' ? 'none' : 'block';
+  document.getElementById('deploy-dir-area').style.display = (mode === 'ai-deploy') ? 'none' : 'block';
 
   const btn = document.getElementById('launch-deploy-btn');
-  btn.textContent = mode === 'manual' ? 'Create L2 Config' : 'Deploy L2';
+  btn.textContent = mode === 'ai-deploy' ? 'Generate AI Prompt' : 'Deploy L2';
 
   if (mode === 'local') checkDocker();
   if (mode === 'remote') loadHostsForLaunch();
+  if (mode === 'ai-deploy') loadAIPresets();
 }
 
 function onL1NodeChange() {
@@ -756,14 +757,12 @@ async function handleLaunchDeploy() {
   hideLaunchError();
 
   try {
-    const rpcUrl = launchMode === 'manual' ? (document.getElementById('launch-rpc-url')?.value || '').trim() : undefined;
     const body = {
       programSlug: selectedProgram.program_id || selectedProgram.id,
       name,
       chainId: parseInt(document.getElementById('launch-chain-id').value) || undefined,
-      rpcUrl: rpcUrl || undefined,
       config: {
-        mode: launchMode,
+        mode: launchMode === 'ai-deploy' ? 'ai-deploy' : launchMode,
         l1Image: launchMode === 'local' ? (document.getElementById('launch-l1-image')?.value || 'ethrex') : undefined,
         deployDir: (document.getElementById('launch-deploy-dir')?.value || '').trim() || undefined,
         l1ChainId: parseInt(getL1ChainIdEl()?.value) || undefined,
@@ -816,10 +815,10 @@ async function handleLaunchDeploy() {
       launchDeploymentId = data.deployment?.id || data.id;
     }
 
-    if (launchMode === 'manual') {
-      showDeploymentDetail(launchDeploymentId);
+    if (launchMode === 'ai-deploy') {
+      await generateAndShowAIPrompt(launchDeploymentId);
       btn.disabled = false;
-      btn.textContent = 'Create L2 Config';
+      btn.textContent = 'Generate AI Prompt';
       return;
     }
 
@@ -2728,6 +2727,138 @@ document.getElementById('header-launch-btn').style.display = '';
 // Handle URL parameters (e.g. ?view=launch, ?detail=id from Messenger)
 const urlParams = new URLSearchParams(window.location.search);
 const editId = urlParams.get('edit');
+// ---------------------------------------------------------------------------
+// AI Deploy helpers
+// ---------------------------------------------------------------------------
+
+let aiPresetsCache = null;
+
+async function loadAIPresets() {
+  if (aiPresetsCache) return aiPresetsCache;
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/presets`);
+    if (res.ok) aiPresetsCache = await res.json();
+  } catch {}
+  return aiPresetsCache;
+}
+
+function onAICloudChange() {
+  const cloud = document.getElementById('ai-cloud').value;
+  const regionSel = document.getElementById('ai-region');
+  const vmSel = document.getElementById('ai-vm-type');
+  regionSel.innerHTML = '<option value="">Select region...</option>';
+  vmSel.innerHTML = '<option value="">Select VM type...</option>';
+  if (!cloud || !aiPresetsCache || !aiPresetsCache[cloud]) return;
+  const preset = aiPresetsCache[cloud];
+  preset.regions.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r.id; opt.textContent = r.label;
+    regionSel.appendChild(opt);
+  });
+  preset.vmTypes.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.id; opt.textContent = v.label + (v.recommended ? ' (recommended)' : '');
+    if (v.recommended) opt.selected = true;
+    vmSel.appendChild(opt);
+  });
+}
+
+function onAIL1ModeChange() {
+  const mode = document.getElementById('ai-l1-mode').value;
+  document.getElementById('ai-testnet-fields').style.display = mode === 'testnet' ? 'block' : 'none';
+}
+
+const AI_L1_CHAIN_IDS = { sepolia: 11155111, holesky: 17000 };
+
+async function generateAndShowAIPrompt(deploymentId) {
+  const cloud = document.getElementById('ai-cloud').value;
+  const region = document.getElementById('ai-region').value;
+  const vmType = document.getElementById('ai-vm-type').value;
+  if (!cloud || !region || !vmType) {
+    showLaunchError('Please select cloud provider, region, and VM type');
+    return;
+  }
+  const l1Mode = document.getElementById('ai-l1-mode').value;
+  const l1Network = l1Mode === 'testnet' ? (document.getElementById('ai-l1-network')?.value || 'sepolia') : undefined;
+  const l1ChainId = l1Network ? (AI_L1_CHAIN_IDS[l1Network] || undefined) : undefined;
+  const l1RpcUrl = l1Mode === 'testnet' ? (document.getElementById('ai-l1-rpc')?.value || '').trim() : undefined;
+
+  try {
+    const res = await fetch(`${API}/deployments/${deploymentId}/ai-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network }),
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to generate prompt'); }
+    const { prompt } = await res.json();
+    showAIPromptResult(prompt);
+  } catch (e) {
+    showLaunchError(e.message);
+  }
+}
+
+function showAIPromptResult(prompt) {
+  // Switch to step 3 and show the prompt
+  document.querySelectorAll('.launch-step').forEach(s => s.style.display = 'none');
+  const step3 = document.getElementById('launch-step3');
+  step3.style.display = 'block';
+
+  const infoText = document.getElementById('deploy-info-text');
+  infoText.textContent = 'Your AI deployment prompt is ready. Copy it and paste into Claude Code or ChatGPT.';
+
+  // Hide deploy-specific UI elements
+  document.getElementById('deploy-progress-steps').innerHTML = '';
+  const elapsedBar = document.querySelector('.elapsed-bar');
+  if (elapsedBar) elapsedBar.style.display = 'none';
+  const buildLogDetails = document.getElementById('build-log-details');
+  if (buildLogDetails) buildLogDetails.style.display = 'none';
+  const eventLogDetails = document.getElementById('event-log-details');
+  if (eventLogDetails) eventLogDetails.style.display = 'none';
+  const deployMsg = document.getElementById('deploy-message');
+  if (deployMsg) deployMsg.style.display = 'none';
+
+  // Show prompt in the deploy card area
+  const deployCard = document.querySelector('.deploy-card');
+  if (deployCard) {
+    deployCard.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:600;font-size:14px">AI Deployment Prompt</span>
+        <button class="btn-primary" onclick="copyAIPrompt()" style="font-size:12px;padding:6px 14px" id="copy-prompt-btn">Copy to Clipboard</button>
+      </div>
+      <pre id="ai-prompt-content" style="background:var(--bg-surface,#161622);border:1px solid var(--border,#333);border-radius:8px;padding:16px;font-size:11px;line-height:1.6;max-height:600px;overflow:auto;white-space:pre-wrap;word-wrap:break-word">${escapeHtml(prompt)}</pre>
+    `;
+  }
+
+  // Show buttons
+  const gotoDashBtn = document.getElementById('goto-dashboard-btn');
+  if (gotoDashBtn) gotoDashBtn.style.display = 'none';
+  const cancelBtn = document.getElementById('cancel-deploy-btn');
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  const resumeBtn = document.getElementById('resume-deploy-btn');
+  if (resumeBtn) resumeBtn.style.display = 'none';
+
+  // Update step indicator
+  updateStepIndicator(3);
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function copyAIPrompt() {
+  const content = document.getElementById('ai-prompt-content');
+  if (!content) return;
+  const text = content.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copy-prompt-btn');
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000); }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
 const initialView = urlParams.get('view');
 const detailId = urlParams.get('detail');
 loadDeployments().then(() => {

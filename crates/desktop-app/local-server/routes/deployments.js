@@ -32,6 +32,12 @@ const fs = require("fs");
 // CRUD (local — no auth required)
 // ==========================================
 
+// GET /api/deployments/ai-deploy/presets — cloud provider options (must be before /:id)
+const { generateAIDeployPrompt, CLOUD_PRESETS } = require("../lib/ai-prompt-generator");
+router.get("/ai-deploy/presets", (_req, res) => {
+  res.json(CLOUD_PRESETS);
+});
+
 // GET /api/deployments/next-chain-id — get unique L1 and L2 chain IDs
 router.get("/next-chain-id", (req, res) => {
   try {
@@ -973,6 +979,31 @@ router.get("/:id/monitoring", async (req, res) => {
   }
 });
 
-// (moved above /:id to avoid route shadowing)
+// ---------------------------------------------------------------------------
+// AI Deploy Prompt
+// ---------------------------------------------------------------------------
+
+/** POST /api/deployments/:id/ai-prompt — generate AI deployment prompt */
+router.post("/:id/ai-prompt", (req, res) => {
+  try {
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
+    if (!deployment) return res.status(404).json({ error: "Deployment not found" });
+
+    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network } = req.body;
+    if (!cloud || !region || !vmType) {
+      return res.status(400).json({ error: "cloud, region, and vmType are required" });
+    }
+
+    const prompt = generateAIDeployPrompt({
+      deployment, cloud, region, vmType,
+      l1Mode: l1Mode || "local",
+      l1RpcUrl, l1ChainId, l1Network,
+    });
+
+    res.json({ prompt });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 module.exports = router;

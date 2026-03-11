@@ -106,9 +106,9 @@
                 <div class="mode-title">Remote Server</div>
                 <div class="mode-desc">Deploy to a remote server via SSH</div>
               </button>
-              <button type="button" class="mode-card" data-mode="manual" onclick="setLaunchMode('manual')" style="padding:8px">
-                <div class="mode-title">Manual</div>
-                <div class="mode-desc">Download config and run manually</div>
+              <button type="button" class="mode-card" data-mode="ai-deploy" onclick="setLaunchMode('ai-deploy')" style="padding:8px">
+                <div class="mode-title">AI Deploy</div>
+                <div class="mode-desc">Generate prompt for AI-assisted cloud deploy</div>
               </button>
             </div>
 
@@ -252,11 +252,51 @@
               </div>
             </div>
 
-            <div id="manual-rpc-area" style="display:none">
-              <label>L1 RPC URL *
-                <input type="text" id="launch-rpc-url" placeholder="https://mainnet.infura.io/v3/...">
-                <p class="form-hint">The Ethereum L1 endpoint your L2 will settle to.</p>
-              </label>
+            <div id="ai-deploy-area" style="display:none">
+              <div class="testnet-info-box" style="background:var(--purple-50,#faf5ff);border:1px solid var(--purple-200,#e9d5ff);border-radius:8px;padding:10px 14px;margin-bottom:12px">
+                <p style="font-weight:600;color:var(--purple-700,#7e22ce);margin-bottom:4px;font-size:13px">AI Deploy</p>
+                <p style="color:var(--purple-600,#9333ea);font-size:11px;line-height:1.5">
+                  Configure your cloud settings, then generate a complete deployment prompt.<br>
+                  Copy the prompt into Claude Code or ChatGPT — the AI will execute it step by step.
+                </p>
+              </div>
+              <div class="form-row" style="margin-bottom:8px">
+                <label style="margin-bottom:8px">Cloud Provider *
+                  <select id="ai-cloud" onchange="onAICloudChange()">
+                    <option value="">Select...</option>
+                    <option value="gcp">Google Cloud (GCP)</option>
+                    <option value="aws">Amazon Web Services (AWS)</option>
+                  </select>
+                </label>
+                <label style="margin-bottom:8px">Region *
+                  <select id="ai-region"><option value="">Select cloud first...</option></select>
+                </label>
+              </div>
+              <div class="form-row" style="margin-bottom:8px">
+                <label style="margin-bottom:8px">VM Type *
+                  <select id="ai-vm-type"><option value="">Select cloud first...</option></select>
+                </label>
+                <label style="margin-bottom:8px">L1 Mode
+                  <select id="ai-l1-mode" onchange="onAIL1ModeChange()">
+                    <option value="local">Built-in L1 (Docker)</option>
+                    <option value="testnet">Testnet (Sepolia, etc.)</option>
+                  </select>
+                </label>
+              </div>
+              <div id="ai-testnet-fields" style="display:none">
+                <div class="form-row" style="margin-bottom:8px">
+                  <label style="margin-bottom:8px">L1 RPC URL
+                    <input type="text" id="ai-l1-rpc" placeholder="https://eth-sepolia.g.alchemy.com/v2/...">
+                  </label>
+                  <label style="margin-bottom:8px">L1 Network
+                    <select id="ai-l1-network">
+                      <option value="sepolia">Sepolia (11155111)</option>
+                      <option value="holesky">Holesky (17000)</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div id="launch-error" class="error-msg" style="display:none"></div>
