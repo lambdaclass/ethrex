@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
+use ethrex_crypto::Crypto;
 use ethrex_l2_common::messages::get_balance_diffs;
 use ethrex_vm::{Evm, GuestProgramStateWrapper};
 
 use crate::common::{BatchExecutionResult, execute_blocks};
-use crate::crypto::get_crypto_provider;
 use crate::l2::blobs::verify_blob;
 use crate::l2::error::L2ExecutionError;
 use crate::l2::input::ProgramInput;
@@ -13,7 +15,10 @@ use crate::l2::output::ProgramOutput;
 ///
 /// This validates and executes a batch of L2 blocks, verifying state transitions,
 /// message passing, and blob data without access to the full blockchain state.
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2ExecutionError> {
+pub fn execution_program(
+    input: ProgramInput,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, L2ExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
@@ -22,8 +27,6 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
         blob_commitment,
         blob_proof,
     } = input;
-
-    let crypto = get_crypto_provider();
 
     // Execute blocks using the common execution logic
     let BatchExecutionResult {
