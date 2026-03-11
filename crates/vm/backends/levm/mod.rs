@@ -44,7 +44,9 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+};
 use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
@@ -707,6 +709,7 @@ impl LEVM {
         let t_exec = std::time::Instant::now();
         let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = (0..n_txs)
             .into_par_iter()
+            .with_min_len(4)
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
