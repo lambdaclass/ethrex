@@ -308,7 +308,11 @@ impl L1Watcher {
                 .await
                 .map_err(|e| {
                     L1WatcherError::Custom(format!(
-                        "Failed to add mint transaction to the mempool: {e:#?}"
+                        "Failed to add mint transaction to the mempool \
+                        (to: {:x}, value: {}, transactionId: {:#}): {e:#?}",
+                        privileged_transaction_data.to_address,
+                        privileged_transaction_data.value,
+                        privileged_transaction_data.transaction_id
                     ))
                 })?;
 
