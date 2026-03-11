@@ -4,7 +4,7 @@ fn main() {
     #[cfg(all(not(clippy), feature = "risc0"))]
     build_risc0_program();
 
-    #[cfg(all(not(clippy), feature = "sp1"))]
+    #[cfg(all(not(clippy), feature = "sp1-build-elf"))]
     build_sp1_program();
 
     #[cfg(all(not(clippy), feature = "zisk"))]
@@ -62,7 +62,7 @@ fn build_risc0_program() {
     .expect("could not write Risc0 vk to file");
 }
 
-#[cfg(all(not(clippy), feature = "sp1"))]
+#[cfg(all(not(clippy), feature = "sp1-build-elf"))]
 fn build_sp1_program() {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};

@@ -69,7 +69,7 @@ risc0 = [
     "dep:risc0-zkp",
     "ethrex-common/risc0",
 ]
-sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
+sp1 = ["ethrex-guest-program/sp1-build-elf", "dep:sp1-sdk", "dep:sp1-prover"]
 zisk = ["ethrex-guest-program/zisk"]
 openvm = [
     "ethrex-guest-program/openvm",

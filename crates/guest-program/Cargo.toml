@@ -42,10 +42,13 @@ risc0 = [
     "ethrex-l2-common/secp256k1",
 ]
 sp1 = [
-    "dep:sp1-build", "dep:sp1-sdk",
     "dep:k256", "dep:substrate-bn",
     "ethrex-l2-common/secp256k1",
     "ethrex-crypto/kzg-rs",
+]
+sp1-build-elf = [
+    "sp1",
+    "dep:sp1-build", "dep:sp1-sdk",
 ]
 zisk = [
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
