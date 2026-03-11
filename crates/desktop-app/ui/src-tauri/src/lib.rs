@@ -42,6 +42,7 @@ pub fn run() {
             // Auto-start local server for deployment management
             let server = Arc::new(local_server::LocalServer::new());
             app.manage(server.clone());
+            let server_for_watchdog = server.clone();
             tauri::async_runtime::spawn(async move {
                 // Skip start if port already has a healthy server
                 if server.health_check().await {
@@ -51,6 +52,8 @@ pub fn run() {
                 if let Err(e) = server.start().await {
                     log::warn!("Failed to auto-start local server: {e}");
                 }
+                // Start watchdog to auto-restart if the server crashes
+                local_server::LocalServer::start_watchdog(server_for_watchdog);
             });
 
             // System tray

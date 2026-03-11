@@ -132,7 +132,7 @@ async function checkHealth() {
     dot.className = 'dot';
     text.textContent = 'Offline';
     fDot.className = 'footer-dot';
-    fText.textContent = 'Engine offline';
+    fText.innerHTML = 'Engine offline &nbsp;<button onclick="location.reload()" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer">Reconnect</button>';
   }
 }
 

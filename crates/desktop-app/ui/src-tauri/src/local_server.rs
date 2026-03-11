@@ -247,9 +247,39 @@ impl LocalServer {
         }
     }
 
-    /// Check if a child process is running
+    /// Check if a child process is running (actually polls the process)
     pub async fn is_running(&self) -> bool {
-        let child_guard = self.child.lock().await;
-        child_guard.is_some()
+        let mut child_guard = self.child.lock().await;
+        if let Some(ref mut child) = *child_guard {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    // Process exited — clean up
+                    *child_guard = None;
+                    false
+                }
+                Ok(None) => true,  // Still running
+                Err(_) => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Start a watchdog that auto-restarts the server if it crashes.
+    /// Should be called once after the initial start.
+    pub fn start_watchdog(server: std::sync::Arc<Self>) {
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let running = server.is_running().await;
+                if !running {
+                    log::warn!("[watchdog] Local server process died, restarting...");
+                    match server.start().await {
+                        Ok(()) => log::info!("[watchdog] Local server restarted successfully"),
+                        Err(e) => log::error!("[watchdog] Failed to restart local server: {e}"),
+                    }
+                }
+            }
+        });
     }
 }
