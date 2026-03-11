@@ -11,8 +11,16 @@ const fs = require("fs");
 
 const ETHREX_ROOT = path.resolve(__dirname, "../../../..");
 
+/** Resolve docker binary — macOS .app bundles lack shell PATH */
+const DOCKER_BIN = (() => {
+  for (const p of ["/usr/local/bin/docker", "/opt/homebrew/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker"]) {
+    if (fs.existsSync(p)) return p;
+  }
+  return "docker";
+})();
+
 function composeCmd(projectName, composeFile, args) {
-  return ["docker", "compose", "-p", projectName, "-f", composeFile, ...args];
+  return [DOCKER_BIN, "compose", "-p", projectName, "-f", composeFile, ...args];
 }
 
 function runCompose(projectName, composeFile, args, opts = {}) {
@@ -73,7 +81,7 @@ async function buildImages(projectName, composeFile, env = {}, onLog, { forceReb
       ).toString().trim();
       if (existing) {
         for (const img of existing.split("\n").filter(Boolean)) {
-          execSync(`docker rmi "${img}"`, { timeout: 30000, stdio: "ignore" });
+          execSync(`${DOCKER_BIN} rmi "${img}"`, { timeout: 30000, stdio: "ignore" });
         }
       }
     } catch {
@@ -338,7 +346,7 @@ async function startTools(projectName, envVars, toolsPorts = {}) {
   if (projectName) buildArgs.push("-p", projectName);
   buildArgs.push("build");
   await new Promise((resolve, reject) => {
-    const proc = spawn("docker", buildArgs, {
+    const proc = spawn(DOCKER_BIN, buildArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -355,7 +363,7 @@ async function startTools(projectName, envVars, toolsPorts = {}) {
   // Start tools (optionally skip L1 explorer for external L1)
   const upArgs = buildToolsUpArgs(toolsCompose, toolsPorts, projectName);
   await new Promise((resolve, reject) => {
-    const proc = spawn("docker", upArgs, {
+    const proc = spawn(DOCKER_BIN, upArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -387,7 +395,7 @@ async function buildTools(projectName, toolsPorts = {}) {
   if (projectName) buildArgs.push("-p", projectName);
   buildArgs.push("build");
   await new Promise((resolve, reject) => {
-    const proc = spawn("docker", buildArgs, {
+    const proc = spawn(DOCKER_BIN, buildArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -426,7 +434,7 @@ async function restartTools(projectName, envVars, toolsPorts = {}) {
   if (projectName) downArgs.push("-p", projectName);
   downArgs.push("down", "--remove-orphans");
   await new Promise((resolve) => {
-    const proc = spawn("docker", downArgs, {
+    const proc = spawn(DOCKER_BIN, downArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -438,7 +446,7 @@ async function restartTools(projectName, envVars, toolsPorts = {}) {
   // Start without build
   const restartUpArgs = buildToolsUpArgs(toolsCompose, toolsPorts, projectName);
   await new Promise((resolve, reject) => {
-    const proc = spawn("docker", restartUpArgs, {
+    const proc = spawn(DOCKER_BIN, restartUpArgs, {
       cwd: l2Dir,
       env: { ...process.env, ...toolsEnv },
       stdio: "pipe",
@@ -468,7 +476,7 @@ async function getToolsLogs(projectName, service, tail = 100) {
   const env = toolsEnvFile ? { ...process.env, TOOLS_ENV_FILE: toolsEnvFile } : undefined;
 
   return new Promise((resolve) => {
-    const proc = spawn("docker", args, { cwd: l2Dir, env, stdio: "pipe" });
+    const proc = spawn(DOCKER_BIN, args, { cwd: l2Dir, env, stdio: "pipe" });
     let stdout = "";
     if (proc.stdout) proc.stdout.on("data", (d) => (stdout += d));
     if (proc.stderr) proc.stderr.on("data", (d) => (stdout += d));
@@ -488,7 +496,7 @@ function streamToolsLogs(projectName, service) {
 
   const toolsEnvFile = resolveToolsEnvFile(projectName);
   const env = toolsEnvFile ? { ...process.env, TOOLS_ENV_FILE: toolsEnvFile } : undefined;
-  return spawn("docker", args, { cwd: l2Dir, env, stdio: "pipe" });
+  return spawn(DOCKER_BIN, args, { cwd: l2Dir, env, stdio: "pipe" });
 }
 
 /** Resolve the per-deployment tools env file path for a given project name */
@@ -514,7 +522,7 @@ async function getToolsStatus(projectName) {
 
   try {
     const result = await new Promise((resolve, reject) => {
-      const proc = spawn("docker", args, {
+      const proc = spawn(DOCKER_BIN, args, {
         cwd: l2Dir,
         env: { ...process.env, ...env },
         stdio: "pipe",
@@ -550,7 +558,7 @@ async function stopTools(projectName) {
   const env = toolsEnvFile ? { TOOLS_ENV_FILE: toolsEnvFile } : {};
 
   await new Promise((resolve) => {
-    const proc = spawn("docker", args, {
+    const proc = spawn(DOCKER_BIN, args, {
       cwd: l2Dir,
       env: { ...process.env, ...env },
       stdio: "pipe",
@@ -563,7 +571,7 @@ async function stopTools(projectName) {
 /** Check if Docker daemon is available */
 function isDockerAvailable() {
   try {
-    execSync("docker info", { stdio: "ignore", timeout: 5000 });
+    execSync(`${DOCKER_BIN} info`, { stdio: "ignore", timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -588,12 +596,12 @@ function findImage(programSlug) {
   }
   try {
     // First check shared name: tokamak-appchain:{slug}
-    const shared = execSync(`docker image inspect "tokamak-appchain:${programSlug}" --format "{{.Id}}"`, { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] });
+    const shared = execSync(`${DOCKER_BIN} image inspect "tokamak-appchain:${programSlug}" --format "{{.Id}}"`, { timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] });
     if (shared.toString().trim()) return `tokamak-appchain:${programSlug}`;
   } catch {}
   try {
     // Then check any project-specific name: tokamak-appchain:{slug}-*
-    const result = execSync(`docker images --filter "reference=tokamak-appchain:${programSlug}-*" --format "{{.Repository}}:{{.Tag}}"`, { timeout: 10000 });
+    const result = execSync(`${DOCKER_BIN} images --filter "reference=tokamak-appchain:${programSlug}-*" --format "{{.Repository}}:{{.Tag}}"`, { timeout: 10000 });
     const first = result.toString().trim().split("\n").filter(Boolean)[0];
     if (first) return first;
   } catch {}
