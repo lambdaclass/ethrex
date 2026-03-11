@@ -265,11 +265,28 @@ function renderPrograms() {
 
 function filterPrograms() { renderPrograms(); }
 
-function selectProgram(id) {
+async function selectProgram(id) {
   selectedProgram = programs.find(p => p.id === id);
   if (!selectedProgram) return;
   document.getElementById('launch-name').value = `${selectedProgram.name} L2`;
-  document.getElementById('launch-chain-id').value = Math.floor(Math.random() * 90000) + 10000;
+  // Fetch a unique L2 chain ID from the server
+  const chainIdInput = document.getElementById('launch-chain-id');
+  let chainId;
+  try {
+    const res = await fetch(`${API}/deployments/next-chain-id`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Number.isFinite(data.chainId)) {
+        chainId = data.chainId;
+      }
+    }
+  } catch (_) { /* fallback below */ }
+  if (Number.isFinite(chainId)) {
+    chainIdInput.value = chainId;
+  } else {
+    chainIdInput.value = '';
+    chainIdInput.placeholder = 'Could not fetch ID. Please enter manually.';
+  }
   launchGoStep(2);
 }
 

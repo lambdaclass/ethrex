@@ -17,7 +17,7 @@ const {
   cancelProvision,
   getActiveProvisions,
 } = require("../lib/deployment-engine");
-const { getDeployEvents } = require("../db/deployments");
+const { getDeployEvents, getNextAvailableL2ChainId } = require("../db/deployments");
 const docker = require("../lib/docker-local");
 const remote = require("../lib/docker-remote");
 const { getDeploymentDir } = require("../lib/compose-generator");
@@ -31,6 +31,15 @@ const fs = require("fs");
 // ==========================================
 // CRUD (local — no auth required)
 // ==========================================
+
+// GET /api/deployments/next-chain-id — get a unique L2 chain ID
+router.get("/next-chain-id", (req, res) => {
+  try {
+    res.json({ chainId: getNextAvailableL2ChainId() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // POST /api/deployments — create a new deployment
 router.post("/", (req, res) => {

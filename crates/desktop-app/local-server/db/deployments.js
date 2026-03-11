@@ -132,8 +132,43 @@ function clearDeployEvents(deploymentId) {
   db.prepare(`DELETE FROM deploy_events WHERE deployment_id = ?`).run(deploymentId);
 }
 
+/**
+ * Generate a unique L2 chain ID that doesn't conflict with existing deployments.
+ * Uses range 65537000+ (above the default 65536999) with random offset.
+ */
+function getNextAvailableL2ChainId() {
+  const BASE = 65537000;
+  const existing = db.prepare(
+    `SELECT chain_id FROM deployments WHERE chain_id IS NOT NULL`
+  ).all().map(r => r.chain_id);
+  const usedSet = new Set(existing);
+  // Also exclude the hardcoded default
+  usedSet.add(65536999);
+
+  // Random selection with collision avoidance
+  const RANGE = 900000;
+  const MAX_RANDOM_ATTEMPTS = 10000;
+  let chainId;
+  let attempts = 0;
+  do {
+    chainId = BASE + Math.floor(Math.random() * RANGE);
+    attempts++;
+  } while (usedSet.has(chainId) && attempts < MAX_RANDOM_ATTEMPTS);
+
+  if (usedSet.has(chainId)) {
+    // Fallback: sequential scan for guaranteed uniqueness
+    for (let i = 0; i < RANGE; i++) {
+      const candidate = BASE + i;
+      if (!usedSet.has(candidate)) return candidate;
+    }
+    throw new Error("No available L2 chain IDs in range");
+  }
+  return chainId;
+}
+
 module.exports = {
   createDeployment, getDeploymentById, getAllDeployments,
   updateDeployment, deleteDeployment, getNextAvailablePorts,
+  getNextAvailableL2ChainId,
   insertDeployEvent, getDeployEvents, clearDeployEvents,
 };
