@@ -8,7 +8,7 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{self, Decoder, Encoder},
 };
-use secp256k1::{PublicKey, SecretKey};
+use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
 use serde::{Deserialize, Serialize, ser::Serializer};
 use std::net::Ipv6Addr;
 use std::{
@@ -184,6 +184,10 @@ impl Node {
     pub fn from_enr_url(enr: &str) -> Result<Self, NodeError> {
         let base64_decoded = ethrex_common::base64::decode(&enr.as_bytes()[4..]);
         let record = NodeRecord::decode(&base64_decoded).map_err(NodeError::from)?;
+        Node::from_enr(&record)
+    }
+
+    pub fn from_enr(record: &NodeRecord) -> Result<Self, NodeError> {
         let pairs = record.decode_pairs();
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
@@ -305,7 +309,7 @@ impl NodeRecord {
                     let Ok(bytes) = Bytes::decode(&value) else {
                         continue;
                     };
-                    if bytes.len() < 33 {
+                    if bytes.len() != 33 {
                         continue;
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
@@ -408,6 +412,32 @@ impl NodeRecord {
             .finish();
         keccak_hash(&rlp)
     }
+
+    /// Verifies the ENR signature using the embedded public key.
+    /// Returns true if the signature is valid, false otherwise.
+    pub fn verify_signature(&self) -> bool {
+        let pairs = self.decode_pairs();
+        let Some(pubkey_bytes) = pairs.secp256k1 else {
+            return false;
+        };
+
+        let Ok(pubkey) = PublicKey::from_slice(pubkey_bytes.as_bytes()) else {
+            return false;
+        };
+
+        let digest = self.get_signature_digest();
+        let Ok(message) = secp256k1::Message::from_digest_slice(&digest) else {
+            return false;
+        };
+
+        let Ok(signature) = Signature::from_compact(self.signature.as_bytes()) else {
+            return false;
+        };
+
+        secp256k1::SECP256K1
+            .verify_ecdsa(&message, &signature, &pubkey)
+            .is_ok()
+    }
 }
 
 impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
@@ -445,10 +475,10 @@ impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
 
 impl RLPDecode for NodeRecord {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.len() > MAX_NODE_RECORD_ENCODED_SIZE {
+        let decoder = Decoder::new(rlp)?;
+        if decoder.get_payload_len() > MAX_NODE_RECORD_ENCODED_SIZE {
             return Err(RLPDecodeError::InvalidLength);
         }
-        let decoder = Decoder::new(rlp)?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         let (seq, decoder) = decoder.decode_field("seq")?;
         let (pairs, decoder) = decode_node_record_optional_fields(vec![], decoder)?;
@@ -644,5 +674,25 @@ mod tests {
         let pairs = parsed_record.decode_pairs();
 
         assert_eq!(pairs.eth, Some(fork_id));
+    }
+
+    #[test]
+    fn verify_enr_signature_valid() {
+        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
+        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
+        let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+        let record = NodeRecord::decode(&base64_decoded).unwrap();
+        assert!(record.verify_signature());
+    }
+
+    #[test]
+    fn verify_enr_signature_invalid() {
+        // Use a valid ENR and tamper with the signature
+        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
+        let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+        let mut record = NodeRecord::decode(&base64_decoded).unwrap();
+        // Tamper with the signature
+        record.signature = ethrex_common::H512::zero();
+        assert!(!record.verify_signature());
     }
 }

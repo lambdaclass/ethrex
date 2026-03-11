@@ -8,6 +8,52 @@ import {ICommonBridge} from "./ICommonBridge.sol";
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
 /// by the proposer to commit batches of l2 blocks and verify proofs.
 interface IOnChainProposer {
+    // Initialization errors
+    error MissingRisc0Verifier(); // 0x1871c084
+    error MissingSp1Verifier(); // 0xc0b62621
+    error MissingTdxVerifier(); // 0xee7f6b60
+    error AlignedModeRequiresSp1(); // 0xb41e395e
+    error AlignedModeDoesNotSupportRisc0(); // 0xadae5cff
+    error CommitHashIsZero(); // 0x1f14b5aa
+    error MissingSp1VerificationKey(); // 0x544c07b4
+    error MissingRisc0VerificationKey(); // 0x60c177e0
+    error BridgeIsZeroAddress(); // 0x850138f2
+    error BridgeIsContractAddress(); // 0xdf655de9
+
+    // Commit errors
+    error BatchNumberNotSuccessor(); // 0xcd1793fe
+    error BatchAlreadyCommitted(); // 0x884923cf
+    error LastBlockHashIsZero(); // 0xf1cbbe55
+    error InvalidPrivilegedTransactionLogs(); // 0x9e6e5638
+    error InvalidL2MessageRollingHash(); // 0x52ba57cb
+    error ValidiumBlobPublished(); // 0x0c9c8061
+    error RollupBlobNotPublished(); // 0xe1aa9667
+    error MissingVerificationKeyForCommit(); // 0xf6b9798e
+
+    // Verify errors
+    error UseAlignedVerification(); // 0x2da8b4d4
+    error UseSmartContractVerification(); // 0xc8d8ecb9
+    error BatchNotSequential(); // 0xceb05a46
+    error BatchNotCommitted(); // 0xc26a3294
+    error EmptyBatchArray(); // 0x7dc57e7b
+    error BatchArrayLengthMismatch(); // 0xfc5221bd
+    error ExpiredPrivilegedTransactionDeadline(); // 0x1420ad0b
+    error InvalidRisc0Proof(); // 0x14add973
+    error InvalidSp1Proof(); // 0x7ff849b5
+    error InvalidTdxProof(); // 0x62013a95
+
+    // Aligned verify errors
+    error IncorrectFirstBatchNumber(); // 0x5f83abb8
+    error LastBatchExceedsCommitted(); // 0xfbd95da9
+    error Sp1ProofArrayLengthMismatch(); // 0xc1af923d
+    error Risc0ProofArrayLengthMismatch(); // 0x60fecd3e
+    error AlignedAggregatorCallFailed(); // 0x63934992
+    error AlignedProofVerificationFailed(); // 0x44602025
+
+    // Revert errors
+    error CannotRevertVerifiedBatch(); // 0xdb2665e8
+    error NoBatchesToRevert(); // 0xcd988645
+
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.
     function lastCommittedBatch() external view returns (uint256);
@@ -39,13 +85,6 @@ interface IOnChainProposer {
         bytes32 commitHash,
         bytes32 newVerificationKey
     );
-
-    /// @notice Set the bridge address for the first time.
-    /// @dev This method is separated from initialize because both the CommonBridge
-    /// and the OnChainProposer need to know the address of the other. This solves
-    /// the circular dependency while allowing to initialize the proxy with the deploy.
-    /// @param bridge the address of the bridge contract.
-    function initializeBridgeAddress(address bridge) external;
 
     /// @notice Upgrades the SP1 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for SP1 verifier
@@ -89,30 +128,16 @@ interface IOnChainProposer {
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
 
-    /// @notice Method used to verify a batch of L2 blocks.
-    /// @dev This method is used by the operator when a batch is ready to be
-    /// verified (this is after proved).
-    /// @param batchNumber is the number of the batch to be verified.
-    /// ----------------------------------------------------------------------
-    /// @param risc0BlockProof is the proof of the batch to be verified.
-    /// @param risc0Journal public_inputs aka journal
-    /// ----------------------------------------------------------------------
-    /// @param sp1PublicValues Values used to perform the execution
-    /// @param sp1ProofBytes Groth16 proof
-    /// ----------------------------------------------------------------------
-    /// @param tdxPublicValues Values used to perform the execution
-    /// @param tdxSignature TDX signature
-    function verifyBatch(
-        uint256 batchNumber,
-        //risc0
-        bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
-        //sp1
-        bytes calldata sp1PublicValues,
-        bytes memory sp1ProofBytes,
-        //tdx
-        bytes calldata tdxPublicValues,
-        bytes memory tdxSignature
+    /// @notice Method used to verify one or more consecutive L2 batches in a single transaction.
+    /// @param firstBatchNumber The batch number of the first batch to verify. Must be `lastVerifiedBatch + 1`.
+    /// @param risc0BlockProofs An array of RISC0 proofs, one per batch.
+    /// @param sp1ProofsBytes An array of SP1 proofs, one per batch.
+    /// @param tdxSignatures An array of TDX signatures, one per batch.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external;
 
     // TODO: imageid, programvkey and riscvvkey should be constants
@@ -121,17 +146,19 @@ interface IOnChainProposer {
     /// @notice Method used to verify a sequence of L2 batches in Aligned, starting from `firstBatchNumber`.
     /// Each proof corresponds to one batch, and batch numbers must increase by 1 sequentially.
     /// @param firstBatchNumber The batch number of the first proof to verify. Must be `lastVerifiedBatch + 1`.
-    /// @param publicInputsList An array of public input bytes, one per proof.
+    /// @param lastBatchNumber The batch number of the last proof to verify. Must be `lastBatchNumber <= lastCommittedBatch`.
     /// @param sp1MerkleProofsList An array of Merkle proofs (sibling hashes), one per SP1 proof.
     /// @param risc0MerkleProofsList An array of Merkle proofs (sibling hashes), one per Risc0 proof.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata publicInputsList,
+        uint256 lastBatchNumber,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external;
 
     /// @notice Allows unverified batches to be reverted
+    /// @param batchNumber the number of the batch to revert. The commitment for that batch
+    /// and for all subsequent batches will be removed. The batch can only be reverted if it is not verified.
     function revertBatch(uint256 batchNumber) external;
 
     /// @notice Allows the owner to pause the contract

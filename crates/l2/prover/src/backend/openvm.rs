@@ -1,98 +1,125 @@
-use crate::ProofFormat;
-use guest_program::input::ProgramInput;
+use std::time::{Duration, Instant};
+
+use ethrex_guest_program::input::ProgramInput;
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use openvm_continuations::verifier::internal::types::VmStarkProof;
 use openvm_sdk::{Sdk, StdIn, types::EvmProof};
 use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2Config;
 use rkyv::rancor::Error;
 
-static PROGRAM_ELF: &[u8] = include_bytes!("../guest_program/src/openvm/out/riscv32im-openvm-elf");
+use crate::backend::{BackendError, ProverBackend};
 
-pub enum ProveOutput {
+static PROGRAM_ELF: &[u8] =
+    include_bytes!("../../../../guest-program/bin/openvm/out/riscv32im-openvm-elf");
+
+/// OpenVM-specific proof output.
+pub enum OpenVmProveOutput {
     Compressed(VmStarkProof<BabyBearPoseidon2Config>),
     Groth16(EvmProof),
 }
 
-pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
-    let sdk = Sdk::standard();
+/// OpenVM prover backend.
+#[derive(Default)]
+pub struct OpenVmBackend;
 
-    let mut stdin = StdIn::default();
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
-    stdin.write_bytes(bytes.as_slice());
+impl OpenVmBackend {
+    pub fn new() -> Self {
+        Self
+    }
 
-    sdk.execute(PROGRAM_ELF, stdin.clone())?;
+    /// Execute using already-serialized input.
+    fn execute_with_stdin(&self, stdin: StdIn) -> Result<(), BackendError> {
+        let sdk = Sdk::standard();
+        sdk.execute(PROGRAM_ELF, stdin)
+            .map_err(BackendError::execution)?;
+        Ok(())
+    }
 
-    Ok(())
+    /// Prove using already-serialized input.
+    fn prove_with_stdin(
+        &self,
+        stdin: StdIn,
+        format: ProofFormat,
+    ) -> Result<OpenVmProveOutput, BackendError> {
+        let sdk = Sdk::standard();
+        let proof = match format {
+            ProofFormat::Compressed => {
+                let (proof, _) = sdk
+                    .prove(PROGRAM_ELF, stdin)
+                    .map_err(BackendError::proving)?;
+                OpenVmProveOutput::Compressed(proof)
+            }
+            ProofFormat::Groth16 => {
+                let proof = sdk
+                    .prove_evm(PROGRAM_ELF, stdin)
+                    .map_err(BackendError::proving)?;
+                OpenVmProveOutput::Groth16(proof)
+            }
+        };
+        Ok(proof)
+    }
 }
 
-pub fn execute_timed(
-    input: ProgramInput,
-) -> Result<std::time::Duration, Box<dyn std::error::Error>> {
-    let sdk = Sdk::standard();
+impl ProverBackend for OpenVmBackend {
+    type ProofOutput = OpenVmProveOutput;
+    type SerializedInput = StdIn;
 
-    let mut stdin = StdIn::default();
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
-    stdin.write_bytes(bytes.as_slice());
+    fn prover_type(&self) -> ProverType {
+        unimplemented!("OpenVM is not yet enabled as a backend for the L2")
+    }
 
-    let start = std::time::Instant::now();
-    sdk.execute(PROGRAM_ELF, stdin.clone())?;
-    let duration = start.elapsed();
+    fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
+        let mut stdin = StdIn::default();
+        let bytes = rkyv::to_bytes::<Error>(input).map_err(BackendError::serialization)?;
+        stdin.write_bytes(bytes.as_slice());
+        Ok(stdin)
+    }
 
-    Ok(duration)
-}
+    fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
+        let stdin = self.serialize_input(&input)?;
+        self.execute_with_stdin(stdin)
+    }
 
-pub fn prove(
-    input: ProgramInput,
-    format: ProofFormat,
-) -> Result<ProveOutput, Box<dyn std::error::Error>> {
-    let sdk = Sdk::standard();
+    fn prove(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
+        let stdin = self.serialize_input(&input)?;
+        self.prove_with_stdin(stdin, format)
+    }
 
-    let mut stdin = StdIn::default();
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
-    stdin.write_bytes(bytes.as_slice());
+    fn verify(&self, _proof: &Self::ProofOutput) -> Result<(), BackendError> {
+        Err(BackendError::not_implemented(
+            "verify is not implemented for OpenVM backend",
+        ))
+    }
 
-    let proof = match format {
-        ProofFormat::Compressed => {
-            let (proof, _) = sdk.prove(PROGRAM_ELF, stdin.clone())?;
-            ProveOutput::Compressed(proof)
-        }
-        ProofFormat::Groth16 => {
-            let proof = sdk.prove_evm(PROGRAM_ELF, stdin.clone())?;
-            ProveOutput::Groth16(proof)
-        }
-    };
+    fn to_batch_proof(
+        &self,
+        _proof: Self::ProofOutput,
+        _format: ProofFormat,
+    ) -> Result<BatchProof, BackendError> {
+        Err(BackendError::not_implemented(
+            "to_batch_proof is not implemented for OpenVM backend",
+        ))
+    }
 
-    Ok(proof)
-}
+    fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
+        let stdin = self.serialize_input(&input)?;
+        let start = Instant::now();
+        self.execute_with_stdin(stdin)?;
+        Ok(start.elapsed())
+    }
 
-pub fn prove_timed(
-    input: ProgramInput,
-    format: ProofFormat,
-) -> Result<(ProveOutput, std::time::Duration), Box<dyn std::error::Error>> {
-    let sdk = Sdk::standard();
-
-    let mut stdin = StdIn::default();
-    let bytes = rkyv::to_bytes::<Error>(&input)?;
-    stdin.write_bytes(bytes.as_slice());
-
-    let start = std::time::Instant::now();
-    let proof = match format {
-        ProofFormat::Compressed => {
-            let (proof, _) = sdk.prove(PROGRAM_ELF, stdin.clone())?;
-            ProveOutput::Compressed(proof)
-        }
-        ProofFormat::Groth16 => {
-            let proof = sdk.prove_evm(PROGRAM_ELF, stdin.clone())?;
-            ProveOutput::Groth16(proof)
-        }
-    };
-    let duration = start.elapsed();
-
-    Ok((proof, duration))
-}
-
-pub fn to_batch_proof(
-    _proof: ProveOutput,
-    _format: ProofFormat,
-) -> Result<ethrex_l2_common::prover::BatchProof, Box<dyn std::error::Error>> {
-    unimplemented!("OpenVM to_batch_proof is not implemented yet");
+    fn prove_timed(
+        &self,
+        input: ProgramInput,
+        format: ProofFormat,
+    ) -> Result<(Self::ProofOutput, Duration), BackendError> {
+        let stdin = self.serialize_input(&input)?;
+        let start = Instant::now();
+        let proof = self.prove_with_stdin(stdin, format)?;
+        Ok((proof, start.elapsed()))
+    }
 }

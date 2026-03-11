@@ -2,7 +2,6 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     sequencer::{
         errors::CommitterError,
-        sequencer_state::{SequencerState, SequencerStatus},
         utils::{
             self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
             get_git_commit_hash, system_now_ms,
@@ -22,6 +21,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,
@@ -101,6 +101,7 @@ pub struct L1Committer {
     eth_client: EthClient,
     blockchain: Arc<Blockchain>,
     on_chain_proposer_address: Address,
+    timelock_address: Option<Address>,
     store: Store,
     rollup_store: StoreRollup,
     commit_time_ms: u64,
@@ -205,6 +206,7 @@ impl L1Committer {
             eth_client,
             blockchain,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
+            timelock_address: committer_config.timelock_address,
             store,
             rollup_store,
             commit_time_ms: committer_config.commit_time_ms,
@@ -556,7 +558,7 @@ impl L1Committer {
                 *fee_config_guard = *fee_config;
             }
 
-            one_time_checkpoint_blockchain.add_block_pipeline(block.clone())?;
+            one_time_checkpoint_blockchain.add_block_pipeline(block.clone(), None)?;
         }
 
         Ok(())
@@ -817,6 +819,8 @@ impl L1Committer {
                     BlockExecutionResult {
                         receipts,
                         requests: vec![],
+                        // Use the block header's gas_used
+                        block_gas_used: potential_batch_block.header.gas_used,
                     },
                 )?;
             } else {
@@ -851,7 +855,7 @@ impl L1Committer {
                     *fee_config_guard = fee_config;
                 }
 
-                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?
+                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone(), None)?
             };
 
             // Accumulate block data with the rest of the batch.
@@ -969,7 +973,7 @@ impl L1Committer {
             #[allow(clippy::as_conversions)]
             let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
             let batch_gas_used = batch_gas_used.try_into()?;
-            let batch_size = (last_added_block_number - first_block_of_batch).try_into()?;
+            let batch_size = (last_added_block_number - first_block_of_batch + 1).try_into()?;
             let tx_count = tx_count.try_into()?;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
@@ -1272,6 +1276,15 @@ impl L1Committer {
                 CommitterError::ConversionError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
+        let target_address = if !self.based {
+            self.timelock_address
+                .ok_or(CommitterError::UnexpectedError(
+                    "Timelock address is not set".to_string(),
+                ))?
+        } else {
+            self.on_chain_proposer_address
+        };
+
         // Validium: EIP1559 Transaction.
         // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
         let tx = if !self.validium {
@@ -1289,7 +1302,7 @@ impl L1Committer {
             build_generic_tx(
                 &self.eth_client,
                 TxType::EIP4844,
-                self.on_chain_proposer_address,
+                target_address,
                 self.signer.address(),
                 calldata.into(),
                 Overrides {
@@ -1309,7 +1322,7 @@ impl L1Committer {
             build_generic_tx(
                 &self.eth_client,
                 TxType::EIP1559,
-                self.on_chain_proposer_address,
+                target_address,
                 self.signer.address(),
                 calldata.into(),
                 Overrides {
@@ -1385,7 +1398,7 @@ impl L1Committer {
             arbitrary_base_blob_gas_price: self.arbitrary_base_blob_gas_price,
             validium: self.validium,
             based: self.based,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             committer_wake_up_ms: self.committer_wake_up_ms,
             last_committed_batch_timestamp: self.last_committed_batch_timestamp,
             last_committed_batch: self.last_committed_batch,
@@ -1396,7 +1409,7 @@ impl L1Committer {
     }
 
     async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                     .await
@@ -1584,15 +1597,14 @@ async fn estimate_blob_gas(
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
     let blob_gas = fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
-        U256::from(total_blob_gas),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        total_blob_gas.into(),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
 
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
-    // Check if we have an overflow when we take the headroom into account.
     let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;
@@ -1665,7 +1677,7 @@ pub async fn regenerate_state(
             *fee_config_guard = fee_config;
         }
 
-        if let Err(err) = blockchain.add_block_pipeline(block) {
+        if let Err(err) = blockchain.add_block_pipeline(block, None) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
     }

@@ -1,11 +1,7 @@
-use crate::discv4::server::lookup_interval_function;
+use crate::discv4::server::{LOOKUP_INTERVAL_MS, lookup_interval_function};
+use crate::peer_table::PeerTableError;
 use crate::types::Node;
-use crate::{
-    discv4::{peer_table::PeerTableError, server::LOOKUP_INTERVAL_MS},
-    metrics::METRICS,
-    network::P2PContext,
-    rlpx::connection::server::PeerConnection,
-};
+use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
 use spawned_concurrency::{
     messages::Unused,
     tasks::{CastResponse, GenServer, GenServerHandle, InitResult, send_after, send_message_on},

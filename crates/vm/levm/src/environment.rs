@@ -8,9 +8,9 @@ use crate::constants::{
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
 };
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
-pub type TransientStorage = HashMap<(Address, U256), U256>;
+pub type TransientStorage = FxHashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 /// Environmental information that the execution agent must provide.
@@ -20,18 +20,19 @@ pub struct Environment {
     /// Gas limit of the Transaction
     pub gas_limit: u64,
     pub config: EVMConfig,
-    pub block_number: U256,
-    /// Coinbase is the block's beneficiary - the address that receives the block rewards (priority fees).
+    pub block_number: u64,
+    /// Coinbase is the block's beneficiary - the address that receives the block rewards and fees.
     pub coinbase: Address,
-    pub timestamp: U256,
+    pub timestamp: u64,
     pub prev_randao: Option<H256>,
     pub difficulty: U256,
+    pub slot_number: U256,
     pub chain_id: U256,
     pub base_fee_per_gas: U256,
     pub base_blob_fee_per_gas: U256,
     pub gas_price: U256, // Effective gas price
-    pub block_excess_blob_gas: Option<U256>,
-    pub block_blob_gas_used: Option<U256>,
+    pub block_excess_blob_gas: Option<u64>,
+    pub block_blob_gas_used: Option<u64>,
     pub tx_blob_hashes: Vec<H256>,
     pub tx_max_priority_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_gas: Option<U256>,
@@ -40,6 +41,9 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub is_privileged: bool,
     pub fee_token: Option<Address>,
+    /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
+    /// to avoid early reverts on insufficient balance so that warming touches more storage.
+    pub disable_balance_check: bool,
 }
 
 /// This struct holds special configuration variables specific to the

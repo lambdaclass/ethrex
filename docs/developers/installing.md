@@ -23,7 +23,7 @@ To build the client run
 cargo build --release --bin ethrex
 ```
 
-the following feature can be enable with `--features <features>`
+the following features can be enabled with `--features <features>`
 
 |Feature|Description|
 |-------|-----------|
@@ -50,8 +50,17 @@ The Dockerfile is located at the root of the repository and can be built by runn
 docker build -t ethrex .
 ```
 
-The `BUILD_FLAGS` argument can be used to pass flags to cargo, for example
+Build arguments:
+- `PROFILE`: Cargo profile to use (default: `release`). Example: `release-with-debug-assertions`
+- `BUILD_FLAGS`: Additional cargo flags (features, etc.)
 
 ```
-docker build -t ethrex --build-arg BUILD_FLAGS="--features <features>" .
+# Custom profile
+docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" .
+
+# With features
+docker build -t ethrex --build-arg BUILD_FLAGS="--features l2" .
+
+# Both
+docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --build-arg BUILD_FLAGS="--features l2" .
 ```

@@ -51,7 +51,7 @@ fn count_crates_loc(crates_path: &PathBuf, config: &Config) -> Vec<(String, usiz
 
 fn count_loc(path: PathBuf, config: &Config) -> Option<Language> {
     let mut languages = Languages::new();
-    languages.get_statistics(&[path], &["tests"], config);
+    languages.get_statistics(&[path], &["tests", "test", "tooling", "benches"], config);
     languages.get(&LanguageType::Rust).cloned()
 }
 
@@ -71,10 +71,17 @@ fn main() {
 
     let config = Config::default();
 
-    let ethrex_loc = count_loc(ethrex_path, &config).unwrap();
+    let ethrex_loc = count_loc(ethrex_path.clone(), &config).unwrap();
     let levm_loc = count_loc(levm_path, &config).unwrap();
     let ethrex_l2_loc = count_loc(ethrex_l2_path, &config).unwrap();
-    let ethrex_crates_loc = count_crates_loc(&ethrex_crates_path, &config);
+    let mut ethrex_crates_loc = count_crates_loc(&ethrex_crates_path, &config);
+
+    // Also include cmd/ in the breakdown (counted in ethrex_l1 but outside crates/)
+    if let Some(cmd_loc) = count_loc(ethrex_path.join("cmd"), &config) {
+        ethrex_crates_loc.push(("cmd".to_owned(), cmd_loc.code));
+        ethrex_crates_loc.sort_by_key(|(_name, loc)| *loc);
+        ethrex_crates_loc.reverse();
+    }
 
     spinner.success("Lines of code calculated!");
 

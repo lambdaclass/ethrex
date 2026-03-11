@@ -1,6 +1,6 @@
 # Ethereum foundation tests
 
-These are the official execution spec tests there two kinds `state tests` and `blockchain tests`, you can execute them with:
+These are the official execution spec tests. There are two kinds: `state tests` and `blockchain tests`, you can execute them with:
 
 ### State tests
 
