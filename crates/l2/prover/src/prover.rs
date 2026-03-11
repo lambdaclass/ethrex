@@ -227,7 +227,7 @@ impl<B: ProverBackend> Prover<B> {
                 .await
                 .map_err(|e| format!("Failed to get SubmitAck: {e}"))?
         else {
-            return Err("Expecting ProofData::SubmitAck".to_owned());
+            return Err("Expecting ProofData::ProofSubmitACK".to_owned());
         };
 
         info!(%endpoint, "Received submit ack for batch_number: {batch_number}");
