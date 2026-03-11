@@ -287,20 +287,17 @@ impl LEVM {
                             &validation_index.accounts_by_min_index,
                         )
                         .is_ok()
+                            && let VMType::L1 = vm_type
+                            && let Err(e @ EvmError::SystemContractCallFailed(_)) =
+                                extract_all_requests_levm(
+                                    &[],
+                                    db,
+                                    &block.header,
+                                    vm_type,
+                                    crypto,
+                                )
                         {
-                            if let VMType::L1 = vm_type {
-                                if let Err(e @ EvmError::SystemContractCallFailed(_)) =
-                                    extract_all_requests_levm(
-                                        &[],
-                                        db,
-                                        &block.header,
-                                        vm_type,
-                                        crypto,
-                                    )
-                                {
-                                    return Err(e);
-                                }
-                            }
+                            return Err(e);
                         }
                         return Err(parallel_err);
                     }
@@ -991,7 +988,7 @@ impl LEVM {
                 current_state,
                 codes,
                 bal,
-                &validation_index,
+                validation_index,
                 &system_seed,
                 &store,
             )
