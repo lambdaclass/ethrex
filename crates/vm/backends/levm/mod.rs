@@ -289,13 +289,7 @@ impl LEVM {
                         .is_ok()
                             && let VMType::L1 = vm_type
                             && let Err(e @ EvmError::SystemContractCallFailed(_)) =
-                                extract_all_requests_levm(
-                                    &[],
-                                    db,
-                                    &block.header,
-                                    vm_type,
-                                    crypto,
-                                )
+                                extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
                         {
                             return Err(e);
                         }

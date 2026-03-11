@@ -215,6 +215,12 @@ pub struct PayloadBuildContext {
     /// Cumulative gas spent (post-refund) for receipt tracking.
     /// Per EIP-7778 this differs from `remaining_gas` which tracks pre-refund gas.
     pub cumulative_gas_spent: u64,
+    /// EIP-8037 (Amsterdam+): cumulative regular (non-state) gas used.
+    pub block_regular_gas_used: u64,
+    /// EIP-8037 (Amsterdam+): cumulative state gas used.
+    pub block_state_gas_used: u64,
+    /// Whether Amsterdam fork is active for this block.
+    pub is_amsterdam: bool,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -257,10 +263,14 @@ impl PayloadBuildContext {
             vm.set_bal_index(0);
         }
 
+        let is_amsterdam = config.is_amsterdam_activated(payload.header.timestamp);
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
+            is_amsterdam,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -278,7 +288,12 @@ impl PayloadBuildContext {
     }
 
     pub fn gas_used(&self) -> u64 {
-        self.payload.header.gas_limit - self.remaining_gas
+        if self.is_amsterdam {
+            // EIP-8037: block gas = max(sum_regular, sum_state)
+            self.block_regular_gas_used.max(self.block_state_gas_used)
+        } else {
+            self.payload.header.gas_limit - self.remaining_gas
+        }
     }
 }
 
@@ -425,7 +440,6 @@ impl Blockchain {
     /// Completes the payload building process, return the block value
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
-        let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
@@ -463,7 +477,8 @@ impl Blockchain {
         );
         metrics!(METRICS_BLOCKS.set_block_building_ms(interval as i64));
         metrics!(METRICS_BLOCKS.set_block_building_base_fee(base_fee as i64));
-        if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
+        let gas_used = context.gas_used();
+        if gas_used > 0 {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
@@ -760,7 +775,7 @@ impl Blockchain {
             .requests
             .as_ref()
             .map(|requests| compute_requests_hash(requests));
-        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        context.payload.header.gas_used = context.gas_used();
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
@@ -785,15 +800,26 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (receipt, gas_spent) = context.vm.execute_tx(
+    let (receipt, report) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
-        &mut context.remaining_gas,
         &mut context.cumulative_gas_spent,
         head.tx.sender(),
     )?;
+
+    // EIP-8037 (Amsterdam+): track regular and state gas separately
+    let tx_state_gas = report.state_gas_used;
+    let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
+    context.block_regular_gas_used = context
+        .block_regular_gas_used
+        .saturating_add(tx_regular_gas);
+    context.block_state_gas_used = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    // Update remaining_gas using gas_used (pre-refund) for block gas limit checks
+    context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
+
     // Block value uses gas_spent (what the user actually pays) for tip calculation
-    context.block_value += U256::from(gas_spent) * head.tip;
+    context.block_value += U256::from(report.gas_spent) * head.tip;
     Ok(receipt)
 }
 
