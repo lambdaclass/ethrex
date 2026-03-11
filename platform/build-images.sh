@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./build-images.sh          # Build L1 + L2 images locally
-#   ./build-images.sh --push   # Build and push to registry
+#   ./build-images.sh --push   # Build and push to registry (multi-platform)
 #
 # Images built:
 #   tokamak-appchain:l1    — L1 node
@@ -15,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ETHREX_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REGISTRY="${ETHREX_IMAGE_REGISTRY:-}"
+PLATFORMS="${ETHREX_IMAGE_PLATFORMS:-linux/amd64,linux/arm64}"
 
 PUSH=false
 if [[ "${1:-}" == "--push" ]]; then
@@ -42,28 +43,40 @@ echo "==> Building platform images from $ETHREX_ROOT"
 echo "    L1:  $L1_IMAGE"
 echo "    L2:  $L2_IMAGE"
 echo "    SP1: $SP1_IMAGE"
+
+if $PUSH; then
+  echo "    Platforms: $PLATFORMS"
+fi
+
 echo ""
 
-echo "==> Building L1 image..."
-docker build \
-  -f "$SCRIPT_DIR/Dockerfile" \
-  --target l1 \
-  -t "$L1_IMAGE" \
-  "$ETHREX_ROOT"
+build_image() {
+  local target="$1"
+  local image="$2"
 
-echo "==> Building L2 image..."
-docker build \
-  -f "$SCRIPT_DIR/Dockerfile" \
-  --target l2 \
-  -t "$L2_IMAGE" \
-  "$ETHREX_ROOT"
+  echo "==> Building $target image..."
+  if $PUSH; then
+    # Multi-platform build + push in one step (required for multi-arch manifests)
+    docker buildx build \
+      --platform "$PLATFORMS" \
+      -f "$SCRIPT_DIR/Dockerfile" \
+      --target "$target" \
+      -t "$image" \
+      --push \
+      "$ETHREX_ROOT"
+  else
+    # Local build (single platform, current arch)
+    docker build \
+      -f "$SCRIPT_DIR/Dockerfile" \
+      --target "$target" \
+      -t "$image" \
+      "$ETHREX_ROOT"
+  fi
+}
 
-echo "==> Building SP1 image..."
-docker build \
-  -f "$SCRIPT_DIR/Dockerfile" \
-  --target sp1 \
-  -t "$SP1_IMAGE" \
-  "$ETHREX_ROOT"
+build_image l1  "$L1_IMAGE"
+build_image l2  "$L2_IMAGE"
+build_image sp1 "$SP1_IMAGE"
 
 echo ""
 echo "==> Images built successfully!"
@@ -73,11 +86,8 @@ echo "    $SP1_IMAGE"
 
 if $PUSH; then
   echo ""
-  echo "==> Pushing images to $REGISTRY..."
-  docker push "$L1_IMAGE"
-  docker push "$L2_IMAGE"
-  docker push "$SP1_IMAGE"
-  echo "==> Push complete!"
+  echo "==> Multi-platform images pushed to $REGISTRY"
+  echo "    Platforms: $PLATFORMS"
 fi
 
 echo ""
