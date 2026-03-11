@@ -240,11 +240,11 @@ impl LEVM {
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
             // Validate header BAL structural properties before execution.
-            // This catches index-out-of-bounds and size violations that would otherwise
-            // only surface as INVALID_STATE_ROOT after merkleization.
+            // This catches index-out-of-bounds early, before wasting execution time.
+            // Note: size cap validation is deferred until after transaction processing
+            // so that transaction-level errors (e.g. gas allowance exceeded) take
+            // priority, matching the reference implementation's validation order.
             validate_header_bal_indices(bal, block.body.transactions.len())
-                .map_err(|e| EvmError::Custom(e.to_string()))?;
-            validate_block_access_list_size(&block.header, &chain_config, bal)
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             // No BAL recording needed: we have the header BAL, not building a new one
@@ -376,6 +376,11 @@ impl LEVM {
                      and no storage reads but was never accessed during block execution"
                 )));
             }
+
+            // EIP-7928 size cap: validated after execution so that transaction-level
+            // errors (e.g. gas allowance exceeded) take priority.
+            validate_block_access_list_size(&block.header, &chain_config, bal)
+                .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             return Ok((
                 BlockExecutionResult {
