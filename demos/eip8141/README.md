@@ -30,7 +30,7 @@ Browser (React + WebAuthn)         http://localhost:5173
                                |
                                +---> ethrex node (eth_sendRawTransaction)
 
-Blockscout Explorer (optional)     https://localhost:8083 (local) or https://demo.eip-8141.explorer.ethrex.xyz (prod)
+Blockscout Explorer (optional)     https://localhost:8083 (local) or https://<your-domain>:8082 (prod)
     |
     +-- indexes blocks ----> ethrex node
 ```
@@ -100,14 +100,26 @@ cp ethrex-blockscout/frontend/ui/tx/frames/*.tsx blockscout-frontend/ui/tx/frame
 cp ethrex-blockscout/frontend/types/api/transaction.ts blockscout-frontend/types/api/transaction.ts
 ```
 
+**Required ethrex compatibility settings** — add these to `ethrex-blockscout/docker-compose/envs/common-blockscout.env`:
+```
+INDEXER_DISABLE_EMPTY_BLOCKS_SANITIZER=true
+INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER=true
+```
+
+Without these, the Blockscout backend will crash-loop:
+- `EmptyBlocksSanitizer` crashes because ethrex returns `nil` instead of `[]` for the transactions field on empty blocks.
+- `InternalTransactionsFetcher` spams `debug_traceTransaction` errors because ethrex can't trace old blocks.
+
 **For remote/HTTPS deployments**, edit `ethrex-blockscout/docker-compose/envs/common-frontend.env` and update the host/protocol settings:
 ```
-NEXT_PUBLIC_API_HOST=demo.eip-8141.explorer.ethrex.xyz
+NEXT_PUBLIC_API_HOST=demo.eip-8141.ethrex.xyz:8082
 NEXT_PUBLIC_API_PROTOCOL=https
-NEXT_PUBLIC_APP_HOST=demo.eip-8141.explorer.ethrex.xyz
+NEXT_PUBLIC_APP_HOST=demo.eip-8141.ethrex.xyz:8082
 NEXT_PUBLIC_APP_PROTOCOL=https
 NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=wss
 ```
+
+If using a reverse proxy (e.g. Caddy) in front of Blockscout, remap the nginx port to avoid conflicts. In `docker-compose/services/nginx.yml`, change `published: 8082` to a non-conflicting port (e.g. `18082`) and configure the proxy to forward to it. Set `VITE_BLOCKSCOUT_URL` in `frontend/.env` to the public Blockscout URL (e.g. `https://demo.eip-8141.ethrex.xyz:8082`).
 
 Start all services:
 ```bash
@@ -138,7 +150,7 @@ docker compose -f docker-compose/docker-compose.yml down
 
 ### 1. Register a passkey
 
-On the **Simple Send** tab, click **Create Passkey Account**. Your browser prompts for biometric authentication (Touch ID, Face ID, etc.). This creates a P256 key pair and registers it on-chain via the WebAuthnP256Account contract.
+On the **Simple Send** tab, click **Create Passkey Account**. Your browser prompts for biometric authentication (Touch ID, Face ID, etc.). This creates a P256 key pair and deploys a new WebAuthnP256Account contract via the factory.
 
 The account panel on the right shows your account address, ETH balance, and DEMO token balance. The dev account auto-funds new accounts with ETH and 1,000,000 DEMO tokens.
 
@@ -177,11 +189,11 @@ These contracts are injected into `genesis.json` at fixed addresses:
 |----------|---------|-------------|
 | GasSponsor | `0x1000000000000000000000000000000000000001` | Verifies sender holds ERC20 tokens, approves as gas payer (scope=1). Pre-funded with 100 ETH. |
 | MockERC20 | `0x1000000000000000000000000000000000000002` | Minimal ERC20 token ("DEMO"). No access control on `mint()`. |
-| WebAuthnP256Account | `0x1000000000000000000000000000000000000003` | Smart account with passkey auth. Verifies WebAuthn P256 signatures, has `execute(address,uint256,bytes)` for arbitrary calls. |
 | WebAuthnVerifier | `0x1000000000000000000000000000000000000004` | Helper that wraps the WebAuthn verification logic for Yul contracts. |
+| WebAuthnP256AccountFactory | `0x1000000000000000000000000000000000000005` | Factory that deploys per-user WebAuthnP256Account contracts. Initialized at backend startup with the account initcode. Each passkey registration deploys a new account via `factory.deploy(pubKeyX, pubKeyY)`. |
 | Deterministic Deployment Proxy | `0x4e59b44847b379578588920ca78fbf26c0b4956c` | CREATE2 factory ([Arachnid](https://github.com/Arachnid/deterministic-deployment-proxy)). Used by deploy-execute to deploy contracts from frame transactions. |
 
-The GasSponsor and WebAuthnP256Account are compiled from **Yul** (`contracts/yul/`) because they use `verbatim` for EIP-8141 custom opcodes (APPROVE `0xAA`, TXPARAMLOAD `0xB0`). MockERC20 and WebAuthnVerifier are standard Solidity compiled with `--via-ir`.
+The GasSponsor and WebAuthnP256Account are compiled from **Yul** (`contracts/yul/`) because they use `verbatim` for EIP-8141 custom opcodes (APPROVE `0xAA`, TXPARAMLOAD `0xB0`). The factory is also Yul. MockERC20 and WebAuthnVerifier are standard Solidity compiled with `--via-ir`.
 
 ## Dev Account
 
@@ -305,6 +317,9 @@ make redeploy-full BLOCKSCOUT_REPO=/path/to/ethrex-blockscout
 **"Failed to execute transaction" in backend logs**
 The VERIFY frame likely failed — check that the passkey account was registered and has the correct public key. Re-register by refreshing the page.
 
+**Blockscout backend crash-looping**
+Check `docker logs backend` for `Protocol.UndefinedError: protocol Enumerable not implemented for nil`. This means the ethrex compatibility settings are missing. Add `INDEXER_DISABLE_EMPTY_BLOCKS_SANITIZER=true` and `INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER=true` to `common-blockscout.env`, then recreate the container with `docker compose up -d backend` (NOT `docker compose restart` — `restart` does not re-read env files).
+
 **Blockscout shows empty blocks / no transactions**
 Blockscout needs a few seconds to catch up. Wait 10-15 seconds after submitting a transaction, then refresh.
 
@@ -332,6 +347,9 @@ curl -s -X POST http://localhost:8545 -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 ```
 If the block number doesn't change, restart ethrex. Also check `txpool_content` for stuck pending transactions. After restarting ethrex, any pending transactions from before the restart will need to be resubmitted (refresh the demo page).
+
+**"JSON Parse error: Unexpected identifier 'Version'" in frontend**
+The demo backend is returning an HTML/text error instead of JSON. This usually happens after a DB wipe — the WebAuthnP256AccountFactory goes back to uninitialized state, so `deployAccount()` reverts with "not initialized". Fix by restarting the backend (`make start-backend`), which calls `ensureFactoryInitialized()` at startup.
 
 **"Exceeded max amount of blocks to re-execute for tracing"**
 ethrex limitation for `debug_traceTransaction` on old blocks. Non-blocking — Blockscout still indexes transactions, just can't show internal transaction details for older blocks.

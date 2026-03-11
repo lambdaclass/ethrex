@@ -161,7 +161,7 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
     expect(href).toBeTruthy();
     expect(href).toContain('/tx/');
     expect(href).toContain(result.txHash!);
-    expect(href).toMatch(/^https:\/\/.+:8083\/tx\/0x/);
+    expect(href).toMatch(/^https:\/\/.+\/tx\/0x/);
     // Link opens in a new tab
     const target = await txLink.getAttribute('target');
     expect(target).toBe('_blank');
