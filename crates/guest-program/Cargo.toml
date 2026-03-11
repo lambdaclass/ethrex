@@ -45,6 +45,7 @@ sp1 = [
     "dep:sp1-build", "dep:sp1-sdk",
     "dep:k256", "dep:substrate-bn",
     "ethrex-l2-common/secp256k1",
+    "ethrex-crypto/kzg-rs",
 ]
 zisk = [
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
