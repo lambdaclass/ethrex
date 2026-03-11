@@ -190,6 +190,7 @@ ${l1Build}
       - 127.0.0.1:${l1Port}:8545
     environment:
       - ETHREX_LOG_LEVEL
+      - ETHREX_DEV_BLOCK_TIME_MS=2000
     volumes:
       - ${l1GenesisSource}:/genesis/l1.json
     command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
@@ -211,6 +212,7 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${profile.deployRich}
+      - ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS=2
       - ETHREX_L2_RISC0=false
       - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
