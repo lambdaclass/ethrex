@@ -75,18 +75,22 @@ impl TryFrom<&Path> for Genesis {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
 
-        // Try to derive if the genesis file is PoS
-        // Different genesis files have different configurations
-        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
-        if genesis.config.terminal_total_difficulty != Some(0)
-            && genesis.config.merge_netsplit_block != Some(0)
-            && genesis.config.shanghai_time != Some(0)
-            && genesis.config.cancun_time != Some(0)
-            && genesis.config.prague_time != Some(0)
-        {
-            // Hive has a minimalistic genesis file, which is not supported
-            // return Err(GenesisError::InvalidFork());
-            warn!("Invalid fork, only post-merge networks are supported.");
+        // Validate that the network is post-merge.
+        // A network is considered post-merge if any of these conditions are met:
+        // - terminal_total_difficulty is 0 (merge happened at or before genesis)
+        // - terminal_total_difficulty_passed is true (merge already happened)
+        // - Any post-merge fork time is set (shanghai, cancun, prague, etc.)
+        let has_post_merge_fork = genesis.config.shanghai_time.is_some()
+            || genesis.config.cancun_time.is_some()
+            || genesis.config.prague_time.is_some()
+            || genesis.config.osaka_time.is_some();
+
+        let is_post_merge = genesis.config.terminal_total_difficulty == Some(0)
+            || genesis.config.terminal_total_difficulty_passed
+            || has_post_merge_fork;
+
+        if !is_post_merge {
+            return Err(GenesisError::InvalidFork());
         }
 
         if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
