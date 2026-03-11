@@ -9,12 +9,12 @@ cargo doc --package ethrex-p2p --open
 
 ## Protocols
 
-- **DiscV4**: Node discovery
+- **DiscV4**: Node discovery (legacy)
+- **DiscV5**: Node discovery
 - **RLPx**: Encrypted transport
 - **eth/68**: Block and transaction propagation
 - **snap/1**: Snap sync for state synchronization
 
 ## Features
 
-- `experimental-discv5`: Enable discv5 node discovery (experimental)
 - `sync-test`: Testing utilities for sync

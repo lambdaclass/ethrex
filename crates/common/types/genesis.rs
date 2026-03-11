@@ -260,6 +260,7 @@ pub struct ChainConfig {
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
+    #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
     /// Network has already passed the terminal total difficult
     #[serde(default)]

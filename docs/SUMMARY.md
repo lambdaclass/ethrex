@@ -92,6 +92,7 @@
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
   - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
+  - [Distributed proving](./l2/fundamentals/distributed_proving.md)
 
 # Ethrex for developers
 

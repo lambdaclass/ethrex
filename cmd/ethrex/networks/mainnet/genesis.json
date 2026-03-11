@@ -17,7 +17,7 @@
     "londonBlock": 12965000,
     "arrowGlacierBlock": 13773000,
     "grayGlacierBlock": 15050000,
-    "terminalTotalDifficulty": 58750000000000000000000,
+    "terminalTotalDifficulty": "0xc70d808a128d7380000",
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 1681338455,
     "cancunTime": 1710338135,
