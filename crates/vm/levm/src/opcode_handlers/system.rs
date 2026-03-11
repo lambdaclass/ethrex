@@ -863,7 +863,7 @@ impl<'a> VM<'a> {
         return_data_size: usize,
     ) -> Result<OpcodeResult, VMError> {
         // Warm/cold check — still needed for gas accounting
-        let address_was_cold = !self.substate.add_accessed_address(callee);
+        let address_was_cold = self.substate.add_accessed_address(callee);
 
         // Memory expansion
         let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
@@ -871,7 +871,16 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
+        #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = self.current_call_frame.gas_remaining as u64;
+
+        // Only query DB for is_empty when value > 0 (needed for CALL_TO_EMPTY_ACCOUNT surcharge).
+        // When value is 0, account_is_empty doesn't affect gas, so skip the DB lookup.
+        let account_is_empty = if !value.is_zero() {
+            self.db.get_account(callee)?.is_empty()
+        } else {
+            false
+        };
 
         // BAL recording for precompile (no delegation, no EIP-7702)
         let value_cost = if !value.is_zero() {
@@ -879,7 +888,11 @@ impl<'a> VM<'a> {
         } else {
             0
         };
-        // account_is_empty is always false for precompiles, so create_cost = 0
+        let create_cost = if account_is_empty && !value.is_zero() {
+            gas_cost::CALL_TO_EMPTY_ACCOUNT
+        } else {
+            0
+        };
         self.record_bal_call_touch(
             callee,
             callee, // code_address == callee for precompiles
@@ -889,15 +902,15 @@ impl<'a> VM<'a> {
             current_memory_size,
             address_was_cold,
             value_cost,
-            0, // create_cost (precompiles are never empty)
+            create_cost,
         );
 
-        // Gas computation — same as gas_cost::call with account_is_empty=false, eip7702_gas_consumed=0
+        // Gas computation — same as gas_cost::call with eip7702_gas_consumed=0
         let (cost, gas_limit) = gas_cost::call(
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            false, // account_is_empty: precompiles are never empty
+            account_is_empty,
             value,
             gas,
             gas_left,
