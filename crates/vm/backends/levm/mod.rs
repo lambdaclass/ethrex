@@ -161,6 +161,11 @@ impl LEVM {
             if is_amsterdam {
                 // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+                ::tracing::debug!(
+                    "EIP-8037 validate tx[{tx_idx}]: regular={tx_regular_gas} state={tx_state_gas} gas_used={} gas_spent={} block_regular={block_regular_gas_used} block_state={block_state_gas_used} block_max={block_gas_used}",
+                    report.gas_used,
+                    report.gas_spent,
+                );
             } else {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
@@ -749,6 +754,7 @@ impl LEVM {
                         storage: FxHashMap::default(),
                         has_storage: false,
                         status: AccountStatus::Modified,
+                        exists: true,
                     });
                 acc.info.balance = balance;
                 acc.info.nonce = nonce;

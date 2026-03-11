@@ -311,6 +311,7 @@ impl CallFrameBackup {
                 storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
+                exists: account.exists,
             });
 
         Ok(())

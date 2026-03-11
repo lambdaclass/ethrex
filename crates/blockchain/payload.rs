@@ -775,7 +775,16 @@ impl Blockchain {
             .requests
             .as_ref()
             .map(|requests| compute_requests_hash(requests));
-        context.payload.header.gas_used = context.gas_used();
+        let gas_used = context.gas_used();
+        if context.is_amsterdam {
+            debug!(
+                "EIP-8037 block finalize: gas_used={gas_used} regular={} state={} txs={}",
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                context.payload.body.transactions.len(),
+            );
+        }
+        context.payload.header.gas_used = gas_used;
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
@@ -814,6 +823,19 @@ pub fn apply_plain_transaction(
         .block_regular_gas_used
         .saturating_add(tx_regular_gas);
     context.block_state_gas_used = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    if context.is_amsterdam {
+        debug!(
+            "EIP-8037 tx gas: regular={tx_regular_gas} state={tx_state_gas} gas_used={} gas_spent={} block_regular={} block_state={} block_max={}",
+            report.gas_used,
+            report.gas_spent,
+            context.block_regular_gas_used,
+            context.block_state_gas_used,
+            context
+                .block_regular_gas_used
+                .max(context.block_state_gas_used),
+        );
+    }
 
     // Update remaining_gas using gas_used (pre-refund) for block gas limit checks
     context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);

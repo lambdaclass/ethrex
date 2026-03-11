@@ -304,7 +304,9 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let authority_info = self.db.get_account(authority_address)?.info.clone();
+            let authority_account = self.db.get_account(authority_address)?;
+            let authority_exists = authority_account.exists;
+            let authority_info = authority_account.info.clone();
             let authority_code = self.db.get_code(authority_info.code_hash)?;
             self.substate.add_accessed_address(authority_address);
 
@@ -336,7 +338,9 @@ impl<'a> VM<'a> {
             // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
             // to the state gas reservoir (the new-account portion of the auth state charge).
             // Pre-Amsterdam: add REFUND_AUTH_PER_EXISTING_ACCOUNT (12500) to global refund counter.
-            if !authority_info.is_empty() {
+            // NOTE: Uses `exists` (account_exists in EELS / Exist in geth), NOT `!is_empty()`.
+            // An account can exist in the trie but be empty (e.g., has non-empty storage root).
+            if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
                     let state_refund = STATE_GAS_NEW_ACCOUNT;
                     self.state_gas_reservoir = self
@@ -590,6 +594,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
             storage: account.storage,
             status: AccountStatus::Unmodified,
+            exists: true,
         },
         account.code,
     )
