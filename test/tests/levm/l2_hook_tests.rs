@@ -12,6 +12,7 @@ use ethrex_common::{
         Transaction, TxKind, fee_config::FeeConfig,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
@@ -181,6 +182,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
+        &NativeCrypto,
     )
     .expect("VM creation should succeed");
 
