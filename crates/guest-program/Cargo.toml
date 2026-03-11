@@ -52,6 +52,8 @@ openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]
 # compiles the guest binary — guest binaries must NOT enable these.
 sp1-build-elf = ["sp1", "dep:sp1-build", "dep:sp1-sdk"]
 risc0-build-elf = ["risc0", "dep:risc0-build"]
+zisk-build-elf = ["zisk"]
+openvm-build-elf = ["openvm"]
 
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
