@@ -11,7 +11,7 @@ ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.15.0" 
 sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-ethrex-guest-program = { path = "../../", default-features = false, features = ["zisk-crypto"] }
+ethrex-guest-program = { path = "../../", default-features = false, features = ["zisk"] }
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "zisk",
 ] }

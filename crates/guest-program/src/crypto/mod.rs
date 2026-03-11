@@ -1,17 +1,12 @@
-#[cfg(feature = "openvm-crypto")]
+#[cfg(feature = "openvm")]
 pub mod openvm;
-#[cfg(feature = "risc0-crypto")]
+#[cfg(feature = "risc0")]
 pub mod risc0;
-#[cfg(any(
-    feature = "sp1-crypto",
-    feature = "risc0-crypto",
-    feature = "zisk-crypto",
-    feature = "openvm-crypto"
-))]
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk", feature = "openvm"))]
 mod shared;
-#[cfg(feature = "sp1-crypto")]
+#[cfg(feature = "sp1")]
 pub mod sp1;
-#[cfg(feature = "zisk-crypto")]
+#[cfg(feature = "zisk")]
 pub mod zisk;
 
 // Re-export core crypto types so consumers don't need a direct ethrex-crypto dependency.

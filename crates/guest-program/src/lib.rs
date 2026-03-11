@@ -37,16 +37,16 @@ pub mod execution {
 
 // When running clippy, the ELFs are not built, so we define them empty.
 
-#[cfg(all(not(clippy), feature = "sp1"))]
+#[cfg(all(not(clippy), feature = "sp1-build-elf"))]
 pub static ZKVM_SP1_PROGRAM_ELF: &[u8] =
     include_bytes!("../bin/sp1/out/riscv32im-succinct-zkvm-elf");
-#[cfg(any(clippy, not(feature = "sp1")))]
+#[cfg(any(clippy, not(feature = "sp1-build-elf")))]
 pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[];
 
-#[cfg(all(not(clippy), feature = "risc0"))]
+#[cfg(all(not(clippy), feature = "risc0-build-elf"))]
 pub static ZKVM_RISC0_PROGRAM_VK: &str =
     include_str!(concat!("../bin/risc0/out/riscv32im-risc0-vk"));
-#[cfg(any(clippy, not(feature = "risc0")))]
+#[cfg(any(clippy, not(feature = "risc0-build-elf")))]
 pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
 
 #[cfg(all(not(clippy), feature = "zisk"))]

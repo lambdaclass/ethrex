@@ -23,7 +23,7 @@ ethrex-common = { path = "../../../common", default-features = false, features =
     "openvm",
 ] }
 
-ethrex-guest-program = { path = "../..", default-features = false, features = ["openvm-crypto"] }
+ethrex-guest-program = { path = "../..", default-features = false, features = ["openvm"] }
 
 [features]
 l2 = ["ethrex-guest-program/l2"]
