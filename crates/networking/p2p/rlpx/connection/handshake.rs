@@ -216,7 +216,7 @@ async fn receive_auth<S: AsyncRead + std::marker::Unpin>(
         public_key: auth.public_key,
         nonce: auth.nonce,
         ephemeral_key: remote_ephemeral_key,
-        init_message: msg_bytes.to_owned(),
+        init_message: msg_bytes,
     })
 }
 
@@ -241,7 +241,7 @@ async fn receive_ack<S: AsyncRead + std::marker::Unpin>(
         public_key: remote_public_key,
         nonce: ack.nonce,
         ephemeral_key: remote_ephemeral_key,
-        init_message: msg_bytes.to_owned(),
+        init_message: msg_bytes,
     })
 }
 
@@ -260,15 +260,8 @@ async fn receive_handshake_msg<S: AsyncRead + std::marker::Unpin>(
     buf.resize(msg_size + 2, 0);
 
     // Read the rest of the message
-    // Guard unwrap
-    if buf.len() < msg_size + 2 {
-        return Err(PeerConnectionError::CryptographyError(String::from(
-            "bad buf size",
-        )));
-    }
-    stream.read_exact(&mut buf[2..msg_size + 2]).await?;
-    let ack_bytes = &buf[..msg_size + 2];
-    Ok(ack_bytes.to_vec())
+    stream.read_exact(&mut buf[2..]).await?;
+    Ok(buf)
 }
 
 /// Encodes an Auth message, to start a handshake.

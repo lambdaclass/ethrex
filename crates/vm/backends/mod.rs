@@ -4,12 +4,14 @@ use levm::LEVM;
 use crate::db::{DynVmDatabase, VmDatabase};
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
 use ethrex_common::{Address, types::fee_config::FeeConfig};
+use ethrex_crypto::Crypto;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
@@ -23,6 +25,7 @@ use tracing::instrument;
 pub struct Evm {
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
+    pub crypto: Arc<dyn Crypto>,
 }
 
 impl core::fmt::Debug for Evm {
@@ -33,48 +36,67 @@ impl core::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new_for_l1(db: impl VmDatabase + 'static) -> Self {
+    pub fn new_for_l1(db: impl VmDatabase + 'static, crypto: Arc<dyn Crypto>) -> Self {
         let wrapped_db: DynVmDatabase = Box::new(db);
         Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L1,
+            crypto,
         }
     }
 
     pub fn new_for_l2(
         db: impl VmDatabase + 'static,
         fee_config: FeeConfig,
+        crypto: Arc<dyn Crypto>,
     ) -> Result<Self, EvmError> {
         let wrapped_db: DynVmDatabase = Box::new(db);
 
         let evm = Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L2(fee_config),
+            crypto,
         };
 
         Ok(evm)
     }
 
-    pub fn new_from_db_for_l1(store: Arc<impl LevmDatabase + 'static>) -> Self {
-        Self::_new_from_db(store, VMType::L1)
+    pub fn new_from_db_for_l1(
+        store: Arc<impl LevmDatabase + 'static>,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::L1, crypto)
     }
 
     pub fn new_from_db_for_l2(
         store: Arc<impl LevmDatabase + 'static>,
         fee_config: FeeConfig,
+        crypto: Arc<dyn Crypto>,
     ) -> Self {
-        Self::_new_from_db(store, VMType::L2(fee_config))
+        Self::_new_from_db(store, VMType::L2(fee_config), crypto)
     }
 
-    fn _new_from_db(store: Arc<impl LevmDatabase + 'static>, vm_type: VMType) -> Self {
+    fn _new_from_db(
+        store: Arc<impl LevmDatabase + 'static>,
+        vm_type: VMType,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
         Evm {
             db: GeneralizedDatabase::new(store),
             vm_type,
+            crypto,
         }
     }
 
-    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type)
+    /// Execute a block and return the execution result.
+    ///
+    /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
+    /// The BAL will be `None` for pre-Amsterdam forks.
+    pub fn execute_block(
+        &mut self,
+        block: &Block,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        LEVM::execute_block(block, &mut self.db, self.vm_type, self.crypto.as_ref())
     }
 
     #[instrument(
@@ -88,33 +110,56 @@ impl Evm {
         block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
-    ) -> Result<BlockExecutionResult, EvmError> {
-        LEVM::execute_block_pipeline(block, &mut self.db, self.vm_type, merkleizer, queue_length)
+        bal: Option<&BlockAccessList>,
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
+        LEVM::execute_block_pipeline(
+            block,
+            &mut self.db,
+            self.vm_type,
+            merkleizer,
+            queue_length,
+            self.crypto.as_ref(),
+            bal,
+        )
     }
 
     /// Wraps [LEVM::execute_tx].
-    /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    /// Updates `remaining_gas` (pre-refund) for block gas accounting and
+    /// `cumulative_gas_spent` (post-refund) for receipt cumulative tracking.
+    /// Returns (Receipt, gas_spent) where gas_spent is post-refund for block value calculation.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &mut self,
         tx: &Transaction,
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
+        cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        let execution_report =
-            LEVM::execute_tx(tx, sender, block_header, &mut self.db, self.vm_type)?;
+        let execution_report = LEVM::execute_tx(
+            tx,
+            sender,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )?;
 
+        // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
         *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+        // Track cumulative post-refund gas for receipt
+        *cumulative_gas_spent += execution_report.gas_spent;
 
         let receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
-            block_header.gas_limit - *remaining_gas,
+            *cumulative_gas_spent,
             execution_report.logs.clone(),
         );
 
-        Ok((receipt, execution_report.gas_used))
+        // Return gas_spent (post-refund) for block value calculation
+        Ok((receipt, execution_report.gas_spent))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
@@ -128,11 +173,21 @@ impl Evm {
         let fork = chain_config.fork(block_header.timestamp);
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-            LEVM::beacon_root_contract_call(block_header, &mut self.db, self.vm_type)?;
+            LEVM::beacon_root_contract_call(
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                self.crypto.as_ref(),
+            )?;
         }
 
         if fork >= Fork::Prague {
-            LEVM::process_block_hash_history(block_header, &mut self.db, self.vm_type)?;
+            LEVM::process_block_hash_history(
+                block_header,
+                &mut self.db,
+                self.vm_type,
+                self.crypto.as_ref(),
+            )?;
         }
 
         Ok(())
@@ -155,7 +210,29 @@ impl Evm {
         receipts: &[Receipt],
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
-        levm::extract_all_requests_levm(receipts, &mut self.db, header, self.vm_type)
+        levm::extract_all_requests_levm(
+            receipts,
+            &mut self.db,
+            header,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Takes the Block Access List (BAL) from the database if recording was enabled.
+    /// Returns `None` if BAL recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.db.take_bal()
+    }
+
+    /// Enables BAL (Block Access List) recording for EIP-7928.
+    pub fn enable_bal_recording(&mut self) {
+        self.db.enable_bal_recording();
+    }
+
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    pub fn set_bal_index(&mut self, index: u16) {
+        self.db.set_bal_index(index);
     }
 
     pub fn simulate_tx_from_generic(
@@ -163,7 +240,7 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
     ) -> Result<ExecutionResult, EvmError> {
-        LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type)
+        LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref())
     }
 
     pub fn create_access_list(
@@ -171,7 +248,15 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
-        let result = { LEVM::create_access_list(tx.clone(), header, &mut self.db, self.vm_type)? };
+        let result = {
+            LEVM::create_access_list(
+                tx.clone(),
+                header,
+                &mut self.db,
+                self.vm_type,
+                self.crypto.as_ref(),
+            )?
+        };
 
         match result {
             (

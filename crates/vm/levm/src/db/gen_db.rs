@@ -6,6 +6,7 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
+use ethrex_common::types::block_access_list::{BlockAccessList, BlockAccessListRecorder};
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -28,9 +29,19 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
+    /// Shared read-only base state (e.g. post-system-call snapshot for parallel groups).
+    /// Checked on load_account between initial_accounts_state and store lookups.
+    /// Accounts are cloned into initial_accounts_state on first access (lazy, per-account).
+    pub shared_base: Option<Arc<CacheDB>>,
     pub codes: FxHashMap<H256, Code>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// Optional BAL recorder for EIP-7928 Block Access List recording.
+    pub bal_recorder: Option<BlockAccessListRecorder>,
+    /// When true, skip cloning accounts into `initial_accounts_state` on load.
+    /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
+    /// (state transitions come from BAL instead).
+    skip_initial_tracking: bool,
 }
 
 impl GeneralizedDatabase {
@@ -39,10 +50,74 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: Default::default(),
             initial_accounts_state: Default::default(),
+            shared_base: None,
             tx_backup: None,
             codes: Default::default(),
             code_metadata: Default::default(),
+            bal_recorder: None,
+            skip_initial_tracking: false,
         }
+    }
+
+    /// Creates a new GeneralizedDatabase with a shared read-only base state.
+    /// Used for parallel execution groups that share post-system-call state.
+    /// Skips initial_accounts_state tracking since parallel per-tx DBs never
+    /// call get_state_transitions_tx (state comes from BAL instead).
+    pub fn new_with_shared_base(store: Arc<dyn Database>, shared_base: Arc<CacheDB>) -> Self {
+        Self::new_with_shared_base_and_capacity(store, shared_base, 0)
+    }
+
+    /// Like `new_with_shared_base` but pre-allocates account/code maps to
+    /// `capacity` entries, avoiding rehashing during BAL seeding.
+    pub fn new_with_shared_base_and_capacity(
+        store: Arc<dyn Database>,
+        shared_base: Arc<CacheDB>,
+        capacity: usize,
+    ) -> Self {
+        Self {
+            store,
+            current_accounts_state: FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            ),
+            initial_accounts_state: Default::default(),
+            shared_base: Some(shared_base),
+            tx_backup: None,
+            codes: FxHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
+            code_metadata: Default::default(),
+            bal_recorder: None,
+            skip_initial_tracking: true,
+        }
+    }
+
+    /// Enables BAL recording for EIP-7928.
+    /// After enabling, state changes will be recorded during execution.
+    pub fn enable_bal_recording(&mut self) {
+        self.bal_recorder = Some(BlockAccessListRecorder::new());
+    }
+
+    /// Disables BAL recording.
+    pub fn disable_bal_recording(&mut self) {
+        self.bal_recorder = None;
+    }
+
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    /// Call this before each transaction or phase.
+    pub fn set_bal_index(&mut self, index: u16) {
+        if let Some(recorder) = &mut self.bal_recorder {
+            recorder.set_block_access_index(index);
+        }
+    }
+
+    /// Takes the BAL recorder and builds the final BlockAccessList.
+    /// Returns None if recording was not enabled.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
+        self.bal_recorder.take().map(|recorder| recorder.build())
+    }
+
+    /// Returns a mutable reference to the BAL recorder if enabled.
+    pub fn bal_recorder_mut(&mut self) -> Option<&mut BlockAccessListRecorder> {
+        self.bal_recorder.as_mut()
     }
 
     /// Only used within Levm Runner, where the accounts already have all the storage pre-loaded, not used in real case scenarios.
@@ -63,9 +138,12 @@ impl GeneralizedDatabase {
             store,
             current_accounts_state: levm_accounts.clone(),
             initial_accounts_state: levm_accounts,
+            shared_base: None,
             tx_backup: None,
             codes,
             code_metadata: Default::default(),
+            bal_recorder: None,
+            skip_initial_tracking: false,
         }
     }
 
@@ -79,9 +157,20 @@ impl GeneralizedDatabase {
                 if let Some(account) = self.initial_accounts_state.get(&address) {
                     return Ok(entry.insert(account.clone()));
                 }
+                // Check shared_base (read-only post-system-call snapshot) before hitting store.
+                if let Some(ref base) = self.shared_base
+                    && let Some(account) = base.get(&address)
+                {
+                    if !self.skip_initial_tracking {
+                        self.initial_accounts_state.insert(address, account.clone());
+                    }
+                    return Ok(entry.insert(account.clone()));
+                }
                 let state = self.store.get_account_state(address)?;
                 let account = LevmAccount::from(state);
-                self.initial_accounts_state.insert(address, account.clone());
+                if !self.skip_initial_tracking {
+                    self.initial_accounts_state.insert(address, account.clone());
+                }
                 Ok(entry.insert(account))
             }
         }
@@ -171,6 +260,9 @@ impl GeneralizedDatabase {
         key: H256,
     ) -> Result<U256, InternalError> {
         let value = self.store.get_storage_value(address, key)?;
+        if self.skip_initial_tracking {
+            return Ok(value);
+        }
         // Account must already be in initial_accounts_state
         match self.initial_accounts_state.get_mut(&address) {
             Some(account) => {
@@ -250,13 +342,18 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            // Only emit removed_storage if the account actually had storage in the trie.
+            // If it didn't (e.g. account was created within the batch), there's nothing to
+            // remove, and emitting removed_storage=true would cause a spurious empty
+            // account to be inserted into the state trie.
+            let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = if !removed_storage {
+                let old_value = if !was_destroyed {
                     initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
                 } else {
                     // There's not an "old value" if the contract was destroyed and re-created.
@@ -351,13 +448,18 @@ impl GeneralizedDatabase {
             // Edge cases that can make this true:
             //   1. Account was destroyed and created again afterwards.
             //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let removed_storage = new_state_account.status == AccountStatus::DestroyedModified;
+            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            // Only emit removed_storage if the account actually had storage in the trie.
+            // If it didn't (e.g. account was created within the batch), there's nothing to
+            // remove, and emitting removed_storage=true would cause a spurious empty
+            // account to be inserted into the state trie.
+            let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage: FxHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
-                let old_value = if !removed_storage {
+                let old_value = if !was_destroyed {
                     initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address}")))})?
                 } else {
                     // There's not an "old value" if the contract was destroyed and re-created.
@@ -438,11 +540,24 @@ impl<'a> VM<'a> {
         increase: U256,
     ) -> Result<(), InternalError> {
         let account = self.get_account_mut(address)?;
+
+        // Get initial balance BEFORE modification (avoids duplicate lookup)
+        let initial_balance = account.info.balance;
+
+        // Modify balance
         account.info.balance = account
             .info
             .balance
             .checked_add(increase)
             .ok_or(InternalError::Overflow)?;
+        let new_balance = account.info.balance;
+
+        // Record initial and changed balance for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(address, initial_balance);
+            recorder.record_balance_change(address, new_balance);
+        }
+
         Ok(())
     }
 
@@ -452,11 +567,24 @@ impl<'a> VM<'a> {
         decrease: U256,
     ) -> Result<(), InternalError> {
         let account = self.get_account_mut(address)?;
+
+        // Get initial balance BEFORE modification (avoids duplicate lookup)
+        let initial_balance = account.info.balance;
+
+        // Modify balance
         account.info.balance = account
             .info
             .balance
             .checked_sub(decrease)
             .ok_or(InternalError::Underflow)?;
+        let new_balance = account.info.balance;
+
+        // Record initial and changed balance for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.set_initial_balance(address, initial_balance);
+            recorder.record_balance_change(address, new_balance);
+        }
+
         Ok(())
     }
 
@@ -480,6 +608,25 @@ impl<'a> VM<'a> {
         address: Address,
         new_bytecode: Code,
     ) -> Result<(), InternalError> {
+        // Record code change for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            // Capture initial code BEFORE recording the change.
+            // This is needed for:
+            // 1. Distinguishing CREATE empty code vs delegation clear
+            // 2. Net-zero code change detection (e.g., delegate then reset in same tx)
+            let current_code_bytes = self
+                .db
+                .current_accounts_state
+                .get(&address)
+                .and_then(|account| self.db.codes.get(&account.info.code_hash))
+                .map(|c| c.bytecode.clone())
+                .unwrap_or_default();
+            let has_code = !current_code_bytes.is_empty();
+            recorder.capture_initial_code_presence(address, has_code);
+            recorder.set_initial_code(address, current_code_bytes);
+            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+        }
+
         let acc = self.get_account_mut(address)?;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
@@ -488,6 +635,12 @@ impl<'a> VM<'a> {
     }
 
     // =================== Nonce related functions ======================
+    /// Increments the nonce of the given account.
+    /// Per EIP-7928, nonce changes are recorded for:
+    /// - EOA senders
+    /// - Contracts performing CREATE/CREATE2
+    /// - Deployed contracts
+    /// - EIP-7702 authorities
     pub fn increment_account_nonce(&mut self, address: Address) -> Result<u64, InternalError> {
         let account = self.get_account_mut(address)?;
         account.info.nonce = account
@@ -495,40 +648,45 @@ impl<'a> VM<'a> {
             .nonce
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
-        Ok(account.info.nonce)
-    }
+        let new_nonce = account.info.nonce;
 
-    /// Gets original storage value of an account, caching it if not already cached.
-    /// Also saves the original value for future gas calculations.
-    pub fn get_original_storage(
-        &mut self,
-        address: Address,
-        key: H256,
-    ) -> Result<U256, InternalError> {
-        if let Some(value) = self.storage_original_values.get(&(address, key)) {
-            return Ok(*value);
+        // Record nonce change for BAL
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_nonce_change(address, new_nonce);
         }
 
-        let value = self.get_storage_value(address, key)?;
-        self.storage_original_values.insert((address, key), value);
-        Ok(value)
+        Ok(new_nonce)
     }
 
-    /// Accesses to an account's storage slot and returns the value in it.
-    ///
-    /// Accessed storage slots are stored in the `accessed_storage_slots` set.
-    /// Accessed storage slots take place in some gas cost computation.
-    pub fn access_storage_slot(
+    /// SSTORE-specialized storage access path that returns current and original values together.
+    /// This keeps the SSTORE hot path tighter by avoiding extra method-level plumbing.
+    #[inline(always)]
+    pub fn access_storage_slot_for_sstore(
         &mut self,
         address: Address,
         key: H256,
-    ) -> Result<(U256, bool), InternalError> {
-        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let storage_slot_was_cold = !self.substate.add_accessed_slot(address, key);
+    ) -> Result<(U256, U256, bool), InternalError> {
+        let storage_slot_was_cold = self.substate.add_accessed_slot(address, key);
+        let current_value = self.get_storage_value(address, key)?;
+        let original_value = match self
+            .storage_original_values
+            .entry(address)
+            .or_default()
+            .entry(key)
+        {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => *entry.insert(current_value),
+        };
+        Ok((current_value, original_value, storage_slot_was_cold))
+    }
 
-        let storage_slot = self.get_storage_value(address, key)?;
-
-        Ok((storage_slot, storage_slot_was_cold))
+    /// Records a storage slot read to BAL after gas checks have passed.
+    /// Per EIP-7928: "If pre-state validation fails, the target is never accessed and must not appear in BAL."
+    /// This function should be called AFTER the gas check succeeds.
+    pub fn record_storage_slot_to_bal(&mut self, address: Address, key: U256) {
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_storage_read(address, key);
+        }
     }
 
     /// Gets storage value of an account, caching it if not already cached.
@@ -553,8 +711,12 @@ impl<'a> VM<'a> {
 
         let value = self.db.get_value_from_database(address, key)?;
 
-        // Update the account with the fetched value
-        let account = self.get_account_mut(address)?;
+        // Cache-fill only: this is a read-path miss, not a state mutation.
+        let account = self
+            .db
+            .current_accounts_state
+            .get_mut(&address)
+            .ok_or(InternalError::AccountNotFound)?;
         account.storage.insert(key, value);
 
         Ok(value)
@@ -565,10 +727,28 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
+        slot_key: U256,
         new_value: U256,
         current_value: U256,
     ) -> Result<(), InternalError> {
         self.backup_storage_slot(address, key, current_value)?;
+
+        // Record storage change for BAL (EIP-7928).
+        // SSTORE that changes the value (new != current) → storage write.
+        // SSTORE with same value (new == current) → storage read (no actual mutation).
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            if new_value != current_value {
+                // Record original value before first write. If final value equals original
+                // after all tx operations, the slot becomes a read per EIP-7928 net-zero filtering.
+                // This captures the value BEFORE the first write in this transaction
+                recorder.capture_pre_storage(address, slot_key, current_value);
+                // Actual write
+                recorder.record_storage_write(address, slot_key, new_value);
+            } else {
+                // No-op write (post == pre) - record as read per EIP-7928
+                recorder.record_storage_read(address, slot_key);
+            }
+        }
 
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);

@@ -55,9 +55,12 @@ pub async fn start_block_producer(
                 continue;
             }
         };
-        let payload_id = fork_choice_response
-            .payload_id
-            .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
+        let Some(payload_id) = fork_choice_response.payload_id else {
+            tracing::error!("Failed to produce block: payload_id is None in ForkChoiceResponse");
+            sleep(Duration::from_millis(300)).await;
+            tries += 1;
+            continue;
+        };
 
         // Wait to retrieve the payload.
         // Note that this makes getPayload failures result in skipped blocks.

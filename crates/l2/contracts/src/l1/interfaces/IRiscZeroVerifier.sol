@@ -33,7 +33,7 @@ struct Receipt {
 }
 
 /// @notice Error raised when cryptographic verification of the zero-knowledge proof fails.
-error VerificationFailed();
+error VerificationFailed(); // 0x439cc0cd
 
 /// @notice Verifier interface for RISC Zero receipts of execution.
 interface IRiscZeroVerifier {

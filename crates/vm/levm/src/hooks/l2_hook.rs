@@ -234,7 +234,7 @@ fn validate_sufficient_max_fee_per_gas_l2(
     let total_fee = vm
         .env
         .base_fee_per_gas
-        .checked_add(U256::from(fee_config.operator_fee_per_gas))
+        .checked_add(fee_config.operator_fee_per_gas.into())
         .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
 
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
@@ -263,10 +263,19 @@ fn pay_coinbase_l2(
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    if use_fee_token {
-        pay_fee_token(vm, vm.env.coinbase, coinbase_fee)?;
-    } else {
-        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
+    // even if the priority fee is zero. In L2, this function is only called for
+    // non-privileged (user) transactions, so no gas_price check is needed.
+    if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+        recorder.record_touched_address(vm.env.coinbase);
+    }
+
+    if !coinbase_fee.is_zero() {
+        if use_fee_token {
+            pay_fee_token(vm, vm.env.coinbase, coinbase_fee)?;
+        } else {
+            vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+        }
     }
 
     Ok(())
@@ -685,6 +694,7 @@ fn simulate_common_bridge_call(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
+        vm.crypto,
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;

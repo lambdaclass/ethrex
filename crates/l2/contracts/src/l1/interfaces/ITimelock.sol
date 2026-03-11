@@ -15,10 +15,10 @@ interface ITimelock {
     event EmergencyExecution(address indexed target, uint256 value, bytes data);
 
     // @notice Used for functions that can only be called by the Timelock itself.
-    error TimelockCallerNotSelf();
+    error TimelockCallerNotSelf(); // 0xc8fe83ea
 
     // @notice Used for other initialize() from contracts that the Timelock inherits from
-    error TimelockUseCustomInitialize();
+    error TimelockUseCustomInitialize(); // 0x3f348ad0
 
     /// @notice The OnChainProposer contract controlled by this timelock.
     function onChainProposer() external view returns (IOnChainProposer);
@@ -54,12 +54,12 @@ interface ITimelock {
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external;
 
-    /// @notice Verifies a single batch through the timelock.
-    function verifyBatch(
-        uint256 batchNumber,
-        bytes memory risc0BlockProof,
-        bytes memory sp1ProofBytes,
-        bytes memory tdxSignature
+    /// @notice Verifies one or more consecutive batches through the timelock.
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external;
 
     /// @notice Verifies multiple batches through the timelock using aligned proofs.

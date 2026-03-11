@@ -9,6 +9,7 @@ use ethrex_common::{
         LegacyTransaction, Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment, tracing::LevmCallTracer, utils::get_base_fee_per_blob_gas, vm::VM,
     vm::VMType,
@@ -69,8 +70,8 @@ pub async fn run_test(
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm =
-            VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
+            .map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.
         let execution_result = vm.execute();
@@ -115,24 +116,30 @@ pub fn get_vm_env_for_test(
     let blob_schedule = EVMConfig::canonical_values(test_case.fork);
     let config = EVMConfig::new(test_case.fork, blob_schedule);
     let gas_price = effective_gas_price(&test_env, test_case)?;
-    let base_blob_fee_per_gas =
-        get_base_fee_per_blob_gas(test_env.current_excess_blob_gas, &config)
-            .map_err(|e| RunnerError::Custom(format!("Failed to get blob base fee: {e}")))?;
+    let base_blob_fee_per_gas = get_base_fee_per_blob_gas(
+        test_env
+            .current_excess_blob_gas
+            .map(|x| x.try_into().unwrap()),
+        &config,
+    )
+    .map_err(|e| RunnerError::Custom(format!("Failed to get blob base fee: {e}")))?;
     Ok(Environment {
         origin: test_case.sender,
         gas_limit: test_case.gas,
         config,
-        block_number: test_env.current_number,
+        block_number: test_env.current_number.try_into().unwrap(),
         coinbase: test_env.current_coinbase,
-        timestamp: test_env.current_timestamp,
+        timestamp: test_env.current_timestamp.try_into().unwrap(),
         prev_randao: test_env.current_random,
         difficulty: test_env.current_difficulty,
-        slot_number: U256::zero(),
+        slot_number: test_env.slot_number.unwrap_or_default(),
         chain_id: U256::from(1),
         base_fee_per_gas: test_env.current_base_fee.unwrap_or_default(),
         base_blob_fee_per_gas,
         gas_price,
-        block_excess_blob_gas: test_env.current_excess_blob_gas,
+        block_excess_blob_gas: test_env
+            .current_excess_blob_gas
+            .map(|x| x.try_into().unwrap()),
         block_blob_gas_used: None,
         tx_blob_hashes: test_case.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: test_case.max_priority_fee_per_gas,
@@ -142,6 +149,7 @@ pub fn get_vm_env_for_test(
         block_gas_limit: test_env.current_gas_limit,
         is_privileged: false,
         fee_token: None,
+        disable_balance_check: false,
     })
 }
 

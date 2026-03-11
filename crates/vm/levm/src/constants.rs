@@ -1,9 +1,4 @@
-use ethrex_common::{H160, H256, U256};
-use k256::elliptic_curve::bigint::Encoding;
-use p256::{
-    FieldElement as P256FieldElement, NistP256,
-    elliptic_curve::{Curve, bigint::U256 as P256Uint, ff::PrimeField},
-};
+use ethrex_common::{H256, U256};
 use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
@@ -51,7 +46,7 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 pub const TARGET_BLOB_GAS_PER_BLOCK: u32 = 393216; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 pub const TARGET_BLOB_GAS_PER_BLOCK_PECTRA: u32 = 786432; // TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB
 
-pub const MIN_BASE_FEE_PER_BLOB_GAS: U256 = U256::one();
+pub const MIN_BASE_FEE_PER_BLOB_GAS: u64 = 1;
 
 // WARNING: Do _not_ use the BLOB_BASE_FEE_UPDATE_FRACTION_* family of
 // constants as is. Use the `get_blob_base_fee_update_fraction_value`
@@ -69,13 +64,17 @@ pub const MAX_BLOB_COUNT_TX: usize = 6;
 pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
-pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
+pub const LAST_AVAILABLE_BLOCK_LIMIT: u64 = 256;
 
 // EIP7702 - EOA Load Code
-pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(||
-        // we use the k256 crate instead of the secp256k1 because the latter is optional
-        // while the former is not, this is to avoid a conditional compilation attribute.
-        U256::from_big_endian(&k256::Secp256k1::ORDER.to_be_bytes()));
+// secp256k1 curve order: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(|| {
+    U256::from_big_endian(&[
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFE, 0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36,
+        0x41, 0x41,
+    ])
+});
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
     LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
 pub const MAGIC: u8 = 0x05;
@@ -85,24 +84,6 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 pub const PER_AUTH_BASE_COST: u64 = 12500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
-
-// Secp256r1 curve parameters
-// See https://eips.ethereum.org/EIPS/eip-7951
-pub const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
-pub const P256_N: P256Uint = NistP256::ORDER;
-pub const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
-pub const P256_B_UINT: P256Uint =
-    P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
-lazy_static::lazy_static! {
-    pub static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
-}
-
-// EIP-7708: ETH Transfers Emit a Log
-// System address for EIP-7708 logs (0xfffffffffffffffffffffffffffffffffffffffe)
-pub const EIP7708_SYSTEM_ADDRESS: H160 = H160([
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0xFF, 0xFF, 0xFE,
-]);
 
 /// EIP-7708: keccak256('Transfer(address,address,uint256)')
 pub const TRANSFER_EVENT_TOPIC: H256 = H256([
