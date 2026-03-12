@@ -1,5 +1,5 @@
 [profile.default]
-src = "test"
+src = "src"
 test = "test"
 out = "forge-out"
 libs = ["lib"]
@@ -10,6 +10,8 @@ evm_version = "cancun"
 
 remappings = [
     "forge-std/=lib/forge-std/src/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/",
 ]
 
 via_ir = true
