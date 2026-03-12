@@ -1104,6 +1104,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if 1.0.4",
+ "crossbeam-utils 0.8.21",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1500,6 +1514,7 @@ version = "9.0.0"
 dependencies = [
  "bitvec",
  "bytes",
+ "dashmap",
  "datatest-stable",
  "derive_more",
  "ethrex-common",
@@ -1594,6 +1609,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "bytes",
+ "dashmap",
  "envy",
  "ethereum-types",
  "ethrex-blockchain",
@@ -1610,6 +1626,7 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.8.5",
  "reqwest",
+ "rustc-hash",
  "secp256k1",
  "serde 1.0.228",
  "serde_json",
@@ -1678,6 +1695,7 @@ version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
+ "dashmap",
  "derive_more",
  "dyn-clone",
  "ethereum-types",
@@ -2071,6 +2089,12 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"

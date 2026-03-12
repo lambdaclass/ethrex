@@ -24,6 +24,7 @@ sha3 = "0.10.8"
 malachite = "0.6.1"
 strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
+dashmap.workspace = true
 rayon.workspace = true
 
 bitvec = { version = "1.0.1", features = ["alloc"] }

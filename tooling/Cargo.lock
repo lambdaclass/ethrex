@@ -3567,6 +3567,7 @@ version = "9.0.0"
 dependencies = [
  "axum 0.8.8",
  "bytes",
+ "dashmap 6.1.0",
  "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common 9.0.0",
@@ -3579,6 +3580,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "hex",
  "reqwest",
+ "rustc-hash 2.1.1",
  "rustc-hex",
  "secp256k1 0.30.0",
  "serde",
@@ -3597,6 +3599,7 @@ version = "9.0.0"
 dependencies = [
  "bitvec",
  "bytes",
+ "dashmap 6.1.0",
  "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common 9.0.0",
@@ -3791,6 +3794,7 @@ dependencies = [
  "axum 0.8.8",
  "axum-extra",
  "bytes",
+ "dashmap 6.1.0",
  "envy",
  "ethereum-types",
  "ethrex-blockchain",
@@ -3807,6 +3811,7 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.8.5",
  "reqwest",
+ "rustc-hash 2.1.1",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -3972,6 +3977,7 @@ version = "9.0.0"
 dependencies = [
  "bincode",
  "bytes",
+ "dashmap 6.1.0",
  "derive_more 1.0.0",
  "dyn-clone",
  "ethereum-types",

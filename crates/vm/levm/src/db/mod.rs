@@ -1,18 +1,19 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
+use dashmap::DashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::FxHashMap;
-use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use rustc_hash::FxBuildHasher;
+use std::sync::{Arc, OnceLock};
 
 pub mod gen_db;
 
 // Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, AccountState>;
-type StorageCache = FxHashMap<(Address, H256), U256>;
-type CodeCache = FxHashMap<H256, Code>;
+type AccountCache = DashMap<Address, AccountState, FxBuildHasher>;
+type StorageCache = DashMap<(Address, H256), U256, FxBuildHasher>;
+type CodeCache = DashMap<H256, Code, FxBuildHasher>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -47,17 +48,17 @@ pub trait Database: Send + Sync {
 /// the sequential execution phase to reuse warmed state. Reduces redundant
 /// database/trie lookups when multiple transactions touch the same accounts.
 ///
-/// Thread-safe via RwLock - optimized for read-heavy concurrent access.
+/// Thread-safe via DashMap - internally sharded for lock-free concurrent access.
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
-    accounts: RwLock<AccountCache>,
+    accounts: AccountCache,
     /// Cached storage values
-    storage: RwLock<StorageCache>,
+    storage: StorageCache,
     /// Cached contract code
-    code: RwLock<CodeCache>,
+    code: CodeCache,
     /// Shared precompile result cache (warmer populates, executor reuses)
     precompile_cache: PrecompileCache,
     /// Cached chain config (constant for the lifetime of this database)
@@ -68,9 +69,9 @@ impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>) -> Self {
         Self {
             inner,
-            accounts: RwLock::new(FxHashMap::default()),
-            storage: RwLock::new(FxHashMap::default()),
-            code: RwLock::new(FxHashMap::default()),
+            accounts: DashMap::with_hasher(FxBuildHasher),
+            storage: DashMap::with_hasher(FxBuildHasher),
+            code: DashMap::with_hasher(FxBuildHasher),
             precompile_cache: PrecompileCache::new(),
             chain_config: OnceLock::new(),
         }
@@ -80,40 +81,12 @@ impl CachingDatabase {
     pub fn precompile_cache(&self) -> &PrecompileCache {
         &self.precompile_cache
     }
-
-    fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
-        self.accounts.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_accounts(&self) -> Result<RwLockWriteGuard<'_, AccountCache>, DatabaseError> {
-        self.accounts.write().map_err(poison_error_to_db_error)
-    }
-
-    fn read_storage(&self) -> Result<RwLockReadGuard<'_, StorageCache>, DatabaseError> {
-        self.storage.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_storage(&self) -> Result<RwLockWriteGuard<'_, StorageCache>, DatabaseError> {
-        self.storage.write().map_err(poison_error_to_db_error)
-    }
-
-    fn read_code(&self) -> Result<RwLockReadGuard<'_, CodeCache>, DatabaseError> {
-        self.code.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
-        self.code.write().map_err(poison_error_to_db_error)
-    }
-}
-
-fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
-    DatabaseError::Custom(format!("Cache lock poisoned: {err}"))
 }
 
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         // Check cache first
-        if let Some(state) = self.read_accounts()?.get(&address).copied() {
+        if let Some(state) = self.accounts.get(&address).map(|r| *r) {
             return Ok(state);
         }
 
@@ -121,14 +94,14 @@ impl Database for CachingDatabase {
         let state = self.inner.get_account_state(address)?;
 
         // Populate cache (AccountState is Copy, no clone needed)
-        self.write_accounts()?.insert(address, state);
+        self.accounts.insert(address, state);
 
         Ok(state)
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         // Check cache first
-        if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
+        if let Some(value) = self.storage.get(&(address, key)).map(|r| *r) {
             return Ok(value);
         }
 
@@ -136,7 +109,7 @@ impl Database for CachingDatabase {
         let value = self.inner.get_storage_value(address, key)?;
 
         // Populate cache (U256 is Copy, no clone needed)
-        self.write_storage()?.insert((address, key), value);
+        self.storage.insert((address, key), value);
 
         Ok(value)
     }
@@ -159,7 +132,7 @@ impl Database for CachingDatabase {
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
         // Check cache first
-        if let Some(code) = self.read_code()?.get(&code_hash).cloned() {
+        if let Some(code) = self.code.get(&code_hash).map(|r| r.clone()) {
             return Ok(code);
         }
 
@@ -167,7 +140,7 @@ impl Database for CachingDatabase {
         let code = self.inner.get_account_code(code_hash)?;
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
-        self.write_code()?.insert(code_hash, code.clone());
+        self.code.insert(code_hash, code.clone());
 
         Ok(code)
     }
@@ -184,32 +157,27 @@ impl Database for CachingDatabase {
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<(Address, AccountState)> = addresses
+        // Fetch from inner in parallel, inserting directly into DashMap (no global lock needed).
+        addresses
             .par_iter()
-            .map(|&addr| self.inner.get_account_state(addr).map(|s| (addr, s)))
-            .collect::<Result<_, _>>()?;
-        let mut cache = self.write_accounts()?;
-        for (addr, state) in fetched {
-            cache.entry(addr).or_insert(state);
-        }
-        Ok(())
+            .try_for_each(|&addr| -> Result<(), DatabaseError> {
+                if !self.accounts.contains_key(&addr) {
+                    let state = self.inner.get_account_state(addr)?;
+                    self.accounts.entry(addr).or_insert(state);
+                }
+                Ok(())
+            })
     }
 
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<((Address, H256), U256)> = keys
-            .par_iter()
-            .map(|&(addr, key)| {
-                self.inner
-                    .get_storage_value(addr, key)
-                    .map(|v| ((addr, key), v))
+        // Fetch from inner in parallel, inserting directly into DashMap (no global lock needed).
+        keys.par_iter()
+            .try_for_each(|&(addr, key)| -> Result<(), DatabaseError> {
+                if !self.storage.contains_key(&(addr, key)) {
+                    let value = self.inner.get_storage_value(addr, key)?;
+                    self.storage.entry((addr, key)).or_insert(value);
+                }
+                Ok(())
             })
-            .collect::<Result<_, _>>()?;
-        let mut cache = self.write_storage()?;
-        for (key, value) in fetched {
-            cache.entry(key).or_insert(value);
-        }
-        Ok(())
     }
 }
