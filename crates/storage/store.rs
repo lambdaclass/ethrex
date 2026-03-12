@@ -14,11 +14,11 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
+    layering::AccountHashSet,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
-    layering::AccountHashSet,
 };
 
 use bytes::Bytes;
@@ -2291,6 +2291,7 @@ impl Store {
         let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
+        Ok(Some(self.open_storage_trie(
             hashed_address,
             header.state_root,
             storage_root,
