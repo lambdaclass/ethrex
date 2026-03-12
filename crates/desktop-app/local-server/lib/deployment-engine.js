@@ -36,6 +36,8 @@ const { getHostById } = require("../db/hosts");
 const keychain = require("./keychain");
 const { getExternalL1Config, getPublicAccessConfig, getToolsPorts } = require("./tools-config");
 const { verifyAllContracts, SUPPORTED_CHAIN_IDS } = require("./etherscan-verify");
+const path = require("path");
+const fs = require("fs");
 const { ethers } = require("ethers");
 
 /**
@@ -69,8 +71,8 @@ function buildKeysEnvContent(keys) {
  */
 function writeKeysEnvFile(deploymentId, keysEnvContent, customDir) {
   const deployDir = getDeploymentDir(deploymentId, customDir);
-  const keysPath = require("path").join(deployDir, ".keys.env");
-  require("fs").writeFileSync(keysPath, keysEnvContent, { mode: 0o600 });
+  const keysPath = path.join(deployDir, ".keys.env");
+  fs.writeFileSync(keysPath, keysEnvContent, { mode: 0o600 });
   return keysPath;
 }
 
@@ -1781,8 +1783,8 @@ async function provisionRemoteTestnet(deployment, hostId) {
       await remote.uploadFile(conn, tomlContent, `${remoteDir}/programs.toml`);
     }
 
-    const envFileFlag = `--env-file ${remoteDir}/.keys.env`;
-    await remote.exec(conn, `cd ${remoteDir} && docker compose ${envFileFlag} -p ${projectName} pull`, {
+    const envFileFlag = `--env-file "${remoteDir}/.keys.env"`;
+    await remote.exec(conn, `cd "${remoteDir}" && docker compose ${envFileFlag} -p ${projectName} pull`, {
       timeout: 300000,
     });
 
@@ -1791,7 +1793,7 @@ async function provisionRemoteTestnet(deployment, hostId) {
     provisionInfo.phase = "deploying_contracts";
     emit(id, "phase", { phase: "deploying_contracts", message: "Deploying contracts to external L1..." });
     updateDeployment(id, { phase: "deploying_contracts" });
-    await remote.exec(conn, `cd ${remoteDir} && docker compose ${envFileFlag} -p ${projectName} up tokamak-app-deployer`, {
+    await remote.exec(conn, `cd "${remoteDir}" && docker compose ${envFileFlag} -p ${projectName} up tokamak-app-deployer`, {
       timeout: 600000,
     });
 
@@ -1813,7 +1815,7 @@ async function provisionRemoteTestnet(deployment, hostId) {
     provisionInfo.phase = "l2_starting";
     emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node on remote..." });
     updateDeployment(id, { phase: "l2_starting" });
-    await remote.exec(conn, `cd ${remoteDir} && docker compose ${envFileFlag} -p ${projectName} up -d tokamak-app-l2`, {
+    await remote.exec(conn, `cd "${remoteDir}" && docker compose ${envFileFlag} -p ${projectName} up -d tokamak-app-l2`, {
       timeout: 60000,
     });
     await waitForRemoteHealthy(conn, l2Port, 120000, id);
@@ -1822,7 +1824,7 @@ async function provisionRemoteTestnet(deployment, hostId) {
     provisionInfo.phase = "starting_prover";
     emit(id, "phase", { phase: "starting_prover", message: "Starting prover on remote..." });
     updateDeployment(id, { phase: "starting_prover" });
-    await remote.exec(conn, `cd ${remoteDir} && docker compose ${envFileFlag} -p ${projectName} up -d tokamak-app-prover`, {
+    await remote.exec(conn, `cd "${remoteDir}" && docker compose ${envFileFlag} -p ${projectName} up -d tokamak-app-prover`, {
       timeout: 60000,
     });
 
