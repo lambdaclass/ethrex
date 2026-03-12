@@ -13,6 +13,7 @@
     "@upstash/redis": "^1.36.3",
     "bcryptjs": "^2.4.3",
     "next": "^15.1.0",
+    "nostr-tools": "^2.23.3",
     "pg": "^8.20.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
