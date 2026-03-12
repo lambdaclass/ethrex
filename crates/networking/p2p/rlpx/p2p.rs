@@ -14,7 +14,11 @@ use ethrex_rlp::{
 use secp256k1::PublicKey;
 use serde::Serialize;
 
-pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 2] = [Capability::eth(68), Capability::eth(69)];
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 3] = [
+    Capability::eth(68),
+    Capability::eth(69),
+    Capability::eth(71),
+];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 
 /// The version of the base P2P protocol we support.

@@ -2026,6 +2026,14 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
+        // Store the produced BAL (present on Amsterdam+ blocks) so peers can request it
+        if let Some(bal) = &produced_bal {
+            let block_hash = block.hash();
+            if let Err(err) = self.storage.store_block_access_list(block_hash, bal) {
+                warn!("Failed to store block access list for block {block_hash}: {err}");
+            }
+        }
+
         let result = self.store_block(block, account_updates_list, res);
 
         let stored = Instant::now();

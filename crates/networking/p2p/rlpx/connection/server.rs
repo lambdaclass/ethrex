@@ -15,9 +15,10 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
+            block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
             receipts::{GetReceipts, Receipts68, Receipts69},
-            status::{StatusMessage68, StatusMessage69},
+            status::{StatusMessage68, StatusMessage69, StatusMessage71},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
@@ -527,6 +528,7 @@ where
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+        Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
         _ => EthCapVersion::default(),
     };
     *eth_version
@@ -676,6 +678,7 @@ where
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
             69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -698,6 +701,10 @@ where
             }
             Message::Status69(msg_data) => {
                 trace!(peer=%state.node, "Received Status(69)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status71(msg_data) => {
+                trace!(peer=%state.node, "Received Status(71)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -938,6 +945,11 @@ async fn handle_incoming_message(
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
         }
+        Message::Status71(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth).await?
+            };
+        }
         Message::GetAccountRange(req) => {
             let response = process_account_range_request(req, state.storage.clone()).await?;
             send(state, Message::AccountRange(response)).await?
@@ -998,6 +1010,26 @@ async fn handle_incoming_message(
             };
             send(state, Message::BlockBodies(response)).await?;
         }
+        Message::GetBlockAccessLists(GetBlockAccessLists { id, block_hashes })
+            if peer_supports_eth =>
+        {
+            use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
+            let mut block_access_lists = Vec::with_capacity(block_hashes.len());
+            for hash in &block_hashes {
+                match state.storage.get_block_access_list(*hash) {
+                    Ok(bal) => block_access_lists.push(bal),
+                    Err(err) => {
+                        error!("Error accessing DB while building BAL response for peer: {err}");
+                        block_access_lists.push(None);
+                    }
+                }
+                if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
+                    break;
+                }
+            }
+            let response = BlockAccessLists::new(id, block_access_lists);
+            send(state, Message::BlockAccessLists(response)).await?;
+        }
         Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 let mut receipts = Vec::new();
@@ -1006,7 +1038,8 @@ async fn handle_incoming_message(
                 }
                 let response = match eth.version {
                     68 => Message::Receipts68(Receipts68::new(id, receipts)),
-                    69 => Message::Receipts69(Receipts69::new(id, receipts)),
+                    // eth/71 uses the same receipts format as eth/69
+                    69 | 71 => Message::Receipts69(Receipts69::new(id, receipts)),
                     ver => {
                         return Err(PeerConnectionError::InternalError(format!(
                             "Invalid eth version {ver}"
@@ -1146,7 +1179,8 @@ async fn handle_incoming_message(
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
-        | message @ Message::Receipts69(_) => {
+        | message @ Message::Receipts69(_)
+        | message @ Message::BlockAccessLists(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))

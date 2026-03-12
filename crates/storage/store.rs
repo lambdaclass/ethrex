@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -27,6 +28,7 @@ use ethrex_common::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
         Receipt, Transaction,
+        block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
@@ -2031,6 +2033,34 @@ impl Store {
             Some(value) => {
                 let witness: RpcExecutionWitness = serde_json::from_slice(&value)?;
                 Ok(Some(witness))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Stores a block access list for a given block hash.
+    pub fn store_block_access_list(
+        &self,
+        block_hash: BlockHash,
+        bal: &BlockAccessList,
+    ) -> Result<(), StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        let mut value = vec![];
+        bal.encode(&mut value);
+        self.write(BLOCK_ACCESS_LISTS, key, value)
+    }
+
+    /// Returns the block access list for a given block hash, if stored.
+    pub fn get_block_access_list(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockAccessList>, StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        match self.read(BLOCK_ACCESS_LISTS, key)? {
+            Some(value) => {
+                let bal = BlockAccessList::decode(&value)
+                    .map_err(|e| StoreError::Custom(format!("Failed to decode BAL: {e}")))?;
+                Ok(Some(bal))
             }
             None => Ok(None),
         }
