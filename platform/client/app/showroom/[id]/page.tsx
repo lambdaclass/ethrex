@@ -42,9 +42,11 @@ const L1_NAMES: Record<number, string> = {
   17000: "Holesky",
 };
 
+const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs";
+
 function ipfsToHttp(uri: string): string {
   if (uri.startsWith("ipfs://")) {
-    return `https://gateway.pinata.cloud/ipfs/${uri.replace("ipfs://", "")}`;
+    return `${IPFS_GATEWAY}/${uri.replace("ipfs://", "")}`;
   }
   return uri;
 }
@@ -81,17 +83,22 @@ export default function AppchainDetailPage() {
 
   const fetchLiveStatus = useCallback(async () => {
     if (!id) return;
-    const [block, batch, gas] = await Promise.all([
-      storeApi.appchainRpc(id, "eth_blockNumber"),
-      storeApi.appchainRpc(id, "ethrex_batchNumber"),
-      storeApi.appchainRpc(id, "eth_gasPrice"),
-    ]);
-    setLiveStatus({
-      blockNumber: block ? parseInt(block, 16) : null,
-      batchNumber: batch ? parseInt(batch, 16) : null,
-      gasPrice: gas ? (parseInt(gas, 16) / 1e9).toFixed(4) : null,
-      online: block !== null,
-    });
+    try {
+      const [block, batch, gas] = await Promise.all([
+        storeApi.appchainRpc(id, "eth_blockNumber"),
+        storeApi.appchainRpc(id, "ethrex_batchNumber"),
+        storeApi.appchainRpc(id, "eth_gasPrice"),
+      ]);
+      setLiveStatus({
+        blockNumber: block ? parseInt(block, 16) : null,
+        batchNumber: batch ? parseInt(batch, 16) : null,
+        gasPrice: gas ? (parseInt(gas, 16) / 1e9).toFixed(4) : null,
+        online: block !== null,
+      });
+    } catch (err) {
+      console.warn("[live-status] Failed to fetch:", err);
+      setLiveStatus({ blockNumber: null, batchNumber: null, gasPrice: null, online: false });
+    }
   }, [id]);
 
   useEffect(() => {
@@ -130,7 +137,8 @@ export default function AppchainDetailPage() {
     { label: "CommonBridge", addr: appchain.bridge_address },
   ].filter((c) => c.addr);
 
-  const socialEntries = Object.entries(appchain.social_links || {}).filter(([, v]) => v);
+  const isSafeUrl = (url: string) => /^https?:\/\//i.test(url);
+  const socialEntries = Object.entries(appchain.social_links || {}).filter(([, v]) => v && isSafeUrl(v));
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -227,7 +235,7 @@ export default function AppchainDetailPage() {
       <div className="bg-white rounded-xl border p-6 mb-4">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Services</h2>
         <div className="space-y-3">
-          {appchain.explorer_url && (
+          {appchain.explorer_url && isSafeUrl(appchain.explorer_url) && (
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">L2 Explorer</span>
               <a href={appchain.explorer_url} target="_blank" rel="noopener noreferrer"
@@ -237,7 +245,7 @@ export default function AppchainDetailPage() {
               </a>
             </div>
           )}
-          {appchain.dashboard_url && (
+          {appchain.dashboard_url && isSafeUrl(appchain.dashboard_url) && (
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">Bridge Dashboard</span>
               <a href={appchain.dashboard_url} target="_blank" rel="noopener noreferrer"
