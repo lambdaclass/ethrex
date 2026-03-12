@@ -4,7 +4,10 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{
+        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
+        VMError,
+    },
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -26,13 +29,13 @@ use ethrex_crypto::Crypto;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::{OnceCell, RefCell},
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
 };
 
 /// Storage mapping from slot key to value.
-pub type Storage = HashMap<U256, H256>;
+pub type Storage = FxHashMap<U256, H256>;
 
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -96,7 +99,7 @@ impl Substate {
             accessed_storage_slots,
             created_accounts: FxHashSet::default(),
             refunded_gas: 0,
-            transient_storage: TransientStorage::new(),
+            transient_storage: TransientStorage::default(),
             logs: Vec::new(),
         }
     }
@@ -607,6 +610,18 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+        // If gas is already exhausted (negative), fail immediately.
+        // This can happen when intrinsic gas exceeds the gas limit in privileged L2 transactions.
+        // Without this check, casting negative gas_remaining to u64 would wrap to a huge value.
+        if self.current_call_frame.gas_remaining < 0 {
+            return Ok(ContextResult {
+                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                gas_used: self.current_call_frame.gas_limit,
+                gas_spent: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            });
+        }
+
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
