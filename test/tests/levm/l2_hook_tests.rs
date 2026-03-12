@@ -1,8 +1,4 @@
-//! Regression test for audit finding C: Nonatomic Finalization Can Lead to Inconsistent State
-//!
-//! Verifies that when `apply_finalize_mutations` fails mid-way (e.g. overflow in
-//! `pay_operator_fee`), `restore_cache_state()` reverts all partial mutations so no
-//! intermediate fee payments leak into the DB.
+//! Tests for L2 Hook: nonatomic finalization regression and privileged transaction handling.
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -10,10 +6,11 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        Transaction, TxKind,
+        PrivilegedL2Transaction, Transaction, TxKind,
         fee_config::{FeeConfig, OperatorFeeConfig},
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
@@ -27,7 +24,7 @@ use ethrex_levm::{
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-// ==================== Test Database Implementation ====================
+// ==================== Test Database ====================
 
 struct TestDatabase {
     accounts: FxHashMap<Address, Account>,
@@ -91,6 +88,12 @@ impl Database for TestDatabase {
         Ok(CodeMetadata { length: 0 })
     }
 }
+
+// ==================== Constants ====================
+
+const SENDER: u64 = 0x1000;
+const RECIPIENT: u64 = 0x2000;
+const COINBASE: u64 = 0xCCC;
 
 // ==================== Helpers ====================
 
@@ -173,8 +176,8 @@ fn fee_token_lock_only_contract() -> Account {
 /// `restore_cache_state()` reverts everything, leaving balances unchanged.
 #[test]
 fn finalize_mutation_failure_reverts_all_changes() {
-    let sender = Address::from_low_u64_be(0x1000);
-    let coinbase = Address::from_low_u64_be(0xCCC);
+    let sender = Address::from_low_u64_be(SENDER);
+    let coinbase = Address::from_low_u64_be(COINBASE);
     let operator_fee_vault = Address::from_low_u64_be(0xFEE);
 
     let gas_limit: u64 = 100_000;
@@ -248,6 +251,7 @@ fn finalize_mutation_failure_reverts_all_changes() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -288,8 +292,8 @@ fn finalize_mutation_failure_reverts_all_changes() {
 /// Assertions verify the contract still holds the value (undo was rolled back).
 #[test]
 fn fee_token_revert_during_finalize_triggers_rollback() {
-    let sender = Address::from_low_u64_be(0x1000);
-    let coinbase = Address::from_low_u64_be(0xCCC);
+    let sender = Address::from_low_u64_be(SENDER);
+    let coinbase = Address::from_low_u64_be(COINBASE);
     let contract_addr = Address::from_low_u64_be(0x9999);
     let fee_token_addr = Address::from_low_u64_be(0xEE00);
 
@@ -367,6 +371,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -392,5 +397,123 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         contract_balance,
         U256::zero(),
         "Contract should not hold value after tx revert + rollback"
+    );
+}
+
+/// Privileged tx with intrinsic gas failure must not lose sender funds.
+///
+/// Scenario: A non-bridge privileged tx has value > 0, sufficient sender balance,
+/// but gas_limit < intrinsic gas (21000). The old code debits the sender's balance
+/// before validation and then zeroes msg_value on failure, making the refund in
+/// finalize_execution a no-op — permanently burning the sender's ETH.
+#[test]
+fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let recipient = Address::from_low_u64_be(RECIPIENT);
+    let coinbase = Address::from_low_u64_be(COINBASE);
+
+    let initial_balance = U256::from(1_000_000);
+    let transfer_value = U256::from(500_000);
+    // Gas limit of 100 is well below intrinsic gas (21000 base cost)
+    let gas_limit: u64 = 100;
+
+    let test_db = TestDatabase::new();
+    let accounts: FxHashMap<Address, Account> = vec![
+        (sender, eoa(initial_balance)),
+        (recipient, eoa(U256::zero())),
+        (coinbase, eoa(U256::zero())),
+    ]
+    .into_iter()
+    .collect();
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
+
+    let fork = Fork::Prague;
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    let env = Environment {
+        origin: sender,
+        gas_limit,
+        config: EVMConfig::new(fork, blob_schedule),
+        block_number: 1,
+        coinbase,
+        timestamp: 1000,
+        prev_randao: Some(H256::zero()),
+        difficulty: U256::zero(),
+        slot_number: U256::zero(),
+        chain_id: U256::from(1),
+        base_fee_per_gas: U256::from(1000),
+        base_blob_fee_per_gas: U256::from(1),
+        gas_price: U256::from(1000),
+        block_excess_blob_gas: None,
+        block_blob_gas_used: None,
+        tx_blob_hashes: vec![],
+        tx_max_priority_fee_per_gas: None,
+        tx_max_fee_per_gas: Some(U256::from(1000)),
+        tx_max_fee_per_blob_gas: None,
+        tx_nonce: 0,
+        block_gas_limit: gas_limit * 100,
+        is_privileged: true,
+        fee_token: None,
+        disable_balance_check: false,
+    };
+
+    let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1000,
+        max_fee_per_gas: 1000,
+        gas_limit,
+        to: TxKind::Call(recipient),
+        value: transfer_value,
+        data: Bytes::new(),
+        access_list: vec![],
+        from: sender,
+        inner_hash: Default::default(),
+        sender_cache: Default::default(),
+        cached_canonical: Default::default(),
+    });
+
+    let fee_config = FeeConfig {
+        base_fee_vault: None,
+        operator_fee_config: None,
+        l1_fee_config: None,
+    };
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config),
+        &NativeCrypto,
+    )
+    .expect("VM creation should succeed");
+
+    let report = vm
+        .execute()
+        .expect("Privileged tx execution should not error");
+
+    // The tx should revert (INVALID opcode) because intrinsic gas was too low
+    assert!(
+        !report.is_success(),
+        "Tx should revert due to intrinsic gas failure"
+    );
+
+    // The sender's balance must be fully preserved — no funds should be burned.
+    let sender_balance_after = db.get_account(sender).unwrap().info.balance;
+    assert_eq!(
+        sender_balance_after,
+        initial_balance,
+        "Sender balance must be preserved after failed privileged tx. \
+         Expected {initial_balance}, got {sender_balance_after}. \
+         Difference (lost funds): {}",
+        initial_balance - sender_balance_after
+    );
+
+    // The recipient should NOT have received any funds
+    let recipient_balance_after = db.get_account(recipient).unwrap().info.balance;
+    assert_eq!(
+        recipient_balance_after,
+        U256::zero(),
+        "Recipient should not receive funds from a reverted privileged tx"
     );
 }

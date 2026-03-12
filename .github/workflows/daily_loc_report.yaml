@@ -2,8 +2,8 @@ name: Daily Lines of Code Report
 
 on:
   schedule:
-    # Every day at UTC midnight
-    - cron: "0 0 * * 1,2,3,4,5"
+    # Every day at UTC midnight (Slack is posted daily; Telegram only Mon & Thu)
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       slack_channel:
@@ -66,7 +66,7 @@ jobs:
           echo $! > /tmp/ts-ssh.pid
           sleep 2
 
-      - name: Generate the performance report
+      - name: Generate the combined report
         env:
           PERF_PROMETHEUS_URL: http://localhost:9090
           PERF_PROMETHEUS_RANGE: 24h
@@ -76,12 +76,6 @@ jobs:
             or label_replace(avg_over_time(nethermind_mgas_per_sec{instance=~"nethermind-mainnet-1(:[0-9]+)?"}[24h]) / 1000, "client", "nethermind", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1000, "client", "geth", "", "")
             or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1000, "client", "geth", "", "")
-        run: |
-          bash .github/scripts/generate_performance_report.sh
-
-      - name: Generate the block time report
-        env:
-          BLOCK_TIME_PROMETHEUS_URL: http://localhost:9090
           BLOCK_TIME_PROMETHEUS_RANGE: 24h
           BLOCK_TIME_PROMETHEUS_QUERY: >-
             label_replace(
@@ -123,18 +117,9 @@ jobs:
               ""
             )
             or label_replace(
-              avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.999"}[24h]
-              ) * 10e2,
-              "client",
-              "reth",
-              "",
-              ""
-            )
-            or label_replace(
-              avg_over_time(
-                reth_engine_rpc_new_payload_v4{instance="reth-mainnet-1:6060", quantile="0.5"}[24h]
-              ) * 10e2,
+              rate(reth_consensus_engine_beacon_new_payload_latency_sum{instance="reth-mainnet-1:6060"}[24h])
+              / rate(reth_consensus_engine_beacon_new_payload_latency_count{instance="reth-mainnet-1:6060"}[24h])
+              * 1000,
               "client",
               "reth",
               "",
@@ -163,7 +148,7 @@ jobs:
               ""
             )
         run: |
-          bash .github/scripts/generate_block_time_report.sh
+          bash .github/scripts/generate_combined_report.sh
 
       - name: Stop Tailscale SSH tunnel
         if: always()
@@ -181,14 +166,7 @@ jobs:
 
       - name: Post results in summary
         run: |
-          {
-            echo "# 'ethrex' lines of code report"
-            cat tooling/loc/loc_report_github.txt
-            echo ""
-            cat tooling/performance_report/performance_report_github.txt
-            echo ""
-            cat tooling/block_time_report/block_time_report_github.txt
-          } >> "$GITHUB_STEP_SUMMARY"
+          cat tooling/daily_report/daily_report_github.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post results to Slack
         env:
@@ -199,16 +177,24 @@ jobs:
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
-            sh .github/scripts/publish_loc.sh "$webhook"
-            bash .github/scripts/publish_performance.sh "$webhook" tooling/performance_report/performance_report_slack.json
-            bash .github/scripts/publish_performance.sh "$webhook" tooling/block_time_report/block_time_report_slack.json
+            bash .github/scripts/publish_performance.sh "$webhook" tooling/daily_report/daily_report_slack.json
           done
 
       - name: Post results to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_ETHREX_CHAT_ID: ${{ secrets.TELEGRAM_ETHREX_CHAT_ID }}
+          TELEGRAM_ETHREX_CHAT_ID: >-
+            ${{ (github.event_name == 'schedule' || inputs.slack_channel == 'prod')
+              && secrets.TELEGRAM_ETHREX_CHAT_ID
+              || secrets.TELEGRAM_ETHREX_TEST_CHAT_ID
+            }}
         run: |
-          bash .github/scripts/publish_telegram.sh tooling/loc/loc_report_github.txt
-          bash .github/scripts/publish_telegram.sh tooling/performance_report/performance_report_github.txt
-          bash .github/scripts/publish_telegram.sh tooling/block_time_report/block_time_report_github.txt
+          # For scheduled runs, only post to Telegram on Monday and Thursday
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            day_of_week=$(date -u +%u)  # 1=Monday .. 7=Sunday
+            if [[ "$day_of_week" != "1" && "$day_of_week" != "4" ]]; then
+              echo "Skipping Telegram post (only sent on Monday and Thursday)"
+              exit 0
+            fi
+          fi
+          bash .github/scripts/publish_telegram.sh tooling/daily_report/daily_report_telegram.txt

@@ -85,28 +85,28 @@ impl StatusMessage68 {
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
-        let lastest_block = storage.get_latest_block_number().await?;
+        let latest_block = storage.get_latest_block_number().await?;
         let block_header =
             storage
-                .get_block_header(lastest_block)?
+                .get_block_header(latest_block)?
                 .ok_or(PeerConnectionError::NotFound(format!(
-                    "Block {lastest_block}"
+                    "Block {latest_block}"
                 )))?;
 
         let genesis = genesis_header.hash();
-        let lastest_block_hash = block_header.hash();
+        let latest_block_hash = block_header.hash();
         let fork_id = ForkId::new(
             chain_config,
             genesis_header,
             block_header.timestamp,
-            lastest_block,
+            latest_block,
         );
 
         Ok(StatusMessage68 {
             eth_version: 68,
             network_id,
             total_difficulty,
-            block_hash: lastest_block_hash,
+            block_hash: latest_block_hash,
             genesis,
             fork_id,
         })
