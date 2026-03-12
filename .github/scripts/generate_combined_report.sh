@@ -387,6 +387,16 @@ jq -n --arg header "$header_text" --arg text "$slack_text" '{
 
 # --- Generate Telegram HTML report ---
 # Uses <pre> for code sections (monospace) and <b> for bold headers
+
+# Escape HTML special characters for Telegram's HTML parser
+escape_html() {
+  local s="$1"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  printf "%s" "$s"
+}
+
 tg_text="<b>${header_text}</b>"$'\n\n'
 
 if [[ -n "$loc_text" ]]; then
@@ -397,7 +407,7 @@ if [[ -n "$loc_text" ]]; then
 fi
 
 tg_text+="<b>Comparative performance report (24h average)</b>"$'\n'
-tg_text+="Comparing ${comparing_line}"$'\n\n'
+tg_text+="Comparing $(escape_html "$comparing_line")"$'\n\n'
 
 tg_text+="<b>Block Time</b>"$'\n'
 tg_text+="<pre>"$'\n'

@@ -2,8 +2,8 @@ name: Daily Lines of Code Report
 
 on:
   schedule:
-    # Every Monday and Thursday at UTC midnight
-    - cron: "0 0 * * 1,4"
+    # Every day at UTC midnight (Slack is posted daily; Telegram only Mon & Thu)
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       slack_channel:
@@ -189,4 +189,12 @@ jobs:
               || secrets.TELEGRAM_ETHREX_TEST_CHAT_ID
             }}
         run: |
+          # For scheduled runs, only post to Telegram on Monday and Thursday
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            day_of_week=$(date -u +%u)  # 1=Monday .. 7=Sunday
+            if [[ "$day_of_week" != "1" && "$day_of_week" != "4" ]]; then
+              echo "Skipping Telegram post (only sent on Monday and Thursday)"
+              exit 0
+            fi
+          fi
           bash .github/scripts/publish_telegram.sh tooling/daily_report/daily_report_telegram.txt
