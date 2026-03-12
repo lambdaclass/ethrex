@@ -211,6 +211,32 @@ class LocalServerAPI {
   deleteHost(id: string) {
     return this.fetch<{ ok: boolean }>(`/api/hosts/${id}`, { method: 'DELETE' })
   }
+
+  // AI Deploy — report AI config status to Manager
+  async reportAIStatus(status: { configured: boolean; mode: string | null; provider: string | null; model: string | null }) {
+    try {
+      await window.fetch(`${this.baseUrl}/api/deployments/ai-deploy/report-ai`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(status),
+      })
+    } catch {
+      // Manager might not be running — ignore
+    }
+  }
+
+  // AI Deploy — check for pending prompt from Manager
+  async getPendingAIPrompt(): Promise<{
+    deploymentId: string
+    deploymentName: string
+    cloud: string
+    prompt: string
+    createdAt: string
+  } | null> {
+    const resp = await window.fetch(`${this.baseUrl}/api/deployments/ai-deploy/pending`)
+    if (!resp.ok) return null
+    return resp.json()
+  }
 }
 
 export const localServerAPI = new LocalServerAPI()

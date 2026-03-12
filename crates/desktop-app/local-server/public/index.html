@@ -31,12 +31,13 @@
       </button>
 
       <div class="sidebar-section">Infrastructure</div>
-      <button class="nav-link" data-view="hosts">
+      <!-- Remote Hosts hidden for now -->
+      <!--<button class="nav-link" data-view="hosts">
         <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
         </svg>
         <span>Remote Hosts</span>
-      </button>
+      </button>-->
     </div>
 
     <div class="sidebar-footer">
@@ -98,17 +99,13 @@
           <div class="config-form">
             <label style="margin-bottom:8px">Environment</label>
             <div class="mode-cards" style="margin-bottom:12px">
-              <button type="button" class="mode-card active" data-mode="local" onclick="setLaunchMode('local')" style="padding:8px">
+              <button type="button" class="mode-card active" data-mode="ai-deploy" onclick="setLaunchMode('ai-deploy')" style="padding:8px">
+                <div class="mode-title">AI Deploy</div>
+                <div class="mode-desc">Generate prompt for AI-assisted cloud deploy</div>
+              </button>
+              <button type="button" class="mode-card" data-mode="local" onclick="setLaunchMode('local')" style="padding:8px">
                 <div class="mode-title">Local (Docker)</div>
                 <div class="mode-desc">Build and run on this machine</div>
-              </button>
-              <button type="button" class="mode-card" data-mode="remote" onclick="setLaunchMode('remote')" style="padding:8px">
-                <div class="mode-title">Remote Server</div>
-                <div class="mode-desc">Deploy to a remote server via SSH</div>
-              </button>
-              <button type="button" class="mode-card" data-mode="manual" onclick="setLaunchMode('manual')" style="padding:8px">
-                <div class="mode-title">Manual</div>
-                <div class="mode-desc">Download config and run manually</div>
               </button>
             </div>
 
@@ -122,7 +119,7 @@
               </label>
             </div>
 
-            <div id="deploy-dir-area">
+            <div id="deploy-dir-area" style="display:none">
               <label style="margin-bottom:4px">Deploy Directory</label>
               <div style="display:flex;gap:6px;margin-bottom:4px">
                 <input type="text" id="launch-deploy-dir" placeholder="~/.tokamak/deployments/<id> (default)" style="flex:1;margin:0">
@@ -131,7 +128,7 @@
               <p class="form-hint" style="margin-bottom:8px">docker-compose.yaml will be generated here.</p>
             </div>
 
-            <div id="l1-node-area">
+            <div id="l1-node-area" style="display:none">
               <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
                 <label style="margin-bottom:8px;flex:1;min-width:200px">L1 Node
                   <select id="launch-l1-image" onchange="onL1NodeChange()">
@@ -243,20 +240,168 @@
             <div id="docker-status-area"></div>
 
             <div id="remote-host-area" style="display:none">
-              <label>Target Server
+              <label style="margin-bottom:8px">Target Server
                 <select id="launch-host-select"><option value="">Select a server...</option></select>
               </label>
-              <div class="remote-info-box">
+              <label style="margin-bottom:8px">L1 Source
+                <select id="remote-l1-source" onchange="onRemoteL1SourceChange()">
+                  <option value="local">Built-in L1 (Docker on remote)</option>
+                  <option value="testnet">Testnet (Sepolia, Holesky, etc.)</option>
+                </select>
+              </label>
+              <div id="remote-testnet-fields" style="display:none">
+                <div class="testnet-info-box" style="background:var(--blue-50,#eff6ff);border:1px solid var(--blue-200,#bfdbfe);border-radius:8px;padding:10px 14px;margin-bottom:12px">
+                  <p style="font-weight:600;color:var(--blue-700,#1d4ed8);margin-bottom:4px;font-size:13px">Remote + Testnet</p>
+                  <p style="color:var(--blue-600,#2563eb);font-size:11px;line-height:1.5">
+                    No L1 container on the remote server. L2 contracts will be deployed to the external L1.<br>
+                    Select a deployer key from Keychain. The account must be funded with testnet ETH.
+                  </p>
+                </div>
+                <label style="margin-bottom:8px">L1 Network
+                  <select id="remote-l1-network" onchange="onRemoteL1NetworkChange()">
+                    <option value="sepolia">Sepolia (Chain ID: 11155111)</option>
+                    <option value="holesky">Holesky (Chain ID: 17000)</option>
+                    <option value="custom-l1">Custom L1 Network</option>
+                  </select>
+                </label>
+                <label style="margin-bottom:8px">L1 RPC URL *
+                  <input type="text" id="remote-testnet-rpc" placeholder="https://sepolia.infura.io/v3/YOUR_KEY">
+                </label>
+                <label style="margin-bottom:8px">Deployer Key (Keychain) *
+                  <select id="remote-testnet-keychain-key">
+                    <option value="">Select key...</option>
+                  </select>
+                </label>
+              </div>
+              <div class="remote-info-box" id="remote-info-box">
                 <p style="font-weight:500;margin-bottom:4px">Remote deployment</p>
                 <p>Pre-built Docker images will be pulled on the remote server.</p>
               </div>
             </div>
 
-            <div id="manual-rpc-area" style="display:none">
-              <label>L1 RPC URL *
-                <input type="text" id="launch-rpc-url" placeholder="https://mainnet.infura.io/v3/...">
-                <p class="form-hint">The Ethereum L1 endpoint your L2 will settle to.</p>
-              </label>
+            <div id="ai-deploy-area" style="display:none">
+              <div id="ai-config-section" style="margin-bottom:16px;padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+                <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:10px">AI 설정</div>
+
+                <!-- Option A: Use Messenger's key -->
+                <div id="ai-opt-messenger" style="display:none;margin-bottom:10px">
+                  <div class="ai-source-option" onclick="document.getElementById('ai-src-messenger').checked=true;onAISourceChange('messenger')" style="border-radius:6px;border:1px solid var(--border);background:var(--surface)">
+                    <input type="radio" name="ai-source" id="ai-src-messenger" value="messenger" onchange="onAISourceChange('messenger')">
+                    <div>
+                      <div>메신저 AI 설정 사용</div>
+                      <div class="ai-source-detail" id="ai-messenger-detail"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Option B: Enter key manually -->
+                <div id="ai-opt-manual">
+                  <div id="ai-manual-radio" style="display:none;margin-bottom:8px">
+                    <div class="ai-source-option" onclick="document.getElementById('ai-src-manual').checked=true;onAISourceChange('manual')">
+                      <input type="radio" name="ai-source" id="ai-src-manual" value="manual" onchange="onAISourceChange('manual')">
+                      <div>직접 입력</div>
+                    </div>
+                  </div>
+                  <div id="ai-key-setup" style="margin-top:6px">
+                    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+                      <label style="flex:0 0 auto;margin:0">
+                        <select id="ai-provider" style="width:130px">
+                          <option value="claude">Claude</option>
+                          <option value="gpt">ChatGPT</option>
+                          <option value="gemini">Gemini</option>
+                        </select>
+                      </label>
+                      <label style="flex:1;margin:0">
+                        <input type="password" id="ai-api-key" placeholder="API Key" style="width:100%">
+                      </label>
+                      <button class="btn-primary" onclick="saveAIConfig()" style="padding:6px 14px;font-size:12px;white-space:nowrap">Save</button>
+                    </div>
+                    <div id="ai-key-status" style="margin-top:6px;font-size:11px"></div>
+                  </div>
+                </div>
+              </div>
+              <div id="ai-deploy-main" style="display:none">
+                <label style="margin-bottom:8px">Deploy Target *
+                  <select id="ai-cloud" onchange="onAIDeployTargetChange()">
+                    <option value="">Select...</option>
+                    <option value="local-docker">Local (Docker)</option>
+                    <option value="gcp">Google Cloud (GCP)</option>
+                    <option value="aws">Amazon Web Services (AWS)</option>
+                    <option value="vultr">Vultr</option>
+                  </select>
+                </label>
+                <div id="cloud-cli-status" style="display:none"></div>
+                <label id="gcp-project-label" style="margin-bottom:8px;display:none">GCP Project ID *
+                  <input type="text" id="gcp-project-id" placeholder="e.g. tokamak-appchain">
+                </label>
+                <div id="vultr-apikey-label" style="display:none;margin-bottom:8px">
+                  <label style="margin:0">Vultr API Key *
+                    <div style="display:flex;gap:6px">
+                      <input type="password" id="vultr-api-key-input" placeholder="Vultr API Key" style="flex:1">
+                      <button class="btn-primary" onclick="saveVultrApiKey()" style="padding:6px 14px;font-size:12px;white-space:nowrap">Save</button>
+                    </div>
+                  </label>
+                  <div id="vultr-apikey-status" style="margin-top:4px;font-size:10px;color:#888">
+                    <a href="https://my.vultr.com/settings/#settingsapi" target="_blank" style="color:#60a5fa">Vultr 설정 → API</a>에서 키를 생성하세요
+                  </div>
+                </div>
+                <div style="display:flex;gap:10px;margin-bottom:8px">
+                  <label style="flex:1;margin:0">L1 Network *
+                    <select id="ai-l1-mode" onchange="onAIL1ModeChange()">
+                      <option value="local">Local (VM 내 L1 노드 포함)</option>
+                      <option value="sepolia">Sepolia Testnet</option>
+                      <option value="mainnet">Ethereum Mainnet</option>
+                    </select>
+                  </label>
+                  <label id="ai-l1-chainid-area" style="width:140px;margin:0">L1 Chain ID
+                    <input type="number" id="ai-l1-chain-id" placeholder="9" value="9">
+                  </label>
+                </div>
+                <div id="ai-l1-rpc-area" style="display:none">
+                  <label style="margin-bottom:8px">L1 RPC URL *
+                    <input type="text" id="ai-l1-rpc-url" placeholder="https://sepolia.infura.io/v3/YOUR_KEY">
+                  </label>
+                </div>
+                <div id="ai-wallet-area" style="display:none;margin-bottom:10px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                    <span style="font-weight:600;font-size:12px">Wallet Configuration</span>
+                    <div style="display:flex;gap:6px">
+                      <button type="button" class="btn-secondary" onclick="registerAIKeychainKey()" style="font-size:10px;padding:3px 8px">+ Register Key</button>
+                      <button type="button" class="btn-secondary" onclick="loadAIKeychainKeys()" style="font-size:10px;padding:3px 8px">↻</button>
+                    </div>
+                  </div>
+                  <p style="font-size:10px;color:#888;margin-bottom:8px;line-height:1.4">비밀키는 macOS Keychain에 저장됩니다. 클라우드 배포 시 AI가 서버의 Secret Manager에 안전하게 등록하도록 안내합니다.</p>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+                    <div style="border-left:4px solid #2563eb;border-radius:8px;padding:10px 10px 10px 12px;background:#eff6ff;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                      <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px">Deployer *</div>
+                      <select id="ai-deployer-key" onchange="onAIKeyChange()" style="font-size:11px;width:100%;margin-bottom:2px"><option value="">Select key...</option></select>
+                      <div id="ai-deployer-addr" style="font-size:9px;color:#4b5563;word-break:break-all"></div>
+                    </div>
+                    <div style="border-left:4px solid #16a34a;border-radius:8px;padding:10px 10px 10px 12px;background:#f0fdf4;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                      <div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:4px">Committer</div>
+                      <select id="ai-committer-key" style="font-size:11px;width:100%;margin-bottom:2px"><option value="">Same as Deployer</option></select>
+                      <div id="ai-committer-addr" style="font-size:9px;color:#4b5563;word-break:break-all"></div>
+                    </div>
+                    <div style="border-left:4px solid #9333ea;border-radius:8px;padding:10px 10px 10px 12px;background:#faf5ff;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                      <div style="font-size:12px;font-weight:700;color:#7e22ce;margin-bottom:4px">Proof Coordinator</div>
+                      <select id="ai-proof-coordinator-key" style="font-size:11px;width:100%;margin-bottom:2px"><option value="">Same as Deployer</option></select>
+                      <div id="ai-proof-coordinator-addr" style="font-size:9px;color:#4b5563;word-break:break-all"></div>
+                    </div>
+                    <div style="border-left:4px solid #d97706;border-radius:8px;padding:10px 10px 10px 12px;background:#fffbeb;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                      <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:4px">Bridge Owner</div>
+                      <select id="ai-bridge-owner-key" style="font-size:11px;width:100%;margin-bottom:2px"><option value="">Same as Deployer</option></select>
+                      <div id="ai-bridge-owner-addr" style="font-size:9px;color:#4b5563;word-break:break-all"></div>
+                    </div>
+                  </div>
+                  <div id="ai-wallet-status" style="font-size:11px"></div>
+                </div>
+                <label style="margin-bottom:10px;display:flex;align-items:center;gap:8px;cursor:pointer;width:100%">
+                  <input type="checkbox" id="ai-include-prover" checked onchange="onProverToggle()" style="width:16px;height:16px;flex-shrink:0">
+                  <span style="white-space:nowrap">SP1 Prover 포함</span>
+                  <span style="font-size:10px;color:#888;white-space:nowrap">(ZK 증명 생성 — 높은 사양 필요)</span>
+                </label>
+                <div id="ai-spec-recommendation" style="margin-bottom:10px;padding:10px 12px;border-radius:8px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);font-size:11px;line-height:1.7;color:#e2e8f0"></div>
+              </div>
             </div>
 
             <div id="launch-error" class="error-msg" style="display:none"></div>
@@ -380,6 +525,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=32"></script>
+  <script src="/app.js?v=71"></script>
 </body>
 </html>

@@ -124,14 +124,14 @@ export default function HomeView({ onNavigate }: HomeViewProps) {
             </div>
           ) : (
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl border border-[var(--color-border)] overflow-hidden">
-              {deployments.map((d, i) => {
+              {(() => {
+                const d = deployments[0]
                 const mode = d.network_mode?.toLowerCase() || 'local'
                 const isRunning = d.status === 'running'
                 return (
                   <button
-                    key={d.id}
                     onClick={() => onNavigate('myl2')}
-                    className={`w-full flex items-center gap-3 px-3.5 py-3 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left ${i > 0 ? 'border-t border-[var(--color-border)]' : ''}`}
+                    className="w-full flex items-center gap-3 px-3.5 py-3 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left"
                   >
                     <div className="w-8 h-8 rounded-lg bg-[var(--color-bg-main)] flex items-center justify-center text-sm flex-shrink-0 border border-[var(--color-border)]">
                       ⛓️
@@ -159,21 +159,17 @@ export default function HomeView({ onNavigate }: HomeViewProps) {
                     </div>
                   </button>
                 )
-              })}
-              {/* Add new */}
-              <button
-                onClick={() => openDeployManager('launch')}
-                className="w-full flex items-center gap-3 px-3.5 py-2.5 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer text-left border-t border-[var(--color-border)]"
-              >
-                <div className="w-8 h-8 rounded-lg bg-[var(--color-success)]/10 flex items-center justify-center flex-shrink-0">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                  </svg>
-                </div>
-                <span className="text-[11px] text-[var(--color-success)] font-medium">
-                  {ko ? '새 앱체인 만들기' : 'Create New Appchain'}
-                </span>
-              </button>
+              })()}
+              {totalCount > 1 && (
+                <button
+                  onClick={() => onNavigate('myl2')}
+                  className="w-full px-3.5 py-2 hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer border-t border-[var(--color-border)]"
+                >
+                  <span className="text-[10px] text-[var(--color-text-secondary)]">
+                    {ko ? `+${totalCount - 1}개 더보기 →` : `${totalCount - 1} more →`}
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>

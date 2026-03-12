@@ -91,6 +91,11 @@ async function buildImages(projectName, composeFile, env = {}, onLog, { forceReb
   return runCompose(projectName, composeFile, ["build"], { env, onLog });
 }
 
+/** Pull pre-built images (for AI Deploy local mode) */
+async function pullImages(projectName, composeFile, onLog) {
+  return runCompose(projectName, composeFile, ["pull"], { onLog, timeout: 300000 });
+}
+
 /** Start L1 service */
 async function startL1(projectName, composeFile, env = {}) {
   return runCompose(projectName, composeFile, ["up", "-d", "--no-build", "tokamak-app-l1"], { env });
@@ -277,6 +282,11 @@ function buildToolsEnv(toolsPorts) {
   env.PUBLIC_L1_EXPLORER_HOST = `localhost:${toolsPorts.toolsL1ExplorerPort || 8083}`;
   env.PUBLIC_L1_EXPLORER_PROTOCOL = 'http';
   env.PUBLIC_L1_WS_PROTOCOL = 'ws';
+
+  // Public access — bind to 0.0.0.0 when enabled (default: 127.0.0.1 = localhost only)
+  if (toolsPorts.isPublic) {
+    env.TOOLS_BIND_ADDR = '0.0.0.0';
+  }
 
   // Public access config (external domain/IP) — overrides defaults above
   if (toolsPorts.publicDomain) {
@@ -611,6 +621,7 @@ function findImage(programSlug) {
 module.exports = {
   findImage,
   buildImages,
+  pullImages,
   startL1,
   deployContracts,
   extractEnv,

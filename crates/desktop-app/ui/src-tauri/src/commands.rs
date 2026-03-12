@@ -363,6 +363,7 @@ pub struct LocalServerStatus {
 pub async fn start_local_server(
     server: State<'_, Arc<LocalServer>>,
 ) -> Result<String, String> {
+    server.resume_watchdog();
     server.start().await?;
     Ok(server.url())
 }
@@ -371,6 +372,7 @@ pub async fn start_local_server(
 pub async fn stop_local_server(
     server: State<'_, Arc<LocalServer>>,
 ) -> Result<(), String> {
+    server.pause_watchdog();
     server.stop().await
 }
 
@@ -378,12 +380,11 @@ pub async fn stop_local_server(
 pub async fn get_local_server_status(
     server: State<'_, Arc<LocalServer>>,
 ) -> Result<LocalServerStatus, String> {
-    let running = server.is_running().await;
-    let healthy = if running {
-        server.health_check().await
-    } else {
-        false
-    };
+    let has_process = server.is_running().await;
+    let healthy = server.health_check().await;
+    // Server is "running" if we have a child process OR if health check passes
+    // (the server might have been started externally or before Tauri spawned it)
+    let running = has_process || healthy;
     Ok(LocalServerStatus {
         running,
         healthy,

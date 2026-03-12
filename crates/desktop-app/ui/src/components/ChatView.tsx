@@ -6,6 +6,7 @@ import { t } from '../i18n'
 import type { ViewType } from '../App'
 import type { Lang } from '../i18n'
 import type { NetworkMode } from './CreateL2Wizard'
+import { localServerAPI } from '../api/local-server'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -158,18 +159,56 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Poll for pending AI Deploy prompts from Manager
+  useEffect(() => {
+    if (!isVisible) return
+    const pollInterval = setInterval(async () => {
+      try {
+        const pending = await localServerAPI.getPendingAIPrompt()
+        if (pending && pending.prompt) {
+          // Add the prompt as a user message and auto-send
+          const deployPrefix = lang === 'ko'
+            ? `[AI Deploy] "${pending.deploymentName}" ${pending.cloud.toUpperCase()} 클라우드 배포를 실행해주세요:\n\n`
+            : `[AI Deploy] Please execute cloud deployment for "${pending.deploymentName}" on ${pending.cloud.toUpperCase()}:\n\n`
+          const userMsg: Message = { role: 'user', content: deployPrefix + pending.prompt }
+          setMessages(prev => [...prev, userMsg])
+          setLoading(true)
+          try {
+            const context = await invoke<Record<string, unknown>>('get_chat_context')
+            const contextJson = JSON.stringify(context)
+            const response = await invoke<{ role: string; content: string }>('send_chat_message', {
+              messages: [{ role: 'user', content: deployPrefix + pending.prompt }],
+              context: contextJson,
+            })
+            setMessages(prev => [...prev, { role: 'assistant', content: response.content }])
+          } catch (e) {
+            setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e}` }])
+          } finally {
+            setLoading(false)
+          }
+        }
+      } catch {
+        // Manager not running or network error — ignore
+      }
+    }, 3000) // Poll every 3 seconds
+    return () => clearInterval(pollInterval)
+  }, [isVisible, lang])
+
   const loadAiMode = async () => {
     try {
       const mode = await invoke<AiMode>('get_ai_mode')
       setAiMode(mode)
       if (mode === 'tokamak') {
         await loadTokamakUsage()
+        // Report AI status to Manager
+        localServerAPI.reportAIStatus({ configured: true, mode: 'tokamak', provider: 'tokamak', model: 'Tokamak AI' })
       } else {
         await checkApiKey()
       }
     } catch {
       // Default to tokamak mode
       setAiMode('tokamak')
+      localServerAPI.reportAIStatus({ configured: false, mode: null, provider: null, model: null })
       if (messages.length === 0) {
         setMessages([{ role: 'assistant', content: t('chat.welcome.tokamak', lang) }])
       }
@@ -223,12 +262,17 @@ export default function ChatView({ onNavigate, onCreateWithNetwork, isVisible }:
       if (result) {
         const cfg = await invoke<AiConfig>('get_ai_config')
         setConfig(cfg)
+        // Report AI status to Manager
+        localServerAPI.reportAIStatus({ configured: true, mode: 'custom', provider: cfg.provider, model: cfg.model })
         if (messages.length === 0) {
           setMessages([{ role: 'assistant', content: t('chat.welcome.connected', lang) }])
         }
+      } else {
+        localServerAPI.reportAIStatus({ configured: false, mode: 'custom', provider: null, model: null })
       }
     } catch {
       setHasKey(false)
+      localServerAPI.reportAIStatus({ configured: false, mode: null, provider: null, model: null })
     }
   }
 

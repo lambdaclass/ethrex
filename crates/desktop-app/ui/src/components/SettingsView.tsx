@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-shell'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useLang, useTheme } from '../App'
 import { t, langNames } from '../i18n'
 import type { PlatformUser } from '../api/platform'
@@ -197,6 +198,79 @@ export default function SettingsView() {
   const [tgSaving, setTgSaving] = useState(false)
   const [tgResult, setTgResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [tgSystemAlerts, setTgSystemAlerts] = useState(true)
+
+  // Local server (L2 Manager)
+  const [serverStatus, setServerStatus] = useState<{ running: boolean; healthy: boolean } | null>(null)
+  const [serverRestarting, setServerRestarting] = useState(false)
+  const [serverMsg, setServerMsg] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const loadServerStatus = async () => {
+    try {
+      const st = await invoke<{ running: boolean; healthy: boolean; url: string; port: number }>('get_local_server_status')
+      setServerStatus(st)
+    } catch {
+      setServerStatus({ running: false, healthy: false })
+    }
+  }
+
+  useEffect(() => {
+    loadServerStatus()
+    const iv = setInterval(loadServerStatus, 5000)
+    return () => clearInterval(iv)
+  }, [])
+
+  const showServerMsg = (msg: { ok: boolean; msg: string }) => {
+    setServerMsg(msg)
+    setTimeout(() => setServerMsg(null), 3000)
+  }
+
+  const handleServerRestart = async () => {
+    setServerRestarting(true)
+    setServerMsg(null)
+    try {
+      await invoke('stop_local_server')
+      await new Promise(r => setTimeout(r, 1000))
+      await invoke<string>('start_local_server')
+      await loadServerStatus()
+      showServerMsg({ ok: true, msg: lang === 'ko' ? '서버가 재시작되었습니다.' : 'Server restarted.' })
+    } catch (e) {
+      showServerMsg({ ok: false, msg: `${e}` })
+    } finally {
+      setServerRestarting(false)
+    }
+  }
+
+  const handleServerStop = async () => {
+    setServerRestarting(true)
+    setServerMsg(null)
+    try {
+      await invoke('stop_local_server')
+      // Wait for process to fully terminate before checking status
+      await new Promise(r => setTimeout(r, 1000))
+      await loadServerStatus()
+      showServerMsg({ ok: true, msg: lang === 'ko' ? '서버가 중지되었습니다.' : 'Server stopped.' })
+    } catch (e) {
+      showServerMsg({ ok: false, msg: `${e}` })
+    } finally {
+      setServerRestarting(false)
+    }
+  }
+
+  const handleServerStart = async () => {
+    setServerRestarting(true)
+    setServerMsg(null)
+    try {
+      await invoke<string>('start_local_server')
+      // Wait for server to become healthy before checking status
+      await new Promise(r => setTimeout(r, 2000))
+      await loadServerStatus()
+      showServerMsg({ ok: true, msg: lang === 'ko' ? '서버가 시작되었습니다.' : 'Server started.' })
+    } catch (e) {
+      showServerMsg({ ok: false, msg: `${e}` })
+    } finally {
+      setServerRestarting(false)
+    }
+  }
 
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -455,6 +529,13 @@ export default function SettingsView() {
               {saveResult.msg}
             </p>
           )}
+          {maskedKey && (
+            <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">
+              {lang === 'ko'
+                ? 'L2 매니저의 AI Deploy에서도 이 설정을 사용할 수 있습니다.'
+                : 'This setting can also be used in L2 Manager AI Deploy.'}
+            </p>
+          )}
         </section>
 
         {/* Telegram Bot */}
@@ -531,6 +612,73 @@ export default function SettingsView() {
           {tgResult && (
             <p className={`text-[12px] ${tgResult.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
               {tgResult.msg}
+            </p>
+          )}
+        </section>
+
+        {/* L2 Manager Server */}
+        <section className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 space-y-3 border border-[var(--color-border)]">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[13px] font-medium">{lang === 'ko' ? 'L2 매니저 서버' : 'L2 Manager Server'}</h2>
+            {serverStatus && (
+              <span className={`text-[11px] font-medium flex items-center gap-1 ${serverStatus.healthy ? 'text-[var(--color-success)]' : serverStatus.running ? 'text-[var(--color-warning)]' : 'text-[var(--color-error)]'}`}>
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${serverStatus.healthy ? 'bg-[var(--color-success)]' : serverStatus.running ? 'bg-[var(--color-warning)]' : 'bg-[var(--color-error)]'}`} />
+                {serverStatus.healthy ? (lang === 'ko' ? '정상' : 'Healthy') : serverStatus.running ? (lang === 'ko' ? '시작 중' : 'Starting') : (lang === 'ko' ? '중지됨' : 'Stopped')}
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-[var(--color-text-secondary)]">
+            {lang === 'ko'
+              ? '배포 관리를 담당하는 로컬 서버입니다. 문제가 있으면 재시작하세요.'
+              : 'Local server for deployment management. Restart if experiencing issues.'}
+          </p>
+          <div className="flex gap-2">
+            {serverStatus?.running ? (
+              <>
+                <button
+                  onClick={async () => {
+                    try {
+                      const baseUrl = await invoke<string>('open_deployment_ui')
+                      const existing = await WebviewWindow.getByLabel('deploy-manager')
+                      if (existing) { await existing.show(); await existing.setFocus(); return }
+                      new WebviewWindow('deploy-manager', {
+                        url: baseUrl, title: 'Tokamak L2 Manager',
+                        width: 1100, height: 800, minWidth: 800, minHeight: 600, center: true,
+                      })
+                    } catch (e) { console.error('Failed to open manager:', e) }
+                  }}
+                  className="flex-1 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]"
+                >
+                  {lang === 'ko' ? '열기' : 'Open'}
+                </button>
+                <button
+                  onClick={handleServerRestart}
+                  disabled={serverRestarting}
+                  className="px-4 py-2 rounded-lg text-[13px] font-medium border border-[var(--color-border)] hover:bg-[var(--color-bg-main)] transition-colors cursor-pointer disabled:opacity-40"
+                >
+                  {serverRestarting ? '...' : (lang === 'ko' ? '재시작' : 'Restart')}
+                </button>
+                <button
+                  onClick={handleServerStop}
+                  disabled={serverRestarting}
+                  className="px-4 py-2 rounded-lg text-[13px] font-medium border border-[var(--color-error)] text-[var(--color-error)] hover:bg-[var(--color-error)] hover:text-white transition-colors cursor-pointer disabled:opacity-40"
+                >
+                  {lang === 'ko' ? '중지' : 'Stop'}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleServerStart}
+                disabled={serverRestarting}
+                className="flex-1 bg-[var(--color-success)] hover:opacity-80 disabled:opacity-40 rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer text-white"
+              >
+                {serverRestarting ? '...' : (lang === 'ko' ? '시작' : 'Start')}
+              </button>
+            )}
+          </div>
+          {serverMsg && (
+            <p className={`text-[12px] ${serverMsg.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
+              {serverMsg.msg}
             </p>
           )}
         </section>

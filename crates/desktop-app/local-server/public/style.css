@@ -556,7 +556,7 @@ body {
 /* ============================================================
    Configure Form
    ============================================================ */
-.config-form { max-width: 100%; }
+.config-form { max-width: 100%; min-width: 480px; }
 label {
   display: block; margin-bottom: 16px; font-size: 13px;
   font-weight: 500; color: var(--text-secondary);
@@ -809,7 +809,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
   display: flex; align-items: center; gap: 5px; font-size: 12px;
   color: var(--text-secondary); cursor: pointer; white-space: nowrap; margin: 0; font-weight: normal;
 }
-.checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
+.checkbox-label input[type="checkbox"],
+.checkbox-label input[type="radio"] { width: auto; margin: 0; }
+
+/* AI source selector in AI Deploy */
+.ai-source-option { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; cursor: pointer; font-size: 13px; font-weight: 500; }
+.ai-source-option input[type="radio"] { width: auto; margin: 3px 0 0; flex-shrink: 0; display: inline-block; }
+.ai-source-option .ai-source-detail { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-weight: normal; }
 .stream-btn {
   padding: 6px 12px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 500;
   border: none; cursor: pointer;

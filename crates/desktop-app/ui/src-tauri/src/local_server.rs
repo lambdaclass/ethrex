@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::Mutex;
@@ -9,6 +10,8 @@ use tokio::sync::Mutex;
 pub struct LocalServer {
     child: Mutex<Option<Child>>,
     port: u16,
+    /// When true, the watchdog will not auto-restart the server.
+    watchdog_paused: AtomicBool,
 }
 
 impl LocalServer {
@@ -20,6 +23,7 @@ impl LocalServer {
         Self {
             child: Mutex::new(None),
             port,
+            watchdog_paused: AtomicBool::new(false),
         }
     }
 
@@ -265,12 +269,25 @@ impl LocalServer {
         }
     }
 
+    /// Pause the watchdog (prevents auto-restart after explicit stop).
+    pub fn pause_watchdog(&self) {
+        self.watchdog_paused.store(true, Ordering::Relaxed);
+    }
+
+    /// Resume the watchdog (re-enables auto-restart).
+    pub fn resume_watchdog(&self) {
+        self.watchdog_paused.store(false, Ordering::Relaxed);
+    }
+
     /// Start a watchdog that auto-restarts the server if it crashes.
     /// Should be called once after the initial start.
     pub fn start_watchdog(server: std::sync::Arc<Self>) {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                if server.watchdog_paused.load(Ordering::Relaxed) {
+                    continue;
+                }
                 let running = server.is_running().await;
                 if !running {
                     log::warn!("[watchdog] Local server process died, restarting...");

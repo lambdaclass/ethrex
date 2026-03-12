@@ -190,6 +190,7 @@ ${l1Build}
       - 127.0.0.1:${l1Port}:8545
     environment:
       - ETHREX_LOG_LEVEL
+      - ETHREX_DEV_BLOCK_TIME_MS=2000
     volumes:
       - ${l1GenesisSource}:/genesis/l1.json
     command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
@@ -211,12 +212,13 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=${profile.deployRich}
+      - ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS=2
       - ETHREX_L2_RISC0=false
       - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
@@ -297,15 +299,15 @@ ${gpu && profile.sp1Enabled ? `    deploy:
 }
 
 // Pre-built image names for remote deployments only.
-const IMAGE_REGISTRY = process.env.ETHREX_IMAGE_REGISTRY || "";
+const IMAGE_REGISTRY = process.env.ETHREX_IMAGE_REGISTRY || "ghcr.io/tokamak-network";
 
 function imageRef(name) {
   return IMAGE_REGISTRY ? `${IMAGE_REGISTRY}/${name}` : name;
 }
 
 const PULL_IMAGES = {
-  "tokamak-appchain:main": imageRef("tokamak-appchain:main"),
-  "tokamak-appchain:main-l2": imageRef("tokamak-appchain:main-l2"),
+  "tokamak-appchain:l1": imageRef("tokamak-appchain:l1"),
+  "tokamak-appchain:l2": imageRef("tokamak-appchain:l2"),
   "tokamak-appchain:sp1": imageRef("tokamak-appchain:sp1"),
 };
 
@@ -326,21 +328,228 @@ const PULL_IMAGES = {
  * @returns {string} docker-compose.yaml content
  */
 function generateRemoteComposeFile(opts) {
-  const { programSlug: rawSlug, l1Port, l2Port, proofCoordPort = 3900, projectName, dataDir, l2ChainId } = opts;
+  const { programSlug: rawSlug, l1Port, l2Port, proofCoordPort = 3900, projectName, dataDir, l2ChainId, bindAddress = "0.0.0.0", customL2GenesisPath, customL1GenesisPath } = opts;
   const programSlug = sanitizeSlug(rawSlug);
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
-  const l1Image = PULL_IMAGES["tokamak-appchain:main"];
+  const l1Image = PULL_IMAGES["tokamak-appchain:l1"];
   // Map profile to the correct pre-built image name for remote
-  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:main-l2";
+  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:l2";
+  const l2Image = PULL_IMAGES[remoteImageKey];
+
+  const l2GenesisContainer = profile.genesisFile !== "l2.json"
+    ? `/genesis/${profile.genesisFile}`
+    : "/genesis/l2.json";
+
+  // Custom genesis volume mounts (for local prebuilt mode — unique chain IDs per deployment)
+  const hasCustomGenesis = !!(customL2GenesisPath || customL1GenesisPath);
+  let l1ExtraVolumes = "";
+  let deployerExtraVolumes = "";
+  let l2ExtraVolumes = "";
+  let l1GenesisCmd = "/genesis/l1.json";
+  let l2Genesis = l2GenesisContainer;
+  let deployerL1GenesisPath = `${workdir}/fixtures/genesis/l1.json`;
+  let deployerL2GenesisPath = `${workdir}/fixtures/genesis/${profile.genesisFile}`;
+
+  if (customL1GenesisPath) {
+    l1ExtraVolumes = `    volumes:\n      - ${customL1GenesisPath}:/custom-genesis/l1.json:ro`;
+    deployerExtraVolumes += `      - ${customL1GenesisPath}:/custom-genesis/l1.json:ro\n`;
+    l1GenesisCmd = "/custom-genesis/l1.json";
+    deployerL1GenesisPath = "/custom-genesis/l1.json";
+  }
+  if (customL2GenesisPath) {
+    deployerExtraVolumes += `      - ${customL2GenesisPath}:/custom-genesis/${profile.genesisFile}:ro\n`;
+    l2ExtraVolumes = `      - ${customL2GenesisPath}:/custom-genesis/${profile.genesisFile}:ro\n`;
+    l2Genesis = `/custom-genesis/${profile.genesisFile}`;
+    deployerL2GenesisPath = `/custom-genesis/${profile.genesisFile}`;
+  }
+
+  // Deployer extra env (ETHREX_L2_SP1 is set in the base template from profile.sp1Enabled)
+  let deployerExtraEnv = "";
+  if (profile.registerGuestPrograms) deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${profile.registerGuestPrograms}\n`;
+  if (profile.guestPrograms) deployerExtraEnv += `      - GUEST_PROGRAMS=${profile.guestPrograms}\n`;
+  deployerExtraEnv += `      - ETHREX_DEPLOYER_GENESIS_L2_PATH=${deployerL2GenesisPath}\n`;
+  if (l2ChainId) {
+    deployerExtraEnv += `      - ETHREX_L2_CHAIN_ID=${l2ChainId}\n`;
+  }
+
+  // Prover config
+  let proverExtraEnv = "";
+  let proverExtraVolumes = "";
+  let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
+  if (profile.proverBackend === "sp1") {
+    proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
+    proverExtraEnv = `    environment:
+      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
+      - PROVER_CLIENT_TIMED=true
+      - DOCKER_HOST=unix:///var/run/docker.sock`;
+    proverExtraVolumes = `    volumes:
+      - ${dataDir}/programs.toml:/etc/ethrex/programs.toml
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp:/tmp`;
+  }
+
+  const yaml = `# Auto-generated by Tokamak Platform (${bindAddress === "127.0.0.1" ? "LOCAL-PREBUILT" : "REMOTE"} mode)
+# App: ${programSlug} (${profile.description})
+# Project: ${projectName}
+# Pre-built images — no build step required
+
+volumes:
+  env:
+
+services:
+  tokamak-app-l1:
+    container_name: ${projectName}-l1
+    image: "${l1Image}"
+    ports:
+      - ${bindAddress}:${l1Port}:8545
+${l1ExtraVolumes}
+    environment:
+      - ETHREX_LOG_LEVEL
+    command: --network ${l1GenesisCmd} --http.addr 0.0.0.0 --http.port 8545 --dev
+
+  tokamak-app-deployer:
+    container_name: ${projectName}-deployer
+    image: "${l2Image}"
+    restart: "no"
+    volumes:
+      - env:/env/
+${deployerExtraVolumes}    environment:
+      - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
+      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${deployerL1GenesisPath}
+      - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
+      - ETHREX_DEPLOYER_DEPLOY_RICH=true
+      - ETHREX_L2_RISC0=false
+      - ETHREX_L2_SP1=${profile.sp1Enabled}
+      - ETHREX_L2_TDX=false
+      - ETHREX_DEPLOYER_ALIGNED=false
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
+      - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=false
+      - ETHREX_L2_VALIDIUM=false
+      - COMPILE_CONTRACTS=true
+      - ETHREX_USE_COMPILED_GENESIS=true
+${deployerExtraEnv}    depends_on:
+      - tokamak-app-l1
+    entrypoint:
+      - /bin/bash
+      - -c
+      - touch /env/.env; ./ethrex l2 deploy "$$0" "$$@"
+    command: >
+      --randomize-contract-deployment
+
+  tokamak-app-l2:
+    container_name: ${projectName}-l2
+    image: "${l2Image}"
+    ports:
+      - ${bindAddress}:${l2Port}:1729
+      - ${bindAddress}:${proofCoordPort}:3900
+    environment:
+      - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
+      - ETHREX_L2_VALIDIUM=false
+      - ETHREX_BLOCK_PRODUCER_BLOCK_TIME=5000
+      - ETHREX_WATCHER_BLOCK_DELAY=0
+      - ETHREX_BASED=false
+      - ETHREX_COMMITTER_COMMIT_TIME=60000
+      - ETHREX_WATCHER_WATCH_INTERVAL=12000
+      - ETHREX_OSAKA_ACTIVATION_TIME=1761677592
+      - ETHREX_GUEST_PROGRAM_ID=${programSlug}
+      - ETHREX_LOG_LEVEL
+    volumes:
+      - env:/env/
+${l2ExtraVolumes}    entrypoint:
+      - /bin/bash
+      - -c
+      - export $$(xargs < /env/.env); ./ethrex l2 "$$0" "$$@"
+    command: >
+      --network ${l2Genesis}
+      --http.addr 0.0.0.0
+      --http.port 1729
+      --authrpc.port 8552
+      --proof-coordinator.addr 0.0.0.0
+      --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
+      --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --no-monitor
+    depends_on:
+      tokamak-app-deployer:
+        condition: service_completed_successfully
+
+  tokamak-app-prover:
+    container_name: ${projectName}-prover
+    image: "${l2Image}"
+${proverExtraEnv}
+${proverExtraVolumes}
+    command: >
+      ${proverCommand}
+    depends_on:
+      - tokamak-app-l2
+`;
+
+  return yaml;
+}
+
+/**
+ * Generate docker-compose.yaml for REMOTE + TESTNET deployment.
+ *
+ * Combines Remote (pre-built images, no build) with Testnet (external L1, custom keys).
+ * No L1 container — deployer + L2 + prover all connect to an external L1 RPC URL.
+ *
+ * @param {Object} opts
+ * @param {string} opts.programSlug
+ * @param {number} opts.l2Port
+ * @param {number} opts.proofCoordPort
+ * @param {string} opts.projectName
+ * @param {string} opts.dataDir - Remote data directory
+ * @param {string} opts.l1RpcUrl - External L1 RPC URL
+ * @param {string} opts.deployerPrivateKey - Deployer private key
+ * @param {string} [opts.committerPk] - Committer private key (defaults to deployer)
+ * @param {string} [opts.proofCoordinatorPk] - Proof coordinator private key (defaults to deployer)
+ * @param {string} [opts.bridgeOwnerPk] - Bridge owner private key (defaults to deployer)
+ * @param {number} [opts.l2ChainId]
+ * @returns {string} docker-compose.yaml content
+ */
+function generateRemoteTestnetComposeFile(opts) {
+  const {
+    programSlug: rawSlug, l2Port, proofCoordPort = 3900, projectName, dataDir,
+    l1RpcUrl, deployerPrivateKey,
+    committerPk: committerPkOpt, proofCoordinatorPk: proofCoordinatorPkOpt,
+    bridgeOwnerPk: bridgeOwnerPkOpt, l2ChainId,
+  } = opts;
+  const programSlug = sanitizeSlug(rawSlug);
+  const profile = getAppProfile(programSlug);
+  const workdir = "/usr/local/bin";
+
+  // Pre-built images from registry (no build)
+  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:l2";
   const l2Image = PULL_IMAGES[remoteImageKey];
 
   const l2Genesis = profile.genesisFile !== "l2.json"
     ? `/genesis/${profile.genesisFile}`
     : "/genesis/l2.json";
 
-  // Deployer extra env (ETHREX_L2_SP1 is set in the base template from profile.sp1Enabled)
+  // Resolve keys
+  const deployerPk = deployerPrivateKey || "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
+  const { ethers } = require("ethers");
+  const deployerWallet = new ethers.Wallet(deployerPk);
+  const deployerAddress = deployerWallet.address;
+
+  const committerPk = committerPkOpt || deployerPk;
+  const proofCoordinatorPk = proofCoordinatorPkOpt || deployerPk;
+  const bridgeOwnerPk = bridgeOwnerPkOpt || deployerPk;
+
+  const committerAddress = new ethers.Wallet(committerPk).address;
+  const proofCoordinatorAddress = new ethers.Wallet(proofCoordinatorPk).address;
+  const bridgeOwnerAddress = new ethers.Wallet(bridgeOwnerPk).address;
+
+  // Deployer extra env
   let deployerExtraEnv = "";
   if (profile.registerGuestPrograms) deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${profile.registerGuestPrograms}\n`;
   if (profile.guestPrograms) deployerExtraEnv += `      - GUEST_PROGRAMS=${profile.guestPrograms}\n`;
@@ -365,24 +574,16 @@ function generateRemoteComposeFile(opts) {
       - /tmp:/tmp`;
   }
 
-  const yaml = `# Auto-generated by Tokamak Platform (REMOTE mode)
+  const yaml = `# Auto-generated by Tokamak Platform (REMOTE + TESTNET mode)
 # App: ${programSlug} (${profile.description})
 # Project: ${projectName}
 # Pre-built images — no build step required
+# L1: External (${l1RpcUrl})
 
 volumes:
   env:
 
 services:
-  tokamak-app-l1:
-    container_name: ${projectName}-l1
-    image: "${l1Image}"
-    ports:
-      - 0.0.0.0:${l1Port}:8545
-    environment:
-      - ETHREX_LOG_LEVEL
-    command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
-
   tokamak-app-deployer:
     container_name: ${projectName}-deployer
     image: "${l2Image}"
@@ -390,29 +591,30 @@ services:
     volumes:
       - env:/env/
     environment:
-      - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
-      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      - ETHREX_ETH_RPC_URL=${l1RpcUrl}
+      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${deployerPk}
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
-      - ETHREX_DEPLOYER_DEPLOY_RICH=true
+      - ETHREX_DEPLOYER_DEPLOY_RICH=false
+      - ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS=2
       - ETHREX_L2_RISC0=false
       - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk
-      - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
-      - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
-      - ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
-      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
+      - ETHREX_ON_CHAIN_PROPOSER_OWNER=${bridgeOwnerAddress}
+      - ETHREX_BRIDGE_OWNER=${bridgeOwnerAddress}
+      - ETHREX_BRIDGE_OWNER_PK=${bridgeOwnerPk}
+      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=${deployerAddress}
+      - ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${committerAddress}
+      - ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${proofCoordinatorAddress}
       - ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=false
       - ETHREX_L2_VALIDIUM=false
       - COMPILE_CONTRACTS=true
       - ETHREX_USE_COMPILED_GENESIS=true
-${deployerExtraEnv}    depends_on:
-      - tokamak-app-l1
-    entrypoint:
+${deployerExtraEnv}    entrypoint:
       - /bin/bash
       - -c
       - touch /env/.env; ./ethrex l2 deploy "$$0" "$$@"
@@ -424,9 +626,9 @@ ${deployerExtraEnv}    depends_on:
     image: "${l2Image}"
     ports:
       - 0.0.0.0:${l2Port}:1729
-      - 0.0.0.0:${proofCoordPort}:3900
+      - 127.0.0.1:${proofCoordPort}:3900
     environment:
-      - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
+      - ETHREX_ETH_RPC_URL=${l1RpcUrl}
       - ETHREX_L2_VALIDIUM=false
       - ETHREX_BLOCK_PRODUCER_BLOCK_TIME=5000
       - ETHREX_WATCHER_BLOCK_DELAY=0
@@ -449,8 +651,8 @@ ${deployerExtraEnv}    depends_on:
       --authrpc.port 8552
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
-      --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
-      --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --committer.l1-private-key ${committerPk}
+      --proof-coordinator.l1-private-key ${proofCoordinatorPk}
       --no-monitor
     depends_on:
       tokamak-app-deployer:
@@ -601,8 +803,8 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_L2_SP1=${profile.sp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254
-      - ETHREX_RISC0_VERIFICATION_KEY_PATH=/ethrex/crates/guest-program/bin/risc0/out/riscv32im-risc0-vk
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=${bridgeOwnerAddress}
       - ETHREX_BRIDGE_OWNER=${bridgeOwnerAddress}
       - ETHREX_BRIDGE_OWNER_PK=${bridgeOwnerPk}
@@ -754,6 +956,7 @@ module.exports = {
   generateComposeFile,
   generateTestnetComposeFile,
   generateRemoteComposeFile,
+  generateRemoteTestnetComposeFile,
   generateProgramsToml,
   writeComposeFile,
   writeCustomGenesis,

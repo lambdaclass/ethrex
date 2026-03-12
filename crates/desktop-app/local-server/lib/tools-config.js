@@ -50,6 +50,8 @@ function getToolsPorts(deployment) {
     toolsMetricsPort: deployment.tools_metrics_port,
     l1Port: deployment.l1_port,
     l2Port: deployment.l2_port,
+    l2ChainId: deployment.chain_id,
+    isPublic: !!deployment.is_public,
     ...getExternalL1Config(deployment),
     ...getPublicAccessConfig(deployment),
   };
