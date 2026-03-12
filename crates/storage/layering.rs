@@ -2,6 +2,12 @@ use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+use std::{fmt, sync::Arc};
+
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
+
+const BLOOM_SIZE: usize = 1_000_000;
+const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 type AccountHashSet = FxHashSet<H256>;
 
