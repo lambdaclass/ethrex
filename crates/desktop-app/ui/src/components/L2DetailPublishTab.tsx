@@ -137,7 +137,9 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     if (platformId) {
       try {
         await platformAPI.updateDeployment(platformId, { screenshots: JSON.stringify(updated) })
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn('Failed to sync screenshot removal:', err)
+      }
     }
   }
 
@@ -146,11 +148,12 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     setMetadataUploading(true)
     setUploadError('')
     try {
+      const rpcUrl = l2.publicRpcUrl || `http://localhost:${l2.rpcPort}`
       const metadata = buildMetadata({
         name: l2.name,
         description: publishDesc || undefined,
         chainId: l2.chainId,
-        rpcUrl: `http://localhost:${l2.rpcPort}`,
+        rpcUrl,
         networkMode: l2.networkMode || 'local',
         l1ChainId: l2.l1ChainId || 1,
         proposerAddress: l2.proposerAddress || undefined,
@@ -370,12 +373,15 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                   <button
                     onClick={async () => {
                       try {
-                        await invoke('set_metadata_uri', {
-                          l1RpcUrl: l2.l1RpcUrl || '',
+                        const result = await invoke<string>('set_metadata_uri', {
+                          l1RpcUrl: l2.testnetL1RpcUrl || `http://localhost:${l2.l1Port || 8545}`,
                           proposerAddress: l2.proposerAddress || '',
                           metadataUri: metadataCID,
                           keychainKey: `deployer_pk_${l2.id}`,
                         })
+                        const txData = JSON.parse(result)
+                        // Copy calldata for wallet signing
+                        await navigator.clipboard.writeText(JSON.stringify(txData, null, 2))
                         setSaved(true)
                         setTimeout(() => setSaved(false), 3000)
                       } catch (err) {
@@ -384,7 +390,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                     }}
                     className="mt-1.5 w-full py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-medium hover:bg-purple-700"
                   >
-                    {ko ? 'L1 온체인 등록 (setMetadataURI)' : 'Register On-chain (setMetadataURI)'}
+                    {ko ? 'L1 트랜잭션 데이터 준비' : 'Prepare L1 Transaction Data'}
                   </button>
                 </div>
               )}

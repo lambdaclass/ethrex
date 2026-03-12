@@ -5,8 +5,8 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
-const PINATA_API = 'https://api.pinata.cloud'
-const PINATA_GATEWAY = 'https://gateway.pinata.cloud/ipfs'
+const PINATA_API = import.meta.env.VITE_PINATA_API || 'https://api.pinata.cloud'
+const PINATA_GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'https://gateway.pinata.cloud/ipfs'
 
 /** Retrieve Pinata JWT from OS Keychain */
 async function getPinataJWT(): Promise<string> {
@@ -80,7 +80,8 @@ export async function isPinataConfigured(): Promise<boolean> {
   try {
     const jwt = await invoke<string | null>('get_keychain_value', { key: 'pinata_jwt' })
     return !!jwt
-  } catch {
+  } catch (err) {
+    console.warn('Failed to check Pinata configuration:', err)
     return false
   }
 }
@@ -160,6 +161,8 @@ export function buildMetadata(config: {
   socialLinks?: Record<string, string>
   explorerUrl?: string
   bridgeUIUrl?: string
+  nativeToken?: { name: string; symbol: string; decimals: number }
+  proofSystem?: 'sp1' | 'risc0' | 'tdx'
 }): AppchainMetadata {
   const now = new Date().toISOString()
   return {
@@ -182,8 +185,8 @@ export function buildMetadata(config: {
       bridgeUI: config.bridgeUIUrl,
     },
     socialLinks: config.socialLinks,
-    nativeToken: { name: 'Tokamak', symbol: 'TON', decimals: 18 },
-    proofSystem: 'sp1',
+    nativeToken: config.nativeToken || { name: 'Tokamak', symbol: 'TON', decimals: 18 },
+    proofSystem: config.proofSystem || 'sp1',
     createdAt: now,
     updatedAt: now,
   }

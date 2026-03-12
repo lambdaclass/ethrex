@@ -828,12 +828,26 @@ pub async fn get_docker_containers(
 
 // ============================================================================
 // Generic Keychain value storage (for Pinata JWT, etc.)
+// Keys are restricted to known prefixes to prevent arbitrary access.
 // ============================================================================
 
 const KEYRING_SERVICE: &str = "tokamak-appchain";
+const ALLOWED_KEY_PREFIXES: &[&str] = &["pinata_", "deployer_pk_"];
+
+fn validate_keychain_key(key: &str) -> Result<(), String> {
+    if ALLOWED_KEY_PREFIXES.iter().any(|p| key.starts_with(p)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Key '{}' not allowed. Must start with one of: {:?}",
+            key, ALLOWED_KEY_PREFIXES
+        ))
+    }
+}
 
 #[tauri::command]
 pub fn get_keychain_value(key: String) -> Result<Option<String>, String> {
+    validate_keychain_key(&key)?;
     let entry =
         keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
     match entry.get_password() {
@@ -845,6 +859,7 @@ pub fn get_keychain_value(key: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub fn save_keychain_value(key: String, value: String) -> Result<(), String> {
+    validate_keychain_key(&key)?;
     let entry =
         keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
     entry
@@ -854,6 +869,7 @@ pub fn save_keychain_value(key: String, value: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_keychain_value(key: String) -> Result<(), String> {
+    validate_keychain_key(&key)?;
     let entry =
         keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
     match entry.delete_credential() {
@@ -888,10 +904,10 @@ pub async fn set_metadata_uri(
         return Err("Metadata URI is required".to_string());
     }
 
-    // Verify deployer key exists in keychain (validates ownership)
+    // Verify deployer key exists in keychain (validates ownership without loading the key)
     let entry = keyring::Entry::new(KEYRING_SERVICE, &keychain_key)
         .map_err(|e| format!("Keyring error: {e}"))?;
-    let _private_key = entry
+    entry
         .get_password()
         .map_err(|e| format!("No deployer key found: {e}"))?;
 
@@ -918,10 +934,8 @@ pub async fn set_metadata_uri(
     calldata.extend_from_slice(uri_bytes);
     calldata.resize(calldata.len() + padded_len - uri_len, 0);
 
-    // Use reqwest to send raw transaction via JSON-RPC
+    // Fetch chain ID from L1 RPC for the transaction metadata
     let client = reqwest::Client::new();
-
-    // Get chain ID
     let chain_id_resp = client
         .post(&l1_rpc_url)
         .json(&serde_json::json!({
