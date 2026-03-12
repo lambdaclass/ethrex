@@ -127,7 +127,10 @@ async function stopRemote(conn, projectName, remoteDir) {
 
 /** Start stopped services on remote */
 async function startRemote(conn, projectName, remoteDir) {
-  await exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d`, {
+  // Use .keys.env if it exists (testnet deployments)
+  const { stdout } = await exec(conn, `test -f "${remoteDir}/.keys.env" && echo yes || echo no`, { ignoreError: true });
+  const envFileFlag = stdout.trim() === "yes" ? `--env-file "${remoteDir}/.keys.env"` : "";
+  await exec(conn, `cd "${remoteDir}" && docker compose ${envFileFlag} -p ${projectName} up -d`, {
     timeout: 60000,
   });
 }

@@ -509,20 +509,30 @@ ${proverExtraVolumes}
  * @param {string} opts.projectName
  * @param {string} opts.dataDir - Remote data directory
  * @param {string} opts.l1RpcUrl - External L1 RPC URL
- * @param {string} opts.deployerPrivateKey - Deployer private key
- * @param {string} [opts.committerPk] - Committer private key (defaults to deployer)
- * @param {string} [opts.proofCoordinatorPk] - Proof coordinator private key (defaults to deployer)
- * @param {string} [opts.bridgeOwnerPk] - Bridge owner private key (defaults to deployer)
+ * @param {string} opts.deployerAddress - Deployer address (derived from key)
+ * @param {string} opts.committerAddress - Committer address
+ * @param {string} opts.proofCoordinatorAddress - Proof coordinator address
+ * @param {string} opts.bridgeOwnerAddress - Bridge owner address
  * @param {number} [opts.l2ChainId]
- * @returns {string} docker-compose.yaml content
+ * @returns {string} docker-compose.yaml content (keys use ${VAR} substitution via --env-file)
  */
 function generateRemoteTestnetComposeFile(opts) {
   const {
     programSlug: rawSlug, l2Port, proofCoordPort = 3900, projectName, dataDir,
-    l1RpcUrl, deployerPrivateKey,
-    committerPk: committerPkOpt, proofCoordinatorPk: proofCoordinatorPkOpt,
-    bridgeOwnerPk: bridgeOwnerPkOpt, l2ChainId,
+    l1RpcUrl, deployerAddress, committerAddress, proofCoordinatorAddress,
+    bridgeOwnerAddress, l2ChainId,
   } = opts;
+
+  // Validate required addresses to fail fast on caller errors
+  const missing = [];
+  if (!deployerAddress) missing.push("deployerAddress");
+  if (!committerAddress) missing.push("committerAddress");
+  if (!proofCoordinatorAddress) missing.push("proofCoordinatorAddress");
+  if (!bridgeOwnerAddress) missing.push("bridgeOwnerAddress");
+  if (missing.length > 0) {
+    throw new Error(`generateRemoteTestnetComposeFile: missing required option(s): ${missing.join(", ")}`);
+  }
+
   const programSlug = sanitizeSlug(rawSlug);
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
@@ -534,20 +544,6 @@ function generateRemoteTestnetComposeFile(opts) {
   const l2Genesis = profile.genesisFile !== "l2.json"
     ? `/genesis/${profile.genesisFile}`
     : "/genesis/l2.json";
-
-  // Resolve keys
-  const deployerPk = deployerPrivateKey || "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
-  const { ethers } = require("ethers");
-  const deployerWallet = new ethers.Wallet(deployerPk);
-  const deployerAddress = deployerWallet.address;
-
-  const committerPk = committerPkOpt || deployerPk;
-  const proofCoordinatorPk = proofCoordinatorPkOpt || deployerPk;
-  const bridgeOwnerPk = bridgeOwnerPkOpt || deployerPk;
-
-  const committerAddress = new ethers.Wallet(committerPk).address;
-  const proofCoordinatorAddress = new ethers.Wallet(proofCoordinatorPk).address;
-  const bridgeOwnerAddress = new ethers.Wallet(bridgeOwnerPk).address;
 
   // Deployer extra env
   let deployerExtraEnv = "";
@@ -592,7 +588,7 @@ services:
       - env:/env/
     environment:
       - ETHREX_ETH_RPC_URL=${l1RpcUrl}
-      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${deployerPk}
+      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=\${ETHREX_DEPLOYER_L1_PRIVATE_KEY}
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
@@ -606,7 +602,7 @@ services:
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=${bridgeOwnerAddress}
       - ETHREX_BRIDGE_OWNER=${bridgeOwnerAddress}
-      - ETHREX_BRIDGE_OWNER_PK=${bridgeOwnerPk}
+      - ETHREX_BRIDGE_OWNER_PK=\${ETHREX_BRIDGE_OWNER_PK}
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=${deployerAddress}
       - ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${committerAddress}
       - ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${proofCoordinatorAddress}
@@ -637,6 +633,8 @@ ${deployerExtraEnv}    entrypoint:
       - ETHREX_WATCHER_WATCH_INTERVAL=12000
       - ETHREX_OSAKA_ACTIVATION_TIME=1761677592
       - ETHREX_GUEST_PROGRAM_ID=${programSlug}
+      - ETHREX_COMMITTER_L1_PRIVATE_KEY=\${ETHREX_COMMITTER_L1_PRIVATE_KEY}
+      - ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=\${ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY}
       - ETHREX_LOG_LEVEL
     volumes:
       - env:/env/
@@ -651,8 +649,6 @@ ${deployerExtraEnv}    entrypoint:
       --authrpc.port 8552
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
-      --committer.l1-private-key ${committerPk}
-      --proof-coordinator.l1-private-key ${proofCoordinatorPk}
       --no-monitor
     depends_on:
       tokamak-app-deployer:
@@ -685,17 +681,31 @@ ${proverExtraVolumes}
  * @param {number} opts.metricsPort - Host port for metrics
  * @param {string} opts.projectName - Docker Compose project name
  * @param {string} opts.l1RpcUrl - External L1 RPC URL (e.g. https://sepolia.infura.io/v3/...)
- * @param {string} opts.deployerPrivateKey - Private key for contract deployment on L1
+ * @param {string} opts.deployerAddress - Deployer address (derived from key)
+ * @param {string} opts.committerAddress - Committer address
+ * @param {string} opts.proofCoordinatorAddress - Proof coordinator address
+ * @param {string} opts.bridgeOwnerAddress - Bridge owner address
  * @param {boolean} [opts.gpu=false] - Enable NVIDIA GPU
- * @returns {string} docker-compose.yaml content
+ * @returns {string} docker-compose.yaml content (keys use ${VAR} substitution via --env-file)
  */
 function generateTestnetComposeFile(opts) {
   const {
     programSlug: rawSlug, l2Port, proofCoordPort = 3900, metricsPort = 3702,
-    projectName, l1RpcUrl, deployerPrivateKey, gpu = false,
-    committerPk: committerPkOpt, proofCoordinatorPk: proofCoordinatorPkOpt,
-    bridgeOwnerPk: bridgeOwnerPkOpt, isPublic = false, customGenesisPath, l2ChainId,
+    projectName, l1RpcUrl, gpu = false,
+    deployerAddress, committerAddress, proofCoordinatorAddress, bridgeOwnerAddress,
+    isPublic = false, customGenesisPath, l2ChainId,
   } = opts;
+
+  // Validate required addresses to fail fast on caller errors
+  const missing = [];
+  if (!deployerAddress) missing.push("deployerAddress");
+  if (!committerAddress) missing.push("committerAddress");
+  if (!proofCoordinatorAddress) missing.push("proofCoordinatorAddress");
+  if (!bridgeOwnerAddress) missing.push("bridgeOwnerAddress");
+  if (missing.length > 0) {
+    throw new Error(`generateTestnetComposeFile: missing required option(s): ${missing.join(", ")}`);
+  }
+
   const programSlug = sanitizeSlug(rawSlug);
   const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
   // Proof coordinator and metrics are internal-only — never bind to 0.0.0.0
@@ -755,22 +765,6 @@ function generateTestnetComposeFile(opts) {
       - /tmp:/tmp`;
   }
 
-  // Use provided deployer key, fallback to dev key
-  const deployerPk = deployerPrivateKey || "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
-
-  // Resolve role-specific keys: use separate keys if provided, otherwise fall back to deployer
-  const { ethers } = require("ethers");
-  const deployerWallet = new ethers.Wallet(deployerPk);
-  const deployerAddress = deployerWallet.address;
-
-  const committerPk = committerPkOpt || deployerPk;
-  const proofCoordinatorPk = proofCoordinatorPkOpt || deployerPk;
-  const bridgeOwnerPk = bridgeOwnerPkOpt || deployerPk;
-
-  const committerAddress = new ethers.Wallet(committerPk).address;
-  const proofCoordinatorAddress = new ethers.Wallet(proofCoordinatorPk).address;
-  const bridgeOwnerAddress = new ethers.Wallet(bridgeOwnerPk).address;
-
   const yaml = `# Auto-generated by Tokamak Platform
 # App: ${programSlug} (${profile.description})
 # Project: ${projectName}
@@ -794,7 +788,7 @@ ${buildSection}
       - ${ETHREX_ROOT}/fixtures/keys/private_keys_l1.txt:${workdir}/fixtures/keys/private_keys_l1.txt
 ${deployerExtraVolumes}    environment:
       - ETHREX_ETH_RPC_URL=${l1RpcUrl}
-      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=${deployerPk}
+      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=\${ETHREX_DEPLOYER_L1_PRIVATE_KEY}
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
@@ -807,7 +801,7 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=${bridgeOwnerAddress}
       - ETHREX_BRIDGE_OWNER=${bridgeOwnerAddress}
-      - ETHREX_BRIDGE_OWNER_PK=${bridgeOwnerPk}
+      - ETHREX_BRIDGE_OWNER_PK=\${ETHREX_BRIDGE_OWNER_PK}
       - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=${deployerAddress}
       - ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${committerAddress}
       - ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${proofCoordinatorAddress}
@@ -839,6 +833,8 @@ ${deployerExtraEnv}    entrypoint:
       - ETHREX_WATCHER_WATCH_INTERVAL=\${ETHREX_WATCHER_WATCH_INTERVAL:-12000}
       - ETHREX_OSAKA_ACTIVATION_TIME=\${ETHREX_OSAKA_ACTIVATION_TIME:-1761677592}
       - ETHREX_GUEST_PROGRAM_ID=${programSlug}
+      - ETHREX_COMMITTER_L1_PRIVATE_KEY=\${ETHREX_COMMITTER_L1_PRIVATE_KEY}
+      - ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=\${ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY}
       - ETHREX_LOG_LEVEL
     volumes:
       - ${genesisSource}:/genesis/${profile.genesisFile}
@@ -854,8 +850,6 @@ ${l2ExtraVolumes}    entrypoint:
       --authrpc.port 8552
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
-      --committer.l1-private-key ${committerPk}
-      --proof-coordinator.l1-private-key ${proofCoordinatorPk}
       --no-monitor
       --metrics
       --metrics.port 3702

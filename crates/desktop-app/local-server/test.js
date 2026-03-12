@@ -547,40 +547,51 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       const { generateTestnetComposeFile } = require("./lib/compose-generator");
       const { ethers } = require("ethers");
 
-      test("generateTestnetComposeFile uses deployer key for all roles by default", () => {
+      test("generateTestnetComposeFile uses deployer address for all roles by default", () => {
         const deployerPk = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
         const deployerAddr = new ethers.Wallet(deployerPk).address;
         const yaml = generateTestnetComposeFile({
           programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900, metricsPort: 3702,
-          projectName: "tokamak-test", l1RpcUrl: "http://l1:8545", deployerPrivateKey: deployerPk,
+          projectName: "tokamak-test", l1RpcUrl: "http://l1:8545",
+          deployerAddress: deployerAddr, committerAddress: deployerAddr,
+          proofCoordinatorAddress: deployerAddr, bridgeOwnerAddress: deployerAddr,
         });
         // All owner addresses should be deployer
         assert.ok(yaml.includes(`ETHREX_BRIDGE_OWNER=${deployerAddr}`), "bridge owner should be deployer");
         assert.ok(yaml.includes(`ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${deployerAddr}`), "committer should be deployer");
         assert.ok(yaml.includes(`ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${deployerAddr}`), "proof sender should be deployer");
-        assert.ok(yaml.includes(`--committer.l1-private-key ${deployerPk}`), "committer pk should be deployer");
-        assert.ok(yaml.includes(`--proof-coordinator.l1-private-key ${deployerPk}`), "proof coord pk should be deployer");
+        // Keys should use ${VAR} substitution, not hardcoded values
+        assert.ok(yaml.includes("ETHREX_DEPLOYER_L1_PRIVATE_KEY=${ETHREX_DEPLOYER_L1_PRIVATE_KEY}"), "deployer key uses env var substitution");
+        assert.ok(yaml.includes("ETHREX_COMMITTER_L1_PRIVATE_KEY=${ETHREX_COMMITTER_L1_PRIVATE_KEY}"), "committer key uses env var substitution");
+        assert.ok(yaml.includes("ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=${ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY}"), "proof coord key uses env var substitution");
+        // No hardcoded private keys in yaml
+        assert.ok(!yaml.includes(deployerPk), "deployer private key should NOT appear in yaml");
       });
 
-      test("generateTestnetComposeFile uses separate keys when provided", () => {
+      test("generateTestnetComposeFile uses separate addresses when provided", () => {
         const deployerPk = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
         const committerPk = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d";
         const proofPk = "0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e";
         const bridgePk = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        const deployerAddr = new ethers.Wallet(deployerPk).address;
         const committerAddr = new ethers.Wallet(committerPk).address;
         const proofAddr = new ethers.Wallet(proofPk).address;
         const bridgeAddr = new ethers.Wallet(bridgePk).address;
         const yaml = generateTestnetComposeFile({
           programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900, metricsPort: 3702,
-          projectName: "tokamak-test", l1RpcUrl: "http://l1:8545", deployerPrivateKey: deployerPk,
-          committerPk, proofCoordinatorPk: proofPk, bridgeOwnerPk: bridgePk,
+          projectName: "tokamak-test", l1RpcUrl: "http://l1:8545",
+          deployerAddress: deployerAddr, committerAddress: committerAddr,
+          proofCoordinatorAddress: proofAddr, bridgeOwnerAddress: bridgeAddr,
         });
         assert.ok(yaml.includes(`ETHREX_BRIDGE_OWNER=${bridgeAddr}`), `bridge owner should be ${bridgeAddr}`);
-        assert.ok(yaml.includes(`ETHREX_BRIDGE_OWNER_PK=${bridgePk}`), "bridge owner pk");
+        assert.ok(yaml.includes("ETHREX_BRIDGE_OWNER_PK=${ETHREX_BRIDGE_OWNER_PK}"), "bridge owner pk uses env var substitution");
         assert.ok(yaml.includes(`ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS=${committerAddr}`), `committer addr should be ${committerAddr}`);
         assert.ok(yaml.includes(`ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS=${proofAddr}`), `proof sender addr should be ${proofAddr}`);
-        assert.ok(yaml.includes(`--committer.l1-private-key ${committerPk}`), "committer runtime pk");
-        assert.ok(yaml.includes(`--proof-coordinator.l1-private-key ${proofPk}`), "proof coord runtime pk");
+        // No hardcoded private keys in yaml
+        assert.ok(!yaml.includes(deployerPk), "deployer pk should NOT appear in yaml");
+        assert.ok(!yaml.includes(committerPk), "committer pk should NOT appear in yaml");
+        assert.ok(!yaml.includes(proofPk), "proof coord pk should NOT appear in yaml");
+        assert.ok(!yaml.includes(bridgePk), "bridge owner pk should NOT appear in yaml");
       });
 
       // -- API route tests for start/stop --
@@ -1528,11 +1539,13 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       });
 
       test("generateTestnetComposeFile: isPublic=true binds to 0.0.0.0", () => {
+        const testAddr = "0x" + "a".repeat(40);
         const yaml = generateTestnetComposeFile({
           programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900,
           metricsPort: 3702, projectName: "test-testnet",
           l1RpcUrl: "https://sepolia.infura.io/v3/key",
-          deployerPrivateKey: "0x" + "a".repeat(64),
+          deployerAddress: testAddr, committerAddress: testAddr,
+          proofCoordinatorAddress: testAddr, bridgeOwnerAddress: testAddr,
           isPublic: true,
         });
         assert.ok(yaml.includes("0.0.0.0:1729:1729"), "testnet L2 should bind to 0.0.0.0");
@@ -1541,11 +1554,13 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       });
 
       test("generateTestnetComposeFile: isPublic=false binds to 127.0.0.1", () => {
+        const testAddr = "0x" + "a".repeat(40);
         const yaml = generateTestnetComposeFile({
           programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900,
           metricsPort: 3702, projectName: "test-testnet-local",
           l1RpcUrl: "https://sepolia.infura.io/v3/key",
-          deployerPrivateKey: "0x" + "a".repeat(64),
+          deployerAddress: testAddr, committerAddress: testAddr,
+          proofCoordinatorAddress: testAddr, bridgeOwnerAddress: testAddr,
           isPublic: false,
         });
         assert.ok(yaml.includes("127.0.0.1:1729:1729"), "testnet L2 should bind to 127.0.0.1");

@@ -42,6 +42,7 @@ jwt.hex
 *tests*.tar.gz
 
 .env
+.keys.env
 
 levm_ef_tests_report.txt
 levm_ef_tests_summary_slack.txt
