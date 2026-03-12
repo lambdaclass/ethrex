@@ -362,6 +362,83 @@
     assert(status === 200, `expected 200, got ${status}`);
   });
 
+  // ---- Phase 2: On-chain Metadata & IPFS ----
+  console.log("\n=== Phase 2: On-chain Metadata ===");
+
+  await test("POST /api/store/appchains/:id/rpc-proxy — allows ethrex_metadata method", async () => {
+    // ethrex_metadata should be in the allowlist (even though node is offline, should get 502 not 400)
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
+      method: "POST",
+      body: JSON.stringify({ method: "ethrex_metadata", params: [] }),
+    });
+    // 502 = node unreachable (expected since no real L2 running), NOT 400 (method not allowed)
+    assert(status !== 400, `ethrex_metadata should be allowed, got 400: ${JSON.stringify(data)}`);
+  });
+
+  await test("PUT /api/deployments/[id] — updates metadata-related fields", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "Phase 2 metadata test",
+        screenshots: JSON.stringify(["ipfs://QmTestHash1", "ipfs://QmTestHash2", "ipfs://QmTestHash3"]),
+        social_links: JSON.stringify({ website: "https://phase2.test", twitter: "https://twitter.com/test", discord: "https://discord.gg/test" }),
+        explorer_url: "https://explorer.phase2.test",
+        dashboard_url: "https://bridge.phase2.test",
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.description === "Phase 2 metadata test", "description mismatch");
+  });
+
+  await test("GET /api/store/appchains/:id — returns updated Phase 2 fields with 3 screenshots", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    const a = data.appchain;
+    assert(a.description === "Phase 2 metadata test", "description mismatch");
+    assert(Array.isArray(a.screenshots), "screenshots should be array");
+    assert(a.screenshots.length === 3, `expected 3 screenshots, got ${a.screenshots.length}`);
+    assert(a.screenshots[0] === "ipfs://QmTestHash1", "screenshot[0] mismatch");
+    assert(a.screenshots[2] === "ipfs://QmTestHash3", "screenshot[2] mismatch");
+    assert(a.social_links.twitter === "https://twitter.com/test", "twitter link mismatch");
+    assert(a.social_links.discord === "https://discord.gg/test", "discord link mismatch");
+    assert(a.explorer_url === "https://explorer.phase2.test", "explorer_url mismatch");
+    assert(a.dashboard_url === "https://bridge.phase2.test", "dashboard_url mismatch");
+  });
+
+  await test("PUT /api/deployments/[id] — empty screenshots array clears screenshots", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ screenshots: JSON.stringify([]) }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    const { data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(data.appchain.screenshots.length === 0, "screenshots should be empty after clear");
+  });
+
+  await test("PUT /api/deployments/[id] — malformed screenshots JSON doesn't crash detail", async () => {
+    // Store malformed JSON directly
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ screenshots: "not-valid-json" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    const { status: detailStatus, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(detailStatus === 200, `detail should not crash, got ${detailStatus}`);
+    assert(Array.isArray(data.appchain.screenshots), "screenshots should fallback to empty array");
+  });
+
+  await test("PUT /api/deployments/[id] — restore valid data for subsequent tests", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "A test appchain for E2E testing",
+        screenshots: JSON.stringify(["ipfs://Qm123"]),
+        social_links: JSON.stringify({ website: "https://example.com" }),
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+  });
+
   // ---- AI Proxy ----
   console.log("\n=== AI Proxy ===");
 

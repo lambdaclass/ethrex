@@ -168,6 +168,74 @@ test("cleanup showroom test deployment", () => {
 });
 
 // ============================================================
+// Phase 2: On-chain Metadata DB Tests
+// ============================================================
+console.log("\n=== Phase 2: Metadata DB Tests ===");
+
+let metaDeployId;
+test("create deployment for metadata tests", () => {
+  const d = deploymentsDb.createDeployment({
+    programSlug: "evm-l2",
+    name: "Metadata Test Chain",
+    chainId: 99002,
+  });
+  assert.ok(d.id);
+  metaDeployId = d.id;
+});
+
+test("updateDeployment stores IPFS-related fields alongside platform_deployment_id", () => {
+  const updated = deploymentsDb.updateDeployment(metaDeployId, {
+    platform_deployment_id: "plat-meta-001",
+    is_public: 1,
+    name: "Metadata Test Chain Updated",
+  });
+  assert.equal(updated.platform_deployment_id, "plat-meta-001");
+  assert.equal(updated.is_public, 1);
+  assert.equal(updated.name, "Metadata Test Chain Updated");
+});
+
+test("updateDeployment can set and retrieve config JSON", () => {
+  const config = JSON.stringify({ metadataURI: "ipfs://QmTestMetadata123", proofSystem: "sp1" });
+  const updated = deploymentsDb.updateDeployment(metaDeployId, { config });
+  const parsed = JSON.parse(updated.config);
+  assert.equal(parsed.metadataURI, "ipfs://QmTestMetadata123");
+  assert.equal(parsed.proofSystem, "sp1");
+});
+
+test("updateDeployment handles null platform_deployment_id correctly", () => {
+  // Set it first
+  deploymentsDb.updateDeployment(metaDeployId, { platform_deployment_id: "plat-temp" });
+  let d = deploymentsDb.getDeploymentById(metaDeployId);
+  assert.equal(d.platform_deployment_id, "plat-temp");
+
+  // Clear it
+  deploymentsDb.updateDeployment(metaDeployId, { platform_deployment_id: null });
+  d = deploymentsDb.getDeploymentById(metaDeployId);
+  assert.equal(d.platform_deployment_id, null);
+});
+
+test("updateDeployment with empty string vs null for platform_deployment_id", () => {
+  // Empty string is different from null
+  deploymentsDb.updateDeployment(metaDeployId, { platform_deployment_id: "" });
+  const d = deploymentsDb.getDeploymentById(metaDeployId);
+  assert.equal(d.platform_deployment_id, "");
+});
+
+test("multiple rapid updates preserve last value", () => {
+  deploymentsDb.updateDeployment(metaDeployId, { platform_deployment_id: "first" });
+  deploymentsDb.updateDeployment(metaDeployId, { platform_deployment_id: "second" });
+  deploymentsDb.updateDeployment(metaDeployId, { platform_deployment_id: "third" });
+  const d = deploymentsDb.getDeploymentById(metaDeployId);
+  assert.equal(d.platform_deployment_id, "third");
+});
+
+test("cleanup metadata test deployment", () => {
+  deploymentsDb.deleteDeployment(metaDeployId);
+  const d = deploymentsDb.getDeploymentById(metaDeployId);
+  assert.equal(d, undefined);
+});
+
+// ============================================================
 // Hosts DB Tests
 // ============================================================
 console.log("\n=== Hosts DB Tests ===");
