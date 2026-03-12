@@ -39,11 +39,12 @@ default = ["secp256k1"]
 
 # Base features: enable the zkVM crypto modules and feature propagation.
 # Guest binaries use these to get their Crypto implementation.
-sp1 = ["dep:k256", "dep:substrate-bn", "ethrex-l2-common/secp256k1"]
+sp1 = ["dep:k256", "dep:substrate-bn", "ethrex-l2-common/secp256k1", "ethrex-crypto/kzg-rs"]
 risc0 = ["dep:k256", "dep:substrate-bn", "ethrex-l2-common/secp256k1"]
 zisk = [
     "dep:k256", "dep:substrate-bn", "dep:ziskos",
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
+    "ethrex-crypto/kzg-rs",
 ]
 openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]
 
