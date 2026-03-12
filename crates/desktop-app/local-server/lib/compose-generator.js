@@ -522,6 +522,17 @@ function generateRemoteTestnetComposeFile(opts) {
     l1RpcUrl, deployerAddress, committerAddress, proofCoordinatorAddress,
     bridgeOwnerAddress, l2ChainId,
   } = opts;
+
+  // Validate required addresses to fail fast on caller errors
+  const missing = [];
+  if (!deployerAddress) missing.push("deployerAddress");
+  if (!committerAddress) missing.push("committerAddress");
+  if (!proofCoordinatorAddress) missing.push("proofCoordinatorAddress");
+  if (!bridgeOwnerAddress) missing.push("bridgeOwnerAddress");
+  if (missing.length > 0) {
+    throw new Error(`generateRemoteTestnetComposeFile: missing required option(s): ${missing.join(", ")}`);
+  }
+
   const programSlug = sanitizeSlug(rawSlug);
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
@@ -684,6 +695,17 @@ function generateTestnetComposeFile(opts) {
     deployerAddress, committerAddress, proofCoordinatorAddress, bridgeOwnerAddress,
     isPublic = false, customGenesisPath, l2ChainId,
   } = opts;
+
+  // Validate required addresses to fail fast on caller errors
+  const missing = [];
+  if (!deployerAddress) missing.push("deployerAddress");
+  if (!committerAddress) missing.push("committerAddress");
+  if (!proofCoordinatorAddress) missing.push("proofCoordinatorAddress");
+  if (!bridgeOwnerAddress) missing.push("bridgeOwnerAddress");
+  if (missing.length > 0) {
+    throw new Error(`generateTestnetComposeFile: missing required option(s): ${missing.join(", ")}`);
+  }
+
   const programSlug = sanitizeSlug(rawSlug);
   const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
   // Proof coordinator and metrics are internal-only — never bind to 0.0.0.0

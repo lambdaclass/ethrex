@@ -71,8 +71,12 @@ function buildKeysEnvContent(keys) {
  */
 function writeKeysEnvFile(deploymentId, keysEnvContent, customDir) {
   const deployDir = getDeploymentDir(deploymentId, customDir);
+  if (!fs.existsSync(deployDir)) {
+    fs.mkdirSync(deployDir, { recursive: true });
+  }
   const keysPath = path.join(deployDir, ".keys.env");
   fs.writeFileSync(keysPath, keysEnvContent, { mode: 0o600 });
+  fs.chmodSync(keysPath, 0o600);
   return keysPath;
 }
 
@@ -1120,11 +1124,14 @@ async function provisionTestnet(deployment) {
     const gpu = docker.hasNvidiaGpu();
 
     // Derive addresses from keys (compose-generator no longer receives keys)
+    if (!deployerPrivateKey) {
+      throw new Error("Missing deployerPrivateKey: cannot derive role keys or addresses");
+    }
     const keys = {
       deployerPk: deployerPrivateKey,
-      committerPk: roleKeys.committerPk,
-      proofCoordinatorPk: roleKeys.proofCoordinatorPk,
-      bridgeOwnerPk: roleKeys.bridgeOwnerPk,
+      committerPk: (roleKeys && roleKeys.committerPk) || deployerPrivateKey,
+      proofCoordinatorPk: (roleKeys && roleKeys.proofCoordinatorPk) || deployerPrivateKey,
+      bridgeOwnerPk: (roleKeys && roleKeys.bridgeOwnerPk) || deployerPrivateKey,
     };
     const addresses = deriveAddresses(keys);
 
@@ -2307,29 +2314,47 @@ async function setPublicAccess(deployment, isPublic) {
   const dConfig = updated.config ? JSON.parse(updated.config) : {};
   const isTestnet = dConfig.mode === 'testnet';
   const deployDir = updated.deploy_dir || null;
-  const composeFile = require("path").join(getDeploymentDir(id, deployDir), "docker-compose.yaml");
+  const composeFile = path.join(getDeploymentDir(id, deployDir), "docker-compose.yaml");
 
   // 1. Regenerate compose with appropriate binding
   let composeContent;
   if (isTestnet) {
     const testnetCfg = dConfig.testnet || {};
     const roleKeys = testnetCfg.roleKeys || {};
+
+    // Resolve keys from Keychain to derive addresses
+    const keychainKeyName = testnetCfg.keychainKeyName;
+    if (!keychainKeyName) throw new Error("No deployer Keychain key for testnet public access toggle");
+    const deployerPk = await keychain.getPrivateKey(keychainKeyName);
+    const keys = {
+      deployerPk,
+      committerPk: roleKeys.committerKeychainKey
+        ? await keychain.getPrivateKey(roleKeys.committerKeychainKey) : deployerPk,
+      proofCoordinatorPk: roleKeys.proofCoordinatorKeychainKey
+        ? await keychain.getPrivateKey(roleKeys.proofCoordinatorKeychainKey) : deployerPk,
+      bridgeOwnerPk: roleKeys.bridgeOwnerKeychainKey
+        ? await keychain.getPrivateKey(roleKeys.bridgeOwnerKeychainKey) : deployerPk,
+    };
+    const addresses = deriveAddresses(keys);
+
     composeContent = generateTestnetComposeFile({
       programSlug: updated.program_slug, l2Port: updated.l2_port,
       proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,
       projectName: updated.docker_project, l1RpcUrl: testnetCfg.l1RpcUrl,
-      deployerPrivateKey: testnetCfg.deployerPrivateKey, gpu: !!dConfig.gpu,
-      committerPk: roleKeys.committerPk, proofCoordinatorPk: roleKeys.proofCoordinatorPk,
-      bridgeOwnerPk: roleKeys.bridgeOwnerPk, isPublic, l2ChainId: updated.chain_id,
+      gpu: !!dConfig.gpu, ...addresses, isPublic, l2ChainId: updated.chain_id,
     });
+
+    // Ensure .keys.env exists
+    const keysEnvContent = buildKeysEnvContent(keys);
+    writeKeysEnvFile(id, keysEnvContent, deployDir);
   } else {
     // Resolve custom genesis paths from deployment dir (if they exist)
     const depDir = getDeploymentDir(id, deployDir);
     const profile = getAppProfile(updated.program_slug);
-    const customGenesisPath = require("fs").existsSync(require("path").join(depDir, profile.genesisFile))
-      ? require("path").join(depDir, profile.genesisFile) : undefined;
-    const customL1GenesisPath = require("fs").existsSync(require("path").join(depDir, "l1.json"))
-      ? require("path").join(depDir, "l1.json") : undefined;
+    const customGenesisPath = fs.existsSync(path.join(depDir, profile.genesisFile))
+      ? path.join(depDir, profile.genesisFile) : undefined;
+    const customL1GenesisPath = fs.existsSync(path.join(depDir, "l1.json"))
+      ? path.join(depDir, "l1.json") : undefined;
     composeContent = generateComposeFile({
       programSlug: updated.program_slug, l1Port: updated.l1_port, l2Port: updated.l2_port,
       proofCoordPort: updated.proof_coord_port, metricsPort: updated.tools_metrics_port,

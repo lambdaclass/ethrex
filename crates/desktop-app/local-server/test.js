@@ -1539,11 +1539,13 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       });
 
       test("generateTestnetComposeFile: isPublic=true binds to 0.0.0.0", () => {
+        const testAddr = "0x" + "a".repeat(40);
         const yaml = generateTestnetComposeFile({
           programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900,
           metricsPort: 3702, projectName: "test-testnet",
           l1RpcUrl: "https://sepolia.infura.io/v3/key",
-          deployerPrivateKey: "0x" + "a".repeat(64),
+          deployerAddress: testAddr, committerAddress: testAddr,
+          proofCoordinatorAddress: testAddr, bridgeOwnerAddress: testAddr,
           isPublic: true,
         });
         assert.ok(yaml.includes("0.0.0.0:1729:1729"), "testnet L2 should bind to 0.0.0.0");
@@ -1552,11 +1554,13 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       });
 
       test("generateTestnetComposeFile: isPublic=false binds to 127.0.0.1", () => {
+        const testAddr = "0x" + "a".repeat(40);
         const yaml = generateTestnetComposeFile({
           programSlug: "evm-l2", l2Port: 1729, proofCoordPort: 3900,
           metricsPort: 3702, projectName: "test-testnet-local",
           l1RpcUrl: "https://sepolia.infura.io/v3/key",
-          deployerPrivateKey: "0x" + "a".repeat(64),
+          deployerAddress: testAddr, committerAddress: testAddr,
+          proofCoordinatorAddress: testAddr, bridgeOwnerAddress: testAddr,
           isPublic: false,
         });
         assert.ok(yaml.includes("127.0.0.1:1729:1729"), "testnet L2 should bind to 127.0.0.1");
