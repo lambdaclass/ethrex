@@ -1647,16 +1647,9 @@ async function provisionRemoteTestnet(deployment, hostId) {
   activeProvisions.set(id, provisionInfo);
   clearDeployEvents(id);
 
-  const { l2Port, proofCoordPort } = await getNextAvailablePorts();
+  const { l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
   const remoteDir = `/opt/tokamak/${id}`;
-
-  // Allocate tools ports
-  const toolsL2ExplorerPort = 8082;
-  const toolsL1ExplorerPort = 8083;
-  const toolsBridgeUIPort = 3000;
-  const toolsDbPort = 7432;
-  const toolsMetricsPort = 3702;
 
   updateDeployment(id, {
     host_id: hostId,
