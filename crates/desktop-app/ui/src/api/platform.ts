@@ -200,6 +200,21 @@ class PlatformAPI {
     const data = await this.fetch<{ deployments: Array<{ id: string; name: string; phase: string }> }>('/api/deployments')
     return data.deployments
   }
+
+  async getPublicAppchain(id: string) {
+    const data = await this.fetch<{
+      appchain: {
+        id: string
+        name: string
+        description: string | null
+        explorer_url: string | null
+        dashboard_url: string | null
+        social_links: Record<string, string>
+        screenshots: string[]
+      }
+    }>(`/api/store/appchains/${id}`)
+    return data.appchain
+  }
 }
 
 export const platformAPI = new PlatformAPI()

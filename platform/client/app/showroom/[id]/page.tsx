@@ -196,6 +196,7 @@ export default function AppchainDetailPage() {
       )}
 
       {/* Services */}
+      {(appchain.explorer_url || appchain.dashboard_url || appchain.rpc_url) && (
       <div className="bg-white rounded-xl border p-6 mb-4">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Services</h2>
         <div className="space-y-3">
@@ -231,6 +232,7 @@ export default function AppchainDetailPage() {
           )}
         </div>
       </div>
+      )}
 
       {/* L1 Contracts */}
       {contracts.length > 0 && (

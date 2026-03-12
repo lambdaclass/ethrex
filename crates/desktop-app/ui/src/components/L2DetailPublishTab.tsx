@@ -27,6 +27,14 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
   // Sync isPublic when parent re-fetches
   useEffect(() => { setIsPublic(l2.isPublic) }, [l2.isPublic])
 
+  // Load existing description from Platform on mount (if already published)
+  useEffect(() => {
+    if (!l2.platformDeploymentId || !l2.isPublic) return
+    platformAPI.getPublicAppchain(l2.platformDeploymentId).then(appchain => {
+      if (appchain?.description) setPublishDesc(appchain.description)
+    }).catch(() => {})
+  }, [l2.platformDeploymentId, l2.isPublic])
+
   // Auto-save description with debounce
   const saveDescription = useCallback(async (desc: string) => {
     const platformId = l2.platformDeploymentId
@@ -82,12 +90,16 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                     })
                     const platformId = r.deployment.id
 
-                    // Update Platform deployment with chain details
+                    // Update Platform deployment with chain details + service URLs
+                    const explorerUrl = l2.toolsL2ExplorerPort ? `http://localhost:${l2.toolsL2ExplorerPort}` : undefined
+                    const dashboardUrl = l2.toolsBridgeUIPort ? `http://localhost:${l2.toolsBridgeUIPort}` : undefined
                     await platformAPI.updateDeployment(platformId, {
                       bridge_address: l2.bridgeAddress || undefined,
                       proposer_address: l2.proposerAddress || undefined,
                       network_mode: l2.networkMode || 'local',
                       l1_chain_id: l2.l1ChainId || undefined,
+                      explorer_url: explorerUrl,
+                      dashboard_url: dashboardUrl,
                     })
 
                     await platformAPI.activateDeployment(platformId)

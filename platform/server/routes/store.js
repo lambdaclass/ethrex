@@ -75,12 +75,12 @@ router.get("/appchains/:id", (req, res) => {
     if (!appchain) {
       return res.status(404).json({ error: "Appchain not found" });
     }
+    let screenshots = [];
+    let social_links = {};
+    try { screenshots = appchain.screenshots ? JSON.parse(appchain.screenshots) : []; } catch { /* ignore */ }
+    try { social_links = appchain.social_links ? JSON.parse(appchain.social_links) : {}; } catch { /* ignore */ }
     res.json({
-      appchain: {
-        ...appchain,
-        screenshots: appchain.screenshots ? JSON.parse(appchain.screenshots) : [],
-        social_links: appchain.social_links ? JSON.parse(appchain.social_links) : {},
-      },
+      appchain: { ...appchain, screenshots, social_links },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
