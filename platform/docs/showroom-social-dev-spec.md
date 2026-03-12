@@ -102,7 +102,8 @@ router.get("/appchains/:id", (req, res) => {
       }
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error(`[API Error] /appchains/${req.params.id}:`, e);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 ```
@@ -205,7 +206,7 @@ await platformAPI.updateDeployment(r.deployment.id, {
     ? `http://localhost:${l2.toolsL2ExplorerPort}` : undefined,
   dashboard_url: l2.toolsBridgeUIPort
     ? `http://localhost:${l2.toolsBridgeUIPort}` : undefined,
-  l1_chain_id: l2.networkMode === 'testnet' ? 11155111 : 1,  // 네트워크에 따라
+  l1_chain_id: l2.l1ChainId,  // from deployment config (not hardcoded)
   network_mode: l2.networkMode,
 })
 
@@ -338,8 +339,10 @@ router.post("/appchains/:id/rpc-proxy", async (req, res) => {
     const data = await response.json();
     res.json(data);
   } catch (e) {
-    // 노드 오프라인 또는 타임아웃
-    res.status(502).json({ error: "L2 node unreachable", detail: e.message });
+    // Log detailed error server-side for debugging
+    console.error(`RPC proxy error for appchain ${req.params.id}:`, e);
+    // Return generic message to client (don't expose internals)
+    res.status(502).json({ error: "L2 node unreachable" });
   }
 });
 ```
@@ -453,10 +456,12 @@ async function getPinataJWT(): Promise<string> {
 Showroom에서 스크린샷 표시 시 IPFS CID를 HTTP URL로 변환:
 
 ```typescript
+const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://gateway.pinata.cloud/ipfs/';
+
 function ipfsToHttp(uri: string): string {
   if (uri.startsWith('ipfs://')) {
     const cid = uri.replace('ipfs://', '');
-    return `https://gateway.pinata.cloud/ipfs/${cid}`;
+    return `${IPFS_GATEWAY}${cid}`;
   }
   return uri;
 }
@@ -663,7 +668,8 @@ async function startIndexer() {
 }
 
 async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId) {
-  const httpUrl = uri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
+  const gateway = process.env.IPFS_GATEWAY || 'https://gateway.pinata.cloud/ipfs/';
+  const httpUrl = uri.replace('ipfs://', gateway);
   const res = await fetch(httpUrl, { signal: AbortSignal.timeout(10000) });
   const metadata = await res.json();
 
@@ -817,8 +823,16 @@ function getOrCreateNostrKeys(): { sk: Uint8Array; pk: string } {
     const sk = new Uint8Array(JSON.parse(stored));
     return { sk, pk: getPublicKey(sk) };
   }
+
+  // Option A: NIP-07 browser extension (recommended — keys never touch our code)
+  if (window.nostr) {
+    const pk = await window.nostr.getPublicKey();
+    return { sk: null, pk }; // signing delegated to extension
+  }
+
+  // Option B: Generate ephemeral key — kept in memory only, never persisted
   const sk = generateSecretKey();
-  localStorage.setItem('nostr_sk', JSON.stringify(Array.from(sk)));
+  // NOTE: sk lives only for this session. User must back up or use NIP-07.
   return { sk, pk: getPublicKey(sk) };
 }
 ```

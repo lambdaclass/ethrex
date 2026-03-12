@@ -184,7 +184,7 @@ function setMetadataURI(string calldata _uri) external onlyOwner {
 | **인증** | IPFS keys | secp256k1 keypair | EVM wallet | DID (Sign-in with Ethereum) | SEA (Security, Encryption, Authorization) |
 | **소셜 기능** | 기본 없음, 직접 구현 | NIP 확장으로 지원 | 네이티브 (follow, comment, mirror) | GraphQL 스키마로 정의 | 직접 구현 |
 | **성숙도** | v3 출시 (2025) | 활발 ($10M Dorsey 지원) | 메인넷 출시 | 3Box Labs + Textile 합병 중 | 안정적이나 업데이트 느림 |
-| **EVM 호환** | 없음 | 없음 | 네이티브 (Polygon) | SIWE 지원 | 없음 |
+| **EVM 호환** | 없음 | 키 페어 호환 (secp256k1) | 네이티브 (Polygon) | SIWE 지원 | 없음 |
 | **경량성** | Node.js 필요 + IPFS | Relay 운영 필요 | 체인 의존 | Ceramic 노드 필요 | ~9KB (매우 경량) |
 | **오프라인** | ✓ (CRDT) | ✗ | ✗ | ✓ (부분) | ✓ (local-first) |
 | **리스크** | 커뮤니티 주도, 펀딩 불안정 | 분산화 잘 됨 | 합병 후 변화 가능 | Textile 합병으로 전환기 | 개발 정체 |
@@ -596,7 +596,7 @@ tokamak-rollup-metadata-repository/
 1. **소셜 프로토콜 최종 선택:** Nostr를 1순위로 권장하지만, OrbitDB가 IPFS 생태계와 더 자연스러운 연동 가능. 프로토타입 비교 필요.
 2. **IPFS Pinning 서비스:** Pinata vs nft.storage vs 자체 IPFS 노드
 3. **Nostr 키 ↔ EVM 주소 매핑:** NIP-07 확장 vs 커스텀 서명 기반 파생
-4. **Git 메타데이터 레포 통합:** 기존 tokamak-rollup-metadata-repository에 Tokamak Appchain 스키마를 추가할지, 별도 레포를 만들지
+4. **Git 메타데이터 레포 통합:** 기존 tokamak-rollup-metadata-repository에 `appchains/` 폴더 구조를 추가하는 방향으로 결정 (7.2.4 참조). 세부 스키마 필드 확정 필요.
 5. **metadataURI 업데이트 권한:** OnChainProposer의 owner만? 별도 metadata admin 역할?
 6. **Showroom에서 오프라인 노드 처리:** L2 RPC 호출 실패 시 UI 표시 방법
 
