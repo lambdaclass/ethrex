@@ -28,8 +28,10 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
   })
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error?.details || err.error || 'IPFS upload failed')
+    const text = await res.text()
+    let msg = res.statusText
+    try { const parsed = JSON.parse(text); msg = parsed.error?.details || parsed.error || msg } catch { /* use statusText */ }
+    throw new Error(`IPFS upload failed: ${msg}`)
   }
 
   const data = await res.json()
@@ -55,8 +57,10 @@ export async function uploadJSONToIPFS(metadata: AppchainMetadata): Promise<stri
   })
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error?.details || err.error || 'IPFS upload failed')
+    const text = await res.text()
+    let msg = res.statusText
+    try { const parsed = JSON.parse(text); msg = parsed.error?.details || parsed.error || msg } catch { /* use statusText */ }
+    throw new Error(`IPFS JSON upload failed: ${msg}`)
   }
 
   const data = await res.json()

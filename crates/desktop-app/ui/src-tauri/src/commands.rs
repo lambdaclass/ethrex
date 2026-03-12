@@ -867,8 +867,9 @@ pub fn delete_keychain_value(key: String) -> Result<(), String> {
 // L1 On-chain Metadata (Phase 2)
 // ============================================================================
 
-/// Call setMetadataURI on the OnChainProposer L1 contract.
-/// Signs and sends the transaction using the deployer private key from keychain.
+/// Prepare setMetadataURI calldata for the OnChainProposer L1 contract.
+/// Returns JSON with `to`, `data`, and `chainId` for the frontend to sign via browser wallet.
+/// Full on-chain signing (ethers-rs) is planned for a future iteration.
 #[tauri::command]
 pub async fn set_metadata_uri(
     l1_rpc_url: String,
@@ -876,16 +877,26 @@ pub async fn set_metadata_uri(
     metadata_uri: String,
     keychain_key: String,
 ) -> Result<String, String> {
-    // Load private key from keychain
+    // Validate inputs
+    if !proposer_address.starts_with("0x") || proposer_address.len() != 42 {
+        return Err("Invalid proposer address: must be 0x-prefixed 40-char hex".to_string());
+    }
+    if l1_rpc_url.is_empty() {
+        return Err("L1 RPC URL is required".to_string());
+    }
+    if metadata_uri.is_empty() {
+        return Err("Metadata URI is required".to_string());
+    }
+
+    // Verify deployer key exists in keychain (validates ownership)
     let entry = keyring::Entry::new(KEYRING_SERVICE, &keychain_key)
         .map_err(|e| format!("Keyring error: {e}"))?;
     let _private_key = entry
         .get_password()
         .map_err(|e| format!("No deployer key found: {e}"))?;
 
-    // Build and send the setMetadataURI transaction
-    // Function selector: keccak256("setMetadataURI(string)")[:4]
-    // Pre-computed: 0x750c5d86 (keccak256 of "setMetadataURI(string)")
+    // Build setMetadataURI calldata
+    // Function selector: keccak256("setMetadataURI(string)")[:4] = 0x750c5d86
     let func_selector: [u8; 4] = [0x75, 0x0c, 0x5d, 0x86];
 
     // ABI encode: offset (32 bytes) + length (32 bytes) + data (padded to 32 bytes)

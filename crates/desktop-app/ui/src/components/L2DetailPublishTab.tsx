@@ -54,10 +54,12 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     }).catch(() => {})
   }, [l2.platformDeploymentId, l2.isPublic])
 
-  // Auto-save description with debounce
+  // Auto-save description with debounce (guard against concurrent saves)
+  const savingRef = useRef(false)
   const saveDescription = useCallback(async (desc: string) => {
     const platformId = l2.platformDeploymentId
-    if (!platformId || !isPublic) return
+    if (!platformId || !isPublic || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     try {
       await platformAPI.updateDeployment(platformId, { description: desc })
@@ -67,6 +69,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       // Silently fail — user can retry
     } finally {
       setSaving(false)
+      savingRef.current = false
     }
   }, [l2.platformDeploymentId, isPublic])
 
@@ -141,6 +144,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
   // Upload full metadata JSON to IPFS (for on-chain metadataURI)
   const handleUploadMetadata = async () => {
     setMetadataUploading(true)
+    setUploadError('')
     try {
       const metadata = buildMetadata({
         name: l2.name,

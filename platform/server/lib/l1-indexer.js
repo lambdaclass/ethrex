@@ -17,23 +17,18 @@ const CHAINS = [
   // mainnet added later
 ];
 
-// MetadataURIUpdated(string newURI) event topic
-// keccak256("MetadataURIUpdated(string)")
-const METADATA_EVENT_TOPIC =
-  "0x" +
-  "0a96e5eb1e5b9a3b7e0c6ba8e28f4092e8f2e6c7d5b8a9f3c4d2e1f0a7b6c5d4"; // placeholder — will be computed at runtime
-
 /**
- * Compute the actual event topic hash.
- * We use a simple keccak256 of the event signature.
+ * Compute the MetadataURIUpdated(string) event topic via keccak256.
+ * Returns null if ethers is not installed.
  */
+let _cachedEventTopic = null;
 function computeEventTopic() {
-  // Use ethers if available, otherwise fall back to the placeholder
+  if (_cachedEventTopic) return _cachedEventTopic;
   try {
     const { keccak256, toUtf8Bytes } = require("ethers");
-    return keccak256(toUtf8Bytes("MetadataURIUpdated(string)"));
+    _cachedEventTopic = keccak256(toUtf8Bytes("MetadataURIUpdated(string)"));
+    return _cachedEventTopic;
   } catch {
-    // ethers not installed — indexer will not start
     return null;
   }
 }
@@ -56,7 +51,7 @@ function ipfsToHttp(uri) {
 async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId, db) {
   try {
     const httpUrl = ipfsToHttp(uri);
-    const res = await fetch(httpUrl, { signal: AbortSignal.timeout(10000) });
+    const res = await fetch(httpUrl, { signal: AbortSignal.timeout(30000) });
     if (!res.ok) {
       console.error(`[indexer] Failed to fetch metadata: ${res.status}`);
       return;
@@ -130,7 +125,10 @@ async function pollChain(chain, knownProposers, lastBlock) {
     if (latestBlock <= lastBlock) return lastBlock;
 
     const eventTopic = computeEventTopic();
-    if (!eventTopic) return latestBlock;
+    if (!eventTopic) {
+      console.error(`[indexer] Cannot compute event topic — ethers not available`);
+      return latestBlock;
+    }
 
     // Query logs for each known proposer
     for (const proposerAddr of knownProposers) {
@@ -164,6 +162,10 @@ async function pollChain(chain, knownProposers, lastBlock) {
               const { AbiCoder } = require("ethers");
               const coder = new AbiCoder();
               const [newURI] = coder.decode(["string"], data);
+              if (!newURI || typeof newURI !== "string") {
+                console.error(`[indexer] Invalid decoded URI from ${proposerAddr}`);
+                continue;
+              }
               console.log(
                 `[indexer][${chain.name}] MetadataURIUpdated: ${proposerAddr} → ${newURI}`
               );
