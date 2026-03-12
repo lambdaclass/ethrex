@@ -94,6 +94,13 @@ class LocalServerAPI {
     })
   }
 
+  updateDeployment(id: string, fields: Record<string, unknown>) {
+    return this.fetch<{ deployment: Deployment }>(`/api/deployments/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(fields),
+    })
+  }
+
   deleteDeployment(id: string) {
     return this.fetch<{ ok: boolean }>(`/api/deployments/${id}`, { method: 'DELETE' })
   }

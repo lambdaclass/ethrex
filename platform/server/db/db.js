@@ -43,6 +43,14 @@ function runMigrations(database) {
     { name: "tools_metrics_port", type: "INTEGER" },
     { name: "env_project_id", type: "TEXT" },
     { name: "env_updated_at", type: "INTEGER" },
+    // Showroom social features
+    { name: "description", type: "TEXT" },
+    { name: "screenshots", type: "TEXT" },
+    { name: "explorer_url", type: "TEXT" },
+    { name: "dashboard_url", type: "TEXT" },
+    { name: "social_links", type: "TEXT" },
+    { name: "l1_chain_id", type: "INTEGER" },
+    { name: "network_mode", type: "TEXT" },
   ];
   for (const col of newCols) {
     if (!colNames.includes(col.name)) {

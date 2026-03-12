@@ -27,6 +27,7 @@ interface DeploymentFromDB {
   error_message: string | null
   config: string | null
   is_public: number
+  platform_deployment_id: string | null
   created_at: number
   tools_l1_explorer_port: number | null
   tools_l2_explorer_port: number | null
@@ -49,6 +50,7 @@ export interface L2Config {
   proverStatus: 'running' | 'stopped'
   hashtags: string[]
   isPublic: boolean
+  platformDeploymentId: string | null
   createdAt: string
   networkMode?: string
   // Docker deployment fields
@@ -99,6 +101,7 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     proverStatus: 'stopped',
     hashtags: (() => { try { return d.hashtags ? JSON.parse(d.hashtags) : [] } catch { return [] } })(),
     isPublic: d.is_public === 1,
+    platformDeploymentId: d.platform_deployment_id || null,
     createdAt: new Date(d.created_at).toISOString(),
     networkMode: isTestnet ? 'testnet' : 'local',
     source: 'docker',

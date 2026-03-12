@@ -207,6 +207,7 @@ pub fn create_appchain(
         bridge_address: None,
         on_chain_proposer_address: None,
         is_public: req.is_public,
+        platform_deployment_id: None,
         hashtags,
         status: AppchainStatus::Created,
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -327,11 +328,12 @@ pub async fn stop_appchain(
 pub fn update_appchain_public(
     id: String,
     is_public: bool,
+    platform_deployment_id: Option<String>,
     am: State<Arc<AppchainManager>>,
 ) -> Result<(), String> {
     am.get_appchain(&id)
         .ok_or(format!("Appchain not found: {id}"))?;
-    am.update_public(&id, is_public);
+    am.update_public(&id, is_public, platform_deployment_id);
     Ok(())
 }
 

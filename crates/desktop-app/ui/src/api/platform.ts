@@ -172,6 +172,24 @@ class PlatformAPI {
     })
   }
 
+  async updateDeployment(id: string, fields: {
+    description?: string
+    screenshots?: string
+    explorer_url?: string
+    dashboard_url?: string
+    social_links?: string
+    l1_chain_id?: number
+    network_mode?: string
+    bridge_address?: string
+    proposer_address?: string
+    rpc_url?: string
+  }) {
+    return this.fetch<{ deployment: { id: string } }>(`/api/deployments/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(fields),
+    })
+  }
+
   async activateDeployment(id: string) {
     return this.fetch<{ deployment: { id: string } }>(`/api/deployments/${id}/activate`, {
       method: 'POST',
