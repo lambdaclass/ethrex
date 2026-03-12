@@ -183,8 +183,17 @@ impl TrieLayerCache {
         destroyed_accounts: AccountHashSet,
     ) {
         if parent == state_root && key_values.is_empty() && destroyed_accounts.is_empty() {
+            // TODO: check if this is possible in practice
+            // This can't happen in L1, due to system contracts irreversibly modifying state
+            // at each block.
+            // On L2, if no transactions are included in a block, the state root remains the same,
+            // but we handle that case in put_batch. It may happen, however, if someone modifies
+            // state with a privileged tx and later reverts it (since it doesn't update nonce).
             return;
         } else if parent == state_root {
+            // L1 always changes the state root (system contracts run even on empty blocks), so
+            // this should not happen there. L2 can legitimately keep the same root on empty blocks
+            // because it has no system contract calls.
             tracing::trace!("parent == state_root but updates not empty");
             return;
         }
@@ -222,7 +231,8 @@ impl TrieLayerCache {
     /// keys from the removed layers (producing unnecessary false positives).
     pub fn rebuild_bloom(&mut self) {
         // Pre-compute total keys for optimal filter sizing
-        let total_keys: usize = self.layers
+        let total_keys: usize = self
+            .layers
             .values()
             .map(|layer| layer.nodes.len() + layer.destroyed_accounts.len())
             .sum();
@@ -252,7 +262,10 @@ impl TrieLayerCache {
     ///
     /// After removal, any orphaned layers (older than the committed ones) are pruned, and
     /// the bloom filter is rebuilt to remove stale entries.
-    pub fn commit(&mut self, state_root: H256) -> Option<(Vec<(Vec<u8>, Vec<u8>)>, AccountHashSet)> {
+    pub fn commit(
+        &mut self,
+        state_root: H256,
+    ) -> Option<(Vec<(Vec<u8>, Vec<u8>)>, AccountHashSet)> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -298,8 +311,7 @@ impl TrieWrapper {
         db: Box<dyn TrieDB>,
         account_hash: Option<H256>,
     ) -> Self {
-        let prefix_nibbles =
-            account_hash.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
+        let prefix_nibbles = account_hash.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
             state_root,
             inner,
