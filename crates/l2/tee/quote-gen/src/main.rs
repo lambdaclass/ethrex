@@ -1,17 +1,20 @@
 mod sender;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use configfs_tsm::create_tdx_quote;
 use ethrex_common::Bytes;
 use ethrex_common::utils::keccak;
+use ethrex_guest_program::crypto::NativeCrypto;
+use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2_common::{
     calldata::Value,
     prover::{BatchProof, ProofCalldata, ProverType},
     utils::get_address_from_secret_key,
 };
-use ethrex_guest_program::input::ProgramInput;
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
 use sender::{get_batch, submit_proof, submit_quote};
-use std::time::Duration;
 use tokio::time::sleep;
 
 /// Returns the git commit hash of the current build.
@@ -42,7 +45,9 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 }
 
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
-    let output = ethrex_guest_program::execution::execution_program(input).map_err(|e| e.to_string())?;
+    let crypto = Arc::new(NativeCrypto);
+    let output = ethrex_guest_program::execution::execution_program(input, crypto)
+        .map_err(|e| e.to_string())?;
 
     Ok(output.encode())
 }
