@@ -405,8 +405,7 @@ impl TrieDB for TrieWrapper {
                 .get_storage_node(self.state_root, prefixed.as_ref())
         } else {
             // Account trie — look in account_nodes
-            self.inner
-                .get_account_node(self.state_root, key.as_ref())
+            self.inner.get_account_node(self.state_root, key.as_ref())
         };
         Ok(cached)
     }

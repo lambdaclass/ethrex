@@ -65,10 +65,7 @@ pub enum TrieCommitEntry {
         encoded: Vec<u8>,
     },
     /// A leaf's application-level value (for FlatKeyValue table), or a deletion marker.
-    LeafValue {
-        path: Nibbles,
-        value: Vec<u8>,
-    },
+    LeafValue { path: Nibbles, value: Vec<u8> },
 }
 
 impl TrieCommitEntry {
