@@ -76,6 +76,9 @@ impl RocksDBBackend {
         // opts.enable_statistics();
         // opts.set_stats_dump_period_sec(600);
 
+        // Dedicated 64MB cache for ACCOUNT_CODES blobs (contract bytecodes).
+        let blob_cache = Cache::new_lru_cache(64 * 1024 * 1024);
+
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
@@ -159,6 +162,7 @@ impl RocksDBBackend {
                     // Small bytecodes should go inline (mainly for delegation indicators)
                     cf_opts.set_min_blob_size(32);
                     cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_blob_cache(&blob_cache);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
