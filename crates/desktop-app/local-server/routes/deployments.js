@@ -5,6 +5,7 @@ const { ethers } = require("ethers");
 
 const {
   provision,
+  provisionLocalPrebuilt,
   provisionTestnet,
   provisionRemote,
   provisionRemoteTestnet,
@@ -37,6 +38,132 @@ const fs = require("fs");
 const { generateAIDeployPrompt, CLOUD_PRESETS } = require("../lib/ai-prompt-generator");
 router.get("/ai-deploy/presets", (_req, res) => {
   res.json(CLOUD_PRESETS);
+});
+
+// AI status cache (reported by Messenger via POST, read by Manager UI via GET)
+let messengerAIStatus = { configured: false, mode: null, provider: null, model: null };
+
+// GET /api/deployments/ai-deploy/check-ai — get cached Messenger AI status
+router.get("/ai-deploy/check-ai", (_req, res) => {
+  if (!messengerAIStatus.configured) {
+    messengerAIStatus.guide = "메신저 설정에서 AI를 먼저 설정해주세요";
+  }
+  res.json(messengerAIStatus);
+});
+
+// POST /api/deployments/ai-deploy/report-ai — Messenger reports its AI status
+router.post("/ai-deploy/report-ai", (req, res) => {
+  const { configured, mode, provider, model } = req.body;
+  messengerAIStatus = {
+    configured: !!configured,
+    mode: mode || null,
+    provider: provider || null,
+    model: model || null,
+  };
+  res.json({ ok: true });
+});
+
+// In-memory pending prompt store (picked up by Messenger)
+let pendingAIPrompt = null;
+
+// GET /api/deployments/ai-deploy/pending — Messenger polls for pending prompt
+router.get("/ai-deploy/pending", (_req, res) => {
+  if (pendingAIPrompt) {
+    const prompt = pendingAIPrompt;
+    pendingAIPrompt = null; // auto-clear on read
+    res.json(prompt);
+  } else {
+    res.json(null);
+  }
+});
+
+// GET /api/deployments/ai-deploy/check-cli?cloud=gcp|aws — check CLI install + auth status
+router.post("/ai-deploy/vultr-api-key", (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey || typeof apiKey !== "string") {
+    return res.status(400).json({ error: "apiKey required" });
+  }
+  process.env.VULTR_API_KEY = apiKey.trim();
+  res.json({ ok: true });
+});
+
+router.get("/ai-deploy/check-cli", async (req, res) => {
+  const { cloud } = req.query;
+  if (!cloud || !["gcp", "aws", "vultr"].includes(cloud)) {
+    return res.status(400).json({ error: "cloud must be gcp, aws, or vultr" });
+  }
+  const { execSync } = require("child_process");
+  const result = { cloud, cli: { installed: false, name: "" }, auth: { authenticated: false, account: "" } };
+
+  // Add known SDK paths to PATH for detection
+  const extraPaths = ["/usr/local/share/google-cloud-sdk/bin", "/opt/homebrew/share/google-cloud-sdk/bin"];
+  const envPATH = `${extraPaths.join(":")}:${process.env.PATH}`;
+  const execOpts = { timeout: 5000, env: { ...process.env, PATH: envPATH } };
+
+  if (cloud === "vultr") {
+    result.cli.name = "vultr";
+    try {
+      const ver = execSync("vultr version 2>/dev/null || vultr-cli version 2>/dev/null", execOpts).toString().trim();
+      result.cli.installed = true;
+      result.cli.version = ver.replace(/.*v?(\d+\.\d+\.\d+).*/, "$1") || ver;
+    } catch {
+      return res.json(result);
+    }
+    try {
+      const acct = execSync("vultr account 2>/dev/null || vultr-cli account 2>/dev/null", execOpts).toString().trim();
+      if (acct && !acct.includes("error") && !acct.includes("401")) {
+        result.auth.authenticated = true;
+        const emailMatch = acct.match(/EMAIL\s+(.+)/i);
+        result.auth.account = emailMatch ? emailMatch[1].trim() : "Authenticated";
+      }
+    } catch {}
+    return res.json(result);
+  }
+
+  try {
+    if (cloud === "gcp") {
+      result.cli.name = "gcloud";
+      try {
+        const ver = execSync("gcloud version --format=json 2>/dev/null", execOpts).toString();
+        const parsed = JSON.parse(ver);
+        result.cli.installed = true;
+        result.cli.version = parsed["Google Cloud SDK"] || "unknown";
+      } catch {
+        return res.json(result);
+      }
+      try {
+        const acct = execSync("gcloud config get-value account 2>/dev/null", execOpts).toString().trim();
+        if (acct && acct !== "(unset)") {
+          result.auth.authenticated = true;
+          result.auth.account = acct;
+        }
+        // Check active project
+        const proj = execSync("gcloud config get-value project 2>/dev/null", execOpts).toString().trim();
+        if (proj && proj !== "(unset)") {
+          result.auth.project = proj;
+        }
+      } catch {}
+    } else if (cloud === "aws") {
+      result.cli.name = "aws";
+      try {
+        const ver = execSync("aws --version 2>&1", { timeout: 5000 }).toString().trim();
+        result.cli.installed = true;
+        result.cli.version = ver.split(" ")[0]?.replace("aws-cli/", "") || "unknown";
+      } catch {
+        return res.json(result);
+      }
+      try {
+        const identity = execSync("aws sts get-caller-identity --output json 2>/dev/null", { timeout: 5000 }).toString();
+        const parsed = JSON.parse(identity);
+        result.auth.authenticated = true;
+        result.auth.account = parsed.Arn || parsed.Account || "";
+      } catch {}
+    }
+  } catch (e) {
+    // Unexpected error — return what we have
+  }
+
+  res.json(result);
 });
 
 // GET /api/deployments/next-chain-id — get unique L1 and L2 chain IDs
@@ -520,6 +647,8 @@ router.post("/:id/provision", async (req, res) => {
       provisionFn = () => provisionRemote(deployment, hostId);
     } else if (deployMode === 'testnet') {
       provisionFn = () => provisionTestnet(deployment);
+    } else if (deployMode === 'ai-deploy') {
+      provisionFn = () => provisionLocalPrebuilt(deployment);
     } else {
       provisionFn = () => provision(deployment);
     }
@@ -992,23 +1121,234 @@ router.get("/:id/monitoring", async (req, res) => {
 // ---------------------------------------------------------------------------
 
 /** POST /api/deployments/:id/ai-prompt — generate AI deployment prompt */
-router.post("/:id/ai-prompt", (req, res) => {
+router.post("/:id/ai-prompt", async (req, res) => {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
-    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network } = req.body;
-    if (!cloud || !region || !vmType) {
-      return res.status(400).json({ error: "cloud, region, and vmType are required" });
+    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig } = req.body;
+    if (!cloud) {
+      return res.status(400).json({ error: "cloud is required" });
+    }
+
+    // Smart defaults per cloud provider
+    const defaults = cloud === "local"
+      ? { region: "local", vmType: "local" }
+      : cloud === "gcp"
+      ? { region: "asia-northeast3", vmType: "e2-standard-4" }
+      : cloud === "vultr"
+      ? { region: "icn", vmType: "vc2-6c-16gb" }
+      : { region: "ap-northeast-2", vmType: "t3.xlarge" };
+
+    // For local deployments, allocate real free ports to avoid conflicts
+    // with other running processes. Cloud VMs use DEFAULT_PORTS (fresh server).
+    let ports;
+    if (cloud === "local") {
+      const { getNextAvailablePorts } = require("../db/deployments");
+      ports = await getNextAvailablePorts();
     }
 
     const prompt = generateAIDeployPrompt({
-      deployment, cloud, region, vmType,
+      deployment, cloud,
+      region: region || defaults.region,
+      vmType: vmType || defaults.vmType,
       l1Mode: l1Mode || "local",
       l1RpcUrl, l1ChainId, l1Network,
+      includeProver, walletConfig,
+      ports,
     });
 
-    res.json({ prompt });
+    // Store as pending for Messenger to pick up
+    pendingAIPrompt = {
+      deploymentId: deployment.id,
+      deploymentName: deployment.name,
+      cloud,
+      prompt,
+      createdAt: new Date().toISOString(),
+    };
+
+    res.json({ prompt, sentToMessenger: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AI Chat (direct in Manager)
+// ---------------------------------------------------------------------------
+
+let aiConfig = { provider: null, apiKey: null, model: null };
+
+// Try to load AI config from Messenger's Keychain on startup
+try {
+  const kcConfigStr = keychain.getSecret("ai-config");
+  const kcApiKey = keychain.getSecret("ai-api-key");
+  if (kcConfigStr && kcApiKey) {
+    const kcConfig = JSON.parse(kcConfigStr);
+    aiConfig = { provider: kcConfig.provider || "claude", apiKey: kcApiKey, model: kcConfig.model || null };
+    console.log(`[ai] Loaded AI config from Messenger Keychain: provider=${aiConfig.provider}, model=${aiConfig.model || "default"}`);
+  }
+} catch (e) {
+  console.log("[ai] No Messenger AI config found in Keychain");
+}
+
+router.post("/ai-deploy/ai-config", (req, res) => {
+  const { provider, apiKey, model } = req.body;
+  if (!provider || !apiKey) return res.status(400).json({ error: "provider and apiKey required" });
+  aiConfig = { provider, apiKey, model: model || null };
+
+  // Sync to Messenger Keychain only if Messenger doesn't already have a key
+  let messengerSynced = false;
+  try {
+    const existingKey = keychain.getSecret("ai-api-key");
+    if (!existingKey) {
+      const configObj = JSON.stringify({ provider, model: model || null });
+      const ok1 = keychain.setSecret("ai-config", configObj);
+      const ok2 = keychain.setSecret("ai-api-key", apiKey);
+      messengerSynced = ok1 && ok2;
+      if (messengerSynced) console.log(`[ai] Synced AI config to Messenger Keychain (was empty): provider=${provider}`);
+    } else {
+      console.log(`[ai] Messenger Keychain already has AI key, skipping sync`);
+    }
+  } catch (e) {
+    console.error("[ai] Failed to check/sync Messenger Keychain:", e.message);
+  }
+  res.json({ ok: true, messengerSynced });
+});
+
+// Check if Messenger app has AI settings in Keychain
+router.get("/ai-deploy/messenger-ai-config", (_req, res) => {
+  try {
+    const configStr = keychain.getSecret("ai-config");
+    const apiKey = keychain.getSecret("ai-api-key");
+    if (configStr && apiKey) {
+      const config = JSON.parse(configStr);
+      const maskedKey = apiKey.length > 8
+        ? apiKey.slice(0, 4) + "..." + apiKey.slice(-4)
+        : "****";
+      return res.json({
+        available: true,
+        provider: config.provider || "claude",
+        model: config.model || null,
+        maskedKey,
+      });
+    }
+    res.json({ available: false });
+  } catch {
+    res.json({ available: false });
+  }
+});
+
+// Apply Messenger AI config to Manager (Keychain API key only)
+router.post("/ai-deploy/use-messenger-ai", (_req, res) => {
+  try {
+    const configStr = keychain.getSecret("ai-config");
+    const apiKey = keychain.getSecret("ai-api-key");
+    if (!configStr || !apiKey) return res.status(404).json({ error: "Messenger AI config not found in Keychain" });
+    const config = JSON.parse(configStr);
+    aiConfig = { provider: config.provider || "claude", apiKey, model: config.model || null };
+    res.json({ ok: true, provider: aiConfig.provider, model: aiConfig.model });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/ai-deploy/ai-config", (_req, res) => {
+  res.json({
+    configured: !!aiConfig.apiKey,
+    provider: aiConfig.provider,
+    model: aiConfig.model,
+    hasKey: !!aiConfig.apiKey,
+  });
+});
+
+router.post("/ai-deploy/chat", async (req, res) => {
+  const { messages, systemPrompt } = req.body;
+  if (!aiConfig.apiKey) return res.status(400).json({ error: "AI not configured. Set API key first." });
+  if (!messages || !messages.length) return res.status(400).json({ error: "messages required" });
+
+  try {
+    const provider = aiConfig.provider || "claude";
+    let responseText;
+
+    if (provider === "claude") {
+      const apiMessages = messages.map(m => ({ role: m.role, content: m.content }));
+      const body = {
+        model: aiConfig.model || "claude-sonnet-4-6",
+        max_tokens: 8192,
+        messages: apiMessages,
+      };
+      if (systemPrompt) body.system = systemPrompt;
+
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": aiConfig.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Claude API error: ${r.status}`);
+      }
+      const data = await r.json();
+      responseText = data.content?.[0]?.text || "";
+
+    } else if (provider === "openai" || provider === "gpt") {
+      const apiMessages = [];
+      if (systemPrompt) apiMessages.push({ role: "system", content: systemPrompt });
+      messages.forEach(m => apiMessages.push({ role: m.role, content: m.content }));
+
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${aiConfig.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: aiConfig.model || "gpt-4o",
+          messages: apiMessages,
+          max_completion_tokens: 8192,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error?.message || `OpenAI API error: ${r.status}`);
+      }
+      const data = await r.json();
+      responseText = data.choices?.[0]?.message?.content || "";
+
+    } else if (provider === "gemini") {
+      const apiMessages = [];
+      if (systemPrompt) apiMessages.push({ role: "system", content: systemPrompt });
+      messages.forEach(m => apiMessages.push({ role: m.role, content: m.content }));
+
+      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${aiConfig.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: aiConfig.model || "gemini-2.0-flash",
+          messages: apiMessages,
+          max_tokens: 8192,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Gemini API error: ${r.status}`);
+      }
+      const data = await r.json();
+      responseText = data.choices?.[0]?.message?.content || "";
+
+    } else {
+      return res.status(400).json({ error: `Unknown provider: ${provider}` });
+    }
+
+    res.json({ role: "assistant", content: responseText });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -30,7 +30,7 @@ let allLogLines = [];
 let launchStep = 1;
 let programs = [];
 let selectedProgram = null;
-let launchMode = 'local';
+let launchMode = 'ai-deploy';
 let launchDeploymentId = null;
 let cachedDeployList = [];
 let buildLogLines = [];
@@ -355,7 +355,7 @@ function launchGoStep(step) {
       </div>
     `;
 
-    checkDocker();
+    setLaunchMode(launchMode);
     checkDockerImage(pid);
   }
 }
@@ -365,7 +365,8 @@ function setLaunchMode(mode) {
   document.querySelectorAll('.mode-card').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
-  document.getElementById('remote-host-area').style.display = mode === 'remote' ? 'block' : 'none';
+  const remoteArea = document.getElementById('remote-host-area');
+  if (remoteArea) remoteArea.style.display = mode === 'remote' ? 'block' : 'none';
   document.getElementById('docker-status-area').style.display = mode === 'local' ? 'block' : 'none';
   document.getElementById('ai-deploy-area').style.display = mode === 'ai-deploy' ? 'block' : 'none';
   document.getElementById('l1-node-area').style.display = mode === 'local' ? 'block' : 'none';
@@ -376,7 +377,7 @@ function setLaunchMode(mode) {
 
   if (mode === 'local') checkDocker();
   if (mode === 'remote') { loadHostsForLaunch(); loadRemoteKeychainKeys(); }
-  if (mode === 'ai-deploy') loadAIPresets();
+  if (mode === 'ai-deploy') { loadAIPresets(); onAIDeployTargetChange(); onAIL1ModeChange(); }
 }
 
 function onRemoteL1SourceChange() {
@@ -792,7 +793,7 @@ async function handleLaunchDeploy() {
         mode: launchMode === 'ai-deploy' ? 'ai-deploy' : launchMode,
         l1Image: launchMode === 'local' ? (document.getElementById('launch-l1-image')?.value || 'ethrex') : undefined,
         deployDir: (document.getElementById('launch-deploy-dir')?.value || '').trim() || undefined,
-        l1ChainId: parseInt(getL1ChainIdEl()?.value) || undefined,
+        l1ChainId: parseInt(getL1ChainIdEl()?.value) || parseInt(document.getElementById('ai-l1-chain-id')?.value) || undefined,
       },
     };
     if (isTestnetL1()) {
@@ -864,7 +865,7 @@ async function handleLaunchDeploy() {
     if (launchMode === 'ai-deploy') {
       await generateAndShowAIPrompt(launchDeploymentId);
       btn.disabled = false;
-      btn.textContent = 'Generate AI Prompt';
+      btn.textContent = document.getElementById('ai-cloud')?.value === 'local-docker' ? 'Deploy L2' : 'Generate AI Prompt';
       return;
     }
 
@@ -889,7 +890,7 @@ async function handleLaunchDeploy() {
     showLaunchError(err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Deploy L2';
+    btn.textContent = launchMode === 'ai-deploy' ? 'Generate AI Prompt' : 'Deploy L2';
   }
 }
 
@@ -1453,7 +1454,7 @@ async function loadDeployments() {
             <th style="width:40px;padding-left:20px"></th>
             <th>Name</th>
             <th>Status</th>
-            <th>Ports</th>
+            <th>Network</th>
             <th>Phase</th>
             <th style="text-align:right">Actions</th>
           </tr>
@@ -1475,6 +1476,9 @@ function renderDeploymentRow(d) {
     : ['building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools','checking_docker'].includes(d.phase) ? 'building' : 'stopped';
   const rowConfig = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
   const isTestnet = rowConfig.mode === 'testnet';
+  const l1ChainId = d.l1_chain_id || rowConfig.testnet?.l1ChainId || rowConfig.l1ChainId || (!isTestnet ? '9' : '');
+  const l2ChainId = d.chain_id || rowConfig.chainId || '';
+  const chainIds = [l1ChainId ? `L1:${l1ChainId}` : '', l2ChainId ? `L2:${l2ChainId}` : ''].filter(Boolean).join(' · ');
   const ports = [!isTestnet && d.l1_port ? `L1:${d.l1_port}` : '', d.l2_port ? `L2:${d.l2_port}` : ''].filter(Boolean).join(' · ') || '-';
 
   return `
@@ -1501,7 +1505,10 @@ function renderDeploymentRow(d) {
           <span>${hasError ? statusLabel(d.phase) + ' ⚠' : statusLabel(d.phase)}</span>
         </div>
       </td>
-      <td style="font-size:12px;color:var(--text-secondary);font-family:monospace">${ports}</td>
+      <td style="font-size:12px;font-family:monospace;line-height:1.9">
+        ${chainIds ? `<div><span style="color:#6b7280;font-size:10px;font-weight:600;font-family:sans-serif;margin-right:6px">Chain</span><span style="color:#374151">${chainIds}</span></div>` : ''}
+        <div><span style="color:#6b7280;font-size:10px;font-weight:600;font-family:sans-serif;margin-right:6px">Ports</span><span style="color:#374151">${ports}</span></div>
+      </td>
       <td>${renderPhaseBadge(d.phase, hasError)}</td>
       <td>
         <div class="actions-cell">
@@ -2777,118 +2784,1035 @@ const editId = urlParams.get('edit');
 // AI Deploy helpers
 // ---------------------------------------------------------------------------
 
-let aiPresetsCache = null;
-
 async function loadAIPresets() {
-  if (aiPresetsCache) return aiPresetsCache;
+  const statusEl = document.getElementById('ai-key-status');
+  const mainEl = document.getElementById('ai-deploy-main');
+  if (!statusEl) return;
+
+  const optMessenger = document.getElementById('ai-opt-messenger');
+  const manualRadio = document.getElementById('ai-manual-radio');
+  const keySetup = document.getElementById('ai-key-setup');
+
+  // 1. Check Manager's current AI config
+  let ai = null;
   try {
-    const res = await fetch(`${API}/deployments/ai-deploy/presets`);
-    if (res.ok) aiPresetsCache = await res.json();
+    const res = await fetch(`${API}/deployments/ai-deploy/ai-config`);
+    if (res.ok) ai = await res.json();
   } catch {}
-  return aiPresetsCache;
+
+  // 2. Check Messenger Keychain
+  let messengerHasKey = false;
+  try {
+    const mRes = await fetch(`${API}/deployments/ai-deploy/messenger-ai-config`);
+    if (mRes.ok) {
+      const messenger = await mRes.json();
+      if (messenger.available) {
+        messengerHasKey = true;
+        const provLabel = { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini' }[messenger.provider] || messenger.provider;
+        const detail = document.getElementById('ai-messenger-detail');
+        if (detail) detail.textContent = `${provLabel}${messenger.model ? ' · ' + messenger.model : ''} (${messenger.maskedKey})`;
+      }
+    }
+  } catch {}
+
+  // 3. Show UI based on state
+  if (messengerHasKey) {
+    // Show both options: messenger / manual
+    if (optMessenger) optMessenger.style.display = 'block';
+    if (manualRadio) manualRadio.style.display = 'block';
+    const selected = document.querySelector('input[name="ai-source"]:checked');
+    if (!selected) {
+      const defaultSource = (ai && ai.configured) ? 'manual' : 'messenger';
+      const radio = document.querySelector(`input[name="ai-source"][value="${defaultSource}"]`);
+      if (radio) { radio.checked = true; onAISourceChange(defaultSource, true); }
+    }
+  } else {
+    // No messenger key → hide messenger option, show key input directly
+    if (optMessenger) optMessenger.style.display = 'none';
+    if (manualRadio) manualRadio.style.display = 'none';
+    if (keySetup) keySetup.style.display = '';
+  }
+
+  // 4. Update status
+  if (ai && ai.configured) {
+    const providerLabel = { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini' }[ai.provider] || ai.provider;
+    statusEl.innerHTML = `<span style="color:#22c55e">&#10003;</span> <b>${providerLabel}</b> 연결됨${ai.model ? ' (' + ai.model + ')' : ''}`;
+    mainEl.style.display = 'block';
+    const providerEl = document.getElementById('ai-provider');
+    if (providerEl && ai.provider) providerEl.value = ai.provider;
+  } else {
+    statusEl.innerHTML = '<span style="color:var(--text-muted,#888)">API 키를 입력하세요</span>';
+    mainEl.style.display = 'none';
+  }
 }
 
-function onAICloudChange() {
+function onAISourceChange(source, silent) {
+  const keySetup = document.getElementById('ai-key-setup');
+  const statusEl = document.getElementById('ai-key-status');
+  if (source === 'messenger') {
+    if (keySetup) keySetup.style.display = 'none';
+    // Apply messenger config
+    fetch(`${API}/deployments/ai-deploy/use-messenger-ai`, { method: 'POST' })
+      .then(r => { if (!r.ok) throw new Error('Failed'); return r.json(); })
+      .then(() => { if (!silent) loadAIPresets(); })
+      .catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`; });
+  } else {
+    if (keySetup) keySetup.style.display = '';
+  }
+}
+
+async function saveAIConfig() {
+  const provider = document.getElementById('ai-provider').value;
+  const apiKey = document.getElementById('ai-api-key').value.trim();
+  const statusEl = document.getElementById('ai-key-status');
+  if (!apiKey) { statusEl.innerHTML = '<span style="color:#ef4444">API 키를 입력해주세요</span>'; return; }
+
+  statusEl.innerHTML = '<span style="color:var(--text-muted,#888)">저장 중...</span>';
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/ai-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, apiKey }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+    const result = await res.json();
+    document.getElementById('ai-api-key').value = '';
+    statusEl.innerHTML = result.messengerSynced
+      ? '<span style="color:#22c55e">저장 완료 — 메신저에도 동기화됨</span>'
+      : '<span style="color:#22c55e">저장 완료</span>';
+    setTimeout(() => loadAIPresets(), 1000);
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function onAIDeployTargetChange() {
+  const target = document.getElementById('ai-cloud').value;
+  const isLocal = target === 'local-docker';
+  const isCloud = target && !isLocal;
+
+  // Show/hide cloud-specific fields
+  const gcpLabel = document.getElementById('gcp-project-label');
+  if (gcpLabel) gcpLabel.style.display = target === 'gcp' ? '' : 'none';
+  const vultrLabel = document.getElementById('vultr-apikey-label');
+  if (vultrLabel) vultrLabel.style.display = target === 'vultr' ? '' : 'none';
+  const statusEl = document.getElementById('cloud-cli-status');
+  if (statusEl && !isCloud) statusEl.style.display = 'none';
+
+  // Update button text: Local Docker uses direct deploy, Cloud uses AI prompt
+  const btn = document.getElementById('launch-deploy-btn');
+  if (btn) btn.textContent = isLocal ? 'Deploy L2' : 'Generate AI Prompt';
+
+  // Local Docker: check docker instead of cloud CLI
+  if (isLocal) {
+    checkLocalDockerForAI();
+  } else if (isCloud) {
+    checkCloudCLI();
+  }
+  updateSpecRecommendation();
+}
+
+async function checkLocalDockerForAI() {
+  const statusEl = document.getElementById('cloud-cli-status');
+  if (!statusEl) return;
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);border-radius:8px;font-size:12px;color:var(--text-muted,#888)">Checking Docker...</div>';
+  try {
+    const res = await fetch(`${API}/deployments/docker/status`);
+    if (!res.ok) throw new Error('Docker check failed');
+    const data = await res.json();
+    const ok = data.available;
+    const lines = [];
+    if (ok) {
+      lines.push(`<div style="display:flex;align-items:center;gap:6px"><span style="color:#22c55e">&#10003;</span> <span><b>Docker</b> available</span></div>`);
+    } else {
+      lines.push(`<div style="display:flex;align-items:center;gap:6px"><span style="color:#ef4444">&#10007;</span> <span>Docker not found — <a href="https://www.docker.com/products/docker-desktop/" target="_blank" style="color:#60a5fa">Install Docker Desktop</a></span></div>`);
+    }
+    statusEl.innerHTML = `<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid ${ok ? '#22c55e' : '#ef4444'};border-radius:8px;font-size:12px;line-height:1.6;color:#e2e8f0">${lines.join('')}</div>`;
+  } catch {
+    statusEl.innerHTML = `<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);border-radius:8px;font-size:12px;color:#ef4444">Docker check failed</div>`;
+  }
+}
+
+async function checkCloudCLI() {
   const cloud = document.getElementById('ai-cloud').value;
-  const regionSel = document.getElementById('ai-region');
-  const vmSel = document.getElementById('ai-vm-type');
-  regionSel.innerHTML = '<option value="">Select region...</option>';
-  vmSel.innerHTML = '<option value="">Select VM type...</option>';
-  if (!cloud || !aiPresetsCache || !aiPresetsCache[cloud]) return;
-  const preset = aiPresetsCache[cloud];
-  preset.regions.forEach(r => {
-    const opt = document.createElement('option');
-    opt.value = r.id; opt.textContent = r.label;
-    regionSel.appendChild(opt);
-  });
-  preset.vmTypes.forEach(v => {
-    const opt = document.createElement('option');
-    opt.value = v.id; opt.textContent = v.label + (v.recommended ? ' (recommended)' : '');
-    if (v.recommended) opt.selected = true;
-    vmSel.appendChild(opt);
-  });
+  const statusEl = document.getElementById('cloud-cli-status');
+  if (!cloud || cloud === 'local-docker') { if (statusEl) statusEl.style.display = 'none'; return; }
+
+  // Vultr also checks CLI like GCP/AWS — fall through to normal check
+  statusEl.style.display = 'block';
+  statusEl.innerHTML = '<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);border-radius:8px;font-size:12px;color:var(--text-muted,#888)">Checking CLI...</div>';
+
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/check-cli?cloud=${cloud}`);
+    if (!res.ok) throw new Error('Check failed');
+    const r = await res.json();
+
+    const cliName = r.cli.name;
+    const lines = [];
+
+    // CLI install status
+    if (r.cli.installed) {
+      lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#22c55e">&#10003;</span> <span><b>${cliName}</b> installed (v${r.cli.version})</span></div>`);
+    } else {
+      const installCmd = cloud === 'gcp'
+        ? 'brew install --cask google-cloud-sdk'
+        : cloud === 'vultr' ? 'brew install vultr'
+        : 'brew install awscli';
+      lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#ef4444">&#10007;</span> <span><b>${cliName}</b> not found</span></div>`);
+      lines.push(`<div style="display:flex;align-items:center;gap:8px;margin-left:20px;font-size:11px;color:var(--text-muted,#888)">Install: <code style="background:var(--bg-surface,#161622);padding:2px 6px;border-radius:4px">${installCmd}</code> <button onclick="checkCloudCLI()" style="padding:2px 10px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg-surface,#1a1a2e);color:var(--text-muted,#ccc);cursor:pointer">Re-check</button></div>`);
+    }
+
+    // Auth status
+    if (r.cli.installed) {
+      if (r.auth.authenticated) {
+        let detail = r.auth.account;
+        if (r.auth.project) detail += ` (project: ${r.auth.project})`;
+        lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#22c55e">&#10003;</span> <span>Authenticated: ${detail}</span></div>`);
+      } else if (cloud === 'vultr') {
+        lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#ef4444">&#10007;</span> <span>API Key 미설정 — 위에서 입력하세요</span></div>`);
+      } else {
+        const authCmd = cloud === 'gcp' ? 'gcloud auth login' : 'aws configure';
+        lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#ef4444">&#10007;</span> <span>Not authenticated</span></div>`);
+        lines.push(`<div style="display:flex;align-items:center;gap:8px;margin-left:20px;font-size:11px;color:var(--text-muted,#888)">Run: <code style="background:var(--bg-surface,#161622);padding:2px 6px;border-radius:4px">${authCmd}</code> <button onclick="checkCloudCLI()" style="padding:2px 10px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg-surface,#1a1a2e);color:var(--text-muted,#ccc);cursor:pointer">Re-check</button></div>`);
+      }
+    }
+
+    // Auto-fill GCP project ID if detected
+    if (cloud === 'gcp' && r.auth.project) {
+      const projInput = document.getElementById('gcp-project-id');
+      if (projInput && !projInput.value) projInput.value = r.auth.project;
+    }
+
+    // Hide Vultr API key field once authenticated
+    if (cloud === 'vultr' && r.auth.authenticated) {
+      const vLabel = document.getElementById('vultr-apikey-label');
+      if (vLabel) vLabel.style.display = 'none';
+    }
+
+    const allGood = r.cli.installed && r.auth.authenticated;
+    const borderColor = allGood ? '#22c55e' : '#ef4444';
+    statusEl.innerHTML = `<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid ${borderColor};border-radius:8px;font-size:12px;line-height:1.6;color:#e2e8f0">${lines.join('')}</div>`;
+  } catch (e) {
+    statusEl.innerHTML = `<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);border-radius:8px;font-size:12px;color:#ef4444">CLI check failed: ${escapeHtml(e.message)}</div>`;
+  }
+  updateSpecRecommendation();
 }
 
-function onAIL1ModeChange() {
+async function saveVultrApiKey() {
+  const input = document.getElementById('vultr-api-key-input');
+  const statusEl = document.getElementById('vultr-apikey-status');
+  const key = input?.value?.trim();
+  if (!key) { if (statusEl) statusEl.innerHTML = '<span style="color:#ef4444">API Key를 입력하세요</span>'; return; }
+  if (statusEl) statusEl.innerHTML = '<span style="color:#888">저장 중...</span>';
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/vultr-api-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: key }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+    if (statusEl) statusEl.innerHTML = '<span style="color:#22c55e">&#10003; API Key 저장됨</span>';
+    input.value = '';
+    checkCloudCLI();
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function onAIL1ModeChange() {
   const mode = document.getElementById('ai-l1-mode').value;
-  document.getElementById('ai-testnet-fields').style.display = mode === 'testnet' ? 'block' : 'none';
+  const rpcArea = document.getElementById('ai-l1-rpc-area');
+  const walletArea = document.getElementById('ai-wallet-area');
+  const chainIdInput = document.getElementById('ai-l1-chain-id');
+  const isTestnet = mode !== 'local';
+  if (rpcArea) rpcArea.style.display = isTestnet ? 'block' : 'none';
+  if (walletArea) {
+    walletArea.style.display = isTestnet ? 'block' : 'none';
+    if (isTestnet) loadAIKeychainKeys();
+  }
+  if (chainIdInput) {
+    if (mode === 'local') {
+      // Fetch unique L1 chain ID from server (avoids conflicts with existing deployments)
+      try {
+        const res = await fetch(`${API}/deployments/next-chain-id`);
+        if (res.ok) {
+          const data = await res.json();
+          chainIdInput.value = data.l1ChainId || '9';
+        } else { chainIdInput.value = '9'; }
+      } catch { chainIdInput.value = '9'; }
+    }
+    else if (mode === 'sepolia') { chainIdInput.value = '11155111'; }
+    else if (mode === 'mainnet') { chainIdInput.value = '1'; }
+  }
+  updateSpecRecommendation();
 }
 
-const AI_L1_CHAIN_IDS = { sepolia: 11155111, holesky: 17000 };
+const VM_SPECS = {
+  gcp: {
+    withProver:    { type: 'e2-standard-4',  cpu: 4, ram: '16GB', disk: '100GB SSD', price: '~$106/월' },
+    withoutProver: { type: 'e2-standard-2',  cpu: 2, ram: '8GB',  disk: '50GB SSD',  price: '~$53/월' },
+  },
+  aws: {
+    withProver:    { type: 't3.xlarge',   cpu: 4, ram: '16GB', disk: '100GB gp3', price: '~$152/월' },
+    withoutProver: { type: 't3.large',    cpu: 2, ram: '8GB',  disk: '50GB gp3',  price: '~$76/월' },
+  },
+  vultr: {
+    withProver:    { type: 'vc2-6c-16gb', cpu: 6, ram: '16GB', disk: '320GB SSD', price: '$96/월' },
+    withoutProver: { type: 'vc2-4c-8gb',  cpu: 4, ram: '8GB',  disk: '160GB SSD', price: '$48/월' },
+  },
+};
+
+function onProverToggle() {
+  updateSpecRecommendation();
+}
+
+// ---------------------------------------------------------------------------
+// AI Deploy — Wallet Configuration (Keychain)
+// ---------------------------------------------------------------------------
+async function loadAIKeychainKeys() {
+  try {
+    const res = await fetch(`${API}/deployments/keychain/accounts`);
+    if (!res.ok) return;
+    const { accounts } = await res.json();
+    const keys = accounts || [];
+    const keyOptions = keys.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join('');
+
+    const deployer = document.getElementById('ai-deployer-key');
+    const prevDeployer = deployer?.value;
+    if (deployer) {
+      deployer.innerHTML = '<option value="">Select key...</option>' + keyOptions;
+      if (prevDeployer && keys.includes(prevDeployer)) deployer.value = prevDeployer;
+    }
+    const roleIds = ['ai-committer-key', 'ai-proof-coordinator-key', 'ai-bridge-owner-key'];
+    for (const id of roleIds) {
+      const sel = document.getElementById(id);
+      if (!sel) continue;
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">Same as Deployer</option>' + keyOptions;
+      if (prev && keys.includes(prev)) sel.value = prev;
+    }
+    onAIKeyChange();
+  } catch (e) {
+    console.error('Failed to load AI keychain keys:', e);
+  }
+}
+
+async function onAIKeyChange() {
+  const deployerKey = document.getElementById('ai-deployer-key')?.value;
+  if (!deployerKey) {
+    ['ai-deployer-addr', 'ai-committer-addr', 'ai-proof-coordinator-addr', 'ai-bridge-owner-addr'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '';
+    });
+    return;
+  }
+  const rpcUrl = document.getElementById('ai-l1-rpc-url')?.value?.trim() || '';
+  try {
+    const res = await fetch(`${API}/deployments/testnet/resolve-keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rpcUrl: rpcUrl || 'https://rpc.sepolia.org',
+        deployerKey,
+        committerKey: document.getElementById('ai-committer-key')?.value || '',
+        proofCoordinatorKey: document.getElementById('ai-proof-coordinator-key')?.value || '',
+        bridgeOwnerKey: document.getElementById('ai-bridge-owner-key')?.value || '',
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      const statusEl = document.getElementById('ai-wallet-status');
+      if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(err.error || 'Key resolve failed')}</span>`;
+      return;
+    }
+    const data = await res.json();
+    const roles = data.roles || {};
+    const setAddr = (id, role) => {
+      const el = document.getElementById(id);
+      if (el && role?.address) {
+        el.textContent = role.address;
+        if (role.balance !== undefined) el.textContent += ` (${role.balance} ETH)`;
+      } else if (el) {
+        el.textContent = role?.address || '';
+      }
+    };
+    setAddr('ai-deployer-addr', roles.deployer);
+    setAddr('ai-committer-addr', roles.committer);
+    setAddr('ai-proof-coordinator-addr', roles.proofCoordinator);
+    setAddr('ai-bridge-owner-addr', roles.bridgeOwner);
+
+    const statusEl = document.getElementById('ai-wallet-status');
+    if (statusEl) {
+      if (data.deployerSufficient === false) {
+        statusEl.innerHTML = `<span style="color:#f59e0b">⚠ Deployer 잔액 부족 — 예상 배포 비용: ${data.estimatedDeployCostEth || '?'} ETH</span>`;
+      } else if (data.deployerSufficient) {
+        statusEl.innerHTML = `<span style="color:#22c55e">✓ 잔액 확인 완료 (Gas: ${data.gasPriceGwei || '?'} gwei)</span>`;
+      } else {
+        statusEl.innerHTML = '';
+      }
+    }
+  } catch (e) {
+    console.error('AI key resolve error:', e);
+  }
+}
+
+async function registerAIKeychainKey() {
+  try {
+    const res = await fetch(`${API}/open-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'keychain-register' }),
+    });
+    const data = await res.json();
+    if (data.ok && data.keyName) {
+      await loadAIKeychainKeys();
+      const sel = document.getElementById('ai-deployer-key');
+      if (sel) sel.value = data.keyName;
+      await onAIKeyChange();
+    }
+  } catch (e) {
+    console.error('Register key failed:', e);
+  }
+}
+
+function updateSpecRecommendation() {
+  const el = document.getElementById('ai-spec-recommendation');
+  if (!el) return;
+  const cloud = document.getElementById('ai-cloud')?.value;
+  if (!cloud) { el.innerHTML = '<span style="color:#888">배포 대상을 선택하세요</span>'; return; }
+
+  const includeProver = document.getElementById('ai-include-prover')?.checked;
+  const l1Mode = document.getElementById('ai-l1-mode')?.value || 'local';
+  const components = ['L2 Node', 'Tools (Explorer, Dashboard, Bridge)'];
+  if (l1Mode === 'local') components.unshift('L1 Node');
+  if (includeProver) components.push('SP1 Prover');
+
+  if (cloud === 'local-docker') {
+    el.innerHTML = `
+      <div style="margin-bottom:4px"><b>📦 배포 구성:</b> ${components.join(' + ')}</div>
+      <div style="margin-bottom:4px"><b>💻 로컬 Docker 배포</b> — 이 머신에서 Docker Compose로 실행</div>
+      ${includeProver ? '<div style="color:#f59e0b;font-size:10px">⚠ SP1 Prover 포함 시 최소 16GB RAM 권장</div>' : ''}
+    `;
+    return;
+  }
+
+  const specs = VM_SPECS[cloud];
+  if (!specs) { el.innerHTML = ''; return; }
+
+  const s = includeProver ? specs.withProver : specs.withoutProver;
+  const cloudLabel = cloud === 'gcp' ? 'GCP' : cloud === 'vultr' ? 'Vultr' : 'AWS';
+
+  el.innerHTML = `
+    <div style="margin-bottom:4px"><b>📦 배포 구성:</b> ${components.join(' + ')}</div>
+    <div style="margin-bottom:4px"><b>💻 권장 사양 (${cloudLabel}):</b> ${s.type} — ${s.cpu} vCPU, ${s.ram} RAM, ${s.disk}</div>
+    <div><b>💰 예상 비용:</b> ${s.price}</div>
+    ${includeProver ? '<div style="margin-top:4px;color:#f59e0b;font-size:10px">⚠ SP1 Prover는 증명 생성 시 메모리를 많이 사용합니다. 16GB 이상 권장.</div>' : ''}
+  `;
+}
 
 async function generateAndShowAIPrompt(deploymentId) {
   const cloud = document.getElementById('ai-cloud').value;
-  const region = document.getElementById('ai-region').value;
-  const vmType = document.getElementById('ai-vm-type').value;
-  if (!cloud || !region || !vmType) {
-    showLaunchError('Please select cloud provider, region, and VM type');
+  if (!cloud) {
+    showLaunchError('배포 대상을 선택해주세요');
     return;
   }
-  const l1Mode = document.getElementById('ai-l1-mode').value;
-  const l1Network = l1Mode === 'testnet' ? (document.getElementById('ai-l1-network')?.value || 'sepolia') : undefined;
-  const l1ChainId = l1Network ? (AI_L1_CHAIN_IDS[l1Network] || undefined) : undefined;
-  const l1RpcUrl = l1Mode === 'testnet' ? (document.getElementById('ai-l1-rpc')?.value || '').trim() : undefined;
 
+  // Collect cloud-specific info
+  let gcpProjectId = '';
+  if (cloud === 'gcp') {
+    gcpProjectId = (document.getElementById('gcp-project-id')?.value || '').trim();
+    if (!gcpProjectId) {
+      showLaunchError('GCP Project ID를 입력해주세요');
+      return;
+    }
+  }
+
+  // Collect L1 mode info
+  const l1Mode = document.getElementById('ai-l1-mode')?.value || 'local';
+  const l1RpcUrl = document.getElementById('ai-l1-rpc-url')?.value?.trim() || '';
+  if (l1Mode !== 'local' && !l1RpcUrl) {
+    showLaunchError('L1 RPC URL을 입력해주세요');
+    return;
+  }
+  const l1ChainId = parseInt(document.getElementById('ai-l1-chain-id')?.value) || (l1Mode === 'sepolia' ? 11155111 : l1Mode === 'mainnet' ? 1 : 9);
+  const l1Network = l1Mode === 'sepolia' ? 'Sepolia' : l1Mode === 'mainnet' ? 'Mainnet' : 'Local';
+  const includeProver = document.getElementById('ai-include-prover')?.checked ?? true;
+
+  // Collect wallet config for testnet/mainnet
+  let walletConfig = null;
+  if (l1Mode !== 'local') {
+    const deployerKey = document.getElementById('ai-deployer-key')?.value;
+    if (!deployerKey) {
+      showLaunchError('Deployer 키를 선택해주세요');
+      return;
+    }
+    walletConfig = {
+      deployerKey,
+      committerKey: document.getElementById('ai-committer-key')?.value || '',
+      proofCoordinatorKey: document.getElementById('ai-proof-coordinator-key')?.value || '',
+      bridgeOwnerKey: document.getElementById('ai-bridge-owner-key')?.value || '',
+      deployerAddr: document.getElementById('ai-deployer-addr')?.textContent?.split(' ')[0] || '',
+    };
+  }
+
+  // Get CLI/auth status for context (skip for local-docker)
+  let cliInfo = {};
+  if (cloud !== 'local-docker') {
+    try {
+      const cliRes = await fetch(`${API}/deployments/ai-deploy/check-cli?cloud=${cloud}`);
+      if (cliRes.ok) cliInfo = await cliRes.json();
+    } catch {}
+  }
+
+  const promptCloud = cloud === 'local-docker' ? 'local' : cloud;
   try {
     const res = await fetch(`${API}/deployments/${deploymentId}/ai-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network }),
+      body: JSON.stringify({ cloud: promptCloud, l1Mode: l1Mode === 'local' ? 'local' : 'testnet', l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig }),
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to generate prompt'); }
     const { prompt } = await res.json();
-    showAIPromptResult(prompt);
+    const l2Name = document.getElementById('launch-name')?.value?.trim() || 'My L2';
+    const l2ChainId = document.getElementById('launch-chain-id')?.value || 'auto';
+    const programEl = document.querySelector('.program-card.selected .program-name');
+    const programName = programEl?.textContent || selectedProgram?.name || selectedProgram?.id || 'evm-l2';
+    showAIPromptResult(prompt, { cloud, gcpProjectId, cliInfo, l1Mode, l1Network, l1RpcUrl, l1ChainId, l2Name, l2ChainId, programName, includeProver, walletConfig });
   } catch (e) {
     showLaunchError(e.message);
   }
 }
 
-function showAIPromptResult(prompt) {
-  // Switch to step 3 and show the prompt
+// ---------------------------------------------------------------------------
+// AI Chat state
+// ---------------------------------------------------------------------------
+let aiChatMessages = []; // { role, content }
+let aiChatSystemPrompt = '';
+let aiChatSending = false;
+let aiChatLocalDeploy = false; // true when local-docker target
+let aiChatDeployStarted = false; // true after deploy button clicked
+let aiChatDeployEventSource = null;
+
+function aiChatGoBack() {
+  // Reset deploy-card and go back to step 2
+  const deployCard = document.querySelector('.deploy-card');
+  if (deployCard) { deployCard.style.maxWidth = ''; deployCard.style.width = ''; deployCard.innerHTML = ''; }
+  const step3 = document.getElementById('launch-step3');
+  if (step3) { step3.style.maxWidth = ''; step3.style.padding = ''; }
+  launchGoStep(2);
+}
+
+function showAIPromptResult(prompt, cloudCtx = {}) {
+  // Switch to step 3
   document.querySelectorAll('.launch-step').forEach(s => s.style.display = 'none');
   const step3 = document.getElementById('launch-step3');
   step3.style.display = 'block';
 
   const infoText = document.getElementById('deploy-info-text');
-  infoText.textContent = 'Your AI deployment prompt is ready. Copy it and paste into Claude Code or ChatGPT.';
+  infoText.textContent = '';
 
-  // Hide deploy-specific UI elements
-  document.getElementById('deploy-progress-steps').innerHTML = '';
+  // Hide deploy-specific UI
+  const progressSteps = document.getElementById('deploy-progress-steps');
+  if (progressSteps) progressSteps.innerHTML = '';
   const elapsedBar = document.querySelector('.elapsed-bar');
   if (elapsedBar) elapsedBar.style.display = 'none';
-  const buildLogDetails = document.getElementById('build-log-details');
-  if (buildLogDetails) buildLogDetails.style.display = 'none';
-  const eventLogDetails = document.getElementById('event-log-details');
-  if (eventLogDetails) eventLogDetails.style.display = 'none';
-  const deployMsg = document.getElementById('deploy-message');
-  if (deployMsg) deployMsg.style.display = 'none';
+  ['build-log-details', 'event-log-details', 'deploy-message'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  ['goto-dashboard-btn', 'cancel-deploy-btn', 'resume-deploy-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 
-  // Show prompt in the deploy card area
+  // Build chat UI inside deploy-card — expand to full width
   const deployCard = document.querySelector('.deploy-card');
-  if (deployCard) {
-    deployCard.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-weight:600;font-size:14px">AI Deployment Prompt</span>
-        <button class="btn-primary" onclick="copyAIPrompt()" style="font-size:12px;padding:6px 14px" id="copy-prompt-btn">Copy to Clipboard</button>
+  if (!deployCard) return;
+  deployCard.style.maxWidth = 'none';
+  deployCard.style.width = '100%';
+  step3.style.maxWidth = 'none';
+  step3.style.padding = '0';
+
+  // Build config summary
+  const ctx = cloudCtx;
+  const cloudLabel = ctx.cloud === 'local-docker' ? 'Local (Docker)' : ctx.cloud === 'gcp' ? 'Google Cloud (GCP)' : ctx.cloud === 'vultr' ? 'Vultr' : 'AWS';
+  const l1Label = ctx.l1Mode === 'local' ? 'Local (VM 내 L1)' : (ctx.l1Network || 'Testnet');
+  const proverLabel = ctx.includeProver !== false ? 'SP1 Prover 포함' : 'Prover 미포함';
+  const summaryItems = [
+    `<b>App:</b> ${escapeHtml(ctx.programName || '')}`,
+    `<b>L2:</b> ${escapeHtml(ctx.l2Name || '')} (Chain ID: ${ctx.l2ChainId || 'auto'})`,
+    `<b>Cloud:</b> ${cloudLabel}`,
+    ctx.gcpProjectId ? `<b>Project:</b> ${escapeHtml(ctx.gcpProjectId)}` : '',
+    `<b>L1:</b> ${l1Label}${ctx.l1ChainId ? ' (Chain ID: ' + ctx.l1ChainId + ')' : ''}`,
+    ctx.l1RpcUrl ? `<b>L1 RPC:</b> ${escapeHtml(ctx.l1RpcUrl)}` : '',
+    `<b>Prover:</b> ${proverLabel}`,
+    ctx.cliInfo?.auth?.account ? `<b>Account:</b> ${escapeHtml(ctx.cliInfo.auth.account)}` : '',
+  ].filter(Boolean).join(' &middot; ');
+
+  deployCard.innerHTML = `
+    <div id="ai-chat-container" style="display:flex;flex-direction:column;height:calc(100vh - 160px);min-height:500px">
+      <div id="ai-chat-config-summary" style="padding:8px 14px;background:var(--bg-surface,#161622);border-bottom:1px solid var(--border,#333);font-size:11px;line-height:1.8;color:#a0aec0;flex-shrink:0;display:flex;align-items:center;gap:10px">
+        <button onclick="aiChatGoBack()" style="padding:4px 10px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:transparent;color:#a0aec0;cursor:pointer;flex-shrink:0">← Back</button>
+        <span>${summaryItems}</span>
       </div>
-      <pre id="ai-prompt-content" style="background:var(--bg-surface,#161622);border:1px solid var(--border,#333);border-radius:8px;padding:16px;font-size:11px;line-height:1.6;max-height:600px;overflow:auto;white-space:pre-wrap;word-wrap:break-word">${escapeHtml(prompt)}</pre>
-    `;
+      <div id="ai-chat-messages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px">
+      </div>
+      <div style="border-top:1px solid var(--border,#333);padding:10px 12px;display:flex;gap:8px;align-items:flex-end">
+        <textarea id="ai-chat-input" placeholder="메시지를 입력하세요..." rows="2"
+          style="flex:1;resize:none;padding:8px 12px;border:1px solid var(--border,#444);border-radius:8px;background:var(--bg-surface,#161622);color:#e0e0e0;caret-color:#e0e0e0;font-size:13px;line-height:1.5;font-family:inherit"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChatMessage()}"></textarea>
+        <button onclick="sendAIChatMessage()" class="btn-primary" id="ai-chat-send-btn" style="padding:8px 16px;font-size:13px;white-space:nowrap">Send</button>
+      </div>
+    </div>`;
+
+  // Build system prompt with cloud context
+  const cloud = cloudCtx.cloud || 'gcp';
+  const projectId = cloudCtx.gcpProjectId || '';
+  const cliInfo = cloudCtx.cliInfo || {};
+  const account = cliInfo.auth?.account || '';
+  const project = cliInfo.auth?.project || projectId;
+
+  const includeProver = cloudCtx.includeProver !== false;
+  const specKey = includeProver ? 'withProver' : 'withoutProver';
+  const recSpec = VM_SPECS[cloud]?.[specKey] || {};
+
+  let cloudInfo = '';
+  const proverNote = includeProver
+    ? `\n\n## SP1 Prover 포함 배포
+- SP1 Prover는 ZK 증명 생성 시 대량의 메모리를 사용합니다
+- 최소 16GB RAM 필요, 32GB 권장 (증명 생성 속도에 영향)
+- Prover가 포함되므로 높은 사양의 VM을 선택해야 합니다`
+    : `\n\n## Prover 미포함 배포
+- SP1 Prover가 포함되지 않은 경량 배포입니다
+- L2 노드 + Tools만 배포하므로 상대적으로 낮은 사양으로 운영 가능
+- Prover는 별도 서버에서 나중에 연결할 수 있습니다`;
+
+  if (cloud === 'local-docker' || cloud === 'local') {
+    cloudInfo = `
+## Local Docker Deployment
+- 이 머신에서 Docker Compose로 직접 실행
+- Docker Desktop이 설치되어 있고 실행 중이어야 합니다
+- 별도 VM이나 클라우드 비용 없음
+${proverNote}`;
+  } else if (cloud === 'gcp') {
+    cloudInfo = `
+## User's GCP Environment
+- GCP Project ID: ${project}
+- Authenticated account: ${account}
+- gcloud CLI: v${cliInfo.cli?.version || 'unknown'}
+
+## 권장 VM 사양 (${includeProver ? 'Prover 포함' : 'Prover 미포함'})
+- **권장**: ${recSpec.type} (${recSpec.cpu} vCPU, ${recSpec.ram}) — ${recSpec.price}
+
+## GCP VM 전체 비교표 (asia-northeast3, 월 예상)
+| VM Type | vCPU | RAM | 가격 | ${includeProver ? 'Prover 포함' : 'Prover 미포함'} |
+|---------|------|-----|------|------|
+| e2-medium | 2 | 4GB | ~$27/월 | ${includeProver ? '❌ 메모리 부족' : '⚠️ 최소 사양'} |
+| e2-standard-2 | 2 | 8GB | ~$53/월 | ${includeProver ? '❌ 메모리 부족' : '✅ 권장 (테스트)'} |
+| e2-standard-4 | 4 | 16GB | ~$106/월 | ${includeProver ? '✅ 최소 권장' : '✅ 권장 (프로덕션)'} |
+| e2-standard-8 | 8 | 32GB | ~$212/월 | ${includeProver ? '✅ 권장 (안정적)' : '과대 사양'} |
+- 신규 계정: 90일 무료 체험 ($300 크레딧)
+- SSD 디스크 50GB: ~$8.50/월 추가${proverNote}`;
+  } else if (cloud === 'vultr') {
+    cloudInfo = `
+## Vultr Environment
+- vultr CLI: v${cliInfo.cli?.version || 'unknown'}
+
+## 권장 VM 사양 (${includeProver ? 'Prover 포함' : 'Prover 미포함'})
+- **권장**: ${recSpec.type} (${recSpec.cpu} vCPU, ${recSpec.ram}, ${recSpec.disk}) — ${recSpec.price}
+
+## Vultr VM 전체 비교표 (월 가격)
+| Plan | vCPU | RAM | Disk | 가격 | ${includeProver ? 'Prover 포함' : 'Prover 미포함'} |
+|------|------|-----|------|------|------|
+| vc2-2c-4gb | 2 | 4GB | 80GB | $24/월 | ${includeProver ? '❌ 메모리 부족' : '⚠️ 최소 사양'} |
+| vc2-4c-8gb | 4 | 8GB | 160GB | $48/월 | ${includeProver ? '❌ 메모리 부족' : '✅ 권장 (테스트)'} |
+| vc2-6c-16gb | 6 | 16GB | 320GB | $96/월 | ${includeProver ? '✅ 최소 권장' : '✅ 권장 (프로덕션)'} |
+| vc2-8c-32gb | 8 | 32GB | 640GB | $192/월 | ${includeProver ? '✅ 권장 (안정적)' : '과대 사양'} |
+- Regions: Seoul (icn), Tokyo (nrt), Singapore (sgp), US (ewr, lax)
+- OS: Ubuntu 22.04 LTS 권장
+
+## Vultr 배포 절차:
+1. Vultr 콘솔 접속 (https://my.vultr.com/)
+2. Deploy New Server → Cloud Compute → 플랜 및 리전 선택
+3. OS: Ubuntu 22.04 선택
+4. SSH key 등록 (또는 비밀번호)
+5. 서버 생성 후 SSH 접속: ssh root@<server-ip>
+6. Docker 설치 → compose 배포${proverNote}`;
+  } else {
+    cloudInfo = `
+## 권장 VM 사양 (${includeProver ? 'Prover 포함' : 'Prover 미포함'})
+- **권장**: ${recSpec.type} (${recSpec.cpu} vCPU, ${recSpec.ram}) — ${recSpec.price}
+
+## AWS VM 전체 비교표 (ap-northeast-2, 월 예상)
+| Instance | vCPU | RAM | 가격 | ${includeProver ? 'Prover 포함' : 'Prover 미포함'} |
+|----------|------|-----|------|------|
+| t3.medium | 2 | 4GB | ~$38/월 | ${includeProver ? '❌ 메모리 부족' : '⚠️ 최소 사양'} |
+| t3.large | 2 | 8GB | ~$76/월 | ${includeProver ? '❌ 메모리 부족' : '✅ 권장 (테스트)'} |
+| t3.xlarge | 4 | 16GB | ~$152/월 | ${includeProver ? '✅ 최소 권장' : '✅ 권장 (프로덕션)'} |
+| t3.2xlarge | 8 | 32GB | ~$304/월 | ${includeProver ? '✅ 권장 (안정적)' : '과대 사양'} |
+- EBS (gp3 50GB): ~$4/월 추가${proverNote}`;
   }
 
-  // Show buttons
-  const gotoDashBtn = document.getElementById('goto-dashboard-btn');
-  if (gotoDashBtn) gotoDashBtn.style.display = 'none';
-  const cancelBtn = document.getElementById('cancel-deploy-btn');
-  if (cancelBtn) cancelBtn.style.display = 'none';
-  const resumeBtn = document.getElementById('resume-deploy-btn');
-  if (resumeBtn) resumeBtn.style.display = 'none';
+  const l1ModeVal = cloudCtx.l1Mode || 'local';
+  let secretGuide = '';
+  const wc = cloudCtx.walletConfig;
+  if (l1ModeVal !== 'local') {
+    const isGcp = cloud === 'gcp';
+    const walletInfo = wc ? `
+## Wallet Configuration (사용자가 이미 설정함)
+- Deployer: ${wc.deployerKey} (${wc.deployerAddr || 'address resolving...'})
+- Committer: ${wc.committerKey || '= Deployer'}
+- Proof Coordinator: ${wc.proofCoordinatorKey || '= Deployer'}
+- Bridge Owner: ${wc.bridgeOwnerKey || '= Deployer'}
+
+키는 사용자의 macOS Keychain에 저장되어 있습니다.
+서버 배포 시 이 키들을 안전하게 전달해야 합니다.` : '';
+
+    const secretMethod = isGcp ? `
+### GCP Secret Manager 사용:
+1. Secret Manager API 활성화:
+   gcloud services enable secretmanager.googleapis.com
+2. 키 등록 (사용자가 로컬에서 실행):
+   security find-generic-password -a "KEY_NAME" -s "tokamak-appchain" -w | gcloud secrets create tokamak-deployer-key --data-file=-
+3. VM에서 키 가져오기:
+   DEPLOYER_PRIVATE_KEY=$(gcloud secrets versions access latest --secret=tokamak-deployer-key)` : cloud === 'vultr' ? `
+### Vultr 서버에 안전하게 키 전달:
+1. 사용자의 로컬에서 Keychain의 키를 읽어서 서버로 전달
+2. SSH로 접속 후 .env 파일에 직접 입력 (절대 shell history에 남기지 않을 것)
+3. 방법: ssh root@SERVER_IP "cat > /opt/tokamak/DATA_DIR/.env" <<< "DEPLOYER_PRIVATE_KEY=..."
+4. 또는: scp로 로컬에서 만든 .env 파일을 서버로 전송` : `
+### AWS Secrets Manager 사용:
+1. 키 등록: aws secretsmanager create-secret --name tokamak-deployer-key --secret-string "0xKEY"
+2. VM에서: DEPLOYER_PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id tokamak-deployer-key --query SecretString --output text)`;
+
+    secretGuide = `
+## CRITICAL: Private Key Management (${cloudCtx.l1Network || 'Testnet'})
+${walletInfo}
+
+### 보안 원칙:
+- NEVER hardcode private keys in compose files or shell history
+- 프로덕션에서는 각 역할에 별도 키 사용 권장
+${secretMethod}
+
+Important: Deployer 계정에 충분한 ${cloudCtx.l1Network} ETH가 있는지 확인하세요.`;
+  }
+
+  const isLocalDocker = cloud === 'local-docker' || cloud === 'local';
+  aiChatLocalDeploy = isLocalDocker; // flag for deploy button injection
+  aiChatDeployStarted = false;
+  aiChatSystemPrompt = `You are a deployment assistant for Tokamak Appchain L2.
+Respond in Korean (한국어). Be concise and practical.
+
+## IMPORTANT: Deployment Flow
+1. FIRST: Present a deployment plan summary to the user, including:
+${isLocalDocker ? `   - Docker Compose로 로컬 배포
+   - L1/L2 Chain ID 정보
+   - 배포될 컨테이너 목록과 할당된 포트
+   - 예상 디스크/메모리 사용량
+   - 예상 소요 시간 (이미지 pull 3-5분, 컨트랙트 배포 2-3분, 총 약 10분)` : `   - VM specs and region
+   - Estimated monthly cost
+   - What will be installed (Docker, L2 node, tools)
+   - Required steps overview${cloud === 'gcp' ? '\n   - Whether Compute Engine API needs to be enabled: gcloud services enable compute.googleapis.com' : ''}`}${l1ModeVal !== 'local' ? '\n   - Private key setup (MUST be done first)' : ''}
+2. ${isLocalDocker
+  ? 'End your plan summary with: "확인해주시면 바로 배포를 시작합니다." The app will show a Deploy button — the user clicks it and the app handles deployment automatically.'
+  : `WAIT for user confirmation before proceeding
+3. AFTER user confirms: Execute the deployment steps directly, one step at a time
+4. Run the exact commands yourself — do not just show them for the user to copy
+5. After each step, report progress (e.g. "✅ Step 2/7 완료: Docker 설치 완료"), verify the result, and proceed to the next automatically
+6. Always show which step you are on and total steps remaining (e.g. "[Step 3/7] Docker Compose 파일 생성 중...")`}
+${secretGuide}
+${cloudInfo}
+
+## Deployment Configuration & Instructions
+${prompt}`;
+
+  aiChatMessages = [];
+
+  // Send initial request with full config summary
+  const includesL1 = l1ModeVal === 'local';
+  const components = [];
+  if (includesL1) components.push('L1 노드');
+  components.push('L2 노드');
+  if (includeProver) components.push('SP1 Prover');
+  components.push('Tools (Explorer, Dashboard, Bridge)');
+  const configLines = [
+    `앱: ${cloudCtx.programName || 'evm-l2'}`,
+    `L2 이름: ${cloudCtx.l2Name || 'My L2'} (Chain ID: ${cloudCtx.l2ChainId || 'auto'})`,
+    `배포 대상: ${cloud === 'local-docker' ? 'Local (Docker)' : cloud === 'gcp' ? 'GCP' : cloud === 'vultr' ? 'Vultr' : 'AWS'}${project ? ', 프로젝트: ' + project : ''}`,
+    `L1: ${includesL1 ? (cloud === 'local-docker' ? '로컬 Docker L1 노드' : 'VM 내 로컬 L1 노드 포함') : cloudCtx.l1Network} (Chain ID: ${cloudCtx.l1ChainId || ''})`,
+    cloudCtx.l1RpcUrl ? `L1 RPC: ${cloudCtx.l1RpcUrl}` : '',
+    `배포 구성: ${components.join(' + ')}`,
+    recSpec.type ? `권장 사양: ${recSpec.type} (${recSpec.cpu || '?'} vCPU, ${recSpec.ram || '?'}) — ${recSpec.price || '?'}` : '',
+  ].filter(Boolean).join('\n');
+
+  aiChatMessages.push({ role: 'user', content: `다음 구성으로 배포해줘. 먼저 배포 계획을 알려줘.\n\n${configLines}` });
+  renderChatMessages();
+  doAIChatRequest();
 
   // Update step indicator
-  updateStepIndicator(3);
+  const indicator = document.getElementById('step-indicator');
+  if (indicator) {
+    const stepLabels = ['Select App', 'Configure', 'AI Deploy'];
+    indicator.innerHTML = [1, 2, 3].map((n, i) =>
+      (i > 0 ? '<div class="step-line done"></div>' : '') +
+      '<div class="step-item"><div class="step-circle' + (n === 3 ? ' active' : ' done') + '">' + (n < 3 ? '\u2713' : n) + '</div>' +
+      '<span class="step-label' + (n === 3 ? ' active' : ' done') + '">' + stepLabels[i] + '</span></div>'
+    ).join('');
+  }
+}
+
+function renderChatMessages() {
+  const container = document.getElementById('ai-chat-messages');
+  if (!container) return;
+  container.innerHTML = '';
+
+  aiChatMessages.forEach(msg => {
+    const bubble = document.createElement('div');
+    const isUser = msg.role === 'user';
+    bubble.style.cssText = `max-width:92%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.6;word-wrap:break-word;white-space:pre-wrap;position:relative;${
+      isUser
+        ? 'align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:4px'
+        : 'align-self:flex-start;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);color:#e2e8f0;border-bottom-left-radius:4px'
+    }`;
+    bubble.textContent = msg.content;
+    if (!isUser) {
+      const copyBtn = document.createElement('button');
+      copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      copyBtn.title = '복사';
+      copyBtn.style.cssText = 'position:absolute;top:6px;right:6px;background:none;border:1px solid #555;border-radius:4px;padding:3px 4px;cursor:pointer;color:#888;opacity:0;transition:opacity 0.15s;display:flex;align-items:center';
+      copyBtn.onmouseenter = () => copyBtn.style.opacity = '1';
+      copyBtn.onmouseleave = () => copyBtn.style.opacity = '0.6';
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(msg.content).then(() => {
+          copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+          setTimeout(() => {
+            copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+          }, 1500);
+        });
+      };
+      bubble.onmouseenter = () => copyBtn.style.opacity = '0.6';
+      bubble.onmouseleave = () => copyBtn.style.opacity = '0';
+      bubble.appendChild(copyBtn);
+    }
+    container.appendChild(bubble);
+  });
+
+  // Scroll to bottom
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendAIChatMessage() {
+  if (aiChatSending) return;
+  const input = document.getElementById('ai-chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  aiChatMessages.push({ role: 'user', content: text });
+  renderChatMessages();
+  doAIChatRequest();
+}
+
+async function doAIChatRequest() {
+  if (aiChatSending) return;
+  aiChatSending = true;
+
+  const sendBtn = document.getElementById('ai-chat-send-btn');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '...'; }
+
+  // Show typing indicator
+  const container = document.getElementById('ai-chat-messages');
+  const typingEl = document.createElement('div');
+  typingEl.id = 'ai-typing';
+  typingEl.style.cssText = 'align-self:flex-start;padding:10px 14px;border-radius:12px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);color:var(--text-muted,#888);font-size:13px;border-bottom-left-radius:4px';
+  typingEl.textContent = 'AI가 응답 중...';
+  if (container) { container.appendChild(typingEl); container.scrollTop = container.scrollHeight; }
+
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: aiChatMessages, systemPrompt: aiChatSystemPrompt }),
+    });
+
+    const typing = document.getElementById('ai-typing');
+    if (typing) typing.remove();
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Error: ${res.status}`);
+    }
+
+    const reply = await res.json();
+    aiChatMessages.push({ role: 'assistant', content: reply.content });
+    renderChatMessages();
+
+    // For local-docker: show Deploy button after AI presents the plan
+    if (aiChatLocalDeploy && !aiChatDeployStarted) {
+      const container = document.getElementById('ai-chat-messages');
+      if (container) {
+        const btnWrap = document.createElement('div');
+        btnWrap.id = 'ai-chat-deploy-btn-wrap';
+        btnWrap.style.cssText = 'align-self:center;padding:12px 0;display:flex;gap:10px;align-items:center';
+        btnWrap.innerHTML = `
+          <button onclick="startLocalDeployFromChat()" class="btn-primary" style="padding:10px 28px;font-size:14px;font-weight:600;border-radius:8px">
+            Deploy L2
+          </button>
+          <span style="font-size:11px;color:#888">매니저가 직접 빌드하고 배포합니다</span>`;
+        container.appendChild(btnWrap);
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  } catch (e) {
+    const typing = document.getElementById('ai-typing');
+    if (typing) typing.remove();
+    // Show error as system message
+    const errBubble = document.createElement('div');
+    errBubble.style.cssText = 'align-self:center;padding:8px 14px;border-radius:8px;background:rgba(239,68,68,0.15);color:#ef4444;font-size:12px;text-align:center';
+    errBubble.textContent = e.message;
+    if (container) { container.appendChild(errBubble); container.scrollTop = container.scrollHeight; }
+  } finally {
+    aiChatSending = false;
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Local Docker deploy from AI chat
+// ---------------------------------------------------------------------------
+
+const PHASE_LABELS = {
+  configured: '설정 완료',
+  checking_docker: 'Docker 확인 중',
+  building: '이미지 빌드 중',
+  pulling: '이미지 다운로드 중',
+  l1_starting: 'L1 노드 시작 중',
+  deploying_contracts: '컨트랙트 배포 중',
+  verifying_contracts: '컨트랙트 검증 중',
+  l2_starting: 'L2 노드 시작 중',
+  starting_prover: 'Prover 시작 중',
+  starting_tools: 'Tools 시작 중',
+  running: '배포 완료',
+};
+
+async function startLocalDeployFromChat() {
+  if (aiChatDeployStarted) return;
+  aiChatDeployStarted = true;
+
+  // Remove deploy button
+  const btnWrap = document.getElementById('ai-chat-deploy-btn-wrap');
+  if (btnWrap) btnWrap.remove();
+
+  const container = document.getElementById('ai-chat-messages');
+
+  // Add deploy started message
+  addChatSystemMessage('🚀 배포를 시작합니다...');
+
+  // Create progress area in chat
+  const progressEl = document.createElement('div');
+  progressEl.id = 'ai-chat-deploy-progress';
+  progressEl.style.cssText = 'align-self:stretch;margin:8px 0;padding:14px;border-radius:10px;background:var(--bg-surface,#161622);border:1px solid var(--border,#333);font-size:12px;line-height:1.8;color:#e2e8f0';
+  progressEl.innerHTML = '<div id="ai-chat-phase" style="font-weight:600;margin-bottom:6px">[Step 1] Docker 확인 중...</div><div id="ai-chat-deploy-log" style="max-height:200px;overflow-y:auto;font-size:11px;color:#888;font-family:monospace;white-space:pre-wrap"></div>';
+  if (container) { container.appendChild(progressEl); container.scrollTop = container.scrollHeight; }
+
+  // Hide chat input during deploy
+  const inputArea = document.querySelector('#ai-chat-container > div:last-child');
+
+  try {
+    const provRes = await fetch(`${API}/deployments/${launchDeploymentId}/provision`, { method: 'POST' });
+    if (!provRes.ok) {
+      const err = await provRes.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to start provisioning');
+    }
+
+    // Listen to SSE events
+    let chatPhaseIdx = 0;
+    const phaseOrder = ['checking_docker', 'pulling', 'building', 'l1_starting', 'deploying_contracts', 'l2_starting', 'starting_prover', 'starting_tools', 'running'];
+
+    if (aiChatDeployEventSource) aiChatDeployEventSource.close();
+    aiChatDeployEventSource = new EventSource(`${API}/deployments/${launchDeploymentId}/events`);
+
+    aiChatDeployEventSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const phaseEl = document.getElementById('ai-chat-phase');
+        const logEl = document.getElementById('ai-chat-deploy-log');
+
+        if (data.event === 'log') {
+          if (logEl) {
+            logEl.textContent += (data.message || '') + '\n';
+            // Keep last 50 lines
+            const lines = logEl.textContent.split('\n');
+            if (lines.length > 50) logEl.textContent = lines.slice(-50).join('\n');
+            logEl.scrollTop = logEl.scrollHeight;
+          }
+          if (container) container.scrollTop = container.scrollHeight;
+          return;
+        }
+
+        if (data.phase) {
+          const idx = phaseOrder.indexOf(data.phase);
+          if (idx >= 0) chatPhaseIdx = idx;
+          const label = PHASE_LABELS[data.phase] || data.phase;
+          const stepNum = Math.max(1, chatPhaseIdx + 1);
+          const total = phaseOrder.length;
+          if (phaseEl) phaseEl.textContent = `[Step ${stepNum}/${total}] ${label}`;
+        }
+
+        if (data.event === 'error') {
+          addChatSystemMessage(`❌ 배포 실패: ${data.message || 'Unknown error'}`);
+          aiChatDeployEventSource.close();
+          // Tell AI about the error
+          aiChatMessages.push({ role: 'user', content: `배포 중 에러 발생: ${data.message}. 어떻게 해결할 수 있어?` });
+          doAIChatRequest();
+        }
+
+        if (data.event === 'complete' || data.phase === 'running') {
+          if (phaseEl) phaseEl.textContent = '✅ 배포 완료!';
+          aiChatDeployEventSource.close();
+
+          // Fetch final deployment info and tell AI
+          fetch(`${API}/deployments/${launchDeploymentId}`).then(r => r.json()).then(dep => {
+            const info = dep.deployment || dep;
+            const urls = [];
+            if (info.l2_port) urls.push(`L2 RPC: http://localhost:${info.l2_port}`);
+            if (info.l1_port) urls.push(`L1 RPC: http://localhost:${info.l1_port}`);
+            if (info.tools_l2_explorer_port) urls.push(`L2 Explorer: http://localhost:${info.tools_l2_explorer_port}`);
+            if (info.tools_l1_explorer_port) urls.push(`L1 Explorer: http://localhost:${info.tools_l1_explorer_port}`);
+            if (info.tools_bridge_ui_port) urls.push(`Dashboard: http://localhost:${info.tools_bridge_ui_port}`);
+            const contracts = [];
+            if (info.bridge_address) contracts.push(`CommonBridge: ${info.bridge_address}`);
+            if (info.proposer_address) contracts.push(`OnChainProposer: ${info.proposer_address}`);
+
+            addChatSystemMessage(`✅ 배포 완료!\n\n${urls.join('\n')}${contracts.length ? '\n\n' + contracts.join('\n') : ''}`);
+
+            aiChatMessages.push({ role: 'user', content: `배포가 완료되었습니다. 접속 정보를 정리해줘.\n\n${urls.join('\n')}\n${contracts.join('\n')}` });
+            doAIChatRequest();
+          }).catch(() => {
+            addChatSystemMessage('✅ 배포 완료!');
+          });
+        }
+      } catch {}
+    };
+  } catch (e) {
+    addChatSystemMessage(`❌ 배포 시작 실패: ${e.message}`);
+  }
+}
+
+function addChatSystemMessage(text) {
+  const container = document.getElementById('ai-chat-messages');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.style.cssText = 'align-self:center;padding:8px 16px;border-radius:8px;background:rgba(59,130,246,0.1);color:#60a5fa;font-size:12px;text-align:center;white-space:pre-wrap;line-height:1.6;max-width:90%';
+  el.textContent = text;
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function copyAIPrompt() {

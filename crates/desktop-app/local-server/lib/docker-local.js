@@ -91,6 +91,11 @@ async function buildImages(projectName, composeFile, env = {}, onLog, { forceReb
   return runCompose(projectName, composeFile, ["build"], { env, onLog });
 }
 
+/** Pull pre-built images (for AI Deploy local mode) */
+async function pullImages(projectName, composeFile, onLog) {
+  return runCompose(projectName, composeFile, ["pull"], { onLog, timeout: 300000 });
+}
+
 /** Start L1 service */
 async function startL1(projectName, composeFile, env = {}) {
   return runCompose(projectName, composeFile, ["up", "-d", "--no-build", "tokamak-app-l1"], { env });
@@ -616,6 +621,7 @@ function findImage(programSlug) {
 module.exports = {
   findImage,
   buildImages,
+  pullImages,
   startL1,
   deployContracts,
   extractEnv,

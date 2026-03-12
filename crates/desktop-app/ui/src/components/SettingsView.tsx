@@ -529,6 +529,13 @@ export default function SettingsView() {
               {saveResult.msg}
             </p>
           )}
+          {maskedKey && (
+            <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">
+              {lang === 'ko'
+                ? 'L2 매니저의 AI Deploy에서도 이 설정을 사용할 수 있습니다.'
+                : 'This setting can also be used in L2 Manager AI Deploy.'}
+            </p>
+          )}
         </section>
 
         {/* Telegram Bot */}

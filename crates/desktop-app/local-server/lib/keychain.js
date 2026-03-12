@@ -77,8 +77,38 @@ function hasSecret(account) {
   }
 }
 
+/**
+ * Store a secret in the Keychain.
+ * @param {string} account - Key name (Account Name)
+ * @param {string} secret - Secret value to store
+ * @returns {boolean} true if stored successfully
+ */
+function setSecret(account, secret) {
+  try {
+    // Delete existing entry first (ignore errors if not found)
+    try {
+      execFileSync("security", [
+        "delete-generic-password",
+        "-a", account,
+        "-s", SERVICE,
+      ], { stdio: "pipe" });
+    } catch {}
+    // Add new entry
+    execFileSync("security", [
+      "add-generic-password",
+      "-a", account,
+      "-s", SERVICE,
+      "-w", secret,
+    ], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   getSecret,
+  setSecret,
   listAccounts,
   hasSecret,
   SERVICE,

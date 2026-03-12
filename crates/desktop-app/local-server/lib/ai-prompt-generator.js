@@ -3,24 +3,32 @@
  *
  * Generates complete, executable deployment prompts that AI assistants
  * (Claude Code, ChatGPT, etc.) can run step-by-step to deploy a
- * Tokamak L2 appchain on a cloud VM.
+ * Tokamak L2 appchain on Local Docker, Cloud VM, or Testnet/Mainnet.
  *
- * The generated prompt includes:
- * - VM creation commands (GCP / AWS)
- * - Docker installation
- * - Compose files (inline, ready to write)
- * - Environment variables
- * - Deployment steps with verification commands
- * - Troubleshooting guide
+ * Deployment targets:
+ * - Local Docker: Build from source on user's machine
+ * - Cloud (GCP / AWS / Vultr): Pre-built images on remote VM
+ * - Testnet/Mainnet: External L1 (Sepolia, Holesky, Mainnet) with any target
  */
 
-const { generateRemoteComposeFile, getAppProfile, APP_PROFILES } = require("./compose-generator");
+const {
+  generateComposeFile,
+  generateRemoteComposeFile,
+  getAppProfile,
+  APP_PROFILES,
+} = require("./compose-generator");
+const path = require("path");
 
 // ---------------------------------------------------------------------------
 // Cloud presets
 // ---------------------------------------------------------------------------
 
 const CLOUD_PRESETS = {
+  local: {
+    label: "Local (Docker)",
+    regions: [],
+    vmTypes: [],
+  },
   gcp: {
     label: "Google Cloud (GCP)",
     regions: [
@@ -51,6 +59,21 @@ const CLOUD_PRESETS = {
       { id: "g4dn.xlarge", label: "g4dn.xlarge (4 vCPU, 16 GB + T4 GPU)" },
     ],
   },
+  vultr: {
+    label: "Vultr",
+    regions: [
+      { id: "icn", label: "Seoul (icn)" },
+      { id: "nrt", label: "Tokyo (nrt)" },
+      { id: "sgp", label: "Singapore (sgp)" },
+      { id: "ewr", label: "New Jersey (ewr)" },
+      { id: "lax", label: "Los Angeles (lax)" },
+    ],
+    vmTypes: [
+      { id: "vc2-6c-16gb", label: "vc2-6c-16gb (6 vCPU, 16 GB, 320 GB SSD)", recommended: true },
+      { id: "vc2-8c-32gb", label: "vc2-8c-32gb (8 vCPU, 32 GB, 640 GB SSD)" },
+      { id: "vc2-4c-8gb", label: "vc2-4c-8gb (4 vCPU, 8 GB, 160 GB SSD)" },
+    ],
+  },
 };
 
 // Default ports for remote deployments
@@ -65,8 +88,11 @@ const DEFAULT_PORTS = {
   metricsPort: 3702,
 };
 
+// ETHREX_ROOT relative to this file (lib/ → local-server/ → desktop-app/ → crates/ → repo root)
+const ETHREX_ROOT = path.resolve(__dirname, "../../../..");
+
 // ---------------------------------------------------------------------------
-// Main generator
+// Main generator — routes to local or cloud prompt
 // ---------------------------------------------------------------------------
 
 /**
@@ -74,19 +100,422 @@ const DEFAULT_PORTS = {
  *
  * @param {Object} opts
  * @param {Object} opts.deployment  - DB deployment row
- * @param {string} opts.cloud       - 'gcp' | 'aws'
- * @param {string} opts.region      - Cloud region ID
- * @param {string} opts.vmType      - VM instance type
+ * @param {string} opts.cloud       - 'local' | 'gcp' | 'aws' | 'vultr'
+ * @param {string} opts.region      - Cloud region ID (ignored for local)
+ * @param {string} opts.vmType      - VM instance type (ignored for local)
  * @param {string} opts.l1Mode      - 'local' (built-in L1) or 'testnet' (external L1)
  * @param {string} [opts.l1RpcUrl]  - External L1 RPC URL (when l1Mode === 'testnet')
- * @param {number} [opts.l1ChainId] - L1 chain ID for testnet
- * @param {string} [opts.l1Network] - L1 network name (sepolia, holesky, etc.)
+ * @param {number} [opts.l1ChainId] - L1 chain ID
+ * @param {string} [opts.l1Network] - L1 network name (sepolia, holesky, mainnet)
+ * @param {boolean} [opts.includeProver] - Whether to include SP1 prover (default: true)
+ * @param {Object} [opts.walletConfig] - Wallet configuration for testnet/mainnet
  * @returns {string} Markdown prompt
  */
 function generateAIDeployPrompt(opts) {
   const {
     deployment, cloud, region, vmType,
     l1Mode = "local", l1RpcUrl, l1ChainId, l1Network,
+    includeProver = true, walletConfig,
+  } = opts;
+
+  if (cloud === "local") {
+    return generateLocalDeployPrompt(opts);
+  }
+  return generateCloudDeployPrompt(opts);
+}
+
+// ---------------------------------------------------------------------------
+// LOCAL DOCKER deployment prompt
+// ---------------------------------------------------------------------------
+
+function generateLocalDeployPrompt(opts) {
+  const {
+    deployment, l1Mode = "local", l1RpcUrl, l1ChainId, l1Network,
+    includeProver = true, walletConfig, ports,
+  } = opts;
+
+  const config = deployment.config ? JSON.parse(deployment.config) : {};
+  const programSlug = deployment.program_slug || "evm-l2";
+  const profile = getAppProfile(programSlug);
+  const l2ChainId = deployment.chain_id || 65536999;
+  const projectName = `tokamak-${deployment.id.slice(0, 8)}`;
+  const isTestnet = l1Mode === "testnet";
+  const deployDir = config.deployDir || `~/.tokamak/deployments/${deployment.id.slice(0, 8)}`;
+
+  // Use dynamically allocated ports (checked for real TCP availability)
+  // Falls back to DEFAULT_PORTS if not provided
+  const P = {
+    l1: ports?.l1Port || DEFAULT_PORTS.l1,
+    l2: ports?.l2Port || DEFAULT_PORTS.l2,
+    proofCoord: ports?.proofCoordPort || DEFAULT_PORTS.proofCoord,
+    l2Explorer: ports?.toolsL2ExplorerPort || DEFAULT_PORTS.l2Explorer,
+    l1Explorer: ports?.toolsL1ExplorerPort || DEFAULT_PORTS.l1Explorer,
+    dashboard: ports?.toolsBridgeUIPort || DEFAULT_PORTS.dashboard,
+    dbPort: ports?.toolsDbPort || DEFAULT_PORTS.dbPort,
+    metricsPort: ports?.toolsMetricsPort || DEFAULT_PORTS.metricsPort,
+  };
+
+  // Always generate the local-L1 compose as template.
+  // For testnet, we provide modification instructions instead of using
+  // generateTestnetComposeFile (which requires actual private keys for address derivation).
+  const composeContent = generateComposeFile({
+    programSlug,
+    l1Port: P.l1,
+    l2Port: P.l2,
+    proofCoordPort: P.proofCoord,
+    metricsPort: P.metricsPort,
+    projectName,
+    l2ChainId,
+  });
+
+  const sections = [];
+
+  // Header
+  sections.push(`# Tokamak L2 Appchain — Local Docker Deployment
+
+> **AI에게**: 사용자가 확인하면 이 문서의 단계를 직접 실행하세요 (안내가 아니라 직접 배포).
+> 사용자의 로컬 머신에서 Docker Compose로 L2 앱체인을 빌드하고 실행합니다.
+> 각 단계를 직접 실행하고, 진행 상황을 보고하세요 (예: "[Step 2/7] Docker 이미지 빌드 중... ✅ 완료").
+> 결과를 확인한 후 다음 단계로 자동 진행하세요.
+
+## Deployment Summary
+
+| Setting | Value |
+|---------|-------|
+| **App** | ${programSlug} (${profile.description}) |
+| **L2 Name** | ${deployment.name} |
+| **L2 Chain ID** | ${l2ChainId} |
+| **Target** | Local Docker (이 머신) |
+| **L1 Mode** | ${isTestnet ? `Testnet (${l1Network || "external"})` : "Built-in (Docker L1)"} |
+| **L1 Chain ID** | ${l1ChainId || (isTestnet ? "from network" : 9)} |
+${isTestnet ? `| **L1 RPC** | \`${l1RpcUrl || "$L1_RPC_URL"}\` |\n` : ""}| **Prover** | ${includeProver ? "SP1 Prover 포함" : "Prover 미포함"} |
+| **Build** | 소스에서 Docker 이미지 빌드 |
+| **L2 RPC Port** | ${P.l2} |
+${!isTestnet ? `| **L1 RPC Port** | ${P.l1} |\n` : ""}| **Explorer Port** | ${P.l2Explorer} |
+| **Dashboard Port** | ${P.dashboard} |
+
+> 포트는 기존 프로세스와 충돌하지 않도록 자동으로 할당되었습니다.`);
+
+  // Prerequisites
+  sections.push(`## Step 0: Prerequisites
+
+\`\`\`bash
+# Docker Desktop 설치 확인
+docker --version
+docker compose version
+
+# Docker가 실행 중인지 확인
+docker info > /dev/null 2>&1 && echo "✅ Docker is running" || echo "❌ Docker is not running"
+
+# 충분한 디스크 공간 확인 (최소 20GB 필요)
+df -h .
+\`\`\`
+
+> Docker Desktop이 설치되어 있지 않으면 https://www.docker.com/products/docker-desktop/ 에서 다운로드하세요.
+> Docker Desktop → Settings → Resources에서 메모리를 최소 8GB (Prover 포함 시 16GB) 이상으로 설정하세요.`);
+
+  // Source code check
+  sections.push(`## Step 1: Verify Source Code
+
+로컬 빌드를 위해 ethrex 소스 코드가 필요합니다.
+
+\`\`\`bash
+# ethrex 저장소가 있는지 확인
+ETHREX_ROOT="${ETHREX_ROOT}"
+if [ -d "$ETHREX_ROOT/crates/l2" ]; then
+  echo "✅ ethrex source found at $ETHREX_ROOT"
+else
+  echo "❌ ethrex source not found — cloning..."
+  git clone https://github.com/tokamak-network/ethrex.git "$ETHREX_ROOT"
+fi
+\`\`\``);
+
+  // Write compose file
+  sections.push(`## Step 2: Write Docker Compose File
+
+\`\`\`bash
+mkdir -p ${deployDir}
+cd ${deployDir}
+
+cat > docker-compose.yaml << 'COMPOSE_EOF'
+${composeContent.trimEnd()}
+COMPOSE_EOF
+\`\`\`
+
+> Docker Compose 프로젝트 이름: \`${projectName}\`
+> 이 파일은 소스에서 이미지를 빌드합니다. 최초 빌드에 10-20분이 소요될 수 있습니다.`);
+
+  // Testnet env configuration
+  if (isTestnet) {
+    sections.push(localTestnetEnvSection({ l1RpcUrl, l1ChainId, l1Network, deployDir, walletConfig }));
+  }
+
+  // Build images
+  sections.push(`## Step ${isTestnet ? "3.5" : "3"}: Build Docker Images
+
+\`\`\`bash
+cd ${deployDir}
+
+# 이미지 빌드 (첫 빌드 시 10-20분 소요)
+docker compose -p ${projectName} build
+
+# 빌드 완료 확인
+docker images | grep tokamak-appchain
+\`\`\`
+
+> 빌드 중 에러가 발생하면:
+> - \`docker system prune -f\`로 캐시 정리 후 재시도
+> - Docker Desktop 메모리를 8GB 이상으로 설정했는지 확인
+> - Rust 빌드에 RAM이 많이 필요합니다 — 다른 무거운 프로세스를 종료하세요`);
+
+  // Deploy
+  sections.push(`## Step ${isTestnet ? "4" : "4"}: Start Deployment
+
+\`\`\`bash
+cd ${deployDir}
+
+# 전체 서비스 시작
+docker compose -p ${projectName} up -d
+
+# Deployer 로그 확인 (컨트랙트 배포 완료까지 대기)
+docker logs -f ${projectName}-deployer
+\`\`\`
+
+Deployer 컨테이너 동작 순서:
+1. ${isTestnet ? "외부 L1 RPC에 연결" : "Built-in L1 노드가 준비될 때까지 대기"}
+2. L1 컨트랙트 컴파일 및 배포 (CommonBridge, OnChainProposer, Timelock 등)
+3. 배포된 주소를 공유 볼륨(\`/env/.env\`)에 기록
+4. 성공 시 exit code 0으로 종료
+
+Deployer가 종료되면 L2 노드와 Prover가 자동으로 시작됩니다.
+
+\`\`\`bash
+# Deployer 종료 확인 (exit code 0이어야 함)
+docker ps -a --filter "name=${projectName}-deployer" --format "{{.Status}}"
+
+# L2 노드 로그 확인
+docker logs --tail 20 ${projectName}-l2
+\`\`\``);
+
+  // Verify
+  const chainIdHex = "0x" + l2ChainId.toString(16).toUpperCase();
+  sections.push(`## Step 5: Verify Deployment
+
+\`\`\`bash
+# L2 RPC 확인
+curl -s http://localhost:${P.l2} \\
+  -X POST -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}'
+# Expected: {"result":"${chainIdHex}"}
+
+# 블록 번호 확인 (증가하는지)
+curl -s http://localhost:${P.l2} \\
+  -X POST -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+
+${isTestnet ? "" : `# L1 노드 확인
+curl -s http://localhost:${P.l1} \\
+  -X POST -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+`}
+# 전체 컨테이너 상태 확인
+docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+\`\`\`
+
+모든 컨테이너가 "Up" 상태이고, Deployer가 "Exited (0)"이면 정상입니다.`);
+
+  // Tools
+  sections.push(localToolsSection({ deployDir, projectName, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, P }));
+
+  // Summary
+  sections.push(`## Step 7: Access Your L2
+
+배포 완료 후 접속 가능한 서비스:
+
+| Service | URL |
+|---------|-----|
+| **L2 RPC** | \`http://localhost:${P.l2}\` |
+| **L2 Explorer** | \`http://localhost:${P.l2Explorer}\` |
+| **Dashboard** | \`http://localhost:${P.dashboard}\` |
+${isTestnet ? "" : `| **L1 RPC** | \`http://localhost:${P.l1}\` |
+| **L1 Explorer** | \`http://localhost:${P.l1Explorer}\` |
+`}
+### MetaMask 설정
+
+| Setting | Value |
+|---------|-------|
+| **Network Name** | ${deployment.name || "Tokamak Appchain"} |
+| **RPC URL** | \`http://localhost:${P.l2}\` |
+| **Chain ID** | ${l2ChainId} |
+| **Currency Symbol** | ETH |`);
+
+  // Troubleshooting
+  sections.push(localTroubleshootingSection({ projectName, deployDir }));
+
+  return sections.join("\n\n");
+}
+
+function localTestnetEnvSection({ l1RpcUrl, l1ChainId, l1Network, deployDir, walletConfig }) {
+  const hasWallet = walletConfig && walletConfig.deployerKey;
+  return `## Step 3: Configure Testnet Environment
+
+> **IMPORTANT**: 비밀키를 절대 소스코드에 커밋하지 마세요.
+${hasWallet ? `
+사용자가 macOS Keychain에 등록한 키를 사용합니다.
+먼저 키를 환경변수로 추출해야 합니다.
+
+\`\`\`bash
+# Keychain에서 키 추출
+DEPLOYER_PRIVATE_KEY=$(security find-generic-password -a "${walletConfig.deployerKey}" -s "tokamak-appchain" -w 2>/dev/null)
+echo "Deployer key loaded: ${walletConfig.deployerAddr || '(address)'}"
+
+${walletConfig.committerKey ? `COMMITTER_PK=$(security find-generic-password -a "${walletConfig.committerKey}" -s "tokamak-appchain" -w 2>/dev/null)` : "COMMITTER_PK=$DEPLOYER_PRIVATE_KEY"}
+${walletConfig.proofCoordinatorKey ? `PROOF_COORDINATOR_PK=$(security find-generic-password -a "${walletConfig.proofCoordinatorKey}" -s "tokamak-appchain" -w 2>/dev/null)` : "PROOF_COORDINATOR_PK=$DEPLOYER_PRIVATE_KEY"}
+${walletConfig.bridgeOwnerKey ? `BRIDGE_OWNER_PK=$(security find-generic-password -a "${walletConfig.bridgeOwnerKey}" -s "tokamak-appchain" -w 2>/dev/null)` : "BRIDGE_OWNER_PK=$DEPLOYER_PRIVATE_KEY"}
+\`\`\`
+` : `
+\`\`\`bash
+# 비밀키 설정 (실제 키로 교체하세요)
+DEPLOYER_PRIVATE_KEY=0xYOUR_DEPLOYER_PRIVATE_KEY
+COMMITTER_PK=$DEPLOYER_PRIVATE_KEY
+PROOF_COORDINATOR_PK=$DEPLOYER_PRIVATE_KEY
+BRIDGE_OWNER_PK=$DEPLOYER_PRIVATE_KEY
+\`\`\`
+`}
+docker-compose.yaml에서 환경변수를 업데이트합니다:
+
+\`\`\`bash
+cd ${deployDir}
+
+# 테스트넷 .env 파일 생성
+cat > .env << ENV_EOF
+L1_RPC_URL=${l1RpcUrl || "https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY"}
+L1_CHAIN_ID=${l1ChainId || 11155111}
+L1_NETWORK=${l1Network || "sepolia"}
+DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY
+COMMITTER_PK=$COMMITTER_PK
+PROOF_COORDINATOR_PK=$PROOF_COORDINATOR_PK
+BRIDGE_OWNER_PK=$BRIDGE_OWNER_PK
+ENV_EOF
+
+chmod 600 .env
+\`\`\`
+
+> Deployer 계정에 충분한 ${l1Network || "testnet"} ETH가 있는지 확인하세요.
+> Sepolia ETH 파우셋: https://sepoliafaucet.com/ 또는 https://www.alchemy.com/faucets/ethereum-sepolia
+
+**IMPORTANT**: docker-compose.yaml에서 다음 수정이 필요합니다:
+1. \`tokamak-app-l1\` 서비스 전체를 제거 (외부 L1 사용)
+2. Deployer의 \`ETHREX_ETH_RPC_URL\`을 \`.env\` 파일의 \`$L1_RPC_URL\`로 변경
+3. Deployer의 \`ETHREX_DEPLOYER_L1_PRIVATE_KEY\`를 \`$DEPLOYER_PRIVATE_KEY\`로 변경
+4. \`ETHREX_DEPLOYER_DEPLOY_RICH=false\`로 변경 (테스트넷은 실제 ETH)
+5. L2의 \`ETHREX_ETH_RPC_URL\`도 동일하게 외부 L1 RPC로 변경
+6. Deployer의 \`depends_on\`에서 \`tokamak-app-l1\` 제거`;
+}
+
+function localToolsSection({ deployDir, projectName, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, P }) {
+  const toolsProjectName = `${projectName}-tools`;
+  return `## Step 6: Deploy Tools (Explorer + Dashboard)
+
+Tools 스택:
+- **L2 Blockscout Explorer** (port ${P.l2Explorer})
+- ${isTestnet ? `**L1 Explorer**: ${l1Network || "external"} Etherscan 사용` : `**L1 Blockscout Explorer** (port ${P.l1Explorer})`}
+- **Bridge Dashboard** (port ${P.dashboard})
+
+\`\`\`bash
+# Deployer가 기록한 컨트랙트 주소 추출
+docker run --rm \\
+  -v ${projectName}_env:/env \\
+  -v /tmp/ethrex-${projectName}:/out \\
+  alpine cp /env/.env /out/.env
+
+# Tools 환경 파일 생성
+cp /tmp/ethrex-${projectName}/.env ${ETHREX_ROOT}/crates/l2/.deployed-${projectName}.env
+
+# Tools 환경변수 설정
+export TOOLS_ENV_FILE=${ETHREX_ROOT}/crates/l2/.deployed-${projectName}.env
+export TOOLS_L2_RPC_PORT=${P.l2}
+export TOOLS_L1_RPC_PORT=${P.l1}
+export TOOLS_L2_EXPLORER_PORT=${P.l2Explorer}
+export TOOLS_L1_EXPLORER_PORT=${P.l1Explorer}
+export TOOLS_BRIDGE_UI_PORT=${P.dashboard}
+export TOOLS_DB_PORT=${P.dbPort}
+export TOOLS_METRICS_PORT=${P.metricsPort}
+export L2_CHAIN_ID=${l2ChainId}
+${isTestnet ? `export L1_CHAIN_ID=${l1ChainId || 11155111}
+export IS_EXTERNAL_L1=true
+export L1_RPC_URL=${l1RpcUrl || "$L1_RPC_URL"}
+export L1_NETWORK_NAME=${l1Network || "sepolia"}` : `export L1_CHAIN_ID=9`}
+
+# Tools 이미지 빌드 및 시작
+cd ${ETHREX_ROOT}/crates/l2
+docker compose -f docker-compose-zk-dex-tools.yaml \\
+  -p ${toolsProjectName} \\
+  ${isTestnet ? "--profile external-l1 " : ""}build
+
+docker compose -f docker-compose-zk-dex-tools.yaml \\
+  -p ${toolsProjectName} \\
+  ${isTestnet ? "--profile external-l1 " : ""}up -d
+\`\`\`
+
+30초 후 Blockscout 초기화가 완료되면 확인:
+
+\`\`\`bash
+# L2 Explorer 확인
+curl -s http://localhost:${P.l2Explorer}/api/v2/stats | head -c 200
+
+# Dashboard 확인
+curl -s http://localhost:${P.dashboard}/ | head -c 200
+\`\`\``;
+}
+
+function localTroubleshootingSection({ projectName, deployDir }) {
+  return `## Troubleshooting
+
+\`\`\`bash
+# 전체 컨테이너 로그
+docker compose -p ${projectName} logs --tail=50
+
+# 특정 서비스 로그
+docker logs ${projectName}-deployer  # 컨트랙트 배포
+docker logs ${projectName}-l2        # L2 노드
+docker logs ${projectName}-prover    # Prover
+
+# 서비스 재시작
+docker compose -p ${projectName} restart tokamak-app-l2
+
+# 전체 재시작
+cd ${deployDir}
+docker compose -p ${projectName} down
+docker compose -p ${projectName} up -d
+
+# Docker 리소스 확인
+docker system df
+docker stats --no-stream
+
+# 이미지 재빌드 (캐시 없이)
+docker compose -p ${projectName} build --no-cache
+\`\`\`
+
+### Common Issues
+
+1. **빌드 실패 (메모리 부족)**: Docker Desktop → Settings → Resources → Memory를 8GB+ 로 설정
+2. **Deployer 실패**: L1 연결 확인. 테스트넷의 경우 Deployer 계정 잔액 확인
+3. **L2 블록 생성 안됨**: Deployer가 성공적으로 종료되었는지 확인 (\`docker logs ${projectName}-deployer\`)
+4. **Explorer 데이터 없음**: Blockscout 인덱서 초기화에 1-2분 소요
+5. **포트 충돌**: docker-compose.yaml에서 포트 매핑 변경
+6. **빌드 너무 오래 걸림**: 이전 빌드 캐시가 사용되므로 두번째 빌드부터 빨라집니다`;
+}
+
+// ---------------------------------------------------------------------------
+// CLOUD deployment prompt (GCP / AWS / Vultr)
+// ---------------------------------------------------------------------------
+
+function generateCloudDeployPrompt(opts) {
+  const {
+    deployment, cloud, region, vmType,
+    l1Mode = "local", l1RpcUrl, l1ChainId, l1Network,
+    includeProver = true, walletConfig,
   } = opts;
 
   const config = deployment.config ? JSON.parse(deployment.config) : {};
@@ -98,7 +527,9 @@ function generateAIDeployPrompt(opts) {
   const vmName = `tokamak-l2-${deployment.id.slice(0, 8)}`;
   const dataDir = `/opt/tokamak/${deployment.id.slice(0, 8)}`;
 
-  // Generate compose content
+  // Always generate the local-L1 remote compose as template.
+  // For testnet, we provide modification instructions instead of using
+  // generateRemoteTestnetComposeFile (which requires actual private keys for address derivation).
   const composeContent = generateRemoteComposeFile({
     programSlug,
     l1Port: DEFAULT_PORTS.l1,
@@ -109,39 +540,40 @@ function generateAIDeployPrompt(opts) {
     l2ChainId,
   });
 
-  // Build the prompt sections
   const sections = [];
 
-  sections.push(headerSection({ deployment, programSlug, profile, cloud, region, vmType, l2ChainId, isTestnet, l1RpcUrl, l1Network }));
+  sections.push(headerSection({ deployment, programSlug, profile, cloud, region, vmType, l2ChainId, isTestnet, l1RpcUrl, l1Network, l1ChainId }));
   sections.push(prerequisitesSection(cloud));
   sections.push(vmCreationSection({ cloud, region, vmType, vmName }));
   sections.push(dockerInstallSection());
   sections.push(composeFileSection({ composeContent, dataDir, projectName }));
 
   if (isTestnet) {
-    sections.push(testnetEnvSection({ l1RpcUrl, l1ChainId, l1Network, dataDir }));
+    sections.push(testnetEnvSection({ cloud, l1RpcUrl, l1ChainId, l1Network, dataDir, walletConfig }));
   }
 
   sections.push(deploySection({ projectName, dataDir, isTestnet }));
   sections.push(verifySection({ l2ChainId, isTestnet }));
-  sections.push(toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug }));
+  sections.push(toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, projectName }));
   sections.push(firewallSection({ cloud, vmName, isTestnet }));
-  sections.push(summarySection({ isTestnet }));
+  sections.push(summarySection({ isTestnet, deployment }));
   sections.push(troubleshootingSection({ projectName, dataDir }));
 
   return sections.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
-// Section builders
+// Cloud section builders
 // ---------------------------------------------------------------------------
 
-function headerSection({ deployment, programSlug, profile, cloud, region, vmType, l2ChainId, isTestnet, l1RpcUrl, l1Network }) {
+function headerSection({ deployment, programSlug, profile, cloud, region, vmType, l2ChainId, isTestnet, l1RpcUrl, l1Network, l1ChainId }) {
   const cloudLabel = CLOUD_PRESETS[cloud]?.label || cloud;
   return `# Tokamak L2 Appchain — Cloud Deployment
 
-> **This prompt is designed for AI assistants (Claude Code, ChatGPT, etc.).**
-> Execute each step in order. All files and commands are complete and ready to run.
+> **AI에게**: 사용자가 확인하면 이 프롬프트의 모든 명령을 직접 실행하세요 (안내가 아니라 직접 배포).
+> 리전, VM 타입 등은 기본값이 설정되어 있지만, 사용자가 다른 값을 원하면 변경 가능합니다.
+> 각 단계를 직접 실행하고, 진행 상황을 보고하세요 (예: "[Step 3/8] Compose 파일 작성 중... ✅ 완료").
+> 결과를 확인한 후 다음 단계로 자동 진행하세요.
 
 ## Deployment Summary
 
@@ -151,19 +583,91 @@ function headerSection({ deployment, programSlug, profile, cloud, region, vmType
 | **L2 Name** | ${deployment.name} |
 | **L2 Chain ID** | ${l2ChainId} |
 | **Cloud** | ${cloudLabel} |
-| **Region** | ${region} |
-| **VM Type** | ${vmType} |
+| **Region** | ${region} (변경 가능) |
+| **VM Type** | ${vmType} (변경 가능) |
 | **L1 Mode** | ${isTestnet ? `Testnet (${l1Network || "external"})` : "Built-in (Docker L1)"} |
+| **L1 Chain ID** | ${l1ChainId || (isTestnet ? "from network" : 9)} |
 ${isTestnet ? `| **L1 RPC** | \`$L1_RPC_URL\` (set in .env) |\n` : ""}| **Docker Images** | \`ghcr.io/tokamak-network/tokamak-appchain:{l1,l2,sp1}\` |`;
 }
 
 function prerequisitesSection(cloud) {
-  const cli = cloud === "gcp" ? "`gcloud` CLI authenticated (`gcloud auth login`)" : "`aws` CLI configured (`aws configure`)";
-  return `## Prerequisites
+  if (cloud === "gcp") {
+    return `## Step 0: Prerequisites (gcloud CLI 설치 + 로그인)
 
-- ${cli}
-- SSH key pair available
-- For testnet: funded deployer account on the target L1 network`;
+아래 명령어를 순서대로 실행하세요. 이미 설치되어 있으면 건너뛰세요.
+
+\`\`\`bash
+# 1. gcloud CLI 설치 확인 (없으면 설치)
+which gcloud || (curl -fsSL https://sdk.cloud.google.com | bash && exec -l $SHELL)
+
+# 2. 로그인 (브라우저가 열림)
+gcloud auth login
+
+# 3. 프로젝트 설정 (프로젝트가 없으면 gcloud projects create로 생성)
+gcloud config set project YOUR_PROJECT_ID
+
+# 4. Compute Engine API 활성화 (VM 생성에 필요)
+gcloud services enable compute.googleapis.com
+
+# 5. 확인
+gcloud config get-value project
+gcloud config get-value account
+\`\`\`
+
+> 사용자에게 프로젝트 ID를 확인하세요. 빌링이 활성화된 프로젝트여야 합니다.`;
+  }
+
+  if (cloud === "vultr") {
+    return `## Step 0: Prerequisites (Vultr 설정)
+
+### 방법 1: Vultr CLI 사용 (선택사항)
+
+\`\`\`bash
+# vultr CLI 설치 확인
+which vultr || which vultr-cli
+
+# 설치 (macOS)
+brew install vultr/vultr-cli/vultr-cli
+
+# API 키 설정
+export VULTR_API_KEY="YOUR_VULTR_API_KEY"
+vultr account
+
+# SSH 키 등록 (없으면)
+vultr ssh-key create --name "tokamak" --key "$(cat ~/.ssh/id_rsa.pub)"
+\`\`\`
+
+### 방법 2: Vultr 웹 콘솔 (권장)
+
+1. https://my.vultr.com/ 접속
+2. Products → Deploy New Server
+3. Choose Server: Cloud Compute (Regular Performance)
+4. API 키: https://my.vultr.com/settings/#settingsapi 에서 생성
+
+> Vultr API 키는 이미 매니저 앱에서 설정되어 있을 수 있습니다.`;
+  }
+
+  // AWS
+  return `## Step 0: Prerequisites (AWS CLI 설치 + 설정)
+
+아래 명령어를 순서대로 실행하세요. 이미 설치되어 있으면 건너뛰세요.
+
+\`\`\`bash
+# 1. AWS CLI 설치 확인 (없으면 설치)
+which aws || (curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg" && sudo installer -pkg AWSCLIV2.pkg -target /)
+
+# 2. 설정 (Access Key ID + Secret Access Key 입력)
+aws configure
+
+# 3. SSH 키 생성 (없으면)
+aws ec2 create-key-pair --key-name tokamak-key --query 'KeyMaterial' --output text > tokamak-key.pem
+chmod 400 tokamak-key.pem
+
+# 4. 확인
+aws sts get-caller-identity
+\`\`\`
+
+> 사용자에게 AWS Access Key를 확인하세요. EC2 권한이 필요합니다.`;
 }
 
 function vmCreationSection({ cloud, region, vmType, vmName }) {
@@ -190,6 +694,52 @@ gcloud compute ssh ${vmName} --zone=${region}-a
 \`\`\`
 
 Save the external IP as \`VM_IP\` — you'll need it later.`;
+  }
+
+  if (cloud === "vultr") {
+    return `## Step 1: Create VM
+
+### 방법 1: Vultr CLI
+
+\`\`\`bash
+# 사용 가능한 플랜 확인
+vultr plans list | grep -E "vc2-(4|6|8)c"
+
+# 리전 확인
+vultr regions list | grep -E "(icn|nrt|sgp|ewr)"
+
+# OS ID 확인 (Ubuntu 22.04 LTS)
+vultr os list | grep "Ubuntu 22.04"
+
+# 서버 생성
+vultr instance create \\
+  --region ${region} \\
+  --plan ${vmType} \\
+  --os 1743 \\
+  --label "${vmName}" \\
+  --host "${vmName}"
+
+# 서버 IP 확인
+vultr instance list
+\`\`\`
+
+### 방법 2: Vultr 웹 콘솔
+
+1. https://my.vultr.com/ → Deploy New Server
+2. **Type**: Cloud Compute
+3. **Location**: ${region === "icn" ? "Seoul" : region === "nrt" ? "Tokyo" : region === "sgp" ? "Singapore" : region}
+4. **OS**: Ubuntu 22.04 LTS x64
+5. **Plan**: ${vmType} 이상
+6. **SSH Keys**: 기존 키 선택 또는 새로 등록
+7. Deploy Now 클릭
+
+서버 준비 후 SSH 접속:
+
+\`\`\`bash
+ssh root@VM_IP
+\`\`\`
+
+Save the server IP as \`VM_IP\` — you'll need it later.`;
   }
 
   // AWS
@@ -257,17 +807,118 @@ ${composeContent.trimEnd()}
 COMPOSE_EOF
 \`\`\`
 
-The compose project name is \`${projectName}\`.`;
+The compose project name is \`${projectName}\`.
+이 파일은 사전 빌드된 Docker 이미지(\`ghcr.io/tokamak-network/tokamak-appchain\`)를 pull합니다.`;
 }
 
-function testnetEnvSection({ l1RpcUrl, l1ChainId, l1Network, dataDir }) {
+function testnetEnvSection({ cloud, l1RpcUrl, l1ChainId, l1Network, dataDir, walletConfig }) {
+  const hasWallet = walletConfig && walletConfig.deployerKey;
+
+  let keySetupGuide = "";
+  if (hasWallet) {
+    if (cloud === "gcp") {
+      keySetupGuide = `
+### Private Key 전달 방법 (GCP Secret Manager 권장)
+
+사용자의 로컬 머신에서 실행:
+
+\`\`\`bash
+# 1. Secret Manager API 활성화
+gcloud services enable secretmanager.googleapis.com
+
+# 2. Keychain에서 키를 읽어 Secret Manager에 등록
+security find-generic-password -a "${walletConfig.deployerKey}" -s "tokamak-appchain" -w | \\
+  gcloud secrets create tokamak-deployer-key --data-file=-
+
+${walletConfig.committerKey ? `security find-generic-password -a "${walletConfig.committerKey}" -s "tokamak-appchain" -w | \\
+  gcloud secrets create tokamak-committer-key --data-file=-` : "# Committer = Deployer (동일 키)"}
+${walletConfig.proofCoordinatorKey ? `security find-generic-password -a "${walletConfig.proofCoordinatorKey}" -s "tokamak-appchain" -w | \\
+  gcloud secrets create tokamak-proof-coordinator-key --data-file=-` : "# Proof Coordinator = Deployer (동일 키)"}
+${walletConfig.bridgeOwnerKey ? `security find-generic-password -a "${walletConfig.bridgeOwnerKey}" -s "tokamak-appchain" -w | \\
+  gcloud secrets create tokamak-bridge-owner-key --data-file=-` : "# Bridge Owner = Deployer (동일 키)"}
+\`\`\`
+
+VM에서 키 가져오기:
+
+\`\`\`bash
+DEPLOYER_PRIVATE_KEY=$(gcloud secrets versions access latest --secret=tokamak-deployer-key)
+${walletConfig.committerKey ? `COMMITTER_PK=$(gcloud secrets versions access latest --secret=tokamak-committer-key)` : "COMMITTER_PK=$DEPLOYER_PRIVATE_KEY"}
+${walletConfig.proofCoordinatorKey ? `PROOF_COORDINATOR_PK=$(gcloud secrets versions access latest --secret=tokamak-proof-coordinator-key)` : "PROOF_COORDINATOR_PK=$DEPLOYER_PRIVATE_KEY"}
+${walletConfig.bridgeOwnerKey ? `BRIDGE_OWNER_PK=$(gcloud secrets versions access latest --secret=tokamak-bridge-owner-key)` : "BRIDGE_OWNER_PK=$DEPLOYER_PRIVATE_KEY"}
+\`\`\``;
+    } else if (cloud === "aws") {
+      keySetupGuide = `
+### Private Key 전달 방법 (AWS Secrets Manager 권장)
+
+사용자의 로컬 머신에서 실행:
+
+\`\`\`bash
+# 1. Keychain에서 키를 읽어 Secrets Manager에 등록
+DEPLOYER_KEY=$(security find-generic-password -a "${walletConfig.deployerKey}" -s "tokamak-appchain" -w)
+aws secretsmanager create-secret --name tokamak-deployer-key --secret-string "$DEPLOYER_KEY"
+
+${walletConfig.committerKey ? `COMMITTER_KEY=$(security find-generic-password -a "${walletConfig.committerKey}" -s "tokamak-appchain" -w)
+aws secretsmanager create-secret --name tokamak-committer-key --secret-string "$COMMITTER_KEY"` : "# Committer = Deployer (동일 키)"}
+${walletConfig.proofCoordinatorKey ? `PC_KEY=$(security find-generic-password -a "${walletConfig.proofCoordinatorKey}" -s "tokamak-appchain" -w)
+aws secretsmanager create-secret --name tokamak-proof-coordinator-key --secret-string "$PC_KEY"` : "# Proof Coordinator = Deployer (동일 키)"}
+${walletConfig.bridgeOwnerKey ? `BO_KEY=$(security find-generic-password -a "${walletConfig.bridgeOwnerKey}" -s "tokamak-appchain" -w)
+aws secretsmanager create-secret --name tokamak-bridge-owner-key --secret-string "$BO_KEY"` : "# Bridge Owner = Deployer (동일 키)"}
+\`\`\`
+
+VM에서 키 가져오기:
+
+\`\`\`bash
+DEPLOYER_PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id tokamak-deployer-key --query SecretString --output text)
+${walletConfig.committerKey ? `COMMITTER_PK=$(aws secretsmanager get-secret-value --secret-id tokamak-committer-key --query SecretString --output text)` : "COMMITTER_PK=$DEPLOYER_PRIVATE_KEY"}
+${walletConfig.proofCoordinatorKey ? `PROOF_COORDINATOR_PK=$(aws secretsmanager get-secret-value --secret-id tokamak-proof-coordinator-key --query SecretString --output text)` : "PROOF_COORDINATOR_PK=$DEPLOYER_PRIVATE_KEY"}
+${walletConfig.bridgeOwnerKey ? `BRIDGE_OWNER_PK=$(aws secretsmanager get-secret-value --secret-id tokamak-bridge-owner-key --query SecretString --output text)` : "BRIDGE_OWNER_PK=$DEPLOYER_PRIVATE_KEY"}
+\`\`\``;
+    } else {
+      // Vultr or other — use SCP
+      keySetupGuide = `
+### Private Key 전달 방법 (SCP 사용)
+
+사용자의 로컬 머신에서 실행:
+
+\`\`\`bash
+# 1. 로컬에서 .env 파일 생성
+DEPLOYER_KEY=$(security find-generic-password -a "${walletConfig.deployerKey}" -s "tokamak-appchain" -w)
+${walletConfig.committerKey ? `COMMITTER_KEY=$(security find-generic-password -a "${walletConfig.committerKey}" -s "tokamak-appchain" -w)` : "COMMITTER_KEY=$DEPLOYER_KEY"}
+${walletConfig.proofCoordinatorKey ? `PC_KEY=$(security find-generic-password -a "${walletConfig.proofCoordinatorKey}" -s "tokamak-appchain" -w)` : "PC_KEY=$DEPLOYER_KEY"}
+${walletConfig.bridgeOwnerKey ? `BO_KEY=$(security find-generic-password -a "${walletConfig.bridgeOwnerKey}" -s "tokamak-appchain" -w)` : "BO_KEY=$DEPLOYER_KEY"}
+
+cat > /tmp/tokamak-keys.env << EOF
+DEPLOYER_PRIVATE_KEY=$DEPLOYER_KEY
+COMMITTER_PK=$COMMITTER_KEY
+PROOF_COORDINATOR_PK=$PC_KEY
+BRIDGE_OWNER_PK=$BO_KEY
+EOF
+
+# 2. SCP로 서버에 전송
+scp /tmp/tokamak-keys.env root@VM_IP:${dataDir}/.env
+rm /tmp/tokamak-keys.env  # 로컬에서 삭제
+\`\`\`
+
+VM에서 확인:
+
+\`\`\`bash
+# 키 파일 확인 (내용은 절대 출력하지 마세요)
+wc -l ${dataDir}/.env
+chmod 600 ${dataDir}/.env
+
+# 환경변수 로드
+source ${dataDir}/.env
+\`\`\``;
+    }
+  }
+
   return `## Step 3.5: Configure Testnet Environment
 
 Create an environment file with your L1 connection and private keys.
 
-> **IMPORTANT**: Replace the placeholder values below with your actual keys.
-> Never commit private keys to version control.
-
+> **IMPORTANT**: 비밀키를 shell history나 소스코드에 절대 남기지 마세요.
+${keySetupGuide}
+${!hasWallet ? `
 \`\`\`bash
 cat > ${dataDir}/.env << 'ENV_EOF'
 # L1 Connection
@@ -275,24 +926,26 @@ L1_RPC_URL=${l1RpcUrl || "https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY"}
 L1_CHAIN_ID=${l1ChainId || 11155111}
 L1_NETWORK=${l1Network || "sepolia"}
 
-# Private Keys (REPLACE THESE)
-# The deployer key must be funded with testnet ETH on the L1 network.
+# Private Keys (REPLACE THESE — 절대 커밋하지 마세요)
 DEPLOYER_PRIVATE_KEY=0xYOUR_DEPLOYER_PRIVATE_KEY
-# Optional: separate keys for each role (defaults to deployer key)
-# COMMITTER_PRIVATE_KEY=0x...
-# PROOF_COORDINATOR_PRIVATE_KEY=0x...
-# BRIDGE_OWNER_PRIVATE_KEY=0x...
+# Optional: 각 역할에 별도 키 사용 (기본값: Deployer 키)
+# COMMITTER_PK=0x...
+# PROOF_COORDINATOR_PK=0x...
+# BRIDGE_OWNER_PK=0x...
 ENV_EOF
 
 chmod 600 ${dataDir}/.env
 \`\`\`
+` : ""}
+docker-compose.yaml에서 환경변수를 업데이트:
+- \`ETHREX_ETH_RPC_URL\` → \`$L1_RPC_URL\`
+- \`ETHREX_DEPLOYER_L1_PRIVATE_KEY\` → \`$DEPLOYER_PRIVATE_KEY\`
+- Committer/Proof Coordinator 키도 해당하는 환경변수에 설정
+- \`ETHREX_DEPLOYER_DEPLOY_RICH=false\` (테스트넷은 실제 ETH 사용)
+- L1 서비스(\`tokamak-app-l1\`) 제거 (외부 L1 사용)
 
-Then update the docker-compose.yaml deployer and L2 services to use these values:
-- Replace all \`ETHREX_ETH_RPC_URL\` values with \`$L1_RPC_URL\`
-- Replace \`ETHREX_DEPLOYER_L1_PRIVATE_KEY\` with \`$DEPLOYER_PRIVATE_KEY\`
-- Replace committer/proof-coordinator L1 private keys accordingly
-- Set \`ETHREX_DEPLOYER_DEPLOY_RICH=false\` (testnet has real ETH)
-- Remove the \`tokamak-app-l1\` service (no local L1 needed)`;
+> Deployer 계정에 충분한 ${l1Network || "testnet"} ETH가 있는지 확인하세요.
+> Sepolia ETH: https://sepoliafaucet.com/ | Holesky ETH: https://holesky-faucet.pk910.de/`;
 }
 
 function deploySection({ projectName, dataDir, isTestnet }) {
@@ -301,7 +954,7 @@ function deploySection({ projectName, dataDir, isTestnet }) {
 \`\`\`bash
 cd ${dataDir}
 
-# Pull all images
+# Pull all images (사전 빌드된 이미지 — 2-3분 소요)
 docker compose -p ${projectName} pull
 
 # Start the deployment
@@ -312,12 +965,12 @@ docker logs -f ${projectName}-deployer
 \`\`\`
 
 The deployer container will:
-1. ${isTestnet ? "Connect to the external L1 RPC" : "Wait for the built-in L1 to be ready"}
-2. Compile and deploy L1 contracts (CommonBridge, OnChainProposer, etc.)
-3. Write deployed addresses to a shared volume (\`/env/.env\`)
-4. Exit with code 0 on success
+1. ${isTestnet ? "외부 L1 RPC에 연결" : "Built-in L1이 준비될 때까지 대기"}
+2. L1 컨트랙트 컴파일 및 배포 (CommonBridge, OnChainProposer, Timelock, SP1Verifier, GuestProgramRegistry)
+3. 배포된 주소를 공유 볼륨(\`/env/.env\`)에 기록
+4. 성공 시 exit code 0으로 종료
 
-Once the deployer exits, the L2 node and prover will start automatically.`;
+Deployer가 종료되면 L2 노드와 Prover가 자동으로 시작됩니다.`;
 }
 
 function verifySection({ l2ChainId, isTestnet }) {
@@ -349,13 +1002,12 @@ docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
 All containers should show "Up" status. The deployer container should show "Exited (0)".`;
 }
 
-function toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug }) {
-  // Tools compose is large — include inline for the AI to write
+function toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, projectName }) {
   return `## Step 6: Deploy Tools (Explorer + Dashboard)
 
-The tools stack includes:
+Tools 스택:
 - **L2 Blockscout Explorer** (port ${DEFAULT_PORTS.l2Explorer})
-- ${isTestnet ? `**L1 Explorer**: Use ${l1Network || "external"} Etherscan` : `**L1 Blockscout Explorer** (port ${DEFAULT_PORTS.l1Explorer})`}
+- ${isTestnet ? `**L1 Explorer**: ${l1Network || "external"} Etherscan 사용` : `**L1 Blockscout Explorer** (port ${DEFAULT_PORTS.l1Explorer})`}
 - **Bridge Dashboard** (port ${DEFAULT_PORTS.dashboard})
 
 \`\`\`bash
@@ -386,11 +1038,11 @@ export L1_NETWORK_NAME=${l1Network || "sepolia"}` : `export L1_CHAIN_ID=9`}
 
 # Start tools (use external-l1 profile for testnet to skip L1 Blockscout)
 docker compose -f docker-compose-tools.yaml \\
-  -p tools-${programSlug} \\
+  -p ${projectName}-tools \\
   ${isTestnet ? "--profile external-l1 " : ""}up -d
 \`\`\`
 
-Wait ~30 seconds for Blockscout to initialize, then verify:
+30초 후 Blockscout 초기화가 완료되면 확인:
 
 \`\`\`bash
 # L2 Explorer
@@ -416,6 +1068,29 @@ gcloud compute firewall-rules create tokamak-l2-allow \\
 \`\`\``;
   }
 
+  if (cloud === "vultr") {
+    const ports = isTestnet
+      ? [DEFAULT_PORTS.l2, DEFAULT_PORTS.l2Explorer, DEFAULT_PORTS.dashboard]
+      : [DEFAULT_PORTS.l1, DEFAULT_PORTS.l2, DEFAULT_PORTS.l2Explorer, DEFAULT_PORTS.l1Explorer, DEFAULT_PORTS.dashboard];
+
+    return `## Step 7: Open Firewall Ports
+
+### 방법 1: Vultr Firewall Group (웹 콘솔)
+
+1. https://my.vultr.com/firewall/ → Add Firewall Group
+2. 규칙 추가:
+${ports.map(p => `   - Protocol: TCP, Port: ${p}, Source: 0.0.0.0/0`).join("\n")}
+3. 서버에 Firewall Group 연결
+
+### 방법 2: UFW (서버 내)
+
+\`\`\`bash
+sudo ufw allow 22/tcp  # SSH
+${ports.map(p => `sudo ufw allow ${p}/tcp`).join("\n")}
+sudo ufw enable
+\`\`\``;
+  }
+
   // AWS
   const sgRules = [
     { port: DEFAULT_PORTS.l2, desc: "L2 RPC" },
@@ -438,10 +1113,11 @@ ${rules}
 \`\`\``;
 }
 
-function summarySection({ isTestnet }) {
+function summarySection({ isTestnet, deployment }) {
+  const name = deployment?.name || "Tokamak Appchain";
   return `## Step 8: Access Your L2
 
-After completing all steps, your L2 appchain is accessible at:
+배포 완료 후 접속 가능한 서비스:
 
 | Service | URL |
 |---------|-----|
@@ -455,11 +1131,12 @@ Replace \`VM_IP\` with the actual IP from Step 1.
 
 ### MetaMask Configuration
 
-Add this L2 network to MetaMask:
-- **Network Name**: ${isTestnet ? "Tokamak Appchain (Testnet)" : "Tokamak Appchain"}
-- **RPC URL**: \`http://VM_IP:${DEFAULT_PORTS.l2}\`
-- **Chain ID**: (see deployment summary above)
-- **Currency Symbol**: ETH`;
+| Setting | Value |
+|---------|-------|
+| **Network Name** | ${name} |
+| **RPC URL** | \`http://VM_IP:${DEFAULT_PORTS.l2}\` |
+| **Chain ID** | (see deployment summary above) |
+| **Currency Symbol** | ETH |`;
 }
 
 function troubleshootingSection({ projectName, dataDir }) {
@@ -491,10 +1168,12 @@ docker system df
 
 ### Common Issues
 
-1. **Deployer fails**: Check L1 connectivity and that the deployer account has sufficient ETH.
-2. **L2 not producing blocks**: Ensure the deployer exited successfully (\`docker logs ${projectName}-deployer\`).
-3. **Explorer shows no data**: Wait 1-2 minutes for Blockscout indexer to catch up.
-4. **Port already in use**: Change the port mapping in docker-compose.yaml.`;
+1. **Deployer 실패**: L1 연결 확인, Deployer 계정 잔액 확인
+2. **L2 블록 생성 안됨**: Deployer가 성공적으로 종료되었는지 확인 (\`docker logs ${projectName}-deployer\`)
+3. **Explorer 데이터 없음**: Blockscout 인덱서 초기화에 1-2분 소요
+4. **포트 충돌**: docker-compose.yaml에서 포트 매핑 변경
+5. **이미지 pull 실패**: \`docker login ghcr.io\` 또는 네트워크 확인
+6. **Prover 크래시**: 메모리 부족일 수 있음. VM 사양 업그레이드 고려`;
 }
 
 // ---------------------------------------------------------------------------

@@ -657,9 +657,11 @@ async function provision(deployment) {
           env_project_id: projectName,
           env_updated_at: Date.now(),
         });
-        envVars = freshEnv;
       }
-      await docker.startTools(`${projectName}-tools`, envVars, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port, l2Port, toolsMetricsPort });
+      // Always use freshEnv for tools (envVars may be empty if tracker resolved addresses)
+      const toolsEnvVars = Object.keys(freshEnv).length > 0 ? freshEnv : envVars;
+      const latestDep = getDeploymentById(id);
+      await docker.startTools(`${projectName}-tools`, toolsEnvVars, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port, l2Port, toolsMetricsPort, l2ChainId: latestDep.chain_id, l1ChainId: latestDep.l1_chain_id });
       emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
     } catch (toolsErr) {
       emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
@@ -687,6 +689,276 @@ async function provision(deployment) {
       }
     }
     // Don't overwrite state if already cancelled by user (stop endpoint sets phase)
+    if (!provisionInfo.cancelled) {
+      emit(id, "error", { message: err.message });
+      updateDeployment(id, { error_message: err.message });
+    }
+    activeProvisions.delete(id);
+    throw err;
+  }
+}
+
+// ============================================================
+// LOCAL PREBUILT PROVISIONING (pull pre-built images, run locally)
+// Used by AI Deploy Local Docker mode.
+// ============================================================
+
+async function provisionLocalPrebuilt(deployment) {
+  const { id, program_slug: programSlug } = deployment;
+
+  const provisionInfo = { startedAt: Date.now(), phase: "checking_docker" };
+  activeProvisions.set(id, provisionInfo);
+  clearDeployEvents(id);
+
+  emit(id, "phase", { phase: "checking_docker", message: "Checking Docker availability..." });
+  updateDeployment(id, { phase: "checking_docker", error_message: null });
+
+  if (!docker.isDockerAvailable()) {
+    const errMsg = "Docker is not running. Please install and start Docker Desktop first.";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  emit(id, "phase", { phase: "checking_docker", message: "Docker is available" });
+
+  const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
+  const projectName = `tokamak-${id.slice(0, 8)}`;
+
+  updateDeployment(id, {
+    docker_project: projectName,
+    l1_port: l1Port,
+    l2_port: l2Port,
+    proof_coord_port: proofCoordPort,
+    tools_l1_explorer_port: toolsL1ExplorerPort,
+    tools_l2_explorer_port: toolsL2ExplorerPort,
+    tools_bridge_ui_port: toolsBridgeUIPort,
+    tools_db_port: toolsDbPort,
+    tools_metrics_port: toolsMetricsPort,
+    phase: "pulling",
+    error_message: null,
+  });
+
+  provisionInfo.phase = "pulling";
+  emit(id, "phase", { phase: "pulling", message: "Generating Docker Compose configuration..." });
+
+  // Generate unique chain IDs and custom genesis files for this deployment
+  const { customGenesisPath, l2ChainId, customL1GenesisPath } = await ensureChainIds(deployment, null, { includeL1: true });
+
+  let composeFile = null;
+  try {
+    const deployDir = getDeploymentDir(id);
+    const composeContent = generateRemoteComposeFile({
+      programSlug,
+      l1Port,
+      l2Port,
+      proofCoordPort,
+      projectName,
+      dataDir: deployDir,
+      l2ChainId,
+      bindAddress: "127.0.0.1",
+      customL2GenesisPath: customGenesisPath,
+      customL1GenesisPath,
+    });
+    composeFile = writeComposeFile(id, composeContent);
+
+    // Write programs.toml if needed (for SP1 prover)
+    const profile = getAppProfile(programSlug);
+    if (profile.programsToml) {
+      const tomlContent = generateProgramsToml(programSlug);
+      const fs = require("fs");
+      fs.writeFileSync(require("path").join(deployDir, "programs.toml"), tomlContent, "utf-8");
+    }
+
+    emit(id, "phase", { phase: "pulling", message: "Pulling pre-built Docker images from ghcr.io..." });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.pullImages(projectName, composeFile, (chunk) => {
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          emit(id, "log", { message: line });
+        }
+      })
+    );
+
+    checkCancelled(provisionInfo);
+
+    provisionInfo.phase = "l1_starting";
+    emit(id, "phase", { phase: "l1_starting", message: "Starting L1 node..." });
+    updateDeployment(id, { phase: "l1_starting" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startL1(projectName, composeFile)
+    );
+    await waitForHealthy(`http://127.0.0.1:${l1Port}`, 60000, id);
+    emit(id, "phase", { phase: "l1_starting", message: "L1 node is running" });
+
+    // Query actual L1 chain ID from the running node
+    try {
+      const { ethers } = require("ethers");
+      const l1Provider = new ethers.JsonRpcProvider(`http://127.0.0.1:${l1Port}`, undefined, { staticNetwork: true });
+      const l1Network = await l1Provider.getNetwork();
+      const l1ChainId = Number(l1Network.chainId);
+      l1Provider.destroy();
+      updateDeployment(id, { l1_chain_id: l1ChainId });
+      emit(id, "log", { message: `L1 Chain ID: ${l1ChainId}` });
+    } catch (e) {
+      emit(id, "log", { message: `Could not query L1 chain ID: ${e.message}` });
+    }
+
+    checkCancelled(provisionInfo);
+
+    provisionInfo.phase = "deploying_contracts";
+    emit(id, "phase", { phase: "deploying_contracts", message: "Deploying L1 contracts (bridge, proposer, verifier)..." });
+    updateDeployment(id, { phase: "deploying_contracts" });
+
+    const contractLogLines = [];
+    const tracker = createContractTracker(id);
+    const contractLogFn = (chunk) => {
+      const lines = chunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        contractLogLines.push(line);
+        emit(id, "log", { message: line });
+      }
+      tracker.logFn(chunk);
+    };
+    await trackedDockerRun(provisionInfo, () =>
+      docker.deployContracts(projectName, composeFile, {}, contractLogFn)
+    );
+
+    await docker.stopService(projectName, composeFile, "tokamak-app-deployer");
+
+    const tracked = tracker.getAddresses();
+    let bridgeAddress = tracked.bridge;
+    let proposerAddress = tracked.proposer;
+    let timelockAddress = tracked.timelock;
+    let sp1VerifierAddress = tracked.sp1Verifier;
+    let guestProgramRegistryAddress = tracked.guestProgramRegistry;
+
+    let envVars = {};
+    if (!bridgeAddress || !proposerAddress) {
+      try {
+        envVars = await docker.extractEnv(projectName, composeFile);
+      } catch (extractErr) {
+        emit(id, "log", { message: `Warning: extractEnv failed: ${extractErr.message}, retrying...` });
+        await new Promise(r => setTimeout(r, 3000));
+        try { envVars = await docker.extractEnv(projectName, composeFile); } catch {}
+      }
+      if (!bridgeAddress) bridgeAddress = envVars.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+      if (!proposerAddress) proposerAddress = envVars.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+      if (!timelockAddress) timelockAddress = envVars.ETHREX_TIMELOCK_ADDRESS || null;
+      if (!sp1VerifierAddress) sp1VerifierAddress = envVars.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null;
+    }
+
+    if (!bridgeAddress || !proposerAddress) {
+      const parsed = parseContractAddressesFromLogs(contractLogLines);
+      if (!bridgeAddress && parsed.bridge) bridgeAddress = parsed.bridge;
+      if (!proposerAddress && parsed.proposer) proposerAddress = parsed.proposer;
+      if (!timelockAddress && parsed.timelock) timelockAddress = parsed.timelock;
+      if (!sp1VerifierAddress && parsed.sp1Verifier) sp1VerifierAddress = parsed.sp1Verifier;
+    }
+
+    console.log(`[deployment-engine] contract addresses for ${projectName}: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}`);
+    emit(id, "log", { message: `Contract addresses [${projectName}]: bridge=${bridgeAddress}, proposer=${proposerAddress}, timelock=${timelockAddress}, sp1Verifier=${sp1VerifierAddress}` });
+
+    if (bridgeAddress || proposerAddress) {
+      updateDeployment(id, {
+        bridge_address: bridgeAddress,
+        proposer_address: proposerAddress,
+        timelock_address: timelockAddress,
+        sp1_verifier_address: sp1VerifierAddress,
+        env_project_id: projectName,
+        env_updated_at: Date.now(),
+      });
+    }
+
+    if (!bridgeAddress || !proposerAddress) {
+      throw new Error(
+        `Contract deployment incomplete: bridge=${bridgeAddress}, proposer=${proposerAddress}. ` +
+        "The deployer may have exited before writing contract addresses."
+      );
+    }
+
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contracts deployed", bridgeAddress, proposerAddress, timelockAddress, sp1VerifierAddress, guestProgramRegistryAddress });
+
+    checkCancelled(provisionInfo);
+
+    provisionInfo.phase = "l2_starting";
+    emit(id, "phase", { phase: "l2_starting", message: "Starting L2 node..." });
+    updateDeployment(id, { phase: "l2_starting" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startL2(projectName, composeFile)
+    );
+    await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
+    emit(id, "phase", { phase: "l2_starting", message: "L2 node is running" });
+
+    // Query actual L2 chain ID from the running node and save to DB
+    try {
+      const { ethers } = require("ethers");
+      const l2Provider = new ethers.JsonRpcProvider(`http://127.0.0.1:${l2Port}`, undefined, { staticNetwork: true });
+      const l2Network = await l2Provider.getNetwork();
+      const l2ChainId = Number(l2Network.chainId);
+      l2Provider.destroy();
+      updateDeployment(id, { chain_id: l2ChainId });
+      emit(id, "log", { message: `L2 Chain ID: ${l2ChainId}` });
+    } catch (e) {
+      emit(id, "log", { message: `Could not query L2 chain ID: ${e.message}` });
+    }
+
+    checkCancelled(provisionInfo);
+
+    provisionInfo.phase = "starting_prover";
+    emit(id, "phase", { phase: "starting_prover", message: "Starting prover..." });
+    updateDeployment(id, { phase: "starting_prover" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.startProver(projectName, composeFile)
+    );
+
+    checkCancelled(provisionInfo);
+
+    provisionInfo.phase = "starting_tools";
+    emit(id, "phase", { phase: "starting_tools", message: "Starting support tools (Blockscout, Bridge UI, Dashboard)..." });
+    updateDeployment(id, { phase: "starting_tools" });
+    try {
+      const freshEnv = await docker.extractEnv(projectName, composeFile);
+      const freshBridge = freshEnv.ETHREX_WATCHER_BRIDGE_ADDRESS || null;
+      const freshProposer = freshEnv.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null;
+      if (freshBridge && freshBridge !== bridgeAddress) {
+        updateDeployment(id, {
+          bridge_address: freshBridge,
+          proposer_address: freshProposer,
+          env_project_id: projectName,
+          env_updated_at: Date.now(),
+        });
+      }
+      // Always use freshEnv for tools (envVars may be empty if tracker resolved addresses)
+      const toolsEnvVars = Object.keys(freshEnv).length > 0 ? freshEnv : envVars;
+      const latestDep = getDeploymentById(id);
+      await docker.startTools(`${projectName}-tools`, toolsEnvVars, { toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l1Port, l2Port, toolsMetricsPort, l2ChainId: latestDep.chain_id, l1ChainId: latestDep.l1_chain_id });
+      emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
+    } catch (toolsErr) {
+      emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
+    }
+
+    emit(id, "phase", {
+      phase: "running",
+      message: "Deployment is running!",
+      l1Rpc: `http://127.0.0.1:${l1Port}`,
+      l2Rpc: `http://127.0.0.1:${l2Port}`,
+      bridgeAddress,
+      proposerAddress,
+    });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null, ever_running: 1 });
+    activeProvisions.delete(id);
+    return updateDeployment(id, {});
+  } catch (err) {
+    if (composeFile) {
+      try {
+        await docker.stop(projectName, composeFile);
+        emit(id, "log", { message: `Stopped all containers for ${projectName}` });
+      } catch (stopErr) {
+        console.warn(`[deploy-engine] Failed to stop containers on error: ${stopErr.message}`);
+      }
+    }
     if (!provisionInfo.cancelled) {
       emit(id, "error", { message: err.message });
       updateDeployment(id, { error_message: err.message });
@@ -1130,6 +1402,7 @@ async function provisionTestnet(deployment) {
       const freshEnv = await docker.extractEnv(projectName, composeFile);
       // For testnet/mainnet tools, override L1 RPC to use external URL
       freshEnv.ETHREX_ETH_RPC_URL = l1RpcUrl;
+      const latestDep = getDeploymentById(id);
       await docker.startTools(`${projectName}-tools`, freshEnv, {
         toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort,
         l1Port: null, l2Port, toolsMetricsPort,
@@ -1137,6 +1410,7 @@ async function provisionTestnet(deployment) {
         // External L1 metadata for dashboard/bridge UI
         l1RpcUrl,
         l1ChainId: testnetConfig.l1ChainId,
+        l2ChainId: latestDep.chain_id,
         l1ExplorerUrl: testnetConfig.l1ExplorerUrl || ({ sepolia: 'https://sepolia.etherscan.io', holesky: 'https://holesky.etherscan.io' }[testnetConfig.network] || ''),
         l1NetworkName: testnetConfig.network,
         isExternalL1: true,
@@ -1234,6 +1508,9 @@ async function provisionRemote(deployment, hostId) {
 
   emit(id, "phase", { phase: "pulling", message: `Connecting to ${host.hostname}...` });
 
+  // Generate unique chain IDs and custom genesis files
+  const { customGenesisPath, l2ChainId, customL1GenesisPath } = await ensureChainIds(deployment, null, { includeL1: true });
+
   let conn;
   try {
     conn = await remote.connect(host);
@@ -1245,6 +1522,9 @@ async function provisionRemote(deployment, hostId) {
       proofCoordPort,
       projectName,
       dataDir: remoteDir,
+      l2ChainId,
+      customL2GenesisPath: `${remoteDir}/${require("path").basename(customGenesisPath)}`,
+      customL1GenesisPath: `${remoteDir}/l1.json`,
     });
 
     writeComposeFile(id, composeContent);
@@ -1254,6 +1534,19 @@ async function provisionRemote(deployment, hostId) {
 
     await remote.exec(conn, `mkdir -p ${remoteDir}`);
     await remote.uploadFile(conn, composeContent, `${remoteDir}/docker-compose.yaml`);
+
+    // Upload custom genesis files for unique chain IDs
+    const fs = require("fs");
+    if (customL1GenesisPath) {
+      const l1GenesisContent = fs.readFileSync(customL1GenesisPath, "utf-8");
+      await remote.uploadFile(conn, l1GenesisContent, `${remoteDir}/l1.json`);
+      emit(id, "log", { message: `Uploaded custom L1 genesis` });
+    }
+    if (customGenesisPath) {
+      const l2GenesisContent = fs.readFileSync(customGenesisPath, "utf-8");
+      await remote.uploadFile(conn, l2GenesisContent, `${remoteDir}/${require("path").basename(customGenesisPath)}`);
+      emit(id, "log", { message: `Uploaded custom L2 genesis (chain ID: ${l2ChainId})` });
+    }
 
     const profile = getAppProfile(programSlug);
     if (profile.programsToml) {
@@ -1838,6 +2131,8 @@ async function resumePostDeployer(dep, composeFile) {
       l1Port: freshDep.l1_port,
       l2Port: freshDep.l2_port,
       toolsMetricsPort: freshDep.tools_metrics_port,
+      l2ChainId: freshDep.chain_id,
+      l1ChainId: freshDep.l1_chain_id,
     });
     insertDeployEvent(id, "log", "starting_tools", "Support tools started", null);
   } catch (toolsErr) {
@@ -2005,6 +2300,7 @@ async function disablePublicAccess(deployment) { return setPublicAccess(deployme
 
 module.exports = {
   provision,
+  provisionLocalPrebuilt,
   provisionTestnet,
   provisionRemote,
   provisionRemoteTestnet,
