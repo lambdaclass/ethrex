@@ -17,7 +17,8 @@ use crate::{
         eth::{
             blocks::{BlockBodies, BlockHeaders},
             receipts::{
-                GetReceipts, GetReceipts70, Receipts68, Receipts69, Receipts70, SOFT_RESPONSE_LIMIT,
+                GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
+                SOFT_RESPONSE_LIMIT,
             },
             status::{StatusMessage68, StatusMessage69, StatusMessage70},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
@@ -1012,23 +1013,19 @@ async fn handle_incoming_message(
             };
             send(state, Message::BlockBodies(response)).await?;
         }
-        Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            if let Some(eth) = &state.negotiated_eth_capability {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(state.storage.get_receipts_for_block(hash).await?);
-                }
-                let response = match eth.version {
-                    68 => Message::Receipts68(Receipts68::new(id, receipts)),
-                    69 => Message::Receipts69(Receipts69::new(id, receipts)),
-                    ver => {
-                        return Err(PeerConnectionError::InternalError(format!(
-                            "Invalid eth version {ver}"
-                        )));
-                    }
-                };
-                send(state, response).await?;
+        Message::GetReceipts68(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
+            let mut receipts = Vec::new();
+            for hash in block_hashes.iter() {
+                receipts.push(state.storage.get_receipts_for_block(hash).await?);
             }
+            send(state, Message::Receipts68(Receipts68::new(id, receipts))).await?;
+        }
+        Message::GetReceipts69(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
+            let mut receipts = Vec::new();
+            for hash in block_hashes.iter() {
+                receipts.push(state.storage.get_receipts_for_block(hash).await?);
+            }
+            send(state, Message::Receipts69(Receipts69::new(id, receipts))).await?;
         }
         // EIP-7975: eth/70 partial receipt requests
         Message::GetReceipts70(GetReceipts70 {

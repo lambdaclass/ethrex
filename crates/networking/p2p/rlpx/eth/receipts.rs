@@ -1,6 +1,10 @@
 pub use super::eth68::receipts::Receipts68;
 pub use super::eth69::receipts::Receipts69;
 pub use super::eth70::receipts::{GetReceipts70, Receipts70, SOFT_RESPONSE_LIMIT};
+
+/// Type alias: eth/68 and eth/69 share the same GetReceipts wire format.
+pub type GetReceipts68 = GetReceipts;
+pub type GetReceipts69 = GetReceipts;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -71,34 +75,34 @@ mod tests {
         Receipt::new(TxType::EIP1559, true, gas, logs)
     }
 
-    // ── GetReceipts (legacy, eth/68-69) ──
+    // ── GetReceipts68 / GetReceipts69 (legacy, eth/68-69) ──
 
     #[test]
-    fn get_receipts_empty_message() {
+    fn get_receipts68_empty_message() {
         let blocks_hash = vec![];
-        let get_receipts = GetReceipts::new(1, blocks_hash.clone());
+        let get_receipts = GetReceipts68::new(1, blocks_hash.clone());
 
         let mut buf = Vec::new();
         get_receipts.encode(&mut buf).unwrap();
 
-        let decoded = GetReceipts::decode(&buf).unwrap();
+        let decoded = GetReceipts68::decode(&buf).unwrap();
         assert_eq!(decoded.id, 1);
         assert_eq!(decoded.block_hashes, blocks_hash);
     }
 
     #[test]
-    fn get_receipts_not_empty_message() {
+    fn get_receipts69_not_empty_message() {
         let blocks_hash = vec![
             BlockHash::from([0; 32]),
             BlockHash::from([1; 32]),
             BlockHash::from([2; 32]),
         ];
-        let get_receipts = GetReceipts::new(1, blocks_hash.clone());
+        let get_receipts = GetReceipts69::new(1, blocks_hash.clone());
 
         let mut buf = Vec::new();
         get_receipts.encode(&mut buf).unwrap();
 
-        let decoded = GetReceipts::decode(&buf).unwrap();
+        let decoded = GetReceipts69::decode(&buf).unwrap();
         assert_eq!(decoded.id, 1);
         assert_eq!(decoded.block_hashes, blocks_hash);
     }
@@ -212,7 +216,8 @@ mod tests {
     #[test]
     fn get_receipts_and_get_receipts70_have_same_message_code() {
         // Both versions use 0x0F; dispatched by eth capability version
-        assert_eq!(GetReceipts::CODE, GetReceipts70::CODE);
+        assert_eq!(GetReceipts68::CODE, GetReceipts69::CODE);
+        assert_eq!(GetReceipts69::CODE, GetReceipts70::CODE);
     }
 
     #[test]
@@ -226,7 +231,7 @@ mod tests {
     fn get_receipts70_wire_format_differs_from_legacy() {
         // Same block hashes, but the eth/70 format includes firstBlockReceiptIndex
         let hashes = vec![BlockHash::from([1; 32])];
-        let legacy = GetReceipts::new(1, hashes.clone());
+        let legacy = GetReceipts69::new(1, hashes.clone());
         let v70 = GetReceipts70::new(1, 0, hashes);
 
         let mut buf_legacy = Vec::new();
@@ -259,7 +264,7 @@ mod tests {
 
     #[test]
     fn get_receipts70_cannot_decode_as_legacy() {
-        // Encoding a GetReceipts70 and trying to decode as legacy GetReceipts
+        // Encoding a GetReceipts70 and trying to decode as legacy GetReceipts68/69
         // should either fail or produce wrong data
         let msg = GetReceipts70::new(1, 5, vec![BlockHash::from([1; 32])]);
         let mut buf = Vec::new();
@@ -267,7 +272,7 @@ mod tests {
 
         // Legacy decode expects [id, [hashes...]] but gets [id, 5, [hashes...]]
         // The `5` would be parsed as the block_hashes field and fail
-        let result = GetReceipts::decode(&buf);
+        let result = GetReceipts68::decode(&buf);
         assert!(result.is_err());
     }
 

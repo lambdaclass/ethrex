@@ -8,7 +8,9 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::{GetReceipts, GetReceipts70, Receipts68, Receipts69, Receipts70};
+use super::eth::receipts::{
+    GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
+};
 use super::eth::status::{StatusMessage68, StatusMessage69, StatusMessage70};
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
@@ -27,6 +29,7 @@ const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
 const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
 // eth/70 (EIP-7975) reuses the same message codes as eth/69 — it only changes the
 // format of GetReceipts (0x0F) and Receipts (0x10), so offsets are identical.
+// GetReceipts68 and GetReceipts69 are type aliases for the same struct (identical wire format).
 const SNAP_CAPABILITY_OFFSET_ETH_70: u8 = 0x22;
 const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
@@ -88,7 +91,8 @@ pub enum Message {
     NewPooledTransactionHashes(NewPooledTransactionHashes),
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
-    GetReceipts(GetReceipts),
+    GetReceipts68(GetReceipts68),
+    GetReceipts69(GetReceipts69),
     GetReceipts70(GetReceipts70),
     Receipts68(Receipts68),
     Receipts69(Receipts69),
@@ -139,7 +143,8 @@ impl Message {
             Message::PooledTransactions(_) => {
                 eth_version.eth_capability_offset() + PooledTransactions::CODE
             }
-            Message::GetReceipts(_) => eth_version.eth_capability_offset() + GetReceipts::CODE,
+            Message::GetReceipts68(_) => eth_version.eth_capability_offset() + GetReceipts68::CODE,
+            Message::GetReceipts69(_) => eth_version.eth_capability_offset() + GetReceipts69::CODE,
             Message::GetReceipts70(_) => eth_version.eth_capability_offset() + GetReceipts70::CODE,
             Message::Receipts68(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
             Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts69::CODE,
@@ -216,8 +221,11 @@ impl Message {
                 PooledTransactions::CODE => Ok(Message::PooledTransactions(
                     PooledTransactions::decode(data)?,
                 )),
-                GetReceipts::CODE if !matches!(eth_version, EthCapVersion::V70) => {
-                    Ok(Message::GetReceipts(GetReceipts::decode(data)?))
+                GetReceipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                    Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
+                }
+                GetReceipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                    Ok(Message::GetReceipts69(GetReceipts69::decode(data)?))
                 }
                 GetReceipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
                     Ok(Message::GetReceipts70(GetReceipts70::decode(data)?))
@@ -297,7 +305,8 @@ impl Message {
             Message::NewPooledTransactionHashes(msg) => msg.encode(buf),
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
-            Message::GetReceipts(msg) => msg.encode(buf),
+            Message::GetReceipts68(msg) => msg.encode(buf),
+            Message::GetReceipts69(msg) => msg.encode(buf),
             Message::GetReceipts70(msg) => msg.encode(buf),
             Message::Receipts68(msg) => msg.encode(buf),
             Message::Receipts69(msg) => msg.encode(buf),
@@ -324,7 +333,8 @@ impl Message {
             Message::GetBlockHeaders(message) => Some(message.id),
             Message::GetBlockBodies(message) => Some(message.id),
             Message::GetPooledTransactions(message) => Some(message.id),
-            Message::GetReceipts(message) => Some(message.id),
+            Message::GetReceipts68(message) => Some(message.id),
+            Message::GetReceipts69(message) => Some(message.id),
             Message::GetReceipts70(message) => Some(message.id),
             Message::GetAccountRange(message) => Some(message.id),
             Message::GetStorageRanges(message) => Some(message.id),
@@ -375,7 +385,8 @@ impl Display for Message {
             Message::PooledTransactions(_) => "eth::PooledTransactions".fmt(f),
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
-            Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
+            Message::GetReceipts68(_) => "eth:GetReceipts(68)".fmt(f),
+            Message::GetReceipts69(_) => "eth:GetReceipts(69)".fmt(f),
             Message::GetReceipts70(_) => "eth:GetReceipts(70)".fmt(f),
             Message::Receipts68(_) => "eth:Receipts(68)".fmt(f),
             Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
