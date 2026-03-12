@@ -13,7 +13,7 @@ build = "build.rs"
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
-ethrex-crypto.workspace = true
+ethrex-crypto = { workspace = true, default-features = true }
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
@@ -105,8 +105,6 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
-# discv5 is currently experimental and should only be enabled for development purposes
-experimental-discv5 = ["ethrex-p2p/experimental-discv5"]
 
 l2 = [
   "ethrex-l2",

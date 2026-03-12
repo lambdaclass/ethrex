@@ -2,12 +2,22 @@
 
 ## Perf
 
+### 2026-03-05
+
+- Switch hot EVM and mempool HashMaps to FxHashMap for faster hashing [#6303](https://github.com/lambdaclass/ethrex/pull/6303)
+
 ### 2026-03-03
 
 - Replace RwLock/Mutex<HashMap> with DashMap for concurrent caches [#6297](https://github.com/lambdaclass/ethrex/pull/6297)
 
+### 2026-03-02
+
+- SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+- Use FxHashMap in call frame backup [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+
 ### 2026-02-27
 
+- Use nested storage originals, FxHashMap call frame backup, and sstore-specific storage access helper [#6265](https://github.com/lambdaclass/ethrex/pull/6265)
 - Refactor LEVM opcode handlers to avoid expensive matches [#4791](https://github.com/lambdaclass/ethrex/pull/4791)
 
 ### 2026-02-25
