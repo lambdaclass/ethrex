@@ -9,8 +9,8 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
+use rustc_hash::FxHashMap;
 use std::{
-    collections::HashMap,
     fmt,
     hash::{Hash, Hasher},
     hint::assert_unchecked,
@@ -287,8 +287,8 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
