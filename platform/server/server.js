@@ -88,4 +88,12 @@ app.use((err, req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log(`Tokamak App Store server running on port ${PORT}`);
+
+  // Start L1 indexer (watches MetadataURIUpdated events, optional)
+  try {
+    const { startIndexer } = require("./lib/l1-indexer");
+    startIndexer();
+  } catch (err) {
+    console.log(`[indexer] Skipped: ${err.message}`);
+  }
 });

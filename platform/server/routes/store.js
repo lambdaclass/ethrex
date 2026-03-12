@@ -97,7 +97,7 @@ router.post("/appchains/:id/rpc-proxy", async (req, res) => {
 
     const allowedMethods = [
       "eth_blockNumber", "eth_chainId", "eth_gasPrice",
-      "ethrex_batchNumber", "net_version",
+      "ethrex_batchNumber", "ethrex_metadata", "net_version",
     ];
 
     const { method, params } = req.body;

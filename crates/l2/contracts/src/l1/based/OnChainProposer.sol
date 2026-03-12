@@ -115,6 +115,9 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 programTypeId => mapping(uint8 verifierId => bytes32 vk)))
         public verificationKeys;
 
+    /// @notice URI pointing to the appchain metadata (e.g. ipfs://Qm...).
+    string public metadataURI;
+
     modifier onlyLeaderSequencer() {
         require(
             msg.sender ==
@@ -648,6 +651,12 @@ contract OnChainProposer is
             proofVerified,
             "OnChainProposer: Aligned proof verification failed"
         );
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setMetadataURI(string calldata _metadataURI) external override onlyOwner {
+        metadataURI = _metadataURI;
+        emit MetadataURIUpdated(_metadataURI);
     }
 
     /// @notice Allow owner to upgrade the contract.
