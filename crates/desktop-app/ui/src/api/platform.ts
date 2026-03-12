@@ -183,6 +183,7 @@ class PlatformAPI {
     bridge_address?: string
     proposer_address?: string
     rpc_url?: string
+    status?: string
   }) {
     return this.fetch<{ deployment: { id: string } }>(`/api/deployments/${id}`, {
       method: 'PUT',

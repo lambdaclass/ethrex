@@ -168,6 +168,33 @@ export default function AppchainDetailPage() {
             <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{appchain.category}</span>
           </div>
         </div>
+        {/* Add to Wallet */}
+        {appchain.chain_id && appchain.rpc_url && (
+          <button
+            onClick={async () => {
+              try {
+                await (window as unknown as { ethereum: { request: (args: unknown) => Promise<unknown> } }).ethereum.request({
+                  method: "wallet_addEthereumChain",
+                  params: [{
+                    chainId: `0x${appchain.chain_id!.toString(16)}`,
+                    chainName: appchain.name,
+                    nativeCurrency: { name: "TON", symbol: "TON", decimals: 18 },
+                    rpcUrls: [appchain.rpc_url],
+                    blockExplorerUrls: appchain.explorer_url ? [appchain.explorer_url] : undefined,
+                  }],
+                });
+              } catch {
+                // User rejected or no wallet
+              }
+            }}
+            className="mt-3 w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>
+            </svg>
+            Add to Wallet
+          </button>
+        )}
       </div>
 
       {/* Description */}

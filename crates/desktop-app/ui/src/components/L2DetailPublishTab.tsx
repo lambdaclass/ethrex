@@ -22,16 +22,21 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
   const [publishDesc, setPublishDesc] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [socialLinks, setSocialLinks] = useState<Record<string, string>>({})
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const socialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sync isPublic when parent re-fetches
   useEffect(() => { setIsPublic(l2.isPublic) }, [l2.isPublic])
 
-  // Load existing description from Platform on mount (if already published)
+  // Load existing data from Platform on mount (if already published)
   useEffect(() => {
     if (!l2.platformDeploymentId || !l2.isPublic) return
     platformAPI.getPublicAppchain(l2.platformDeploymentId).then(appchain => {
       if (appchain?.description) setPublishDesc(appchain.description)
+      if (appchain?.social_links && Object.keys(appchain.social_links).length > 0) {
+        setSocialLinks(appchain.social_links)
+      }
     }).catch(() => {})
   }, [l2.platformDeploymentId, l2.isPublic])
 
@@ -58,9 +63,35 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     saveTimerRef.current = setTimeout(() => saveDescription(value), 1500)
   }
 
-  // Cleanup debounce timer on unmount
+  // Save social links with debounce
+  const saveSocialLinks = useCallback(async (links: Record<string, string>) => {
+    const platformId = l2.platformDeploymentId
+    if (!platformId || !isPublic) return
+    // Filter out empty values
+    const filtered = Object.fromEntries(Object.entries(links).filter(([, v]) => v.trim()))
+    setSaving(true)
+    try {
+      await platformAPI.updateDeployment(platformId, { social_links: JSON.stringify(filtered) })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { /* ignore */ }
+    finally { setSaving(false) }
+  }, [l2.platformDeploymentId, isPublic])
+
+  const handleSocialChange = (key: string, value: string) => {
+    const updated = { ...socialLinks, [key]: value }
+    setSocialLinks(updated)
+    setSaved(false)
+    if (socialTimerRef.current) clearTimeout(socialTimerRef.current)
+    socialTimerRef.current = setTimeout(() => saveSocialLinks(updated), 1500)
+  }
+
+  // Cleanup debounce timers on unmount
   useEffect(() => {
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      if (socialTimerRef.current) clearTimeout(socialTimerRef.current)
+    }
   }, [])
 
   return (
@@ -120,6 +151,11 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                   finally { setPublishing(false) }
                 } else {
                   setIsPublic(false)
+                  // Deactivate on Platform
+                  if (l2.platformDeploymentId) {
+                    try { await platformAPI.updateDeployment(l2.platformDeploymentId, { status: 'inactive' }) } catch { /* ignore */ }
+                  }
+                  // Clear local DB
                   try {
                     await localServerAPI.updateDeployment(l2.id, {
                       is_public: 0,
@@ -173,6 +209,24 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
           </div>
           <div className="text-[9px] text-[var(--color-text-secondary)] mt-1">
             {ko ? '스크린샷 업로드는 Phase 2에서 지원됩니다 (IPFS)' : 'Screenshot upload coming in Phase 2 (IPFS)'}
+          </div>
+        </div>
+
+        <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+          <SectionHeader title={ko ? '소셜 링크' : 'Social Links'} />
+          <div className="mt-1 space-y-1.5">
+            {(['website', 'github', 'twitter', 'discord', 'telegram'] as const).map(key => (
+              <div key={key} className="flex items-center gap-2">
+                <span className="text-[10px] text-[var(--color-text-secondary)] w-14 flex-shrink-0 capitalize">{key}</span>
+                <input
+                  type="text"
+                  value={socialLinks[key] || ''}
+                  onChange={e => handleSocialChange(key, e.target.value)}
+                  placeholder={`https://...`}
+                  className="flex-1 bg-[var(--color-bg-main)] rounded-lg px-2 py-1.5 text-[10px] outline-none border border-[var(--color-border)]"
+                />
+              </div>
+            ))}
           </div>
         </div>
       </>)}
