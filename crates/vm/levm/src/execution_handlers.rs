@@ -169,11 +169,16 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 
-        // EIP-8037 (Amsterdam+): charge state gas BEFORE regular gas and size check.
-        // Per EELS process_create_message: charge_state_gas → charge_gas → size check.
-        // This ordering matters because on OOG, already-charged state gas must be
-        // reflected in state_gas_used even if the CREATE reverts.
+        // EIP-8037 (Amsterdam+): Per EELS process_create_message (bal@v5.4.0):
+        // 1. Size check first (reject oversized before any gas charges)
+        // 2. Keccak hash cost (regular gas)
+        // 3. State gas for code deposit
         if fork >= Fork::Amsterdam {
+            // Size check BEFORE gas charges
+            if code_length > AMSTERDAM_MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
+
             let words = code_length.div_ceil(32);
             let regular = words
                 .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
@@ -182,15 +187,10 @@ impl<'a> VM<'a> {
                 .checked_mul(COST_PER_STATE_BYTE)
                 .ok_or(InternalError::Overflow)?;
 
-            // State gas first (from reservoir), then regular gas (hash cost)
+            // Regular gas (keccak hash cost) before state gas
+            self.current_call_frame.increase_consumed_gas(regular)?;
             if state > 0 {
                 self.increase_state_gas(state)?;
-            }
-            self.current_call_frame.increase_consumed_gas(regular)?;
-
-            // Size check AFTER gas charges per EELS
-            if code_length > AMSTERDAM_MAX_CODE_SIZE {
-                return Err(ExceptionalHalt::ContractOutputTooBig.into());
             }
         } else {
             // Pre-Amsterdam: size check first, then regular gas charge
