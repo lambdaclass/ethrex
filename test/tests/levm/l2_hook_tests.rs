@@ -385,12 +385,12 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         "Coinbase balance should be 0 after rollback, but was {coinbase_balance}"
     );
 
-    // Verify that undo_value_transfer was rolled back: the contract still
-    // holds the value from prepare_execution's transfer_value (the backup was
-    // cleared after prepare, so restore goes back to post-prepare state).
+    // Verify that undo_value_transfer is preserved: the contract should have
+    // 0 balance because the tx reverted and value was returned to the sender.
     let contract_balance = db.get_account(contract_addr).unwrap().info.balance;
     assert_eq!(
-        contract_balance, tx_value,
-        "Contract should still hold transferred value after rollback (undo_value_transfer reverted)"
+        contract_balance,
+        U256::zero(),
+        "Contract should not hold value after tx revert + rollback"
     );
 }

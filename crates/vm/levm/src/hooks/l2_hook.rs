@@ -138,6 +138,10 @@ fn finalize_non_privileged_execution(
         total_gas_pre_refund = vm.current_call_frame.gas_limit;
     }
 
+    // Clear the backup so that Phase 2's rollback only undoes mutations
+    // from apply_finalize_mutations, not the gas-overuse revert above.
+    vm.current_call_frame.call_frame_backup.clear();
+
     // === Phase 1: Fallible computations (no state mutations) ===
     // Perform contract calls and conversions that can fail BEFORE any
     // mutations, so an error here leaves the DB state unchanged.
@@ -691,14 +695,8 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
         }
     }
 
-    // Apply changed slots
-    let account = vm.db.get_account_mut(fee_token)?;
-    for (key, new_value) in new_storage {
-        let old_value = current_storage.get(&key).copied().unwrap_or_default();
-        if old_value != new_value {
-            account.storage.insert(key, new_value);
-        }
-    }
+    // Apply new storage
+    vm.db.get_account_mut(fee_token)?.storage = new_storage;
 
     // update the initial state account
     let initial_state_fee_token = db_clone
