@@ -907,5 +907,35 @@ tags: [
 
 | 파일 | 변경 유형 | 내용 |
 |------|----------|------|
-| `platform/client/lib/nostr.ts` | **신규** | Nostr 클라이언트 |
-| `platform/client/app/showroom/[id]/page.tsx` | 수정 | 소셜 섹션 추가 |
+| `platform/client/lib/nostr.ts` | **신규** | Nostr 클라이언트 (EVM 지갑 서명 기반) |
+| `platform/client/app/showroom/[id]/page.tsx` | 수정 | 소셜 섹션 + 지갑 연결 UI |
+
+---
+
+## 미구현 항목 (TODO)
+
+> 아래 항목은 Phase 1~3 설계 중 아직 코드로 반영되지 않은 항목들이다.
+> 각 항목은 다음 작업 사이클에서 별도 브랜치로 진행한다.
+
+### Phase 1 미구현
+
+| 항목 | 설명 | 우선순위 |
+|------|------|---------|
+| Desktop 공개 설정 연동 | `L2DetailPublishTab`에서 Platform API로 description/screenshots 실제 저장, `platform_deployment_id` SQLite 컬럼 추가 | 높음 |
+| IPFS 스크린샷 업로드 | Pinata API 연동, Desktop Settings에 JWT 입력 UI, `ipfsToHttp` 게이트웨이 변환 | 중간 |
+
+### Phase 2 미구현
+
+| 항목 | 설명 | 우선순위 |
+|------|------|---------|
+| Deployer `set_metadata_uri` | Rust `cmd/ethrex/l2/deployer.rs`에 배포 후 metadataURI 설정 함수 추가 | 높음 |
+| `ethrex_metadata` RPC 엔드포인트 | `crates/l2/networking/rpc/l2/metadata.rs` — L2 노드에서 chain_id, proposer, bridge, metadataURI 반환 | 중간 |
+| L1 인덱서 | `platform/server/lib/l1-indexer.js` — MetadataURIUpdated 이벤트 감시 → IPFS fetch → DB 캐시 | 중간 |
+| Desktop L1 트랜잭션 서명 | `set_metadata_uri` Tauri 커맨드 — Keychain 개인키로 L1 트랜잭션 서명/전송 | 낮음 |
+
+### Phase 3 미구현
+
+| 항목 | 설명 | 우선순위 |
+|------|------|---------|
+| Nostr Relay 배포 | `nostr-rs-relay` Docker 배포, `wss://relay.tokamak.network` 설정 | 높음 |
+| 스팸 방지 | Relay IP rate limiting, 부적절한 콘텐츠 신고/삭제 기능 | 낮음 |
