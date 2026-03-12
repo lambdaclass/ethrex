@@ -88,16 +88,28 @@ export function hasNostrKeys(): boolean {
 
 // ── Query Functions ──
 
+/** Wrap a promise with a timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("Relay timeout")), ms)
+    ),
+  ]);
+}
+
+const QUERY_TIMEOUT = 10000;
+
 /** Fetch reviews for an appchain by chainId. */
 export async function getAppchainReviews(
   chainId: string
 ): Promise<Review[]> {
   const pool = getPool();
-  const events = await pool.querySync([RELAY_URL], {
+  const events = await withTimeout(pool.querySync([RELAY_URL], {
     kinds: [30100],
     "#d": [chainId],
     "#L": ["tokamak-appchain"],
-  });
+  }), QUERY_TIMEOUT);
 
   return events
     .map((e: NostrEvent) => ({
@@ -118,11 +130,11 @@ export async function getAppchainComments(
   chainId: string
 ): Promise<Comment[]> {
   const pool = getPool();
-  const events = await pool.querySync([RELAY_URL], {
+  const events = await withTimeout(pool.querySync([RELAY_URL], {
     kinds: [30101],
-    "#d": [chainId],
+    "#chain": [chainId],
     "#L": ["tokamak-appchain"],
-  });
+  }), QUERY_TIMEOUT);
 
   return events
     .map((e: NostrEvent) => ({
@@ -138,10 +150,10 @@ export async function getAppchainComments(
 /** Count reactions (likes) for a specific event. */
 export async function getReactionCount(eventId: string): Promise<number> {
   const pool = getPool();
-  const events = await pool.querySync([RELAY_URL], {
+  const events = await withTimeout(pool.querySync([RELAY_URL], {
     kinds: [7],
     "#e": [eventId],
-  });
+  }), QUERY_TIMEOUT);
   return events.filter((e: NostrEvent) => e.content === "+").length;
 }
 
@@ -151,10 +163,10 @@ export async function getReactionCounts(
 ): Promise<Record<string, number>> {
   if (eventIds.length === 0) return {};
   const pool = getPool();
-  const events = await pool.querySync([RELAY_URL], {
+  const events = await withTimeout(pool.querySync([RELAY_URL], {
     kinds: [7],
     "#e": eventIds,
-  });
+  }), QUERY_TIMEOUT);
 
   const counts: Record<string, number> = {};
   for (const id of eventIds) counts[id] = 0;
@@ -201,7 +213,9 @@ export async function publishComment(
   parentEventId?: string
 ): Promise<NostrEvent> {
   const pool = getPool();
-  const tags: string[][] = [["d", chainId], NAMESPACE_TAG];
+  // Use unique d-tag so each comment is a separate replaceable event
+  const uniqueId = `${chainId}:${Date.now()}`;
+  const tags: string[][] = [["d", uniqueId], ["chain", chainId], NAMESPACE_TAG];
   if (parentEventId) {
     tags.push(["e", parentEventId]);
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { storeApi } from "@/lib/api";
@@ -88,6 +88,13 @@ export default function AppchainDetailPage() {
   const [commentText, setCommentText] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [socialError, setSocialError] = useState<string | null>(null);
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+
+  // Cache Nostr pubkey to avoid repeated localStorage reads during render
+  const nostrPubkey = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return hasNostrKeys() ? getOrCreateNostrKeys().pk : null;
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -185,9 +192,11 @@ export default function AppchainDetailPage() {
   };
 
   const handleLike = async (eventId: string) => {
+    if (likedIds.has(eventId)) return;
     try {
       const { sk } = getOrCreateNostrKeys();
       await publishReaction(sk, eventId);
+      setLikedIds((prev) => new Set(prev).add(eventId));
       setReactionCounts((prev) => ({ ...prev, [eventId]: (prev[eventId] || 0) + 1 }));
     } catch {
       // Silently fail
@@ -488,7 +497,7 @@ export default function AppchainDetailPage() {
               />
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-gray-400">
-                  {hasNostrKeys() ? `Posting as ${shortenPubkey(getOrCreateNostrKeys().pk)}` : "A Nostr keypair will be generated"}
+                  {nostrPubkey ? `Posting as ${shortenPubkey(nostrPubkey)}` : "A Nostr keypair will be generated"}
                 </span>
                 <button
                   onClick={handlePublishReview}
@@ -558,7 +567,7 @@ export default function AppchainDetailPage() {
               />
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-gray-400">
-                  {hasNostrKeys() ? `Posting as ${shortenPubkey(getOrCreateNostrKeys().pk)}` : "A Nostr keypair will be generated"}
+                  {nostrPubkey ? `Posting as ${shortenPubkey(nostrPubkey)}` : "A Nostr keypair will be generated"}
                 </span>
                 <button
                   onClick={handlePublishComment}
