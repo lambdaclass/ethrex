@@ -567,9 +567,7 @@ async fn build_payload_v4(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        validate_attributes_v2, validate_attributes_v2_pre_shanghai,
-    };
+    use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
     use crate::types::fork_choice::PayloadAttributesV3;
     use ethrex_common::types::{BlockHeader, Withdrawal};
 
@@ -587,7 +585,10 @@ mod tests {
 
         let err = validate_attributes_v2(&attributes, &head_block).unwrap_err();
 
-        assert!(matches!(err, crate::utils::RpcErr::InvalidPayloadAttributes(_)));
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
     }
 
     #[test]
@@ -604,6 +605,9 @@ mod tests {
 
         let err = validate_attributes_v2_pre_shanghai(&attributes, &head_block).unwrap_err();
 
-        assert!(matches!(err, crate::utils::RpcErr::InvalidPayloadAttributes(_)));
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
     }
 }
