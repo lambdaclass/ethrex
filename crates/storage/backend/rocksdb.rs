@@ -79,6 +79,8 @@ impl RocksDBBackend {
         // Shared 128MB LRU block cache across all column families.
         // Pools capacity vs 12 × 8MB isolated defaults — hot CFs get more share.
         let shared_cache = Cache::new_lru_cache(128 * 1024 * 1024);
+        // Dedicated 64MB cache for ACCOUNT_CODES blobs (contract bytecodes).
+        let blob_cache = Cache::new_lru_cache(64 * 1024 * 1024);
 
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -159,6 +161,7 @@ impl RocksDBBackend {
                     // Small bytecodes should go inline (mainly for delegation indicators)
                     cf_opts.set_min_blob_size(32);
                     cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+                    cf_opts.set_blob_cache(&blob_cache);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
