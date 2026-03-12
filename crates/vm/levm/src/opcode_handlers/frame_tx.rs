@@ -89,6 +89,14 @@ impl OpcodeHandler for OpApproveHandler {
                 let max_fee = U256::from(ctx.tx.max_fee_per_gas);
                 let gas_limit = U256::from(ctx.tx.total_gas_limit());
                 let max_tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
+                let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
+                let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
+                let blob_fee = blob_count
+                    .checked_mul(gas_per_blob)
+                    .ok_or(halt_err.clone())?
+                    .checked_mul(ctx.tx.max_fee_per_blob_gas)
+                    .ok_or(halt_err.clone())?;
+                let max_tx_cost = max_tx_cost.checked_add(blob_fee).ok_or(halt_err.clone())?;
                 let sender = ctx.tx.sender;
 
                 vm.increment_account_nonce(sender)?;
@@ -110,6 +118,14 @@ impl OpcodeHandler for OpApproveHandler {
                 let max_fee = U256::from(ctx.tx.max_fee_per_gas);
                 let gas_limit = U256::from(ctx.tx.total_gas_limit());
                 let max_tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
+                let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
+                let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
+                let blob_fee = blob_count
+                    .checked_mul(gas_per_blob)
+                    .ok_or(halt_err.clone())?
+                    .checked_mul(ctx.tx.max_fee_per_blob_gas)
+                    .ok_or(halt_err.clone())?;
+                let max_tx_cost = max_tx_cost.checked_add(blob_fee).ok_or(halt_err.clone())?;
                 let sender = ctx.tx.sender;
 
                 vm.increment_account_nonce(sender)?;
@@ -241,28 +257,42 @@ fn load_tx_param(
 ) -> Result<U256, VMError> {
     match param_id {
         // Scalar parameters
-        0x00 => Ok(U256::from(ctx.tx.chain_id)),
+        0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce)),
         0x02 => Ok(address_to_u256(ctx.tx.sender)),
-        0x03 => Ok(U256::from(ctx.frames.len())),
-        0x04 => Ok(U256::from(ctx.tx.max_priority_fee_per_gas)),
-        0x05 => Ok(U256::from(ctx.tx.max_fee_per_gas)),
-        0x06 => Ok(ctx.tx.max_fee_per_blob_gas),
+        0x03 => Ok(U256::from(ctx.tx.max_priority_fee_per_gas)),
+        0x04 => Ok(U256::from(ctx.tx.max_fee_per_gas)),
+        0x05 => Ok(ctx.tx.max_fee_per_blob_gas),
+        0x06 => {
+            // max_cost = max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas
+            let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
+                .checked_mul(U256::from(ctx.tx.total_gas_limit()))
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
+                .checked_mul(U256::from(131072u64))
+                .ok_or(ExceptionalHalt::InvalidOpcode)?
+                .checked_mul(ctx.tx.max_fee_per_blob_gas)
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            gas_cost
+                .checked_add(blob_cost)
+                .ok_or(ExceptionalHalt::InvalidOpcode.into())
+        }
         0x07 => Ok(U256::from(ctx.tx.blob_versioned_hashes.len())),
         0x08 => {
             let mut bytes = [0u8; 32];
             bytes.copy_from_slice(ctx.sig_hash.as_bytes());
             Ok(U256::from_big_endian(&bytes))
         }
-        0x09 => Ok(U256::from(ctx.tx.total_gas_limit())),
+        0x09 => Ok(U256::from(ctx.frames.len())),
 
         // Per-frame parameters (index = frame index)
+        0x10 => Ok(U256::from(ctx.current_frame_index)),
         0x11 => {
             let frame = ctx
                 .frames
                 .get(index_to_usize(index)?)
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(U256::from(u8::from(frame.mode)))
+            Ok(address_to_u256(frame.target.unwrap_or(ctx.tx.sender)))
         }
         0x12 => {
             let frame = ctx
@@ -288,14 +318,14 @@ fn load_tx_param(
                 .frames
                 .get(index_to_usize(index)?)
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(address_to_u256(frame.target.unwrap_or(ctx.tx.sender)))
+            Ok(U256::from(frame.gas_limit))
         }
         0x14 => {
             let frame = ctx
                 .frames
                 .get(index_to_usize(index)?)
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(U256::from(frame.gas_limit))
+            Ok(U256::from(u8::from(frame.mode)))
         }
         0x15 => {
             let idx = index_to_usize(index)?;
@@ -319,7 +349,7 @@ fn get_tx_param_size(
 ) -> Result<usize, VMError> {
     match param_id {
         0x00..=0x09 => Ok(32),
-        0x11 | 0x13 | 0x14 | 0x15 => Ok(32),
+        0x10 | 0x11 | 0x13 | 0x14 | 0x15 => Ok(32),
         0x12 => {
             let frame = ctx
                 .frames
@@ -341,7 +371,7 @@ fn get_tx_param_data(
     index: u64,
 ) -> Result<Vec<u8>, VMError> {
     match param_id {
-        0x00..=0x09 | 0x11 | 0x13 | 0x14 | 0x15 => {
+        0x00..=0x09 | 0x10 | 0x11 | 0x13 | 0x14 | 0x15 => {
             let val = load_tx_param(ctx, param_id, index)?;
             Ok(val.to_big_endian().to_vec())
         }
