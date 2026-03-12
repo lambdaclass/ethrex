@@ -68,7 +68,7 @@ impl MempoolInner {
     }
 
     /// Remove a blobs bundle from the pool
-    fn remove_blob_bundle(&mut self, hash: &H256) {
+    pub fn remove_blob_bundle(&mut self, hash: &H256) {
         let Some(h) = self.blobs_bundle_pool.remove(hash) else {
             return;
         };
@@ -370,17 +370,6 @@ impl Mempool {
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
         let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
         Ok(blobs_bundle_pool.values().cloned().collect())
-    }
-
-    pub fn get_blobs_bundle_by_versioned_hash(
-        &self,
-        versioned_hash: H256,
-    ) -> Result<Option<FxHashMap<H256, usize>>, MempoolError> {
-        let mempool = self.read()?;
-        Ok(mempool
-            .blobs_bundle_by_versioned_hash
-            .get(&versioned_hash)
-            .cloned())
     }
 
     /// Returns blobs data (blob, commitment, proof) associated with the versioned hashes
