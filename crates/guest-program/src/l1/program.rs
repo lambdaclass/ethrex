@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_crypto::Crypto;
 use ethrex_vm::Evm;
 
 use crate::common::{BatchExecutionResult, ExecutionError, execute_blocks};
-use crate::crypto::get_crypto_provider;
 use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
@@ -10,13 +12,14 @@ use crate::l1::output::ProgramOutput;
 ///
 /// This validates and executes a batch of L1 blocks, verifying state transitions
 /// without access to the full blockchain state.
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, ExecutionError> {
+pub fn execution_program(
+    input: ProgramInput,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
     } = input;
-
-    let crypto = get_crypto_provider();
 
     let BatchExecutionResult {
         receipts: _,

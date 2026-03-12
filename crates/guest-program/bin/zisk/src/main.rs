@@ -1,10 +1,13 @@
 #![no_main]
 
+use std::sync::Arc;
+
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
 #[cfg(not(feature = "l2"))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
 
+use ethrex_guest_program::crypto::zisk::ZiskCrypto;
 use rkyv::rancor::Error;
 use sha2::{Digest, Sha256};
 
@@ -16,8 +19,10 @@ pub fn main() {
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
     println!("finish reading input");
 
+    let crypto = Arc::new(ZiskCrypto);
+
     println!("start execution");
-    let output = execution_program(input).unwrap();
+    let output = execution_program(input, crypto).unwrap();
     println!("finish execution");
 
     println!("start hashing output");
