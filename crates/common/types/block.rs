@@ -329,7 +329,7 @@ impl BlockBody {
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
-            .with_min_len(16)
+            .with_min_len(32)
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }

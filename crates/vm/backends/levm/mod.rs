@@ -709,7 +709,7 @@ impl LEVM {
         let t_exec = std::time::Instant::now();
         let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = (0..n_txs)
             .into_par_iter()
-            .with_min_len(4)
+            .with_min_len(32)
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
