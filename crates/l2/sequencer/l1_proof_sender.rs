@@ -512,12 +512,12 @@ impl L1ProofSender {
         batch_number: u64,
     ) -> Result<(), ProofSenderError> {
         if let Some(proof_type) = Self::invalid_proof_type_from_data(data) {
-            warn!("Deleting invalid {proof_type:?} proof for batch {batch_number}");
+            error!("Deleting invalid {proof_type:?} proof for batch {batch_number}");
             self.rollup_store
                 .delete_proof_by_batch_and_type(batch_number, proof_type)
                 .await?;
         } else if data.starts_with(ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR) {
-            warn!(
+            error!(
                 "Aligned proof verification failed for batch {batch_number}, deleting all proofs"
             );
             for proof_type in &self.needed_proof_types {
