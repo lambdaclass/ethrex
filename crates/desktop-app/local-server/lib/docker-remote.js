@@ -311,8 +311,10 @@ async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPort
     ignoreError: true,
   });
 
-  // Build env export for docker compose
-  const envExport = Object.entries(toolsEnv).map(([k, v]) => `${k}=${v}`).join(" ");
+  // Write env file on remote (safer than shell export for values with special chars)
+  const envLines = Object.entries(toolsEnv).map(([k, v]) => `${k}='${String(v).replace(/'/g, "'\\''")}'`).join("\n");
+  await exec(conn, `cat > ${toolsDir}/.tools.env << 'ENVEOF'\n${envLines}\nENVEOF`);
+  const envFileFlag = `--env-file ${toolsDir}/.tools.env`;
 
   // Build + start tools
   const profile = opts.skipL1Explorer ? "--profile external-l1" : "";
@@ -320,11 +322,11 @@ async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPort
     ? "frontend-l2 backend-l2 db db-init redis-db function-selectors-l2 bridge-ui proxy-l2-only"
     : "";
 
-  await exec(conn, `cd ${toolsDir} && env ${envExport} docker compose -f docker-compose-tools.yaml -p ${projectName} ${profile} build`, {
+  await exec(conn, `cd ${toolsDir} && docker compose ${envFileFlag} -f docker-compose-tools.yaml -p ${projectName} ${profile} build`, {
     timeout: 300000,
   });
 
-  await exec(conn, `cd ${toolsDir} && env ${envExport} docker compose -f docker-compose-tools.yaml -p ${projectName} ${profile} up -d ${services}`, {
+  await exec(conn, `cd ${toolsDir} && docker compose ${envFileFlag} -f docker-compose-tools.yaml -p ${projectName} ${profile} up -d ${services}`, {
     timeout: 120000,
   });
 }

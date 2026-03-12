@@ -2836,7 +2836,7 @@ async function loadAIPresets() {
   // 4. Update status
   if (ai && ai.configured) {
     const providerLabel = { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini' }[ai.provider] || ai.provider;
-    statusEl.innerHTML = `<span style="color:#22c55e">&#10003;</span> <b>${providerLabel}</b> 연결됨${ai.model ? ' (' + ai.model + ')' : ''}`;
+    statusEl.innerHTML = `<span style="color:#22c55e">&#10003;</span> <b>${escapeHtml(providerLabel)}</b> 연결됨${ai.model ? ' (' + escapeHtml(ai.model) + ')' : ''}`;
     mainEl.style.display = 'block';
     const providerEl = document.getElementById('ai-provider');
     if (providerEl && ai.provider) providerEl.value = ai.provider;

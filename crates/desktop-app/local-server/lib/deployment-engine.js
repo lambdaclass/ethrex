@@ -1697,6 +1697,9 @@ async function provisionRemoteTestnet(deployment, hostId) {
   const l1RpcUrl = testnetCfg.l1RpcUrl || deployment.rpc_url;
   if (!l1RpcUrl) throw new Error("L1 RPC URL is required for remote testnet deployment");
 
+  // Ensure chain ID is set (generates custom genesis if needed)
+  const { l2ChainId } = await ensureChainIds(deployment, null);
+
   let conn;
   try {
     conn = await remote.connect(host);
@@ -1712,7 +1715,7 @@ async function provisionRemoteTestnet(deployment, hostId) {
       committerPk,
       proofCoordinatorPk,
       bridgeOwnerPk,
-      l2ChainId: deployment.chain_id,
+      l2ChainId,
     });
 
     writeComposeFile(id, composeContent);

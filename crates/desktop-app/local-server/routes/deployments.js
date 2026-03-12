@@ -77,7 +77,7 @@ router.get("/ai-deploy/pending", (_req, res) => {
   }
 });
 
-// GET /api/deployments/ai-deploy/check-cli?cloud=gcp|aws — check CLI install + auth status
+// POST /api/deployments/ai-deploy/vultr-api-key — store Vultr API key in process.env
 router.post("/ai-deploy/vultr-api-key", (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== "string") {

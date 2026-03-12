@@ -1,12 +1,11 @@
 /**
- * macOS Keychain reader for deployer private keys.
+ * macOS Keychain helper for the Tokamak Appchain Manager.
  *
- * Uses the `security` CLI to read from the macOS Keychain.
- * Keys are stored by the user via Keychain Access app under
- * the service name "tokamak-appchain".
+ * Uses the `security` CLI to read/write the macOS Keychain.
+ * Secrets are stored under the service name "tokamak-appchain".
  *
- * This module is READ-ONLY — private keys are never written
- * programmatically. Users register them directly in Keychain Access.
+ * Read: deployer private keys (registered by user in Keychain Access).
+ * Write: AI API keys (synced from Manager to Messenger via setSecret).
  *
  * No native modules required — works via child_process.
  */

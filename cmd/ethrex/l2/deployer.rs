@@ -726,10 +726,12 @@ const EXTERNAL_CHAIN_ID_THRESHOLD: u64 = 100;
 /// Compute receipt polling interval based on chain ID (external L1 ~12s, local ~2s).
 /// Can be overridden via ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS env var.
 async fn receipt_interval_secs(eth_client: &EthClient) -> u64 {
-    if let Ok(val) = std::env::var("ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS") {
-        if let Ok(secs) = val.parse::<u64>() {
-            return secs;
-        }
+    if let Some(secs) = std::env::var("ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&s| s > 0)
+    {
+        return secs;
     }
     let chain_id = eth_client.get_chain_id().await.unwrap_or(LOCAL_DEVNET_CHAIN_ID.into());
     if chain_id > EXTERNAL_CHAIN_ID_THRESHOLD.into() { 12 } else { 2 }
