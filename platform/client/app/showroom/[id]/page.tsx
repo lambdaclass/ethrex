@@ -15,7 +15,6 @@ import {
   publishComment,
   publishReaction,
   connectWallet,
-  getWalletSession,
   disconnectWallet,
   hasWallet,
   shortenAddress,
@@ -94,10 +93,8 @@ export default function AppchainDetailPage() {
   const [walletSession, setWalletSession] = useState<WalletSession | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
 
-  // Restore session on mount
-  useEffect(() => {
-    setWalletSession(getWalletSession());
-  }, []);
+  // No session restore — wallet session is in React state only (security).
+  // User re-signs on each page load.
 
   useEffect(() => {
     async function load() {
@@ -155,8 +152,8 @@ export default function AppchainDetailPage() {
         const counts = await getReactionCounts(allIds);
         setReactionCounts(counts);
       }
-    } catch {
-      // Relay unreachable — silently degrade
+    } catch (err) {
+      console.warn("[social] Failed to fetch from relay:", err);
     }
   }, [appchain?.chain_id]);
 
@@ -219,8 +216,8 @@ export default function AppchainDetailPage() {
       await publishReaction(walletSession, eventId);
       setLikedIds((prev) => new Set(prev).add(eventId));
       setReactionCounts((prev) => ({ ...prev, [eventId]: (prev[eventId] || 0) + 1 }));
-    } catch {
-      // Silently fail
+    } catch (err) {
+      console.warn("[social] Failed to publish reaction:", err);
     }
   };
 

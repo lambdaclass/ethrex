@@ -8,6 +8,9 @@
     "start": "next start",
     "lint": "next lint"
   },
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "dependencies": {
     "@react-oauth/google": "^0.12.1",
     "@upstash/redis": "^1.36.3",

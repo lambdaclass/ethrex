@@ -6,7 +6,7 @@
  *
  * Custom Event Kinds:
  *   30100 — Appchain Review (replaceable, keyed by chainId)
- *   30101 — Appchain Comment (replaceable, keyed by chainId:timestamp)
+ *    1111 — Appchain Comment (regular event, each comment is unique)
  *       7 — Reaction (like/dislike on reviews)
  *
  * All events are namespaced with ["L", "tokamak-appchain"].
@@ -25,7 +25,7 @@ const RELAY_URL =
 const NAMESPACE_TAG: [string, string] = ["L", "tokamak-appchain"];
 
 const SIGN_MESSAGE =
-  "Sign in to Tokamak Appchain Showroom\nThis signature links your wallet to your social identity.";
+  "Sign in to Tokamak Appchain Showroom\n\nDomain: platform.tokamak.network\nPurpose: Nostr key derivation\n\nThis signature links your wallet to your social identity.";
 
 // Singleton pool
 let _pool: SimplePool | null = null;
@@ -62,8 +62,6 @@ export interface WalletSession {
 
 // ── Wallet-based Key Management ──
 
-const SESSION_KEY = "nostr_session";
-
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 }
@@ -74,6 +72,9 @@ function getEthereum(): EthereumProvider | null {
 }
 
 function hexToBytes(hex: string): Uint8Array {
+  if (!hex.match(/^[0-9a-fA-F]*$/) || hex.length % 2 !== 0) {
+    throw new Error("Invalid hex string");
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
     bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
@@ -88,7 +89,11 @@ export async function connectWallet(): Promise<WalletSession> {
 
   const accounts = (await ethereum.request({
     method: "eth_requestAccounts",
-  })) as string[];
+  })) as unknown;
+
+  if (!Array.isArray(accounts) || accounts.length === 0 || typeof accounts[0] !== "string") {
+    throw new Error("Wallet returned no accounts. Please unlock your wallet and try again.");
+  }
   const address = accounts[0];
 
   const signature = (await ethereum.request({
@@ -96,44 +101,25 @@ export async function connectWallet(): Promise<WalletSession> {
     params: [SIGN_MESSAGE, address],
   })) as string;
 
-  // Derive Nostr secret key from first 32 bytes of signature
+  // Validate signature format (0x prefix + 65 bytes = 132 hex chars)
+  if (!signature.startsWith("0x") || signature.length !== 132) {
+    throw new Error("Invalid signature format from wallet");
+  }
+
+  // Derive Nostr secret key via SHA-256 hash of signature (not raw bytes)
   const sigBytes = hexToBytes(signature.slice(2)); // remove 0x prefix
-  const sk = sigBytes.slice(0, 32);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", sigBytes as unknown as ArrayBuffer);
+  const sk = new Uint8Array(hashBuffer);
   const pk = getPublicKey(sk);
 
-  // Cache in sessionStorage (cleared when tab closes)
   const session: WalletSession = { sk, pk, address };
-  sessionStorage.setItem(
-    SESSION_KEY,
-    JSON.stringify({ sk: Array.from(sk), pk, address })
-  );
-
   return session;
 }
 
-/** Get cached wallet session (from sessionStorage). */
-export function getWalletSession(): WalletSession | null {
-  if (typeof window === "undefined") return null;
-  const stored = sessionStorage.getItem(SESSION_KEY);
-  if (!stored) return null;
-  try {
-    const parsed = JSON.parse(stored);
-    return {
-      sk: new Uint8Array(parsed.sk),
-      pk: parsed.pk,
-      address: parsed.address,
-    };
-  } catch {
-    sessionStorage.removeItem(SESSION_KEY);
-    return null;
-  }
-}
-
-/** Disconnect wallet session. */
+/** Disconnect wallet session (no-op — session is in React state only). */
 export function disconnectWallet(): void {
-  if (typeof window !== "undefined") {
-    sessionStorage.removeItem(SESSION_KEY);
-  }
+  // Session is held in React state, not in storage.
+  // This function exists for API symmetry; callers set state to null.
 }
 
 /** Check if browser has an EVM wallet available. */
@@ -193,7 +179,7 @@ export async function getAppchainComments(
 ): Promise<Comment[]> {
   const pool = getPool();
   const events = await withTimeout(pool.querySync([RELAY_URL], {
-    kinds: [30101],
+    kinds: [1111],
     "#chain": [chainId],
     "#L": ["tokamak-appchain"],
   }), QUERY_TIMEOUT);
@@ -219,6 +205,7 @@ export async function getReactionCounts(
   const events = await withTimeout(pool.querySync([RELAY_URL], {
     kinds: [7],
     "#e": eventIds,
+    "#L": ["tokamak-appchain"],
   }), QUERY_TIMEOUT);
 
   const counts: Record<string, number> = {};
@@ -267,9 +254,7 @@ export async function publishComment(
   parentEventId?: string
 ): Promise<NostrEvent> {
   const pool = getPool();
-  const uniqueId = `${chainId}:${Date.now()}`;
   const tags: string[][] = [
-    ["d", uniqueId],
     ["chain", chainId],
     NAMESPACE_TAG,
     ["wallet", session.address],
@@ -280,7 +265,7 @@ export async function publishComment(
 
   const event = finalizeEvent(
     {
-      kind: 30101,
+      kind: 1111,
       created_at: Math.floor(Date.now() / 1000),
       tags,
       content,

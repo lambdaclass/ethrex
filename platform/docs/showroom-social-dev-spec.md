@@ -825,14 +825,16 @@ export async function publishReview(
 
 ```typescript
 const SIGN_MESSAGE =
-  "Sign in to Tokamak Appchain Showroom\nThis signature links your wallet to your social identity.";
+  "Sign in to Tokamak Appchain Showroom\n\nDomain: platform.tokamak.network\nPurpose: Nostr key derivation\n\nThis signature links your wallet to your social identity.";
 
 async function connectWallet(): Promise<{ sk: Uint8Array; pk: string; address: string }> {
   const ethereum = (window as any).ethereum;
   if (!ethereum) throw new Error("No wallet found");
 
   // 1. 지갑 연결 & 주소 획득
-  const [address] = await ethereum.request({ method: "eth_requestAccounts" });
+  const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+  if (!accounts?.length) throw new Error("No accounts returned");
+  const address = accounts[0];
 
   // 2. 고정 메시지 서명 → deterministic 결과
   const signature = await ethereum.request({
@@ -840,9 +842,10 @@ async function connectWallet(): Promise<{ sk: Uint8Array; pk: string; address: s
     params: [SIGN_MESSAGE, address],
   });
 
-  // 3. 서명 해시에서 Nostr secret key 파생 (앞 32 bytes)
+  // 3. SHA-256 해시로 Nostr secret key 파생 (domain-separated, KDF)
   const sigBytes = hexToBytes(signature.slice(2)); // 0x 제거
-  const sk = sigBytes.slice(0, 32);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", sigBytes);
+  const sk = new Uint8Array(hashBuffer);
 
   return { sk, pk: getPublicKey(sk), address };
 }
@@ -853,7 +856,7 @@ async function connectWallet(): Promise<{ sk: Uint8Array; pk: string; address: s
 - 여러 디바이스에서 같은 키 (같은 지갑이면 같은 서명)
 - localStorage 삭제해도 다시 서명하면 복구
 - 별도의 Nostr 키 관리/백업 불필요
-- 리뷰/댓글에 `["wallet", "0x..."]` 태그 포함 → 온체인 검증 가능
+- 리뷰/댓글에 `["wallet", "0x..."]` 태그 포함 → UI-level self-asserted metadata (향후 EVM 서명 증명 추가 가능)
 
 **이벤트 태그 확장:**
 ```typescript
