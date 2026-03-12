@@ -33,8 +33,8 @@ use tracing::{error, info, warn};
 use super::{
     configs::AlignedConfig,
     utils::{
-        INVALID_RISC0_PROOF_SELECTOR, INVALID_SP1_PROOF_SELECTOR, INVALID_TDX_PROOF_SELECTOR,
-        random_duration, send_verify_tx,
+        ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, INVALID_RISC0_PROOF_SELECTOR,
+        INVALID_SP1_PROOF_SELECTOR, INVALID_TDX_PROOF_SELECTOR, random_duration, send_verify_tx,
     },
 };
 
@@ -503,8 +503,9 @@ impl L1ProofSender {
     }
 
     /// If the error data contains an invalid proof custom error selector,
-    /// deletes the offending proof from the store. If the error is unrecognized,
-    /// deletes all proof types for the batch so provers can regenerate them.
+    /// deletes the offending proof from the store. For errors unrelated to
+    /// proof validity (sequencing errors, transient failures, etc.), no
+    /// proofs are deleted — the caller will propagate the error and retry.
     async fn try_delete_invalid_proof(
         &self,
         data: &str,
@@ -515,16 +516,17 @@ impl L1ProofSender {
             self.rollup_store
                 .delete_proof_by_batch_and_type(batch_number, proof_type)
                 .await?;
-        } else {
+        } else if data.starts_with(ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR) {
             warn!(
-                "L1 rejected batch {batch_number} with unrecognized error, \
-                 deleting all proofs so provers can regenerate"
+                "Aligned proof verification failed for batch {batch_number}, deleting all proofs"
             );
             for proof_type in &self.needed_proof_types {
                 self.rollup_store
                     .delete_proof_by_batch_and_type(batch_number, *proof_type)
                     .await?;
             }
+        } else {
+            warn!("L1 rejected batch {batch_number} with non-proof error ({data}), will retry");
         }
         Ok(())
     }
