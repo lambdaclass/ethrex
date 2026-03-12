@@ -62,7 +62,6 @@ impl RocksDBBackend {
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(true);
-        opts.set_use_direct_io_for_flush_and_compaction(true);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
 
         let compressible_tables = [
