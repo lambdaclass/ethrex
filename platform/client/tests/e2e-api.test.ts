@@ -251,6 +251,117 @@
     assert(data.deployment.status === "active", "should be active");
   });
 
+  // ---- Showroom (Appchain Detail & Social) ----
+  console.log("\n=== Showroom ===");
+
+  await test("PUT /api/deployments/[id] — updates showroom fields (description, social_links)", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "A test appchain for E2E testing",
+        network_mode: "testnet",
+        l1_chain_id: 11155111,
+        bridge_address: "0x1234567890abcdef1234567890abcdef12345678",
+        proposer_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        explorer_url: "http://localhost:8080",
+        dashboard_url: "http://localhost:3010",
+        social_links: JSON.stringify({ website: "https://example.com", github: "https://github.com/test" }),
+        screenshots: JSON.stringify(["ipfs://Qm123", "ipfs://Qm456"]),
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.description === "A test appchain for E2E testing", "description mismatch");
+    assert(data.deployment.network_mode === "testnet", "network_mode mismatch");
+    assert(data.deployment.l1_chain_id === 11155111, "l1_chain_id mismatch");
+  });
+
+  await test("GET /api/store/appchains — lists active appchains (includes test deployment)", async () => {
+    const { status, data } = await api("/api/store/appchains");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(Array.isArray(data.appchains), "appchains should be array");
+    const found = data.appchains.find((a: { id: string }) => a.id === deploymentId);
+    assert(found, "should find activated deployment in showroom");
+    assert(found.description === "A test appchain for E2E testing", "description should appear in listing");
+    assert(found.network_mode === "testnet", "network_mode should appear in listing");
+  });
+
+  await test("GET /api/store/appchains/:id — returns detail with parsed JSON", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    const a = data.appchain;
+    assert(a.name === "Updated Deployment", "name mismatch");
+    assert(a.description === "A test appchain for E2E testing", "description mismatch");
+    assert(a.l1_chain_id === 11155111, "l1_chain_id mismatch");
+    assert(a.network_mode === "testnet", "network_mode mismatch");
+    assert(a.bridge_address === "0x1234567890abcdef1234567890abcdef12345678", "bridge_address mismatch");
+    assert(a.explorer_url === "http://localhost:8080", "explorer_url mismatch");
+    assert(a.dashboard_url === "http://localhost:3010", "dashboard_url mismatch");
+    // JSON fields should be parsed
+    assert(Array.isArray(a.screenshots), "screenshots should be parsed as array");
+    assert(a.screenshots.length === 2, `expected 2 screenshots, got ${a.screenshots.length}`);
+    assert(a.screenshots[0] === "ipfs://Qm123", "screenshot[0] mismatch");
+    assert(typeof a.social_links === "object", "social_links should be parsed as object");
+    assert(a.social_links.website === "https://example.com", "social_links.website mismatch");
+    assert(a.social_links.github === "https://github.com/test", "social_links.github mismatch");
+    // Owner info
+    assert(a.owner_name, "owner_name should be present");
+  });
+
+  await test("GET /api/store/appchains/:id — 404 for non-existent id", async () => {
+    const { status } = await api("/api/store/appchains/non-existent-id-12345");
+    assert(status === 404, `expected 404, got ${status}`);
+  });
+
+  await test("GET /api/store/appchains?search — filters by name", async () => {
+    const { status, data } = await api("/api/store/appchains?search=Updated");
+    assert(status === 200, `expected 200, got ${status}`);
+    const found = data.appchains.find((a: { id: string }) => a.id === deploymentId);
+    assert(found, "should find deployment by search");
+  });
+
+  await test("GET /api/store/appchains?search — no match returns empty", async () => {
+    const { status, data } = await api("/api/store/appchains?search=zzz_nonexistent_xyz");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.appchains.length === 0, "should return empty array for no match");
+  });
+
+  await test("POST /api/store/appchains/:id/rpc-proxy — rejects disallowed method", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
+      method: "POST",
+      body: JSON.stringify({ method: "eth_sendTransaction", params: [] }),
+    });
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "Method not allowed", "should reject disallowed method");
+  });
+
+  await test("POST /api/store/appchains/:id/rpc-proxy — rejects missing method", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
+      method: "POST",
+      body: JSON.stringify({ params: [] }),
+    });
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "Method not allowed", "should reject missing method");
+  });
+
+  await test("PUT /api/deployments/[id] — deactivate (unpublish)", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ status: "inactive" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.status === "inactive", "should be inactive");
+  });
+
+  await test("GET /api/store/appchains/:id — 404 after deactivation", async () => {
+    const { status } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 404, `expected 404 after deactivation, got ${status}`);
+  });
+
+  await test("POST /api/deployments/[id]/activate — reactivate for cleanup", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}/activate`, { method: "POST" });
+    assert(status === 200, `expected 200, got ${status}`);
+  });
+
   // ---- AI Proxy ----
   console.log("\n=== AI Proxy ===");
 

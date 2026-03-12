@@ -115,6 +115,59 @@ test("deleteDeployment removes record", () => {
 });
 
 // ============================================================
+// Showroom / Platform Integration DB Tests
+// ============================================================
+console.log("\n=== Showroom DB Tests ===");
+
+let showroomDeployId;
+test("createDeployment for showroom testing", () => {
+  const d = deploymentsDb.createDeployment({
+    programSlug: "evm-l2",
+    name: "Showroom Test Chain",
+    chainId: 99001,
+  });
+  assert.ok(d.id);
+  showroomDeployId = d.id;
+});
+
+test("updateDeployment sets platform_deployment_id", () => {
+  const updated = deploymentsDb.updateDeployment(showroomDeployId, {
+    platform_deployment_id: "plat-abc-123",
+    is_public: 1,
+  });
+  assert.equal(updated.platform_deployment_id, "plat-abc-123");
+  assert.equal(updated.is_public, 1);
+});
+
+test("getDeploymentById returns platform_deployment_id", () => {
+  const d = deploymentsDb.getDeploymentById(showroomDeployId);
+  assert.equal(d.platform_deployment_id, "plat-abc-123");
+});
+
+test("updateDeployment clears platform_deployment_id on unpublish", () => {
+  const updated = deploymentsDb.updateDeployment(showroomDeployId, {
+    platform_deployment_id: null,
+    is_public: 0,
+  });
+  assert.equal(updated.platform_deployment_id, null);
+  assert.equal(updated.is_public, 0);
+});
+
+test("platform_deployment_id column exists in schema", () => {
+  const cols = db
+    .prepare("PRAGMA table_info(deployments)")
+    .all()
+    .map((r) => r.name);
+  assert.ok(cols.includes("platform_deployment_id"), "missing platform_deployment_id column");
+});
+
+test("cleanup showroom test deployment", () => {
+  deploymentsDb.deleteDeployment(showroomDeployId);
+  const d = deploymentsDb.getDeploymentById(showroomDeployId);
+  assert.equal(d, undefined);
+});
+
+// ============================================================
 // Hosts DB Tests
 // ============================================================
 console.log("\n=== Hosts DB Tests ===");
