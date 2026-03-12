@@ -805,25 +805,66 @@ export async function publishReview(
 }
 ```
 
-### 3.3 인증: Platform 계정 → Nostr 키
+### 3.3 인증: EVM 지갑 서명 → Nostr 키 파생
 
-**방식:** Platform 로그인 시 Nostr 키페어를 생성하고 브라우저 localStorage에 저장.
+**원칙:** Nostr 키를 EVM 지갑 주소에서 deterministic하게 파생한다.
+같은 지갑 = 항상 같은 Nostr 키. 별도의 키 관리가 필요 없다.
+
+**플로우:**
+```
+1. 사용자가 "Sign in with Wallet" 클릭
+2. MetaMask 등 EVM 지갑에서 고정 메시지 서명 요청
+   → "Sign in to Tokamak Appchain Showroom\nThis signature links your wallet to your social identity."
+3. 서명 결과(65 bytes)에서 앞 32 bytes를 Nostr secret key로 사용
+4. Nostr pubkey = getPublicKey(sk)
+5. sk를 sessionStorage에 캐시 (탭 닫으면 삭제, 다시 서명하면 복구)
+6. 지갑 주소 + Nostr pubkey 매핑은 리뷰/댓글에 태그로 포함
+```
+
+**구현:**
 
 ```typescript
-// 최초 로그인 시
-function getOrCreateNostrKeys(): { sk: Uint8Array; pk: string } {
-  const stored = localStorage.getItem('nostr_sk');
-  if (stored) {
-    const sk = new Uint8Array(JSON.parse(stored));
-    return { sk, pk: getPublicKey(sk) };
-  }
-  const sk = generateSecretKey();
-  localStorage.setItem('nostr_sk', JSON.stringify(Array.from(sk)));
-  return { sk, pk: getPublicKey(sk) };
+const SIGN_MESSAGE =
+  "Sign in to Tokamak Appchain Showroom\nThis signature links your wallet to your social identity.";
+
+async function connectWallet(): Promise<{ sk: Uint8Array; pk: string; address: string }> {
+  const ethereum = (window as any).ethereum;
+  if (!ethereum) throw new Error("No wallet found");
+
+  // 1. 지갑 연결 & 주소 획득
+  const [address] = await ethereum.request({ method: "eth_requestAccounts" });
+
+  // 2. 고정 메시지 서명 → deterministic 결과
+  const signature = await ethereum.request({
+    method: "personal_sign",
+    params: [SIGN_MESSAGE, address],
+  });
+
+  // 3. 서명 해시에서 Nostr secret key 파생 (앞 32 bytes)
+  const sigBytes = hexToBytes(signature.slice(2)); // 0x 제거
+  const sk = sigBytes.slice(0, 32);
+
+  return { sk, pk: getPublicKey(sk), address };
 }
 ```
 
-**Platform 계정 연결:** 사용자 프로필에 Nostr pubkey를 저장하여 "이 리뷰는 Alice의 것"을 확인 가능.
+**장점:**
+- 지갑 주소로 리뷰 작성자 검증 가능
+- 여러 디바이스에서 같은 키 (같은 지갑이면 같은 서명)
+- localStorage 삭제해도 다시 서명하면 복구
+- 별도의 Nostr 키 관리/백업 불필요
+- 리뷰/댓글에 `["wallet", "0x..."]` 태그 포함 → 온체인 검증 가능
+
+**이벤트 태그 확장:**
+```typescript
+// 리뷰 이벤트에 지갑 주소 태그 추가
+tags: [
+  ["d", chainId],
+  ["rating", rating.toString()],
+  ["L", "tokamak-appchain"],
+  ["wallet", walletAddress],  // EVM 지갑 주소
+]
+```
 
 ### 3.4 스팸 방지
 

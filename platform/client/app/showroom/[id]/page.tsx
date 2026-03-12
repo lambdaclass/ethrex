@@ -1,21 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { storeApi } from "@/lib/api";
 import {
   type Review,
   type Comment,
+  type WalletSession,
   getAppchainReviews,
   getAppchainComments,
   getReactionCounts,
   publishReview,
   publishComment,
   publishReaction,
-  getOrCreateNostrKeys,
-  hasNostrKeys,
-  shortenPubkey,
+  connectWallet,
+  getWalletSession,
+  disconnectWallet,
+  hasWallet,
+  shortenAddress,
 } from "@/lib/nostr";
 
 interface AppchainDetail {
@@ -62,9 +65,6 @@ function ipfsToHttp(uri: string): string {
   return uri;
 }
 
-function shortenAddress(addr: string): string {
-  return `${addr.slice(0, 8)}...${addr.slice(-6)}`;
-}
 
 export default function AppchainDetailPage() {
   const params = useParams();
@@ -90,10 +90,13 @@ export default function AppchainDetailPage() {
   const [socialError, setSocialError] = useState<string | null>(null);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
 
-  // Cache Nostr pubkey to avoid repeated localStorage reads during render
-  const nostrPubkey = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return hasNostrKeys() ? getOrCreateNostrKeys().pk : null;
+  // Wallet session
+  const [walletSession, setWalletSession] = useState<WalletSession | null>(null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+
+  // Restore session on mount
+  useEffect(() => {
+    setWalletSession(getWalletSession());
   }, []);
 
   useEffect(() => {
@@ -112,17 +115,21 @@ export default function AppchainDetailPage() {
 
   const fetchLiveStatus = useCallback(async () => {
     if (!id) return;
-    const [block, batch, gas] = await Promise.all([
-      storeApi.appchainRpc(id, "eth_blockNumber"),
-      storeApi.appchainRpc(id, "ethrex_batchNumber"),
-      storeApi.appchainRpc(id, "eth_gasPrice"),
-    ]);
-    setLiveStatus({
-      blockNumber: block ? parseInt(block, 16) : null,
-      batchNumber: batch ? parseInt(batch, 16) : null,
-      gasPrice: gas ? (parseInt(gas, 16) / 1e9).toFixed(4) : null,
-      online: block !== null,
-    });
+    try {
+      const [block, batch, gas] = await Promise.all([
+        storeApi.appchainRpc(id, "eth_blockNumber"),
+        storeApi.appchainRpc(id, "ethrex_batchNumber"),
+        storeApi.appchainRpc(id, "eth_gasPrice"),
+      ]);
+      setLiveStatus({
+        blockNumber: block ? parseInt(block, 16) : null,
+        batchNumber: batch ? parseInt(batch, 16) : null,
+        gasPrice: gas ? (parseInt(gas, 16) / 1e9).toFixed(4) : null,
+        online: block !== null,
+      });
+    } catch {
+      setLiveStatus({ blockNumber: null, batchNumber: null, gasPrice: null, online: false });
+    }
   }, [id]);
 
   useEffect(() => {
@@ -143,7 +150,6 @@ export default function AppchainDetailPage() {
       ]);
       setReviews(r);
       setComments(c);
-      // Batch-fetch reaction counts for all review IDs
       const allIds = [...r.map((x) => x.id), ...c.map((x) => x.id)];
       if (allIds.length > 0) {
         const counts = await getReactionCounts(allIds);
@@ -158,13 +164,30 @@ export default function AppchainDetailPage() {
     fetchSocial();
   }, [fetchSocial]);
 
+  const handleConnectWallet = async () => {
+    setWalletConnecting(true);
+    setSocialError(null);
+    try {
+      const session = await connectWallet();
+      setWalletSession(session);
+    } catch (err) {
+      setSocialError(err instanceof Error ? err.message : "Failed to connect wallet");
+    } finally {
+      setWalletConnecting(false);
+    }
+  };
+
+  const handleDisconnect = () => {
+    disconnectWallet();
+    setWalletSession(null);
+  };
+
   const handlePublishReview = async () => {
-    if (!reviewText.trim() || !appchain?.chain_id) return;
+    if (!reviewText.trim() || !appchain?.chain_id || !walletSession) return;
     setPublishing(true);
     setSocialError(null);
     try {
-      const { sk } = getOrCreateNostrKeys();
-      await publishReview(sk, appchain.chain_id.toString(), reviewRating, reviewText.trim());
+      await publishReview(walletSession, appchain.chain_id.toString(), reviewRating, reviewText.trim());
       setReviewText("");
       setReviewRating(5);
       await fetchSocial();
@@ -176,12 +199,11 @@ export default function AppchainDetailPage() {
   };
 
   const handlePublishComment = async () => {
-    if (!commentText.trim() || !appchain?.chain_id) return;
+    if (!commentText.trim() || !appchain?.chain_id || !walletSession) return;
     setPublishing(true);
     setSocialError(null);
     try {
-      const { sk } = getOrCreateNostrKeys();
-      await publishComment(sk, appchain.chain_id.toString(), commentText.trim());
+      await publishComment(walletSession, appchain.chain_id.toString(), commentText.trim());
       setCommentText("");
       await fetchSocial();
     } catch (err) {
@@ -192,10 +214,9 @@ export default function AppchainDetailPage() {
   };
 
   const handleLike = async (eventId: string) => {
-    if (likedIds.has(eventId)) return;
+    if (likedIds.has(eventId) || !walletSession) return;
     try {
-      const { sk } = getOrCreateNostrKeys();
-      await publishReaction(sk, eventId);
+      await publishReaction(walletSession, eventId);
       setLikedIds((prev) => new Set(prev).add(eventId));
       setReactionCounts((prev) => ({ ...prev, [eventId]: (prev[eventId] || 0) + 1 }));
     } catch {
@@ -233,6 +254,22 @@ export default function AppchainDetailPage() {
   ].filter((c) => c.addr);
 
   const socialEntries = Object.entries(appchain.social_links || {}).filter(([, v]) => v);
+
+  /** Render wallet address or pubkey for a social entry. */
+  const renderAuthor = (walletAddress: string | null, pubkey: string) => {
+    if (walletAddress) {
+      return (
+        <span className="text-xs font-mono text-gray-500" title={walletAddress}>
+          {shortenAddress(walletAddress)}
+        </span>
+      );
+    }
+    return (
+      <span className="text-xs font-mono text-gray-400" title={pubkey}>
+        {shortenAddress(pubkey)}
+      </span>
+    );
+  };
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -275,7 +312,9 @@ export default function AppchainDetailPage() {
           <button
             onClick={async () => {
               try {
-                await (window as unknown as { ethereum: { request: (args: unknown) => Promise<unknown> } }).ethereum.request({
+                const eth = (window as unknown as { ethereum?: { request: (args: unknown) => Promise<unknown> } }).ethereum;
+                if (!eth) return;
+                await eth.request({
                   method: "wallet_addEthereumChain",
                   params: [{
                     chainId: `0x${appchain.chain_id!.toString(16)}`,
@@ -442,7 +481,34 @@ export default function AppchainDetailPage() {
 
       {/* Community (Nostr Social) */}
       <div className="bg-white rounded-xl border p-6 mb-4">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Community</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Community</h2>
+          {/* Wallet Connection */}
+          {walletSession ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                {shortenAddress(walletSession.address)}
+              </span>
+              <button
+                onClick={handleDisconnect}
+                className="text-xs text-gray-400 hover:text-gray-600"
+              >
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleConnectWallet}
+              disabled={walletConnecting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-800 disabled:opacity-50 transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>
+              </svg>
+              {walletConnecting ? "Connecting..." : "Sign in with Wallet"}
+            </button>
+          )}
+        </div>
 
         {/* Tabs */}
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1 mb-4">
@@ -471,43 +537,53 @@ export default function AppchainDetailPage() {
         {/* Reviews Tab */}
         {socialTab === "reviews" && (
           <div>
-            {/* Write Review */}
-            <div className="border rounded-lg p-4 mb-4 bg-gray-50">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm text-gray-600">Rating:</span>
-                <div className="flex gap-0.5">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button key={star} onClick={() => setReviewRating(star)} className="p-0.5">
-                      <svg width="20" height="20" viewBox="0 0 24 24"
-                        fill={star <= reviewRating ? "#f59e0b" : "none"}
-                        stroke={star <= reviewRating ? "#f59e0b" : "#d1d5db"}
-                        strokeWidth="2">
-                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                      </svg>
-                    </button>
-                  ))}
+            {/* Write Review — requires wallet */}
+            {walletSession ? (
+              <div className="border rounded-lg p-4 mb-4 bg-gray-50">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm text-gray-600">Rating:</span>
+                  <div className="flex gap-0.5">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button key={star} onClick={() => setReviewRating(star)} className="p-0.5">
+                        <svg width="20" height="20" viewBox="0 0 24 24"
+                          fill={star <= reviewRating ? "#f59e0b" : "none"}
+                          stroke={star <= reviewRating ? "#f59e0b" : "#d1d5db"}
+                          strokeWidth="2">
+                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                        </svg>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <textarea
+                  value={reviewText}
+                  onChange={(e) => setReviewText(e.target.value)}
+                  placeholder="Share your experience with this appchain..."
+                  className="w-full border rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={500}
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-xs text-gray-400">
+                    Posting as {shortenAddress(walletSession.address)}
+                  </span>
+                  <button
+                    onClick={handlePublishReview}
+                    disabled={publishing || !reviewText.trim()}
+                    className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {publishing ? "Publishing..." : "Post Review"}
+                  </button>
                 </div>
               </div>
-              <textarea
-                value={reviewText}
-                onChange={(e) => setReviewText(e.target.value)}
-                placeholder="Share your experience with this appchain..."
-                className="w-full border rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                maxLength={500}
-              />
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-gray-400">
-                  {nostrPubkey ? `Posting as ${shortenPubkey(nostrPubkey)}` : "A Nostr keypair will be generated"}
-                </span>
-                <button
-                  onClick={handlePublishReview}
-                  disabled={publishing || !reviewText.trim()}
-                  className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {publishing ? "Publishing..." : "Post Review"}
-                </button>
+            ) : (
+              <div className="border border-dashed rounded-lg p-6 mb-4 text-center text-gray-400">
+                <p className="text-sm">
+                  {hasWallet()
+                    ? "Connect your wallet to write a review"
+                    : "Install MetaMask to write a review"}
+                </p>
               </div>
-            </div>
+            )}
 
             {/* Review List */}
             {reviews.length === 0 ? (
@@ -518,7 +594,7 @@ export default function AppchainDetailPage() {
                   <div key={review.id} className="border rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-gray-500">{shortenPubkey(review.pubkey)}</span>
+                        {renderAuthor(review.walletAddress, review.pubkey)}
                         <div className="flex gap-0.5">
                           {[1, 2, 3, 4, 5].map((star) => (
                             <svg key={star} width="14" height="14" viewBox="0 0 24 24"
@@ -538,7 +614,8 @@ export default function AppchainDetailPage() {
                     <div className="mt-2 flex items-center gap-1">
                       <button
                         onClick={() => handleLike(review.id)}
-                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
+                        disabled={!walletSession}
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 disabled:hover:text-gray-400 disabled:cursor-not-allowed transition-colors"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -556,28 +633,38 @@ export default function AppchainDetailPage() {
         {/* Comments Tab */}
         {socialTab === "comments" && (
           <div>
-            {/* Write Comment */}
-            <div className="border rounded-lg p-4 mb-4 bg-gray-50">
-              <textarea
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                placeholder="Leave a comment..."
-                className="w-full border rounded-lg px-3 py-2 text-sm resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                maxLength={500}
-              />
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-gray-400">
-                  {nostrPubkey ? `Posting as ${shortenPubkey(nostrPubkey)}` : "A Nostr keypair will be generated"}
-                </span>
-                <button
-                  onClick={handlePublishComment}
-                  disabled={publishing || !commentText.trim()}
-                  className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {publishing ? "Publishing..." : "Post Comment"}
-                </button>
+            {/* Write Comment — requires wallet */}
+            {walletSession ? (
+              <div className="border rounded-lg p-4 mb-4 bg-gray-50">
+                <textarea
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  placeholder="Leave a comment..."
+                  className="w-full border rounded-lg px-3 py-2 text-sm resize-none h-16 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  maxLength={500}
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-xs text-gray-400">
+                    Posting as {shortenAddress(walletSession.address)}
+                  </span>
+                  <button
+                    onClick={handlePublishComment}
+                    disabled={publishing || !commentText.trim()}
+                    className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {publishing ? "Publishing..." : "Post Comment"}
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="border border-dashed rounded-lg p-6 mb-4 text-center text-gray-400">
+                <p className="text-sm">
+                  {hasWallet()
+                    ? "Connect your wallet to leave a comment"
+                    : "Install MetaMask to leave a comment"}
+                </p>
+              </div>
+            )}
 
             {/* Comment List */}
             {comments.length === 0 ? (
@@ -587,7 +674,7 @@ export default function AppchainDetailPage() {
                 {comments.map((comment) => (
                   <div key={comment.id} className="border rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-mono text-gray-500">{shortenPubkey(comment.pubkey)}</span>
+                      {renderAuthor(comment.walletAddress, comment.pubkey)}
                       <span className="text-xs text-gray-400">
                         {new Date(comment.createdAt * 1000).toLocaleDateString()}
                       </span>
@@ -596,7 +683,8 @@ export default function AppchainDetailPage() {
                     <div className="mt-2 flex items-center gap-1">
                       <button
                         onClick={() => handleLike(comment.id)}
-                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
+                        disabled={!walletSession}
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 disabled:hover:text-gray-400 disabled:cursor-not-allowed transition-colors"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
