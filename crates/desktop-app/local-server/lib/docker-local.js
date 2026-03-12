@@ -19,12 +19,21 @@ const DOCKER_BIN = (() => {
   return "docker";
 })();
 
-function composeCmd(projectName, composeFile, args) {
-  return [DOCKER_BIN, "compose", "-p", projectName, "-f", composeFile, ...args];
+function composeCmd(projectName, composeFile, args, extra = {}) {
+  const cmd = [DOCKER_BIN, "compose", "-p", projectName, "-f", composeFile];
+  if (extra.envFile) cmd.push("--env-file", extra.envFile);
+  cmd.push(...args);
+  return cmd;
 }
 
 function runCompose(projectName, composeFile, args, opts = {}) {
-  const [cmd, ...cmdArgs] = composeCmd(projectName, composeFile, args);
+  // Auto-detect .keys.env alongside the compose file
+  let envFile = opts.envFile;
+  if (!envFile) {
+    const keysPath = path.join(path.dirname(composeFile), ".keys.env");
+    if (fs.existsSync(keysPath)) envFile = keysPath;
+  }
+  const [cmd, ...cmdArgs] = composeCmd(projectName, composeFile, args, { envFile });
   const proc = spawn(cmd, cmdArgs, {
     cwd: ETHREX_ROOT,
     env: { ...process.env, ...(opts.env || {}) },
