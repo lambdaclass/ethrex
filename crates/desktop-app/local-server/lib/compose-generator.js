@@ -509,12 +509,12 @@ ${proverExtraVolumes}
  * @param {string} opts.projectName
  * @param {string} opts.dataDir - Remote data directory
  * @param {string} opts.l1RpcUrl - External L1 RPC URL
- * @param {string} opts.deployerPrivateKey - Deployer private key
- * @param {string} [opts.committerPk] - Committer private key (defaults to deployer)
- * @param {string} [opts.proofCoordinatorPk] - Proof coordinator private key (defaults to deployer)
- * @param {string} [opts.bridgeOwnerPk] - Bridge owner private key (defaults to deployer)
+ * @param {string} opts.deployerAddress - Deployer address (derived from key)
+ * @param {string} opts.committerAddress - Committer address
+ * @param {string} opts.proofCoordinatorAddress - Proof coordinator address
+ * @param {string} opts.bridgeOwnerAddress - Bridge owner address
  * @param {number} [opts.l2ChainId]
- * @returns {string} docker-compose.yaml content
+ * @returns {string} docker-compose.yaml content (keys use ${VAR} substitution via --env-file)
  */
 function generateRemoteTestnetComposeFile(opts) {
   const {
