@@ -51,7 +51,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       if (appchain?.screenshots && appchain.screenshots.length > 0) {
         setScreenshots(appchain.screenshots)
       }
-    }).catch(() => {})
+    }).catch((err) => console.warn('[publish] Failed to load appchain data:', err))
   }, [l2.platformDeploymentId, l2.isPublic])
 
   // Auto-save description with debounce (guard against concurrent saves)
@@ -65,8 +65,8 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       await platformAPI.updateDeployment(platformId, { description: desc })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch {
-      // Silently fail — user can retry
+    } catch (err) {
+      console.warn('[publish] Failed to save description:', err)
     } finally {
       setSaving(false)
       savingRef.current = false
@@ -91,7 +91,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       await platformAPI.updateDeployment(platformId, { social_links: JSON.stringify(filtered) })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch { /* ignore */ }
+    } catch (err) { console.warn('[publish] Failed to save social links:', err) }
     finally { setSaving(false) }
   }, [l2.platformDeploymentId, isPublic])
 
@@ -137,7 +137,9 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     if (platformId) {
       try {
         await platformAPI.updateDeployment(platformId, { screenshots: JSON.stringify(updated) })
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn('Failed to sync screenshot removal:', err)
+      }
     }
   }
 
@@ -146,11 +148,12 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     setMetadataUploading(true)
     setUploadError('')
     try {
+      const rpcUrl = l2.publicRpcUrl || `http://localhost:${l2.rpcPort}`
       const metadata = buildMetadata({
         name: l2.name,
         description: publishDesc || undefined,
         chainId: l2.chainId,
-        rpcUrl: `http://localhost:${l2.rpcPort}`,
+        rpcUrl,
         networkMode: l2.networkMode || 'local',
         l1ChainId: l2.l1ChainId || 1,
         proposerAddress: l2.proposerAddress || undefined,
@@ -236,7 +239,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                   setIsPublic(false)
                   // Deactivate on Platform
                   if (l2.platformDeploymentId) {
-                    try { await platformAPI.updateDeployment(l2.platformDeploymentId, { status: 'inactive' }) } catch { /* ignore */ }
+                    try { await platformAPI.updateDeployment(l2.platformDeploymentId, { status: 'inactive' }) } catch (err) { console.warn('[publish] Failed to deactivate:', err) }
                   }
                   // Clear local DB
                   try {
@@ -245,7 +248,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                       platform_deployment_id: null,
                     })
                   } catch {
-                    try { await invoke('update_appchain_public', { id: l2.id, isPublic: false }) } catch { /* ignore */ }
+                    try { await invoke('update_appchain_public', { id: l2.id, isPublic: false }) } catch (err) { console.warn('[publish] Fallback unpublish failed:', err) }
                   }
                   onRefresh?.()
                 }
@@ -370,12 +373,15 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                   <button
                     onClick={async () => {
                       try {
-                        await invoke('set_metadata_uri', {
-                          l1RpcUrl: l2.l1RpcUrl || '',
+                        const result = await invoke<string>('set_metadata_uri', {
+                          l1RpcUrl: l2.testnetL1RpcUrl || `http://localhost:${l2.l1Port || 8545}`,
                           proposerAddress: l2.proposerAddress || '',
                           metadataUri: metadataCID,
                           keychainKey: `deployer_pk_${l2.id}`,
                         })
+                        const txData = JSON.parse(result)
+                        // Copy calldata for wallet signing
+                        await navigator.clipboard.writeText(JSON.stringify(txData, null, 2))
                         setSaved(true)
                         setTimeout(() => setSaved(false), 3000)
                       } catch (err) {
@@ -384,7 +390,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                     }}
                     className="mt-1.5 w-full py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-medium hover:bg-purple-700"
                   >
-                    {ko ? 'L1 온체인 등록 (setMetadataURI)' : 'Register On-chain (setMetadataURI)'}
+                    {ko ? 'L1 트랜잭션 데이터 준비' : 'Prepare L1 Transaction Data'}
                   </button>
                 </div>
               )}

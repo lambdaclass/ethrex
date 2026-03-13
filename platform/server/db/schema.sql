@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS deployments (
   phase TEXT DEFAULT 'configured',
   bridge_address TEXT,
   proposer_address TEXT,
+  description TEXT,
+  screenshots TEXT,
+  explorer_url TEXT,
+  dashboard_url TEXT,
+  social_links TEXT,
+  l1_chain_id INTEGER,
+  network_mode TEXT,
   created_at INTEGER NOT NULL
 );
 

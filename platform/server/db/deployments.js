@@ -59,7 +59,11 @@ function deleteDeployment(id) {
 function getActiveDeploymentById(id) {
   const db = getDb();
   return db.prepare(
-    `SELECT d.*, p.name as program_name, p.program_id as program_slug, p.category,
+    `SELECT d.id, d.name, d.chain_id, d.rpc_url, d.status, d.phase,
+            d.bridge_address, d.proposer_address, d.created_at,
+            d.description, d.screenshots, d.explorer_url, d.dashboard_url,
+            d.social_links, d.l1_chain_id, d.network_mode,
+            p.name as program_name, p.program_id as program_slug, p.category,
             u.name as owner_name, u.picture as owner_picture
      FROM deployments d
      JOIN programs p ON d.program_id = p.id

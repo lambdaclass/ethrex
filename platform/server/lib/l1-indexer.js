@@ -9,13 +9,16 @@
  * not the source of truth (Phase 2 architecture).
  */
 
-const { updateDeployment } = require("../db/deployments");
+const { updateDeployment, getActiveDeployments } = require("../db/deployments");
 
 const CHAINS = [
   { name: "sepolia", chainId: 11155111, rpcUrl: process.env.SEPOLIA_RPC_URL },
   { name: "holesky", chainId: 17000, rpcUrl: process.env.HOLESKY_RPC_URL },
   // mainnet added later
 ];
+
+const IPFS_GATEWAY =
+  process.env.IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs";
 
 /**
  * Compute the MetadataURIUpdated(string) event topic via keccak256.
@@ -33,22 +36,21 @@ function computeEventTopic() {
   }
 }
 
-const PINATA_GATEWAY = "https://gateway.pinata.cloud/ipfs";
-
 /**
  * Convert ipfs:// URI to HTTP URL
  */
 function ipfsToHttp(uri) {
   if (uri.startsWith("ipfs://")) {
-    return `${PINATA_GATEWAY}/${uri.replace("ipfs://", "")}`;
+    return `${IPFS_GATEWAY}/${uri.replace("ipfs://", "")}`;
   }
   return uri;
 }
 
 /**
  * Fetch metadata from IPFS and cache in DB.
+ * Finds matching deployment by proposer_address + l1_chain_id directly from DB.
  */
-async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId, db) {
+async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId) {
   try {
     const httpUrl = ipfsToHttp(uri);
     const res = await fetch(httpUrl, { signal: AbortSignal.timeout(30000) });
@@ -59,7 +61,6 @@ async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId, db) {
     const metadata = await res.json();
 
     // Find deployment by proposer_address and l1_chain_id
-    const { getActiveDeployments } = require("../db/deployments");
     const deployments = getActiveDeployments({ limit: 1000 });
     const match = deployments.find(
       (d) =>
@@ -157,7 +158,6 @@ async function pollChain(chain, knownProposers, lastBlock) {
           for (const log of logsData.result) {
             // Decode the MetadataURIUpdated event data (ABI-encoded string)
             const data = log.data;
-            // String is ABI encoded: offset (32 bytes) + length (32 bytes) + data
             try {
               const { AbiCoder } = require("ethers");
               const coder = new AbiCoder();
@@ -224,32 +224,62 @@ function startIndexer(intervalMs = 30000) {
     `[indexer] Starting L1 indexer for chains: ${activeChains.map((c) => c.name).join(", ")}`
   );
 
-  // Track last polled block per chain
+  // Track last polled block per chain — start from "latest" (will be fetched on first tick)
   const lastBlocks = {};
   for (const chain of activeChains) {
-    lastBlocks[chain.name] = 0;
+    lastBlocks[chain.name] = -1; // -1 means "fetch current block on first poll, skip historical"
   }
 
+  // Guard against overlapping polls
+  let polling = false;
+
   const interval = setInterval(async () => {
-    // Get known proposer addresses from DB
-    const { getActiveDeployments } = require("../db/deployments");
-    const deployments = getActiveDeployments({ limit: 1000 });
+    if (polling) return;
+    polling = true;
 
-    for (const chain of activeChains) {
-      const proposers = deployments
-        .filter(
-          (d) => d.proposer_address && d.l1_chain_id === chain.chainId
-        )
-        .map((d) => d.proposer_address);
+    try {
+      const deployments = getActiveDeployments({ limit: 1000 });
 
-      if (proposers.length === 0) continue;
+      for (const chain of activeChains) {
+        // On first poll, initialize lastBlock to current head (skip genesis scan)
+        if (lastBlocks[chain.name] === -1) {
+          try {
+            const res = await fetch(chain.rpcUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0", id: 1,
+                method: "eth_blockNumber", params: [],
+              }),
+              signal: AbortSignal.timeout(5000),
+            });
+            const data = await res.json();
+            lastBlocks[chain.name] = parseInt(data.result, 16);
+            console.log(`[indexer] ${chain.name}: starting from block ${lastBlocks[chain.name]}`);
+            continue; // skip this tick, start polling from next interval
+          } catch (err) {
+            console.error(`[indexer] Failed to get initial block for ${chain.name}:`, err.message);
+            continue;
+          }
+        }
 
-      const uniqueProposers = [...new Set(proposers)];
-      lastBlocks[chain.name] = await pollChain(
-        chain,
-        uniqueProposers,
-        lastBlocks[chain.name]
-      );
+        const proposers = deployments
+          .filter(
+            (d) => d.proposer_address && d.l1_chain_id === chain.chainId
+          )
+          .map((d) => d.proposer_address);
+
+        if (proposers.length === 0) continue;
+
+        const uniqueProposers = [...new Set(proposers)];
+        lastBlocks[chain.name] = await pollChain(
+          chain,
+          uniqueProposers,
+          lastBlocks[chain.name]
+        );
+      }
+    } finally {
+      polling = false;
     }
   }, intervalMs);
 
