@@ -250,6 +250,11 @@ pub async fn snap_sync(
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
 ) -> Result<(), SyncError> {
+    // Enable sync mode: relax compaction triggers for higher write throughput
+    if let Err(e) = store.set_sync_mode() {
+        warn!("Failed to enable RocksDB sync mode: {e}");
+    }
+
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
@@ -300,8 +305,6 @@ pub async fn snap_sync(
         info!("Starting to download account ranges from peers");
         request_account_range(
             peers,
-            H256::zero(),
-            H256::repeat_byte(0xff),
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,
             block_sync_state,
@@ -565,6 +568,11 @@ pub async fn snap_sync(
     *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
     debug_assert!(validate_bytecodes(store.clone(), pivot_header.state_root));
+
+    // Restore normal mode: reset compaction triggers and compact trie CFs
+    if let Err(e) = store.set_normal_mode() {
+        warn!("Failed to restore RocksDB normal mode: {e}");
+    }
 
     store_block_bodies(vec![pivot_header.clone()], peers.clone(), store.clone()).await?;
 
