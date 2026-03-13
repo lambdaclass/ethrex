@@ -73,7 +73,7 @@ pub mod store;
 pub mod trie;
 pub mod utils;
 
-pub use layering::apply_prefix;
+pub use layering::{AccountHashSet, apply_prefix};
 pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
 
 /// Store Schema Version, must be updated on any breaking change.

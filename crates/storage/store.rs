@@ -38,7 +38,7 @@ use ethrex_rlp::{
     encode::RLPEncode,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
-use ethrex_trie::{Node, NodeRLP, TrieError};
+use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
@@ -1796,6 +1796,8 @@ impl Store {
 
         let mut code_updates = Vec::new();
 
+        let mut destroyed_accounts = AccountHashSet::default();
+
         let state_root = state_trie.hash_no_commit();
 
         for update in account_updates.iter() {
@@ -1804,6 +1806,8 @@ impl Store {
             if update.removed {
                 // Remove account from trie
                 state_trie.remove(&hashed_address)?;
+
+                destroyed_accounts.insert(H256::from_slice(&hashed_address));
 
                 continue;
             }
@@ -1874,7 +1878,7 @@ impl Store {
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
-            destroyed_accounts: AccountHashSet::default(),
+            destroyed_accounts,
         };
 
         Ok((storage_tries, account_updates_list))
@@ -2385,10 +2389,6 @@ impl Store {
                 value: U256::zero(),
             }));
         }
-        let storage_proof = storage_proof
-            .into_iter()
-            .collect::<Result<Vec<_>, TrieError>>()?;
-
         Ok(Some(AccountProof {
             proof,
             account: account_opt.unwrap_or_default(),

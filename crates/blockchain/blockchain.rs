@@ -80,7 +80,8 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
+    AccountHashSet, AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address,
+    hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
@@ -582,6 +583,7 @@ impl Blockchain {
         let mut account_state: FxHashMap<H256, PreMerkelizedAccountState> = Default::default();
         let mut code_updates: Vec<(H256, Code)> = vec![];
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+        let mut destroyed_accounts = AccountHashSet::default();
 
         // Accumulator for witness generation (only used if precompute_witnesses is true)
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
@@ -624,6 +626,7 @@ impl Blockchain {
                         tx.send(MerklizationRequest::Delete(hashed_address))
                             .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                     }
+                    destroyed_accounts.insert(hashed_address);
                     let state = account_state.entry(hashed_address).or_default();
                     *state = PreMerkelizedAccountState {
                         info: Some(Default::default()),
@@ -740,6 +743,7 @@ impl Blockchain {
                 state_updates,
                 storage_updates,
                 code_updates,
+                destroyed_accounts,
             },
             accumulated_updates,
         ))
@@ -795,8 +799,12 @@ impl Blockchain {
         // Extract code updates and build work items with pre-hashed addresses
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
         let mut accounts: Vec<(H256, AccountUpdate)> = Vec::with_capacity(all_updates.len());
+        let mut destroyed_accounts = AccountHashSet::default();
         for (addr, update) in all_updates {
             let hashed = keccak(addr);
+            if update.removed {
+                destroyed_accounts.insert(hashed);
+            }
             if let Some(info) = &update.info
                 && let Some(code) = &update.code
             {
@@ -1046,6 +1054,7 @@ impl Blockchain {
                 state_updates,
                 storage_updates,
                 code_updates,
+                destroyed_accounts,
             },
             accumulated_updates,
         ))
@@ -1880,6 +1889,7 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            destroyed_accounts: account_updates_list.destroyed_accounts,
             batch_mode: false,
         };
 
@@ -2384,6 +2394,7 @@ impl Blockchain {
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
         let code_updates = account_updates_list.code_updates;
+        let destroyed_accounts = account_updates_list.destroyed_accounts;
 
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
@@ -2394,6 +2405,7 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
+            destroyed_accounts,
             batch_mode: true,
         };
 

@@ -765,8 +765,7 @@ impl BlockAccessListRecorder {
                 // (last entry with current_idx, or no entry means no change in this tx)
                 let final_value = changes
                     .iter()
-                    .filter(|(idx, _)| *idx == current_idx)
-                    .next_back()
+                    .rfind(|(idx, _)| *idx == current_idx)
                     .map(|(_, val)| *val);
 
                 if let Some(final_val) = final_value

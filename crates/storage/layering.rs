@@ -9,7 +9,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
-pub(crate) type AccountHashSet = FxHashSet<H256>;
+pub type AccountHashSet = FxHashSet<H256>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TrieLayer {
@@ -118,11 +118,9 @@ impl TrieLayerCache {
 
         while let Some(layer) = self.layers.get(&current_state_root) {
             // Check for account destruction first
-            if let Some(hash) = account_hash {
-                if layer.destroyed_accounts.contains(&hash) {
-                    // Signaling that the account (and its storage) was deleted.
-                    return Some(vec![]);
-                }
+            if account_hash.is_some_and(|hash| layer.destroyed_accounts.contains(&hash)) {
+                // Signaling that the account (and its storage) was deleted.
+                return Some(vec![]);
             }
 
             if let Some(value) = layer.nodes.get(key) {
@@ -274,6 +272,7 @@ impl TrieLayerCache {
     ///
     /// After removal, any orphaned layers (older than the committed ones) are pruned, and
     /// the bloom filter is rebuilt to remove stale entries.
+    #[allow(clippy::type_complexity)]
     pub fn commit(
         &mut self,
         state_root: H256,
