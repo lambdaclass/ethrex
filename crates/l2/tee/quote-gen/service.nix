@@ -38,8 +38,8 @@ let
     cargoDeps = rustPlatform.importCargoLock {
       lockFile = ./Cargo.lock;
       outputHashes = {
-        "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
-        "spawned-concurrency-0.4.5" = "sha256-vxOvxzzuVfNT1hGVo60/7TD0j70VmpowiqdH1tUgucM=";
+        "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
+        "spawned-concurrency-0.5.0" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       };
     };
 
