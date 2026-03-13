@@ -15,19 +15,21 @@ const { toggleBookmark, getUserBookmarks } = require("../db/bookmarks");
 const { getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement, getAnnouncementCount } = require("../db/announcements");
 const { requireAuth } = require("../middleware/auth");
 
-// Middleware: validate appchain exists and is active (checks listings first, then deployments)
+/**
+ * Resolve an appchain by ID — checks listings first, then legacy deployments.
+ */
+function resolveAppchain(id) {
+  const listing = getListingById(id);
+  if (listing && listing.status === "active") return listing;
+  return getActiveDeploymentById(id) || null;
+}
+
+// Middleware: validate appchain exists and is active
 function requireAppchain(req, res, next) {
-  const listing = getListingById(req.params.id);
-  if (listing && listing.status === "active") {
-    req.appchain = listing;
-    return next();
-  }
-  const deployment = getActiveDeploymentById(req.params.id);
-  if (deployment) {
-    req.appchain = deployment;
-    return next();
-  }
-  return res.status(404).json({ error: "Appchain not found" });
+  const appchain = resolveAppchain(req.params.id);
+  if (!appchain) return res.status(404).json({ error: "Appchain not found" });
+  req.appchain = appchain;
+  next();
 }
 
 // Middleware: require caller is the appchain owner (must run after requireAppchain + requireWallet)
@@ -96,13 +98,14 @@ router.get("/appchains", (req, res) => {
     const parsedLimit = parseInt(limit) || 50;
     const parsedOffset = parseInt(offset) || 0;
 
-    // Fetch from both sources
+    // Fetch from both sources (no offset — pagination applied after merge)
+    const fetchLimit = parsedLimit + parsedOffset;
     const listings = getListings({
       search, stackType: stack_type, l1ChainId: l1_chain_id,
-      limit: parsedLimit, offset: parsedOffset,
+      limit: fetchLimit, offset: 0,
     });
     const deployments = getActiveDeployments({
-      search, limit: parsedLimit, offset: parsedOffset,
+      search, limit: fetchLimit, offset: 0,
     });
 
     // Merge: listings first, then deployments (deduplicate by ID)
@@ -115,8 +118,8 @@ router.get("/appchains", (req, res) => {
       }
     }
 
-    // Apply limit after merge
-    const paged = merged.slice(0, parsedLimit);
+    // Apply pagination after merge
+    const paged = merged.slice(parsedOffset, parsedOffset + parsedLimit);
 
     // Enrich with social stats
     const ids = paged.map((a) => a.id);
@@ -140,16 +143,9 @@ router.get("/appchains", (req, res) => {
 });
 
 // GET /api/store/appchains/:id — public appchain detail (Showroom)
-router.get("/appchains/:id", (req, res) => {
+router.get("/appchains/:id", requireAppchain, (req, res) => {
   try {
-    // Check listings first, then legacy deployments
-    let appchain = getListingById(req.params.id);
-    if (!appchain || appchain.status !== "active") {
-      appchain = getActiveDeploymentById(req.params.id);
-    }
-    if (!appchain) {
-      return res.status(404).json({ error: "Appchain not found" });
-    }
+    const appchain = req.appchain;
 
     let screenshots = [];
     let social_links = {};
@@ -176,11 +172,11 @@ router.get("/appchains/:id", (req, res) => {
 });
 
 // POST /api/store/appchains/:id/rpc-proxy — L2 RPC proxy (CORS bypass)
-router.post("/appchains/:id/rpc-proxy", async (req, res) => {
+router.post("/appchains/:id/rpc-proxy", requireAppchain, async (req, res) => {
   try {
-    const appchain = getActiveDeploymentById(req.params.id);
-    if (!appchain || !appchain.rpc_url) {
-      return res.status(404).json({ error: "Appchain not found or no RPC URL" });
+    const appchain = req.appchain;
+    if (!appchain.rpc_url) {
+      return res.status(404).json({ error: "No RPC URL configured for this appchain" });
     }
 
     // SSRF protection: only allow http(s) URLs, block private/internal IPs

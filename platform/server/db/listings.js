@@ -81,7 +81,17 @@ function upsertListing(metadata, repoFilePath) {
     now, now,
   );
 
-  return getListingById(id);
+}
+
+/**
+ * Upsert listing and store the blob SHA for change detection.
+ */
+function upsertListingWithSha(metadata, repoFilePath, sha) {
+  upsertListing(metadata, repoFilePath);
+  if (sha) {
+    const db = getDb();
+    db.prepare("UPDATE explore_listings SET repo_sha = ? WHERE repo_file_path = ?").run(sha, repoFilePath);
+  }
 }
 
 /**
@@ -119,11 +129,31 @@ function getListings({ limit = 50, offset = 0, search, stackType, l1ChainId } = 
 }
 
 /**
- * Get all repo file paths for deletion detection.
+ * Get a listing by identity contract address and L1 chain ID (direct index lookup).
+ */
+function getListingByIdentityContract(identityContract, l1ChainId) {
+  const db = getDb();
+  return db.prepare(
+    "SELECT * FROM explore_listings WHERE identity_contract = ? AND l1_chain_id = ? AND status = 'active'"
+  ).get(identityContract.toLowerCase(), l1ChainId);
+}
+
+/**
+ * Get all repo file paths + SHA for sync change detection.
  */
 function getAllRepoFilePaths() {
   const db = getDb();
-  return db.prepare("SELECT id, repo_file_path FROM explore_listings WHERE repo_file_path IS NOT NULL").all();
+  return db.prepare("SELECT id, repo_file_path, repo_sha FROM explore_listings WHERE repo_file_path IS NOT NULL").all();
+}
+
+/**
+ * Get proposer/identity addresses for a given L1 chain ID (for L1 indexer).
+ */
+function getListingAddressesForChain(l1ChainId) {
+  const db = getDb();
+  return db.prepare(
+    "SELECT id, identity_contract FROM explore_listings WHERE l1_chain_id = ? AND status = 'active' AND identity_contract IS NOT NULL"
+  ).all(l1ChainId).map((r) => r.identity_contract);
 }
 
 /**
@@ -164,9 +194,12 @@ function updateListingEnrichment(id, fields) {
 module.exports = {
   listingId,
   upsertListing,
+  upsertListingWithSha,
   getListingById,
+  getListingByIdentityContract,
   getListings,
   getAllRepoFilePaths,
+  getListingAddressesForChain,
   deleteListing,
   updateListingStatus,
   updateListingEnrichment,

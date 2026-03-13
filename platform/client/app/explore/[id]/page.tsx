@@ -116,6 +116,32 @@ function StarIcon({ filled, size = 14 }: { filled: boolean; size?: number }) {
   );
 }
 
+function isSafeUrl(url: string) { return /^https?:\/\//i.test(url); }
+
+function displayUrl(url: string): string {
+  return url.replace(/^https?:\/\//, "").slice(0, 40);
+}
+
+const ExternalLinkIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+  </svg>
+);
+
+function ServiceLink({ label, url }: { label: string; url: string }) {
+  if (!url || !isSafeUrl(url)) return null;
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-sm text-gray-600">{label}</span>
+      <a href={url} target="_blank" rel="noopener noreferrer"
+        className="text-sm text-blue-600 hover:underline flex items-center gap-1 truncate max-w-[60%]">
+        {displayUrl(url)}
+        <ExternalLinkIcon />
+      </a>
+    </div>
+  );
+}
+
 function HeartIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -443,7 +469,6 @@ export default function AppchainDetailPage() {
         { label: "CommonBridge", addr: appchain.bridge_address },
       ].filter((c) => c.addr);
 
-  const isSafeUrl = (url: string) => /^https?:\/\//i.test(url);
   const socialEntries = Object.entries(appchain.social_links || {}).filter(([, v]) => v && isSafeUrl(v));
 
   const isMyReview = (review: Review) =>
@@ -658,36 +683,9 @@ export default function AppchainDetailPage() {
             {!liveStatus.online && (
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Network</h2>
             )}
-            {appchain.explorer_url && isSafeUrl(appchain.explorer_url) && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">L2 Explorer</span>
-                <a href={appchain.explorer_url} target="_blank" rel="noopener noreferrer"
-                  className="text-sm text-blue-600 hover:underline flex items-center gap-1 truncate max-w-[60%]">
-                  {appchain.explorer_url.replace(/^https?:\/\//, "").slice(0, 40)}
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                </a>
-              </div>
-            )}
-            {appchain.dashboard_url && isSafeUrl(appchain.dashboard_url) && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Dashboard</span>
-                <a href={appchain.dashboard_url} target="_blank" rel="noopener noreferrer"
-                  className="text-sm text-blue-600 hover:underline flex items-center gap-1 truncate max-w-[60%]">
-                  {appchain.dashboard_url.replace(/^https?:\/\//, "").slice(0, 40)}
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                </a>
-              </div>
-            )}
-            {appchain.bridge_url && isSafeUrl(appchain.bridge_url) && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Bridge</span>
-                <a href={appchain.bridge_url} target="_blank" rel="noopener noreferrer"
-                  className="text-sm text-blue-600 hover:underline flex items-center gap-1 truncate max-w-[60%]">
-                  {appchain.bridge_url.replace(/^https?:\/\//, "").slice(0, 40)}
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                </a>
-              </div>
-            )}
+            <ServiceLink label="L2 Explorer" url={appchain.explorer_url || ""} />
+            <ServiceLink label="Dashboard" url={appchain.dashboard_url || ""} />
+            <ServiceLink label="Bridge" url={appchain.bridge_url || ""} />
             {appchain.rpc_url && (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">RPC URL</span>

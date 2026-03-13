@@ -7,7 +7,7 @@
  * Flow: GitHub API → parse JSON → upsert explore_listings → detect deletions
  */
 
-const { upsertListing, getAllRepoFilePaths, deleteListing } = require("../db/listings");
+const { upsertListingWithSha, getAllRepoFilePaths, deleteListing } = require("../db/listings");
 
 const REPO_OWNER = process.env.METADATA_REPO_OWNER || "tokamak-network";
 const REPO_NAME = process.env.METADATA_REPO_NAME || "tokamak-rollup-metadata-repository";
@@ -80,7 +80,7 @@ async function fetchBlobContent(blobUrl) {
  */
 function parseFilePath(filePath) {
   const match = filePath.match(
-    /^tokamak-appchain-data\/(\d+)\/([a-z0-9-]+)\/(0x[a-f0-9]{40})\.json$/
+    /^tokamak-appchain-data\/(\d+)\/([a-z0-9-]+)\/(0x[a-fA-F0-9]{40})\.json$/
   );
   if (!match) return null;
   return {
@@ -104,16 +104,22 @@ async function syncOnce() {
     const treeItems = await fetchRepoTree();
     const currentPaths = new Set(treeItems.map((item) => item.path));
 
-    // 2. Get existing listings for deletion detection
+    // 2. Get existing listings for deletion detection + SHA comparison
     const existingListings = getAllRepoFilePaths();
+    const existingShaMap = new Map(existingListings.map((l) => [l.repo_file_path, l.repo_sha]));
 
-    // 3. Fetch and upsert each metadata file
-    for (const item of treeItems) {
-      try {
+    // 3. Filter to only changed files (SHA mismatch or new)
+    const changedItems = treeItems.filter((item) => existingShaMap.get(item.path) !== item.sha);
+
+    // 4. Fetch and upsert changed files with bounded concurrency
+    const CONCURRENCY = 5;
+    for (let i = 0; i < changedItems.length; i += CONCURRENCY) {
+      const batch = changedItems.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(batch.map(async (item) => {
         const pathInfo = parseFilePath(item.path);
         if (!pathInfo) {
           console.warn(`[metadata-sync] Skipping invalid path: ${item.path}`);
-          continue;
+          return;
         }
 
         const metadata = await fetchBlobContent(item.url);
@@ -123,11 +129,15 @@ async function syncOnce() {
           metadata.identityContract = pathInfo.identityContract;
         }
 
-        upsertListing(metadata, item.path);
+        upsertListingWithSha(metadata, item.path, item.sha);
         synced++;
-      } catch (err) {
-        console.error(`[metadata-sync] Error processing ${item.path}:`, err.message);
-        errors++;
+      }));
+
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error(`[metadata-sync] Error:`, result.reason?.message);
+          errors++;
+        }
       }
     }
 
