@@ -155,6 +155,18 @@ interface IOnChainProposer {
     /// and for all subsequent batches will be removed. The batch can only be reverted if it is not verified.
     function revertBatch(uint256 batchNumber) external;
 
+    /// @notice The metadata URI has been updated.
+    /// @dev Event emitted when the owner updates the metadata URI.
+    /// @param newURI The new metadata URI (typically an IPFS CID).
+    event MetadataURIUpdated(string newURI);
+
+    /// @notice Sets the metadata URI for this appchain.
+    /// @dev Only callable by the owner. The URI should point to a JSON document
+    /// (e.g. ipfs://Qm...) containing appchain metadata such as name, description,
+    /// screenshots, RPC URLs, and social links.
+    /// @param _metadataURI The new metadata URI.
+    function setMetadataURI(string calldata _metadataURI) external;
+
     /// @notice Allows the owner to pause the contract
     function pause() external;
 

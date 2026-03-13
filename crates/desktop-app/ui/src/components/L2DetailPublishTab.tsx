@@ -4,6 +4,7 @@ import { useLang } from '../App'
 import { t } from '../i18n'
 import { platformAPI } from '../api/platform'
 import { localServerAPI } from '../api/local-server'
+import { uploadFileToIPFS, ipfsToHttp, uploadJSONToIPFS, buildMetadata, isPinataConfigured } from '../api/ipfs'
 import { SectionHeader } from './ui-atoms'
 import type { L2Config } from './MyL2View'
 
@@ -23,11 +24,21 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [socialLinks, setSocialLinks] = useState<Record<string, string>>({})
+  const [screenshots, setScreenshots] = useState<string[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const [pinataReady, setPinataReady] = useState(false)
+  const [metadataUploading, setMetadataUploading] = useState(false)
+  const [metadataCID, setMetadataCID] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const socialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sync isPublic when parent re-fetches
   useEffect(() => { setIsPublic(l2.isPublic) }, [l2.isPublic])
+
+  // Check Pinata configuration
+  useEffect(() => { isPinataConfigured().then(setPinataReady) }, [])
 
   // Load existing data from Platform on mount (if already published)
   useEffect(() => {
@@ -37,13 +48,18 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       if (appchain?.social_links && Object.keys(appchain.social_links).length > 0) {
         setSocialLinks(appchain.social_links)
       }
+      if (appchain?.screenshots && appchain.screenshots.length > 0) {
+        setScreenshots(appchain.screenshots)
+      }
     }).catch((err) => console.warn('[publish] Failed to load appchain data:', err))
   }, [l2.platformDeploymentId, l2.isPublic])
 
-  // Auto-save description with debounce
+  // Auto-save description with debounce (guard against concurrent saves)
+  const savingRef = useRef(false)
   const saveDescription = useCallback(async (desc: string) => {
     const platformId = l2.platformDeploymentId
-    if (!platformId || !isPublic) return
+    if (!platformId || !isPublic || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     try {
       await platformAPI.updateDeployment(platformId, { description: desc })
@@ -53,6 +69,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       console.warn('[publish] Failed to save description:', err)
     } finally {
       setSaving(false)
+      savingRef.current = false
     }
   }, [l2.platformDeploymentId, isPublic])
 
@@ -84,6 +101,75 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
     setSaved(false)
     if (socialTimerRef.current) clearTimeout(socialTimerRef.current)
     socialTimerRef.current = setTimeout(() => saveSocialLinks(updated), 1500)
+  }
+
+  // Screenshot upload handler
+  const handleScreenshotUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    setUploading(true)
+    setUploadError('')
+    try {
+      const newUris: string[] = []
+      for (const file of Array.from(files)) {
+        const uri = await uploadFileToIPFS(file)
+        newUris.push(uri)
+      }
+      const updated = [...screenshots, ...newUris]
+      setScreenshots(updated)
+      // Save to Platform
+      const platformId = l2.platformDeploymentId
+      if (platformId) {
+        await platformAPI.updateDeployment(platformId, { screenshots: JSON.stringify(updated) })
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const removeScreenshot = async (index: number) => {
+    const updated = screenshots.filter((_, i) => i !== index)
+    setScreenshots(updated)
+    const platformId = l2.platformDeploymentId
+    if (platformId) {
+      try {
+        await platformAPI.updateDeployment(platformId, { screenshots: JSON.stringify(updated) })
+      } catch (err) {
+        console.warn('Failed to sync screenshot removal:', err)
+      }
+    }
+  }
+
+  // Upload full metadata JSON to IPFS (for on-chain metadataURI)
+  const handleUploadMetadata = async () => {
+    setMetadataUploading(true)
+    setUploadError('')
+    try {
+      const rpcUrl = l2.publicRpcUrl || `http://localhost:${l2.rpcPort}`
+      const metadata = buildMetadata({
+        name: l2.name,
+        description: publishDesc || undefined,
+        chainId: l2.chainId,
+        rpcUrl,
+        networkMode: l2.networkMode || 'local',
+        l1ChainId: l2.l1ChainId || 1,
+        proposerAddress: l2.proposerAddress || undefined,
+        bridgeAddress: l2.bridgeAddress || undefined,
+        screenshots,
+        socialLinks: Object.fromEntries(Object.entries(socialLinks).filter(([, v]) => v.trim())),
+        explorerUrl: l2.toolsL2ExplorerPort ? `http://localhost:${l2.toolsL2ExplorerPort}` : undefined,
+        bridgeUIUrl: l2.toolsBridgeUIPort ? `http://localhost:${l2.toolsBridgeUIPort}` : undefined,
+      })
+      const cid = await uploadJSONToIPFS(metadata)
+      setMetadataCID(cid)
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMetadataUploading(false)
+    }
   }
 
   // Cleanup debounce timers on unmount
@@ -197,19 +283,50 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
 
         <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
           <SectionHeader title={ko ? '스크린샷' : 'Screenshots'} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleScreenshotUpload}
+            className="hidden"
+          />
           <div className="flex gap-2 flex-wrap mt-1">
-            {/* TODO: Phase 2 — IPFS upload integration. For now show placeholder UI */}
+            {screenshots.map((uri, i) => (
+              <div key={i} className="relative group">
+                <img
+                  src={ipfsToHttp(uri)}
+                  alt={`Screenshot ${i + 1}`}
+                  className="w-20 h-14 rounded-lg border object-cover"
+                />
+                <button
+                  onClick={() => removeScreenshot(i)}
+                  className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  x
+                </button>
+              </div>
+            ))}
             <button
-              className="w-20 h-14 rounded-lg border-2 border-dashed border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[#3b82f6] hover:text-[#3b82f6] cursor-pointer transition-colors"
+              disabled={uploading || !pinataReady}
+              onClick={() => fileInputRef.current?.click()}
+              className="w-20 h-14 rounded-lg border-2 border-dashed border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[#3b82f6] hover:text-[#3b82f6] cursor-pointer transition-colors disabled:opacity-50"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
+              {uploading ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              )}
             </button>
           </div>
-          <div className="text-[9px] text-[var(--color-text-secondary)] mt-1">
-            {ko ? '스크린샷 업로드는 Phase 2에서 지원됩니다 (IPFS)' : 'Screenshot upload coming in Phase 2 (IPFS)'}
-          </div>
+          {!pinataReady && (
+            <div className="text-[9px] text-[var(--color-warning)] mt-1">
+              {ko ? 'Settings에서 Pinata API 키를 설정하세요' : 'Set Pinata API key in Settings'}
+            </div>
+          )}
+          {uploadError && <div className="text-[9px] text-[var(--color-error)] mt-1">{uploadError}</div>}
         </div>
 
         <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
@@ -229,6 +346,57 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
             ))}
           </div>
         </div>
+
+        {/* On-chain Metadata (Phase 2) */}
+        {l2.proposerAddress && (
+          <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+            <SectionHeader title={ko ? '온체인 메타데이터' : 'On-chain Metadata'} />
+            <div className="text-[9px] text-[var(--color-text-secondary)] mt-1">
+              {ko
+                ? '메타데이터를 IPFS에 업로드하고 OnChainProposer에 등록합니다.'
+                : 'Upload metadata to IPFS and register it on OnChainProposer.'}
+            </div>
+            <div className="mt-2 space-y-2">
+              <button
+                disabled={metadataUploading || !pinataReady}
+                onClick={handleUploadMetadata}
+                className="w-full py-1.5 bg-[var(--color-accent)] text-white rounded-lg text-[10px] font-medium disabled:opacity-50"
+              >
+                {metadataUploading
+                  ? (ko ? 'IPFS 업로드 중...' : 'Uploading to IPFS...')
+                  : (ko ? '메타데이터 IPFS 업로드' : 'Upload Metadata to IPFS')}
+              </button>
+              {metadataCID && (
+                <div className="bg-[var(--color-bg-main)] rounded-lg p-2 border border-[var(--color-border)]">
+                  <div className="text-[9px] text-[var(--color-text-secondary)]">Metadata CID</div>
+                  <div className="text-[10px] font-mono break-all mt-0.5">{metadataCID}</div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await invoke<string>('set_metadata_uri', {
+                          l1RpcUrl: l2.testnetL1RpcUrl || `http://localhost:${l2.l1Port || 8545}`,
+                          proposerAddress: l2.proposerAddress || '',
+                          metadataUri: metadataCID,
+                          keychainKey: `deployer_pk_${l2.id}`,
+                        })
+                        const txData = JSON.parse(result)
+                        // Copy calldata for wallet signing
+                        await navigator.clipboard.writeText(JSON.stringify(txData, null, 2))
+                        setSaved(true)
+                        setTimeout(() => setSaved(false), 3000)
+                      } catch (err) {
+                        setUploadError(err instanceof Error ? err.message : String(err))
+                      }
+                    }}
+                    className="mt-1.5 w-full py-1.5 bg-purple-600 text-white rounded-lg text-[10px] font-medium hover:bg-purple-700"
+                  >
+                    {ko ? 'L1 트랜잭션 데이터 준비' : 'Prepare L1 Transaction Data'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </>)}
 
       {/* Not public hint */}

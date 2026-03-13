@@ -174,6 +174,10 @@ pub fn run() {
             send_telegram_notification,
             toggle_system_alerts,
             get_all_l2,
+            get_keychain_value,
+            save_keychain_value,
+            delete_keychain_value,
+            set_metadata_uri,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

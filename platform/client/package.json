@@ -8,14 +8,20 @@
     "start": "next start",
     "lint": "next lint"
   },
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "dependencies": {
     "@react-oauth/google": "^0.12.1",
+    "@tailwindcss/typography": "^0.5.19",
     "@upstash/redis": "^1.36.3",
     "bcryptjs": "^2.4.3",
     "next": "^15.1.0",
+    "nostr-tools": "^2.23.3",
     "pg": "^8.20.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",

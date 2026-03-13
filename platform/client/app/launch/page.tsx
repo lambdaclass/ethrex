@@ -35,16 +35,11 @@ function LaunchPageContent() {
   }, []);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      {/* Hero */}
-      <div className="text-center mb-12">
-        <div className="w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-2xl flex items-center justify-center">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-          </svg>
-        </div>
-        <h1 className="text-3xl font-bold mb-3">Launch Your Own L2</h1>
-        <p className="text-gray-600 text-lg max-w-2xl mx-auto">
+    <div className="max-w-6xl mx-auto px-4 py-8">
+      {/* Header */}
+      <div className="text-center mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-3">Launch Your Own L2</h1>
+        <p className="text-gray-600 max-w-2xl mx-auto">
           Deploy your own Layer 2 blockchain powered by Tokamak Network.
           Install the Desktop App, create your appchain, and start building in minutes.
         </p>

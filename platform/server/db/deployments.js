@@ -36,7 +36,7 @@ function getDeploymentsByUser(userId) {
 function updateDeployment(id, fields) {
   const db = getDb();
   const allowed = ["name", "chain_id", "rpc_url", "status", "config", "phase", "bridge_address", "proposer_address",
-    "description", "screenshots", "explorer_url", "dashboard_url", "social_links", "l1_chain_id", "network_mode"];
+    "description", "screenshots", "explorer_url", "dashboard_url", "social_links", "l1_chain_id", "network_mode", "owner_wallet"];
   const updates = [];
   const values = [];
   for (const [key, value] of Object.entries(fields)) {
@@ -59,10 +59,10 @@ function deleteDeployment(id) {
 function getActiveDeploymentById(id) {
   const db = getDb();
   return db.prepare(
-    `SELECT d.id, d.name, d.chain_id, d.rpc_url, d.status, d.phase,
+    `SELECT d.id, d.user_id, d.name, d.chain_id, d.rpc_url, d.status, d.phase,
             d.bridge_address, d.proposer_address, d.created_at,
             d.description, d.screenshots, d.explorer_url, d.dashboard_url,
-            d.social_links, d.l1_chain_id, d.network_mode,
+            d.social_links, d.l1_chain_id, d.network_mode, d.owner_wallet,
             p.name as program_name, p.program_id as program_slug, p.category,
             u.name as owner_name, u.picture as owner_picture
      FROM deployments d
@@ -77,7 +77,7 @@ function getActiveDeployments({ limit = 50, offset = 0, search } = {}) {
   let sql = `SELECT d.id, d.name, d.chain_id, d.rpc_url, d.status, d.phase,
              d.bridge_address, d.proposer_address, d.created_at,
              d.description, d.screenshots, d.explorer_url, d.dashboard_url,
-             d.social_links, d.l1_chain_id, d.network_mode,
+             d.social_links, d.l1_chain_id, d.network_mode, d.hashtags,
              p.name as program_name, p.program_id as program_slug, p.category,
              u.name as owner_name
              FROM deployments d

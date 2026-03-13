@@ -825,3 +825,145 @@ pub async fn get_docker_containers(
     let proxy = DeploymentProxy::new(&server.url());
     proxy.get_containers(&id).await
 }
+
+// ============================================================================
+// Generic Keychain value storage (for Pinata JWT, etc.)
+// Keys are restricted to known prefixes to prevent arbitrary access.
+// ============================================================================
+
+const KEYRING_SERVICE: &str = "tokamak-appchain";
+const ALLOWED_KEY_PREFIXES: &[&str] = &["pinata_", "deployer_pk_"];
+
+fn validate_keychain_key(key: &str) -> Result<(), String> {
+    if ALLOWED_KEY_PREFIXES.iter().any(|p| key.starts_with(p)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Key '{}' not allowed. Must start with one of: {:?}",
+            key, ALLOWED_KEY_PREFIXES
+        ))
+    }
+}
+
+#[tauri::command]
+pub fn get_keychain_value(key: String) -> Result<Option<String>, String> {
+    validate_keychain_key(&key)?;
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.get_password() {
+        Ok(val) => Ok(Some(val)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to get keychain value: {e}")),
+    }
+}
+
+#[tauri::command]
+pub fn save_keychain_value(key: String, value: String) -> Result<(), String> {
+    validate_keychain_key(&key)?;
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
+    entry
+        .set_password(&value)
+        .map_err(|e| format!("Failed to save keychain value: {e}"))
+}
+
+#[tauri::command]
+pub fn delete_keychain_value(key: String) -> Result<(), String> {
+    validate_keychain_key(&key)?;
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Failed to delete keychain value: {e}")),
+    }
+}
+
+// ============================================================================
+// L1 On-chain Metadata (Phase 2)
+// ============================================================================
+
+/// Prepare setMetadataURI calldata for the OnChainProposer L1 contract.
+/// Returns JSON with `to`, `data`, and `chainId` for the frontend to sign via browser wallet.
+/// Full on-chain signing (ethers-rs) is planned for a future iteration.
+#[tauri::command]
+pub async fn set_metadata_uri(
+    l1_rpc_url: String,
+    proposer_address: String,
+    metadata_uri: String,
+    keychain_key: String,
+) -> Result<String, String> {
+    // Validate inputs
+    if !proposer_address.starts_with("0x") || proposer_address.len() != 42 {
+        return Err("Invalid proposer address: must be 0x-prefixed 40-char hex".to_string());
+    }
+    if l1_rpc_url.is_empty() {
+        return Err("L1 RPC URL is required".to_string());
+    }
+    if metadata_uri.is_empty() {
+        return Err("Metadata URI is required".to_string());
+    }
+
+    // Verify deployer key exists in keychain (validates ownership without loading the key)
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &keychain_key)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    entry
+        .get_password()
+        .map_err(|e| format!("No deployer key found: {e}"))?;
+
+    // Build setMetadataURI calldata
+    // Function selector: keccak256("setMetadataURI(string)")[:4] = 0x750c5d86
+    let func_selector: [u8; 4] = [0x75, 0x0c, 0x5d, 0x86];
+
+    // ABI encode: offset (32 bytes) + length (32 bytes) + data (padded to 32 bytes)
+    let uri_bytes = metadata_uri.as_bytes();
+    let uri_len = uri_bytes.len();
+    let padded_len = ((uri_len + 31) / 32) * 32;
+
+    let mut calldata = Vec::with_capacity(4 + 32 + 32 + padded_len);
+    calldata.extend_from_slice(&func_selector);
+    // offset: 0x20 (32) — points to start of string data
+    let mut offset = [0u8; 32];
+    offset[31] = 32;
+    calldata.extend_from_slice(&offset);
+    // length of string
+    let mut length = [0u8; 32];
+    length[24..32].copy_from_slice(&(uri_len as u64).to_be_bytes());
+    calldata.extend_from_slice(&length);
+    // string data (padded to 32-byte boundary)
+    calldata.extend_from_slice(uri_bytes);
+    calldata.resize(calldata.len() + padded_len - uri_len, 0);
+
+    // Fetch chain ID from L1 RPC for the transaction metadata
+    let client = reqwest::Client::new();
+    let chain_id_resp = client
+        .post(&l1_rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "eth_chainId", "params": []
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("RPC error: {e}"))?;
+    let chain_id_data: serde_json::Value = chain_id_resp
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {e}"))?;
+    let chain_id_hex = chain_id_data["result"]
+        .as_str()
+        .ok_or("No chain_id result")?;
+    let _chain_id = u64::from_str_radix(chain_id_hex.trim_start_matches("0x"), 16)
+        .map_err(|e| format!("Bad chain_id: {e}"))?;
+
+    // For now, return the calldata hex — full signing requires ethers-rs integration
+    // which is a larger dependency. The UI can use this with a browser wallet instead.
+    let calldata_hex = format!("0x{}", hex::encode(&calldata));
+
+    Ok(serde_json::json!({
+        "to": proposer_address,
+        "data": calldata_hex,
+        "chainId": chain_id_hex,
+        "note": "Transaction calldata prepared. Use wallet to sign and send."
+    })
+    .to_string())
+}

@@ -51,10 +51,22 @@ function runMigrations(database) {
     { name: "social_links", type: "TEXT" },
     { name: "l1_chain_id", type: "INTEGER" },
     { name: "network_mode", type: "TEXT" },
+    { name: "owner_wallet", type: "TEXT" },
   ];
   for (const col of newCols) {
     if (!colNames.includes(col.name)) {
       database.exec(`ALTER TABLE deployments ADD COLUMN ${col.name} ${col.type}`);
+    }
+  }
+
+  // Add deleted_at to comments for soft-delete (existing DBs)
+  const commentCols = database.prepare("PRAGMA table_info(comments)").all().map((c) => c.name);
+  const commentNewCols = [
+    { name: "deleted_at", type: "INTEGER" },
+  ];
+  for (const col of commentNewCols) {
+    if (!commentCols.includes(col.name)) {
+      database.exec(`ALTER TABLE comments ADD COLUMN ${col.name} ${col.type}`);
     }
   }
 }
