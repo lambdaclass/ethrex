@@ -252,7 +252,7 @@ pub async fn init_network(
     opts: &Options,
     network: &Network,
     datadir: &Path,
-    mut peer_handler: PeerHandler,
+    peer_handler: PeerHandler,
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
     context: P2PContext,
@@ -272,19 +272,9 @@ pub async fn init_network(
         discv5_enabled: opts.discv5_enabled,
     };
 
-    ethrex_p2p::start_network(context, bootnodes.clone(), discovery_config)
+    ethrex_p2p::start_network(context, bootnodes, discovery_config)
         .await
         .expect("Network starts");
-
-    // Directly initiate RLPx connections to bootnodes so we don't depend
-    // solely on the discovery cycle (which can be overwhelmed by other-chain
-    // peers, e.g. Polygon mainnet nodes drowning out Amoy testnet nodes).
-    for node in &bootnodes {
-        let _ = peer_handler
-            .initiator
-            .cast(ethrex_p2p::rlpx::initiator::InMessage::Initiate { node: node.clone() })
-            .await;
-    }
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
