@@ -122,6 +122,11 @@ router.post("/appchains/:id/rpc-proxy", async (req, res) => {
       return res.status(400).json({ error: "Method not allowed" });
     }
 
+    const appchain = getActiveDeploymentById(req.params.id);
+    if (!appchain || !appchain.rpc_url) {
+      return res.status(404).json({ error: "Appchain not found or no RPC URL" });
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
