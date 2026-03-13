@@ -5,6 +5,7 @@
 
 use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use crate::errors::InvalidBlockError;
+use ethrex_crypto::Crypto;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
     Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
@@ -77,8 +78,9 @@ pub fn validate_gas_used(
 pub fn validate_receipts_root(
     block_header: &BlockHeader,
     receipts: &[Receipt],
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
-    let receipts_root = compute_receipts_root(receipts);
+    let receipts_root = compute_receipts_root(receipts, crypto);
 
     if receipts_root == block_header.receipts_root {
         Ok(())

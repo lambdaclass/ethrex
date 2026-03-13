@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
 use ethrex_common::types::{Block, Receipt, validate_block_body};
 use ethrex_common::{
     H256, U256, validate_block_pre_execution, validate_gas_used, validate_receipts_root,
     validate_requests_hash,
 };
+use ethrex_crypto::Crypto;
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 
 use crate::common::ExecutionError;
@@ -41,6 +44,7 @@ pub fn execute_blocks<F>(
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     vm_factory: F,
+    crypto: Arc<dyn Crypto + Send + Sync>,
 ) -> Result<BatchExecutionResult, ExecutionError>
 where
     F: Fn(&GuestProgramStateWrapper, usize) -> Result<Evm, ExecutionError>,
@@ -49,12 +53,11 @@ where
 
     let ethrex_guest_program_state: GuestProgramState =
         report_cycles("ethrex_guest_program_state_initialization", || {
-            execution_witness
-                .try_into()
+            GuestProgramState::from_witness(execution_witness, crypto.as_ref())
                 .map_err(ExecutionError::GuestProgramState)
         })?;
 
-    let mut wrapped_db = GuestProgramStateWrapper::new(ethrex_guest_program_state);
+    let mut wrapped_db = GuestProgramStateWrapper::new(ethrex_guest_program_state, crypto.clone());
 
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         ExecutionError::Internal("No chain config in execution witness".to_string())
@@ -62,12 +65,12 @@ where
 
     // Hashing is expensive in zkVMs - initialize block header hashes once
     report_cycles("initialize_block_header_hashes", || {
-        wrapped_db.initialize_block_header_hashes(blocks)
+        wrapped_db.initialize_block_header_hashes(blocks, crypto.as_ref())
     })?;
 
     // Validate execution witness' block hashes
     report_cycles("get_first_invalid_block_hash", || {
-        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
+        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash(crypto.as_ref()) {
             return Err(ExecutionError::InvalidBlockHash(invalid_block_header));
         }
         Ok(())
@@ -86,7 +89,7 @@ where
 
     let initial_state_hash = report_cycles("state_trie_root", || {
         wrapped_db
-            .state_trie_root()
+            .state_trie_root(crypto.as_ref())
             .map_err(ExecutionError::GuestProgramState)
     })?;
 
@@ -102,7 +105,7 @@ where
     for (i, block) in blocks.iter().enumerate() {
         // Validate that the block header and body match (transactions root, withdrawals root)
         report_cycles("validate_block_body", || {
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, crypto.as_ref())
                 .map_err(ExecutionError::BlockBodyValidation)
         })?;
 
@@ -136,7 +139,7 @@ where
         // and final state validation via state_trie_root())
         report_cycles("apply_account_updates", || {
             wrapped_db
-                .apply_account_updates(&account_updates)
+                .apply_account_updates(&account_updates, crypto.as_ref())
                 .map_err(ExecutionError::GuestProgramState)
         })?;
 
@@ -154,7 +157,7 @@ where
         })?;
 
         report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &receipts)
+            validate_receipts_root(&block.header, &receipts, crypto.as_ref())
                 .map_err(ExecutionError::ReceiptsRootValidation)
         })?;
 
@@ -172,7 +175,7 @@ where
 
     let final_state_hash = report_cycles("get_final_state_root", || {
         wrapped_db
-            .state_trie_root()
+            .state_trie_root(crypto.as_ref())
             .map_err(ExecutionError::GuestProgramState)
     })?;
 
@@ -180,7 +183,7 @@ where
         return Err(ExecutionError::InvalidFinalStateTrie);
     }
 
-    let last_block_hash = last_block.header.hash();
+    let last_block_hash = last_block.header.compute_block_hash(crypto.as_ref());
 
     Ok(BatchExecutionResult {
         receipts: acc_receipts,

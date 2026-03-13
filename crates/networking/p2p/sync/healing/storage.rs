@@ -19,6 +19,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
@@ -479,7 +480,7 @@ async fn zip_requeue_node_responses_score_peer(
                 )
             })?;
 
-            if node.compute_hash().finalize() != node_request.hash {
+            if node.compute_hash(&NativeCrypto).finalize(&NativeCrypto) != node_request.hash {
                 trace!(
                     peer=?request.peer_id,
                     ?node_request,
@@ -661,7 +662,7 @@ pub fn determine_pending_children(
                     acc_path: node_response.node_request.acc_path.clone(),
                     storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
-                    hash: child.compute_hash().finalize(),
+                    hash: child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                 }]);
             }
         }
@@ -685,7 +686,7 @@ pub fn determine_pending_children(
                 acc_path: node_response.node_request.acc_path.clone(),
                 storage_path: child_path,
                 parent: node_response.node_request.storage_path.clone(),
-                hash: node.child.compute_hash().finalize(),
+                hash: node.child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
             }]);
         }
         _ => {}

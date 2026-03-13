@@ -464,7 +464,7 @@ impl LEVM {
                     (*EMPTY_KECCACK_HASH, None)
                 } else {
                     use ethrex_common::types::Code;
-                    let code_obj = Code::from_bytecode(c.new_code.clone());
+                    let code_obj = Code::from_bytecode(c.new_code.clone(), &ethrex_crypto::NativeCrypto);
                     let hash = code_obj.hash;
                     (hash, Some(code_obj))
                 }
@@ -585,7 +585,7 @@ impl LEVM {
                     Some((*EMPTY_KECCACK_HASH, None))
                 } else {
                     use ethrex_common::types::Code;
-                    let code_obj = Code::from_bytecode(last.new_code.clone());
+                    let code_obj = Code::from_bytecode(last.new_code.clone(), &ethrex_crypto::NativeCrypto);
                     Some((code_obj.hash, Some(code_obj)))
                 }
             } else {

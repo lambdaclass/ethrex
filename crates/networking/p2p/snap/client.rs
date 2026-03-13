@@ -24,6 +24,7 @@ use crate::{
     },
 };
 use bytes::Bytes;
+use ethrex_crypto::NativeCrypto;
 use ethrex_common::{
     BigEndianHash, H256, U256,
     types::{AccountState, BlockHeader},
@@ -1091,7 +1092,7 @@ pub async fn request_state_trienodes(
     }
 
     for (index, node) in nodes.iter().enumerate() {
-        if node.compute_hash().finalize() != paths[index].hash {
+        if node.compute_hash(&NativeCrypto).finalize(&NativeCrypto) != paths[index].hash {
             error!(
                 "A peer is sending wrong data for the state trie node {:?}",
                 paths[index].path

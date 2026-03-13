@@ -16,6 +16,8 @@ use rkyv::{
     with::Skip,
 };
 
+use ethrex_crypto::{Crypto, NativeCrypto};
+
 use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
 use super::{ValueRLP, node_hash::NodeHash};
@@ -82,7 +84,8 @@ impl NodeRef {
                 .get(path)?
                 .filter(|rlp| !rlp.is_empty())
                 .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
+                    Ok(node) => (node.compute_hash(&NativeCrypto) == *hash)
+                        .then_some(Ok(Arc::new(node))),
                     Err(err) => Some(Err(TrieError::RLPDecode(err))),
                 })
                 .transpose(),
@@ -129,7 +132,12 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
+    pub fn commit(
+        &mut self,
+        path: Nibbles,
+        acc: &mut Vec<(Nibbles, Vec<u8>)>,
+        crypto: &dyn Crypto,
+    ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 if let Some(hash) = hash.get() {
@@ -138,17 +146,17 @@ impl NodeRef {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc);
+                            node.commit(path.append_new(choice as u8), acc, crypto);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc);
+                        node.child.commit(path.concat(&node.prefix), acc, crypto);
                     }
                     Node::Leaf(_) => {}
                 }
                 let mut buf = Vec::new();
                 node.encode(&mut buf);
-                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf, crypto));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
@@ -160,30 +168,32 @@ impl NodeRef {
         }
     }
 
-    pub fn compute_hash(&self) -> NodeHash {
-        *self.compute_hash_ref()
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+        *self.compute_hash_ref(crypto)
     }
 
-    pub fn compute_hash_ref(&self) -> &NodeHash {
+    pub fn compute_hash_ref(&self, crypto: &dyn Crypto) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash(crypto)),
             NodeRef::Hash(hash) => hash,
         }
     }
 
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> &NodeHash {
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash_no_alloc(buf)),
+            NodeRef::Node(node, hash) => {
+                hash.get_or_init(|| node.compute_hash_no_alloc(buf, crypto))
+            }
             NodeRef::Hash(hash) => hash,
         }
     }
 
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
         {
-            node.memoize_hashes(buf);
-            let _ = hash.set(node.compute_hash_no_alloc(buf));
+            node.memoize_hashes(buf, crypto);
+            let _ = hash.set(node.compute_hash_no_alloc(buf, crypto));
         }
     }
 
@@ -225,7 +235,8 @@ impl From<Arc<Node>> for NodeRef {
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
         let mut buf = Vec::new();
-        self.compute_hash_no_alloc(&mut buf) == other.compute_hash_no_alloc(&mut buf)
+        self.compute_hash_no_alloc(&mut buf, &NativeCrypto)
+            == other.compute_hash_no_alloc(&mut buf, &NativeCrypto)
     }
 }
 
@@ -365,36 +376,36 @@ impl Node {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
         let mut buf = Vec::new();
-        self.memoize_hashes(&mut buf);
+        self.memoize_hashes(&mut buf, crypto);
         match self {
-            Node::Branch(n) => n.compute_hash_no_alloc(&mut buf),
-            Node::Extension(n) => n.compute_hash_no_alloc(&mut buf),
-            Node::Leaf(n) => n.compute_hash_no_alloc(&mut buf),
+            Node::Branch(n) => n.compute_hash_no_alloc(&mut buf, crypto),
+            Node::Extension(n) => n.compute_hash_no_alloc(&mut buf, crypto),
+            Node::Leaf(n) => n.compute_hash_no_alloc(&mut buf, crypto),
         }
     }
 
     /// Computes the node's hash
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
-        self.memoize_hashes(buf);
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
+        self.memoize_hashes(buf, crypto);
         match self {
-            Node::Branch(n) => n.compute_hash_no_alloc(buf),
-            Node::Extension(n) => n.compute_hash_no_alloc(buf),
-            Node::Leaf(n) => n.compute_hash_no_alloc(buf),
+            Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
+            Node::Extension(n) => n.compute_hash_no_alloc(buf, crypto),
+            Node::Leaf(n) => n.compute_hash_no_alloc(buf, crypto),
         }
     }
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
     /// `self` as root (post-order traversal)
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
         match self {
             Node::Branch(n) => {
                 for child in &n.choices {
-                    child.memoize_hashes(buf);
+                    child.memoize_hashes(buf, crypto);
                 }
             }
-            Node::Extension(n) => n.child.memoize_hashes(buf),
+            Node::Extension(n) => n.child.memoize_hashes(buf, crypto),
             _ => {}
         }
     }
