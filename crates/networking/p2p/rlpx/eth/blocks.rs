@@ -376,9 +376,10 @@ impl RLPxMessage for NewBlockHashes {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
-        let decoder = Decoder::new(&decompressed_data)?;
-        let (block_hashes, _): (Vec<(BlockHash, BlockNumber)>, _) =
-            decoder.decode_field("blockHashes")?;
+        // NewBlockHashes is a flat list of [hash, number] pairs at the top level:
+        //   [[hash0, num0], [hash1, num1], ...]
+        // Decode directly as Vec — its RLPDecode impl handles the outer list.
+        let block_hashes = <Vec<(BlockHash, BlockNumber)>>::decode(&decompressed_data)?;
         Ok(Self::new(block_hashes))
     }
 }

@@ -1144,7 +1144,7 @@ async fn handle_incoming_message(
         Message::EthNewBlock(new_block) if peer_supports_eth => {
             let chain_id = state.storage.get_chain_config().chain_id;
             let is_polygon = chain_id == 137 || chain_id == 80002;
-            if is_polygon && state.blockchain.is_synced() {
+            if is_polygon {
                 let new_block = *new_block;
                 let block_hash = new_block.block.hash();
                 let block_number = new_block.block.header.number;
@@ -1203,7 +1203,7 @@ async fn handle_incoming_message(
         Message::NewBlockHashes(new_block_hashes) if peer_supports_eth => {
             let chain_id = state.storage.get_chain_config().chain_id;
             let is_polygon = chain_id == 137 || chain_id == 80002;
-            if is_polygon && state.blockchain.is_synced() {
+            if is_polygon {
                 // Request full block headers+bodies for unknown hashes.
                 let unknown: Vec<_> = new_block_hashes
                     .block_hashes
