@@ -34,6 +34,7 @@ fn test_execution_report_has_both_gas_fields() {
         gas_used: 50000,    // Pre-refund
         gas_spent: 45200,   // Post-refund
         gas_refunded: 4800, // The refund amount
+        state_gas_used: 0,
         output: Bytes::new(),
         logs: vec![],
     };

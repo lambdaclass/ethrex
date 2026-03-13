@@ -25,11 +25,15 @@ pub const TX_DATA_NON_ZERO_GAS: u64 = 68;
 
 // Max bytecode size
 pub const MAX_CODE_SIZE: u32 = 0x6000;
+// EIP-7954 (Amsterdam): increased max bytecode size
+pub const AMSTERDAM_MAX_CODE_SIZE: u32 = 0x8000;
 
 // === EIP-3860 constants ===
 
 // Max contract creation bytecode size
 pub const MAX_INITCODE_SIZE: u32 = 2 * MAX_CODE_SIZE;
+// EIP-7954 (Amsterdam): increased max initcode size
+pub const AMSTERDAM_MAX_INITCODE_SIZE: u32 = 2 * AMSTERDAM_MAX_CODE_SIZE;
 
 // Max non-contract creation bytecode size
 pub const MAX_TRANSACTION_DATA_SIZE: u32 = 4 * 32 * 1024; // 128 Kb

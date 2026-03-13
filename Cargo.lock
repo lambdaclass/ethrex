@@ -3925,6 +3925,7 @@ dependencies = [
  "hex",
  "hex-literal 0.4.1",
  "hex-simd",
+ "indexmap 2.13.0",
  "k256",
  "kzg-rs",
  "lazy_static",

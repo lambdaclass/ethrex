@@ -161,6 +161,18 @@ pub const INIT_CODE_WORD_COST: u64 = 2;
 pub const CODE_DEPOSIT_COST: u64 = 200;
 pub const CREATE_BASE_COST: u64 = 32000;
 
+// EIP-8037: Multidimensional gas for state creation (Amsterdam only)
+pub const COST_PER_STATE_BYTE: u64 = 1174;
+pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
+pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
+pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
+// Pre-computed products to avoid repeated checked_mul in hot paths
+pub const STATE_GAS_NEW_ACCOUNT: u64 = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE; // 131_488
+pub const STATE_GAS_STORAGE_SET: u64 = STATE_BYTES_PER_STORAGE_SET * COST_PER_STATE_BYTE; // 37_568
+pub const STATE_GAS_AUTH_TOTAL: u64 = STATE_BYTES_PER_AUTH_TOTAL * COST_PER_STATE_BYTE; // 158_490
+pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam
+pub const CODE_DEPOSIT_REGULAR_COST_PER_WORD: u64 = 6; // keccak hash cost per 32-byte word
+
 // Calldata costs
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
@@ -409,6 +421,7 @@ pub fn sstore(
     current_value: U256,
     new_value: U256,
     storage_slot_was_cold: bool,
+    fork: Fork,
 ) -> Result<u64, VMError> {
     let static_gas = SSTORE_STATIC;
 
@@ -416,7 +429,13 @@ pub fn sstore(
         SSTORE_DEFAULT_DYNAMIC
     } else if current_value == original_value {
         if original_value.is_zero() {
-            SSTORE_STORAGE_CREATION
+            // For Amsterdam+, new slot creation uses MODIFICATION cost in regular gas;
+            // the state cost (32 * COST_PER_STATE_BYTE) is charged separately.
+            if fork >= Fork::Amsterdam {
+                SSTORE_STORAGE_MODIFICATION
+            } else {
+                SSTORE_STORAGE_CREATION
+            }
         } else {
             SSTORE_STORAGE_MODIFICATION
         }
@@ -524,10 +543,16 @@ fn compute_gas_create(
         0
     };
 
+    let create_base_cost = if fork >= Fork::Amsterdam {
+        REGULAR_GAS_CREATE
+    } else {
+        CREATE_BASE_COST
+    };
+
     let gas_create_cost = memory_expansion_cost
         .checked_add(init_code_cost)
         .ok_or(OutOfGas)?
-        .checked_add(CREATE_BASE_COST)
+        .checked_add(create_base_cost)
         .ok_or(OutOfGas)?
         .checked_add(hash_cost)
         .ok_or(OutOfGas)?;
@@ -553,6 +578,7 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
+    fork: Fork,
 ) -> Result<u64, VMError> {
     let mut dynamic_cost = if address_was_cold {
         COLD_ADDRESS_ACCESS_COST
@@ -560,8 +586,9 @@ pub fn selfdestruct(
         0
     };
 
-    // If a positive balance is sent to an empty account, the dynamic gas is 25000
-    if account_is_empty && balance_to_transfer > U256::zero() {
+    // If a positive balance is sent to an empty account, the dynamic gas is 25000.
+    // For Amsterdam+, this cost is moved to state gas (charged separately).
+    if account_is_empty && balance_to_transfer > U256::zero() && fork < Fork::Amsterdam {
         dynamic_cost = dynamic_cost
             .checked_add(SELFDESTRUCT_DYNAMIC)
             .ok_or(OutOfGas)?;
@@ -666,6 +693,7 @@ pub fn call(
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
+    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
@@ -681,11 +709,13 @@ pub fn call(
         0
     };
 
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
-        CALL_TO_EMPTY_ACCOUNT
-    } else {
-        0
-    };
+    // For Amsterdam+, the new-account cost is moved to state gas (charged separately).
+    let value_to_empty_account =
+        if address_is_empty && !value_to_transfer.is_zero() && fork < Fork::Amsterdam {
+            CALL_TO_EMPTY_ACCOUNT
+        } else {
+            0
+        };
 
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)

@@ -1,5 +1,5 @@
 use crate::{
-    constants::POST_OSAKA_GAS_LIMIT_CAP,
+    constants::{POST_OSAKA_GAS_LIMIT_CAP, TX_MAX_GAS_LIMIT_AMSTERDAM},
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
@@ -479,7 +479,20 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
 
     if vm.env.config.fork >= Fork::Prague {
         default_hook::validate_min_gas_limit(vm)?;
-        if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+        // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
+        // Amsterdam removes this restriction (EIP-8037 reservoir model).
+        if vm.env.config.fork < Fork::Amsterdam && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM {
+            return Err(VMError::TxValidation(
+                TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: vm.tx.hash(),
+                    tx_gas_limit: vm.tx.gas_limit(),
+                },
+            ));
+        }
+        if vm.env.config.fork >= Fork::Osaka
+            && vm.env.config.fork < Fork::Amsterdam
+            && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
                     tx_hash: vm.tx.hash(),

@@ -244,6 +244,9 @@ pub struct ExecutionReport {
     /// Post-EIP-7778: gas_used - refunds (capped).
     pub gas_spent: u64,
     pub gas_refunded: u64,
+    /// EIP-8037: State gas portion of gas_used (Amsterdam+).
+    /// Block gas_used = max(sum(regular_gas), sum(state_gas)).
+    pub state_gas_used: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
 }
@@ -267,5 +270,15 @@ pub struct ContextResult {
 impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
+    }
+
+    /// Returns true if this result is an address collision error.
+    pub fn is_collision(&self) -> bool {
+        matches!(
+            self.result,
+            TxResult::Revert(VMError::ExceptionalHalt(
+                ExceptionalHalt::AddressAlreadyOccupied
+            ))
+        )
     }
 }
