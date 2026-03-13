@@ -48,7 +48,6 @@ use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
@@ -1146,17 +1145,12 @@ impl L1Committer {
         path: &Path,
         rollup_store: &StoreRollup,
     ) -> Result<(Store, Arc<Blockchain>), CommitterError> {
-        #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
-        #[cfg(not(feature = "rocksdb"))]
-        let engine_type = EngineType::InMemory;
-
         if !path.exists() {
             info!("Creating genesis checkpoint at path {path:?}");
         }
 
         let checkpoint_store = {
-            let mut checkpoint_store_inner = Store::new(path, engine_type)?;
+            let mut checkpoint_store_inner = Store::new_checkpoint(path)?;
 
             checkpoint_store_inner.add_initial_state(genesis).await?;
 
