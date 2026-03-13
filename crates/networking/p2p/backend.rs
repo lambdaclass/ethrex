@@ -43,16 +43,23 @@ pub async fn validate_status<ST: StatusMessage>(
     // Check ForkID
     let remote_fork_id = msg_data.get_fork_id();
     if !is_fork_id_valid(storage, &remote_fork_id).await? {
-        // Log both local and remote fork IDs for debugging
         let local_fork_id = get_fork_id(storage).await.ok();
-        debug!(
-            ?remote_fork_id,
-            ?local_fork_id,
-            "Fork ID validation failed"
-        );
-        return Err(PeerConnectionError::HandshakeError(
-            "Invalid Fork Id".to_string(),
-        ));
+        let is_polygon = chain_config.chain_id == 137 || chain_config.chain_id == 80002;
+        if is_polygon {
+            // Polygon: old Bor versions compute fork IDs with only EVM forks
+            // (no Bor-specific forks). Warn but allow the connection — chain ID
+            // and genesis hash already guarantee we're on the right network.
+            debug!(
+                ?remote_fork_id,
+                ?local_fork_id,
+                "Polygon fork ID mismatch (old Bor node?) — allowing connection"
+            );
+        } else {
+            debug!(?remote_fork_id, ?local_fork_id, "Fork ID validation failed");
+            return Err(PeerConnectionError::HandshakeError(
+                "Invalid Fork Id".to_string(),
+            ));
+        }
     }
     Ok(())
 }

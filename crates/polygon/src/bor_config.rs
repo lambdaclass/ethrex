@@ -502,6 +502,10 @@ mod tests {
             lisovo_block: None,
             lisovo_pro_block: None,
             giugliano_block: None,
+            london_block: None,
+            shanghai_block: None,
+            cancun_block: None,
+            prague_block: None,
         };
 
         assert!(config.is_sprint_start(0));
