@@ -1635,6 +1635,17 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_header = self.latest_block_header.get();
 
+        // Polygon uses Bor-specific forks for fork_id computation
+        if let Some(bor_config) =
+            ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        {
+            return Ok(ethrex_polygon::fork_id::polygon_fork_id(
+                genesis_header.hash(),
+                &bor_config,
+                block_header.number,
+            ));
+        }
+
         Ok(ForkId::new(
             chain_config,
             genesis_header,
@@ -2037,12 +2048,23 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        let genesis_block = genesis.get_block();
+        self.add_initial_state_with_block(genesis, genesis_block)
+            .await
+    }
+
+    /// Like `add_initial_state`, but uses a caller-provided genesis block.
+    ///
+    /// This is needed for Polygon networks where the genesis block format
+    /// differs from standard Ethereum (no post-merge header fields).
+    pub async fn add_initial_state_with_block(
+        &mut self,
+        genesis: Genesis,
+        genesis_block: Block,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
-        // Obtain genesis block
-        let genesis_block = genesis.get_block();
         let genesis_block_number = genesis_block.header.number;
-
         let genesis_hash = genesis_block.hash();
 
         // Set chain config

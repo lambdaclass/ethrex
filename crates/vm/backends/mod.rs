@@ -10,7 +10,7 @@ use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
-use ethrex_common::{Address, types::fee_config::FeeConfig};
+use ethrex_common::{Address, types::PolygonFeeConfig, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -61,6 +61,19 @@ impl Evm {
         Ok(evm)
     }
 
+    pub fn new_for_polygon(
+        db: impl VmDatabase + 'static,
+        polygon_fee_config: PolygonFeeConfig,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+        Evm {
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
+            vm_type: VMType::Polygon(polygon_fee_config),
+            crypto,
+        }
+    }
+
     pub fn new_from_db_for_l1(
         store: Arc<impl LevmDatabase + 'static>,
         crypto: Arc<dyn Crypto>,
@@ -74,6 +87,20 @@ impl Evm {
         crypto: Arc<dyn Crypto>,
     ) -> Self {
         Self::_new_from_db(store, VMType::L2(fee_config), crypto)
+    }
+
+    pub fn new_from_db_for_polygon(
+        store: Arc<impl LevmDatabase + 'static>,
+        polygon_fee_config: PolygonFeeConfig,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::Polygon(polygon_fee_config), crypto)
+    }
+
+    /// Update the Polygon fee config for a specific block.
+    /// Called before block execution to resolve BorConfig addresses.
+    pub fn set_polygon_fee_config(&mut self, config: PolygonFeeConfig) {
+        self.vm_type = VMType::Polygon(config);
     }
 
     fn _new_from_db(

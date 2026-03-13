@@ -27,7 +27,13 @@ pub const TX_BASE_COST: u64 = 21000;
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
+/// Polygon PoS maximum transaction gas limit (2^25 = 33,554,432).
+pub const POLYGON_MAX_TX_GAS: u64 = 1 << 25;
+/// Polygon PoS allows 32KB contract code (not 24KB like Ethereum mainnet).
+pub const POLYGON_MAX_CODE_SIZE: u64 = 0x8000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
+/// Polygon PoS init code max size (2 * POLYGON_MAX_CODE_SIZE).
+pub const POLYGON_INIT_CODE_MAX_SIZE: usize = 65536;
 
 // https://eips.ethereum.org/EIPS/eip-3541
 pub const EOF_PREFIX: u8 = 0xef;

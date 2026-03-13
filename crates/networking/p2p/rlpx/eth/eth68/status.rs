@@ -9,6 +9,7 @@ use ethrex_common::{
     U256,
     types::{BlockHash, ForkId},
 };
+use ethrex_polygon::{fork_id::polygon_fork_id, genesis::bor_config_for_chain};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -48,9 +49,11 @@ impl RLPxMessage for StatusMessage68 {
         let decoder = Decoder::new(&decompressed_data)?;
         let (eth_version, decoder): (u32, _) = decoder.decode_field("protocolVersion")?;
 
-        if eth_version != 68 {
+        // Accept version 68 or 69: some clients (e.g. Bor) advertise eth/69
+        // but send the legacy eth/68-shaped status with totalDifficulty.
+        if eth_version != 68 && eth_version != 69 {
             return Err(RLPDecodeError::IncompatibleProtocol(format!(
-                "Received message is encoded in eth version {} when negotiated eth version was 68",
+                "Received message is encoded in eth version {} when negotiated eth version was 68 or 69",
                 eth_version
             )));
         }
@@ -77,15 +80,20 @@ impl RLPxMessage for StatusMessage68 {
 impl StatusMessage68 {
     pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
         let chain_config = storage.get_chain_config();
-        let total_difficulty =
-            U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
         let network_id = chain_config.chain_id;
-
+        // Polygon doesn't use TTD — its cumulative difficulty grows with every block.
+        // Use the latest block number as a lower-bound estimate (each block has diff >= 1).
+        let is_polygon = network_id == 137 || network_id == 80002;
         // These blocks must always be available
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
         let lastest_block = storage.get_latest_block_number().await?;
+        let total_difficulty = if is_polygon {
+            U256::from(lastest_block)
+        } else {
+            U256::from(chain_config.terminal_total_difficulty.unwrap_or_default())
+        };
         let block_header =
             storage
                 .get_block_header(lastest_block)?
@@ -95,12 +103,25 @@ impl StatusMessage68 {
 
         let genesis = genesis_header.hash();
         let lastest_block_hash = block_header.hash();
-        let fork_id = ForkId::new(
-            chain_config,
-            genesis_header,
-            block_header.timestamp,
-            lastest_block,
-        );
+        let fork_id = if is_polygon {
+            if let Some(bor_config) = bor_config_for_chain(network_id) {
+                polygon_fork_id(genesis, &bor_config, lastest_block)
+            } else {
+                ForkId::new(
+                    chain_config,
+                    genesis_header,
+                    block_header.timestamp,
+                    lastest_block,
+                )
+            }
+        } else {
+            ForkId::new(
+                chain_config,
+                genesis_header,
+                block_header.timestamp,
+                lastest_block,
+            )
+        };
 
         Ok(StatusMessage68 {
             eth_version: 68,

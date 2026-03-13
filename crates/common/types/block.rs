@@ -534,14 +534,23 @@ pub enum FakeExponentialError {
     CheckedAdd,
 }
 
-// Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
-// Returns None if the block gas limit is not valid in relation to its parent's gas limit
+/// Calculates the base fee for the current block based on its gas_limit and parent's gas and fee.
+/// Returns None if the block gas limit is not valid in relation to its parent's gas limit.
+///
+/// Parameters:
+/// - `elasticity_multiplier`: Used to compute parent_gas_target as `parent_gas_limit / elasticity_multiplier`.
+///   For Polygon, pass 1 and use `target_gas_percentage` instead.
+/// - `base_fee_change_denominator`: Controls base fee adjustment speed (Ethereum: 8, Polygon: 64).
+/// - `target_gas_percentage`: If Some, overrides elasticity-based target calculation with
+///   `parent_gas_limit * pct / 100` (Polygon uses 65).
 pub fn calculate_base_fee_per_gas(
     block_gas_limit: u64,
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
     elasticity_multiplier: u64,
+    base_fee_change_denominator: u128,
+    target_gas_percentage: Option<u64>,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -549,7 +558,11 @@ pub fn calculate_base_fee_per_gas(
         return None;
     }
 
-    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
+    let parent_gas_target = if let Some(pct) = target_gas_percentage {
+        parent_gas_limit * pct / 100
+    } else {
+        parent_gas_limit / elasticity_multiplier
+    };
 
     match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => Some(parent_base_fee_per_gas),
@@ -560,8 +573,7 @@ pub fn calculate_base_fee_per_gas(
                 u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
             let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            let base_fee_per_gas_delta =
-                max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
+            let base_fee_per_gas_delta = max(target_fee_gas_delta / base_fee_change_denominator, 1);
 
             (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
                 .try_into()
@@ -574,7 +586,7 @@ pub fn calculate_base_fee_per_gas(
                 u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
             let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
+            let base_fee_per_gas_delta = target_fee_gas_delta / base_fee_change_denominator;
 
             (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
                 .try_into()
@@ -625,6 +637,21 @@ pub enum InvalidBlockHeaderError {
     ParentBeaconBlockRootPresent,
     #[error("Requests hash is present")]
     RequestsHashPresent,
+    // Polygon / Bor specific errors
+    #[error("Polygon: difficulty must be non-zero, got {0}")]
+    PolygonInvalidDifficulty(U256),
+    #[error("Polygon: coinbase must be zero in header")]
+    PolygonCoinbaseNotZero,
+    #[error("Polygon: withdrawals_root must be absent")]
+    PolygonWithdrawalsRootPresent,
+    #[error("Polygon: parent_beacon_block_root must be absent")]
+    PolygonParentBeaconBlockRootPresent,
+    #[error("Polygon: blob_gas_used must be absent")]
+    PolygonBlobGasUsedPresent,
+    #[error("Polygon: excess_blob_gas must be absent")]
+    PolygonExcessBlobGasPresent,
+    #[error("Polygon: requests_hash must be absent")]
+    PolygonRequestsHashPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -653,6 +680,8 @@ pub fn validate_block_header(
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
         elasticity_multiplier,
+        BASE_FEE_MAX_CHANGE_DENOMINATOR,
+        None,
     ) {
         base_fee
     } else {
@@ -1012,6 +1041,8 @@ mod test {
             parent_gas_used,
             parent_base_fee_per_gas,
             ELASTICITY_MULTIPLIER,
+            BASE_FEE_MAX_CHANGE_DENOMINATOR,
+            None,
         );
         assert_eq!(calc_base_fee, expected_base_fee)
     }
@@ -1088,5 +1119,92 @@ mod test {
         );
         // With u64 this overflows
         assert!(thing.is_ok());
+    }
+
+    #[test]
+    fn test_compute_transactions_root_includes_state_sync_tx() {
+        use crate::types::transaction::{
+            EIP1559Transaction, LegacyTransaction, StateSyncData, StateSyncTransaction,
+        };
+        // Build a block body with a legacy tx, an EIP-1559 tx, and a StateSyncTx
+        let legacy = Transaction::LegacyTransaction(LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(100),
+            gas: 21000,
+            to: crate::types::TxKind::Call(Address::from_low_u64_be(0x42)),
+            value: U256::from(1),
+            data: Bytes::new(),
+            v: U256::from(27),
+            r: U256::from(1),
+            s: U256::from(2),
+            ..Default::default()
+        });
+        let eip1559 = Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id: 137,
+            nonce: 1,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 100,
+            gas_limit: 21000,
+            to: crate::types::TxKind::Call(Address::from_low_u64_be(0x43)),
+            value: U256::from(2),
+            data: Bytes::new(),
+            access_list: vec![],
+            signature_y_parity: true,
+            signature_r: U256::from(3),
+            signature_s: U256::from(4),
+            ..Default::default()
+        });
+        let state_sync = Transaction::StateSyncTransaction(StateSyncTransaction {
+            state_sync_data: vec![StateSyncData {
+                id: 100,
+                contract: Address::from_low_u64_be(0x1001),
+                data: Bytes::from(vec![0xAA, 0xBB]),
+                tx_hash: H256::from_low_u64_be(0xdead),
+            }],
+            ..Default::default()
+        });
+
+        // The StateSyncTx canonical encoding must start with 0x7f
+        let canonical = state_sync.encode_canonical_to_vec();
+        assert_eq!(canonical[0], 0x7f);
+
+        // Compute root with and without the StateSyncTx
+        let txs_without = vec![legacy.clone(), eip1559.clone()];
+        let txs_with = vec![legacy, eip1559, state_sync];
+
+        let root_without = compute_transactions_root(&txs_without);
+        let root_with = compute_transactions_root(&txs_with);
+
+        // Roots must differ — the StateSyncTx changes the trie
+        assert_ne!(
+            root_without, root_with,
+            "transaction root must differ when StateSyncTx is appended"
+        );
+
+        // Root must be deterministic
+        let root_with_again = compute_transactions_root(&txs_with);
+        assert_eq!(root_with, root_with_again);
+    }
+
+    #[test]
+    fn test_compute_receipts_root_includes_state_sync_receipt() {
+        use crate::types::TxType;
+        use crate::types::receipt::Receipt;
+
+        // Build receipts for a regular tx and a StateSyncTx
+        let regular_receipt = Receipt::new(TxType::EIP1559, true, 21000, vec![]);
+        let state_sync_receipt = Receipt::new(TxType::StateSync, true, 21000, vec![]);
+
+        let receipts_without = vec![regular_receipt.clone()];
+        let receipts_with = vec![regular_receipt, state_sync_receipt];
+
+        let root_without = compute_receipts_root(&receipts_without);
+        let root_with = compute_receipts_root(&receipts_with);
+
+        // Adding a state sync receipt must change the root
+        assert_ne!(
+            root_without, root_with,
+            "receipt root must differ when StateSyncTx receipt is appended"
+        );
     }
 }

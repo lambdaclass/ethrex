@@ -175,7 +175,12 @@ impl<'a> VM<'a> {
         }
 
         // 2. If the code_length > MAX_CODE_SIZE
-        if code_length > MAX_CODE_SIZE {
+        let max_code_size = if self.env.config.fork.is_polygon() {
+            POLYGON_MAX_CODE_SIZE
+        } else {
+            MAX_CODE_SIZE
+        };
+        if code_length > max_code_size {
             return Err(ExceptionalHalt::ContractOutputTooBig.into());
         }
 

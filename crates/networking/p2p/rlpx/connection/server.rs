@@ -1134,6 +1134,101 @@ async fn handle_incoming_message(
                 Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
             }
         }
+        // Polygon PoS: process new blocks received via P2P.
+        // These ETH messages are deprecated post-merge for Ethereum but are the
+        // primary block propagation mechanism for Polygon.
+        Message::EthNewBlock(new_block) if peer_supports_eth => {
+            let chain_id = state.storage.get_chain_config().chain_id;
+            let is_polygon = chain_id == 137 || chain_id == 80002;
+            if is_polygon && state.blockchain.is_synced() {
+                let new_block = *new_block;
+                let block_hash = new_block.block.hash();
+                let block_number = new_block.block.header.number;
+
+                // Skip blocks we already have.
+                if state
+                    .storage
+                    .get_block_header_by_hash(block_hash)?
+                    .is_some()
+                {
+                    debug!(peer=%state.node, block_number, "Ignoring already-known block");
+                } else {
+                    debug!(
+                        peer=%state.node,
+                        block_number,
+                        hash=?block_hash,
+                        td=%new_block.total_difficulty,
+                        "Received new Polygon block via P2P"
+                    );
+
+                    // Execute and store the block. blockchain.add_block() runs
+                    // Bor header validation, LEVM execution, and state root check.
+                    let announced_td = new_block.total_difficulty;
+                    match state.blockchain.add_block(new_block.block) {
+                        Ok(()) => {
+                            // Update the canonical head if the new block's total
+                            // difficulty exceeds our current head. The peer announces
+                            // its cumulative TD in the NewBlock message. We compare
+                            // against our head's block number as a conservative lower
+                            // bound (each Bor block has difficulty >= 1, so local
+                            // TD >= head_number). A proper TD store will replace this
+                            // in Wave 4.
+                            let latest = state.storage.get_latest_block_number().await?;
+                            let local_td_lower_bound = ethrex_common::U256::from(latest);
+                            if announced_td > local_td_lower_bound || block_number > latest {
+                                state
+                                    .storage
+                                    .forkchoice_update(vec![], block_number, block_hash, None, None)
+                                    .await?;
+                                debug!(block_number, %announced_td, "Updated canonical head (Polygon)");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                peer=%state.node,
+                                block_number,
+                                error=%e,
+                                "Failed to process Polygon block"
+                            );
+                        }
+                    }
+                }
+            }
+            // Non-Polygon chains: silently ignore (post-merge, blocks come via Engine API).
+        }
+        Message::NewBlockHashes(new_block_hashes) if peer_supports_eth => {
+            let chain_id = state.storage.get_chain_config().chain_id;
+            let is_polygon = chain_id == 137 || chain_id == 80002;
+            if is_polygon && state.blockchain.is_synced() {
+                // Request full block headers+bodies for unknown hashes.
+                let unknown: Vec<_> = new_block_hashes
+                    .block_hashes
+                    .iter()
+                    .filter(|(hash, _)| {
+                        state
+                            .storage
+                            .get_block_header_by_hash(*hash)
+                            .ok()
+                            .flatten()
+                            .is_none()
+                    })
+                    .collect();
+
+                if !unknown.is_empty() {
+                    // TODO(polygon): Implement full block fetch flow.
+                    // This requires handle_outgoing_request() (not send()) so the
+                    // response is routed back to us, followed by GetBlockBodies
+                    // to retrieve full blocks. For now we log and rely on NewBlock
+                    // announcements for block import.
+                    debug!(
+                        peer=%state.node,
+                        count=unknown.len(),
+                        "Received NewBlockHashes for unknown Polygon blocks (fetch not yet implemented)"
+                    );
+                }
+            }
+            // Non-Polygon chains: silently ignore.
+        }
         #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;

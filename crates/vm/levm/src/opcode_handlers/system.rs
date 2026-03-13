@@ -13,7 +13,7 @@
 
 use crate::{
     call_frame::CallFrame,
-    constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
+    constants::{FAIL, INIT_CODE_MAX_SIZE, POLYGON_INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
@@ -642,7 +642,12 @@ impl<'a> VM<'a> {
     ) -> Result<OpcodeResult, VMError> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
+        let max_init_code_size = if self.env.config.fork.is_polygon() {
+            POLYGON_INIT_CODE_MAX_SIZE
+        } else {
+            INIT_CODE_MAX_SIZE
+        };
+        if code_size_in_memory > max_init_code_size && self.env.config.fork >= Fork::Shanghai {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 

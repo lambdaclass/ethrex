@@ -128,7 +128,7 @@ type BlockExecutionPipelineResult = (
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-/// Specifies whether the blockchain operates as L1 (mainnet/testnet) or L2 (rollup).
+/// Specifies whether the blockchain operates as L1 (mainnet/testnet), L2 (rollup), or Polygon PoS.
 #[derive(Debug, Clone, Default)]
 pub enum BlockchainType {
     /// Standard Ethereum L1 blockchain.
@@ -136,6 +136,8 @@ pub enum BlockchainType {
     L1,
     /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
+    /// Polygon PoS blockchain with deferred fee distribution.
+    Polygon,
 }
 
 /// Configuration for L2 rollup operation.
@@ -325,10 +327,31 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            ethrex_polygon::validation::validate_bor_header(&block.header, &parent_header)
+                .map_err(InvalidBlockError::from)?;
+        } else {
+            validate_block_pre_execution(
+                block,
+                &parent_header,
+                &chain_config,
+                ELASTICITY_MULTIPLIER,
+            )?;
+        }
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
+
+        // For Polygon, resolve the BorConfig addresses for this block number
+        if matches!(self.options.r#type, BlockchainType::Polygon)
+            && let Some(bor_config) =
+                ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        {
+            vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
+                burnt_contract: bor_config.get_burnt_contract(block.header.number),
+                coinbase: bor_config.get_coinbase(block.header.number),
+            });
+        }
 
         let (execution_result, bal) = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions()?;
@@ -394,7 +417,17 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            ethrex_polygon::validation::validate_bor_header(&block.header, parent_header)
+                .map_err(InvalidBlockError::from)?;
+        } else {
+            validate_block_pre_execution(
+                block,
+                parent_header,
+                &chain_config,
+                ELASTICITY_MULTIPLIER,
+            )?;
+        }
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -1255,7 +1288,17 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            ethrex_polygon::validation::validate_bor_header(&block.header, parent_header)
+                .map_err(InvalidBlockError::from)?;
+        } else {
+            validate_block_pre_execution(
+                block,
+                parent_header,
+                chain_config,
+                ELASTICITY_MULTIPLIER,
+            )?;
+        }
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -1359,6 +1402,17 @@ impl Blockchain {
                         ))?,
                     };
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
+                }
+                BlockchainType::Polygon => {
+                    let chain_config = self.storage.get_chain_config();
+                    let fee_config =
+                        ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+                            .map(|bor_config| ethrex_common::types::PolygonFeeConfig {
+                                burnt_contract: bor_config.get_burnt_contract(block.header.number),
+                                coinbase: bor_config.get_coinbase(block.header.number),
+                            })
+                            .unwrap_or_default();
+                    Evm::new_from_db_for_polygon(logger.clone(), fee_config, Arc::new(NativeCrypto))
                 }
             };
 
@@ -1965,6 +2019,8 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
+        let chain_config = self.storage.get_chain_config();
+
         let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
@@ -1976,7 +2032,7 @@ impl Blockchain {
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
+            let mut vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => {
                     Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
                 }
@@ -1987,11 +2043,36 @@ impl Blockchain {
                     })?,
                     Arc::new(NativeCrypto),
                 ),
+                BlockchainType::Polygon => Evm::new_from_db_for_polygon(
+                    logger.clone(),
+                    ethrex_common::types::PolygonFeeConfig::default(),
+                    Arc::new(NativeCrypto),
+                ),
             };
+            // Resolve Polygon fee config for this specific block
+            if matches!(self.options.r#type, BlockchainType::Polygon)
+                && let Some(bor_config) =
+                    ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+            {
+                vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
+                    burnt_contract: bor_config.get_burnt_contract(block.header.number),
+                    coinbase: bor_config.get_coinbase(block.header.number),
+                });
+            }
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-            let vm = self.new_evm(vm_db)?;
+            let mut vm = self.new_evm(vm_db)?;
+            // Resolve Polygon fee config for this specific block
+            if matches!(self.options.r#type, BlockchainType::Polygon)
+                && let Some(bor_config) =
+                    ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+            {
+                vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
+                    burnt_contract: bor_config.get_burnt_contract(block.header.number),
+                    coinbase: bor_config.get_coinbase(block.header.number),
+                });
+            }
             (vm, None)
         };
 
@@ -2439,6 +2520,11 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+        // Polygon: reject blob transactions entirely
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            return Err(MempoolError::BlobTxNotSupported);
+        }
+
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
@@ -2547,6 +2633,28 @@ impl Blockchain {
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(None);
+        }
+
+        // Polygon-specific transaction pool rules
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            // Reject blob transactions (type 3) — Polygon has no blob support
+            if matches!(tx, Transaction::EIP4844Transaction(_)) {
+                return Err(MempoolError::BlobTxNotSupported);
+            }
+            // Accept only types 0 (Legacy), 1 (AccessList), 2 (DynamicFee), 4 (SetCode/EIP-7702)
+            let tx_type = tx.tx_type() as u8;
+            if !matches!(tx_type, 0 | 1 | 2 | 4) {
+                return Err(MempoolError::UnsupportedTxType(tx_type));
+            }
+            // Enforce 25 Gwei minimum gas price
+            let min_gas_price: U256 = U256::from(25_000_000_000u64); // 25 Gwei
+            let effective_gas_price = tx
+                .max_fee_per_gas()
+                .map(U256::from)
+                .unwrap_or_else(|| tx.gas_price());
+            if effective_gas_price < min_gas_price {
+                return Err(MempoolError::TxGasPriceBelowMinimum);
+            }
         }
 
         let header_no = self.storage.get_latest_block_number().await?;
@@ -2687,6 +2795,12 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
+            // StateSyncTransactions are consensus-only (never in mempool/P2P)
+            Transaction::StateSyncTransaction(_) => {
+                return Err(StoreError::Custom(
+                    "StateSyncTransactions are not supported in P2P".to_string(),
+                ));
+            }
         };
 
         Ok(result)
@@ -2718,6 +2832,16 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
                 .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
 
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
+        }
+        BlockchainType::Polygon => {
+            // PolygonFeeConfig is resolved per-block in execute_block, not here.
+            // We create the EVM with a default config; the blockchain layer
+            // updates vm_type before block execution.
+            Evm::new_for_polygon(
+                vm_db,
+                ethrex_common::types::PolygonFeeConfig::default(),
+                Arc::new(NativeCrypto),
+            )
         }
     };
     Ok(evm)

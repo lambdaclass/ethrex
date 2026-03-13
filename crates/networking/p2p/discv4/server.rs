@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -108,7 +108,7 @@ impl DiscoveryServer {
 
         let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
             .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
+        if let Ok(fork_id) = backend::get_fork_id(&storage).await {
             local_node_record
                 .set_fork_id(fork_id, &signer)
                 .expect("Failed to set fork_id on local node record");
@@ -578,23 +578,9 @@ impl DiscoveryServer {
             return Ok(());
         };
 
-        let chain_config = self.store.get_chain_config();
-        let genesis_header = self
-            .store
-            .get_block_header(0)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-        let latest_block_number = self.store.get_latest_block_number().await?;
-        let latest_block_header = self
-            .store
-            .get_block_header(latest_block_number)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-
-        let local_fork_id = ForkId::new(
-            chain_config,
-            genesis_header.clone(),
-            latest_block_header.timestamp,
-            latest_block_number,
-        );
+        let local_fork_id = backend::get_fork_id(&self.store)
+            .await
+            .map_err(|_| DiscoveryServerError::InvalidContact)?;
 
         if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
             self.peer_table

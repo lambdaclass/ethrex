@@ -3,8 +3,9 @@ use ethrex_common::{
     U256,
     constants::GAS_PER_BLOB,
     types::{
-        Block, BlockHeader, ELASTICITY_MULTIPLIER, Fork, ForkBlobSchedule, Transaction,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        BASE_FEE_MAX_CHANGE_DENOMINATOR, Block, BlockHeader, ELASTICITY_MULTIPLIER, Fork,
+        ForkBlobSchedule, Transaction, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas,
     },
 };
 use serde::Serialize;
@@ -201,6 +202,8 @@ fn project_next_block_base_fee_values(
         header.gas_used,
         header.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
+        BASE_FEE_MAX_CHANGE_DENOMINATOR,
+        None,
     )
     .unwrap_or_default();
     let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);
@@ -258,6 +261,7 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
             Transaction::FeeTokenTransaction(t) => t
                 .max_priority_fee_per_gas
                 .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+            Transaction::StateSyncTransaction(_) => 0,
         })
         .collect();
 

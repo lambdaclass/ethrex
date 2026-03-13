@@ -12,6 +12,7 @@ license.workspace = true
 ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
+ethrex-polygon.workspace = true
 ethrex-trie.workspace = true
 
 async-trait.workspace = true

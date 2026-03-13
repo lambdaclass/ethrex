@@ -23,6 +23,8 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
+use ethrex_polygon::genesis::{bor_config_for_chain, polygon_genesis_block};
+use ethrex_polygon::heimdall::{HeimdallPoller, HeimdallPollerState};
 use ethrex_storage::{EngineType, Store, error::StoreError};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -34,9 +36,10 @@ use std::{
     io::IsTerminal,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::RwLock;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 #[cfg(not(feature = "l2"))]
 use tracing::error;
@@ -143,9 +146,20 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
+pub async fn init_store(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    is_polygon: bool,
+) -> Result<Store, StoreError> {
     let mut store = open_store(datadir.as_ref())?;
-    store.add_initial_state(genesis).await?;
+    if is_polygon {
+        let genesis_block = polygon_genesis_block(&genesis);
+        store
+            .add_initial_state_with_block(genesis, genesis_block)
+            .await?;
+    } else {
+        store.add_initial_state(genesis).await?;
+    }
     Ok(store)
 }
 
@@ -303,7 +317,7 @@ pub fn get_network(opts: &Options) -> Network {
     let default = if opts.dev {
         Network::LocalDevnet
     } else {
-        Network::mainnet()
+        Network::polygon()
     };
     opts.network.clone().unwrap_or(default)
 }
@@ -451,13 +465,14 @@ pub async fn init_l1(
     let network = get_network(&opts);
 
     let genesis = network.get_genesis()?;
+    let chain_id = genesis.config.chain_id;
     display_chain_initialization(&genesis);
 
     raise_fd_limit()?;
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let store = match init_store(datadir, genesis, network.is_polygon()).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -475,12 +490,18 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
+    let blockchain_type = if network.is_polygon() {
+        BlockchainType::Polygon
+    } else {
+        BlockchainType::L1
+    };
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
-            r#type: BlockchainType::L1,
+            r#type: blockchain_type,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },
@@ -534,6 +555,34 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+    }
+
+    // Spawn the Heimdall poller for Polygon networks (not in dev mode).
+    if network.is_polygon() && !opts.dev {
+        if let Some(bor_config) = bor_config_for_chain(chain_id) {
+            let heimdall_state = Arc::new(RwLock::new(HeimdallPollerState::default()));
+            let poller = HeimdallPoller::new(&opts.bor_heimdall, bor_config, heimdall_state);
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let shutdown_clone = shutdown.clone();
+            let cancel_clone = cancel_token.clone();
+            info!(
+                heimdall_url = %opts.bor_heimdall,
+                "Starting Heimdall poller for chain {chain_id}"
+            );
+            // Wire the CancellationToken to the poller's shutdown flag.
+            tracker.spawn(async move {
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        shutdown_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    result = poller.spawn(shutdown) => {
+                        result.ok();
+                    }
+                }
+            });
+        } else {
+            warn!("No BorConfig found for chain ID {chain_id}, Heimdall poller not started");
+        }
     }
 
     if opts.dev {

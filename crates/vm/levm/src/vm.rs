@@ -20,7 +20,9 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    types::{
+        AccessListEntry, Code, Fork, Log, PolygonFeeConfig, Transaction, fee_config::FeeConfig,
+    },
 };
 use ethrex_crypto::Crypto;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -34,7 +36,7 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
 
-/// Specifies whether the VM operates in L1 or L2 mode.
+/// Specifies whether the VM operates in L1, L2, or Polygon mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
     /// Standard Ethereum L1 execution.
@@ -42,6 +44,8 @@ pub enum VMType {
     L1,
     /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
+    /// Polygon PoS execution with deferred fee distribution.
+    Polygon(PolygonFeeConfig),
 }
 
 /// Execution substate that tracks changes during transaction execution.

@@ -1,4 +1,5 @@
 use crate::{
+    backend,
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
@@ -145,7 +146,7 @@ impl DiscoveryServer {
 
         let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
             .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
+        if let Ok(fork_id) = backend::get_fork_id(&storage).await {
             local_node_record
                 .set_fork_id(fork_id, &signer)
                 .expect("Failed to set fork_id on local node record");

@@ -31,7 +31,17 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
-        if vm.env.config.fork >= Fork::Prague {
+        if vm.env.config.fork.is_polygon() {
+            // Polygon PoS: enforce 2^25 max transaction gas limit
+            if vm.tx.gas_limit() > POLYGON_MAX_TX_GAS {
+                return Err(VMError::TxValidation(
+                    TxValidationError::TxMaxGasLimitExceeded {
+                        tx_hash: vm.tx.hash(),
+                        tx_gas_limit: vm.tx.gas_limit(),
+                    },
+                ));
+            }
+        } else if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
             if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
                 return Err(VMError::TxValidation(
@@ -360,9 +370,14 @@ pub fn validate_max_fee_per_blob_gas(
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
     let code_size = vm.current_call_frame.calldata.len();
-    if code_size > INIT_CODE_MAX_SIZE && vm.env.config.fork >= Fork::Shanghai {
+    let max_init_code_size = if vm.env.config.fork.is_polygon() {
+        POLYGON_INIT_CODE_MAX_SIZE
+    } else {
+        INIT_CODE_MAX_SIZE
+    };
+    if code_size > max_init_code_size && vm.env.config.fork >= Fork::Shanghai {
         return Err(TxValidationError::InitcodeSizeExceeded {
-            max_size: INIT_CODE_MAX_SIZE,
+            max_size: max_init_code_size,
             actual_size: code_size,
         }
         .into());

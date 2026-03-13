@@ -1,36 +1,14 @@
-use ethrex_p2p::types::Node;
 use std::{
     fmt::{self},
     path::PathBuf,
 };
 
 use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
+use ethrex_polygon::genesis::{amoy_genesis, polygon_mainnet_genesis};
 use serde::{Deserialize, Serialize};
 
-//TODO: Look for a better place to move these files
-const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
-const HOLESKY_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/holesky/bootnodes.json");
-const SEPOLIA_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/sepolia/bootnodes.json");
-const HOODI_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/hoodi/bootnodes.json");
-
-pub const MAINNET_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
-pub const HOLESKY_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/holesky/genesis.json");
-pub const HOODI_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
-pub const SEPOLIA_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
-pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l1.json");
-pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
-
-pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
-    include_str!("../../../fixtures/keys/private_keys_l1.txt");
-
-pub const MAINNET_CHAIN_ID: u64 = 0x1;
-pub const HOLESKY_CHAIN_ID: u64 = 0x4268;
-pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
-pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
+pub const POLYGON_MAINNET_CHAIN_ID: u64 = 137;
+pub const AMOY_CHAIN_ID: u64 = 80002;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
@@ -44,19 +22,15 @@ pub enum Network {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicNetwork {
-    Hoodi,
-    Holesky,
-    Sepolia,
-    Mainnet,
+    Polygon,
+    Amoy,
 }
 
 impl From<&str> for Network {
     fn from(value: &str) -> Self {
         match value {
-            "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
-            "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
-            "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
-            "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "polygon" => Network::PublicNetwork(PublicNetwork::Polygon),
+            "amoy" => Network::PublicNetwork(PublicNetwork::Amoy),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
@@ -68,10 +42,8 @@ impl TryFrom<u64> for Network {
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         match value {
-            MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
-            HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
-            SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
-            HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            POLYGON_MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Polygon)),
+            AMOY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Amoy)),
             _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
@@ -85,17 +57,15 @@ impl From<PathBuf> for Network {
 
 impl Default for Network {
     fn default() -> Self {
-        Network::PublicNetwork(PublicNetwork::Mainnet)
+        Network::PublicNetwork(PublicNetwork::Polygon)
     }
 }
 
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Network::PublicNetwork(PublicNetwork::Holesky) => write!(f, "holesky"),
-            Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
-            Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
-            Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::Polygon) => write!(f, "polygon"),
+            Network::PublicNetwork(PublicNetwork::Amoy) => write!(f, "amoy"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
@@ -104,16 +74,21 @@ impl fmt::Display for Network {
     }
 }
 
+pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l1.json");
+pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
+
+pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
+    include_str!("../../../fixtures/keys/private_keys_l1.txt");
+
 impl Network {
-    pub fn mainnet() -> Self {
-        Network::PublicNetwork(PublicNetwork::Mainnet)
+    pub fn polygon() -> Self {
+        Network::PublicNetwork(PublicNetwork::Polygon)
     }
 
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
-            Network::PublicNetwork(public_network) => {
-                Ok(serde_json::from_str(get_genesis_contents(*public_network))?)
-            }
+            Network::PublicNetwork(PublicNetwork::Polygon) => Ok(polygon_mainnet_genesis()),
+            Network::PublicNetwork(PublicNetwork::Amoy) => Ok(amoy_genesis()),
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),
             Network::LocalDevnetL2 => Ok(serde_json::from_str(LOCAL_DEVNETL2_GENESIS_CONTENTS)?),
             Network::L2Chain(chain_id) => Ok(Genesis {
@@ -128,85 +103,46 @@ impl Network {
         }
     }
 
-    pub fn get_bootnodes(&self) -> Vec<Node> {
-        let bootnodes = match self {
-            Network::PublicNetwork(PublicNetwork::Holesky) => HOLESKY_BOOTNODES,
-            Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
-            Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
-            Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
-            _ => return vec![],
+    /// Returns true if this is a Polygon PoS network (mainnet or testnet).
+    pub fn is_polygon(&self) -> bool {
+        matches!(
+            self,
+            Network::PublicNetwork(PublicNetwork::Polygon | PublicNetwork::Amoy)
+        )
+    }
+
+    pub fn get_bootnodes(&self) -> Vec<ethrex_p2p::types::Node> {
+        use ethrex_p2p::types::Node;
+
+        // Source: Bor params/bootnodes.go (maticnetwork/bor)
+        let enodes: &[&str] = match self {
+            Network::PublicNetwork(PublicNetwork::Polygon) => &[
+                // BorMainnetBootnodes
+                "enode://e4fb013061eba9a2c6fb0a41bbd4149f4808f0fb7e88ec55d7163f19a6f02d64d0ce5ecc81528b769ba552a7068057432d44ab5e9e42842aff5b4709aa2c3f3b@34.89.75.187:30303",
+                "enode://a49da6300403cf9b31e30502eb22c142ba4f77c9dda44990bccce9f2121c3152487ee95ee55c6b92d4cdce77845e40f59fd927da70ea91cf935b23e262236d75@34.142.43.249:30303",
+                // MainnetBootnodes (also used by Bor)
+                "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+                "enode://22a8232c3abc76a16ae9d6c3b164f98775fe226f0917b0ca871128a74a8e9630b458460865bab457221f1d448dd9791d24c4e5d88786180ac185df813a68d4de@3.209.45.79:30303",
+            ],
+            Network::PublicNetwork(PublicNetwork::Amoy) => &[
+                // AmoyBootnodes — https://docs.polygon.technology/pos/reference/seed-and-bootnodes/
+                "enode://d40ab6b340be9f78179bd1ec7aa4df346d43dc1462d85fb44c5d43f595991d2ec215d7c778a7588906cb4edf175b3df231cecce090986a739678cd3c620bf580@34.89.255.109:30303",
+                "enode://13abba15caa024325f2209d3566fa77cd864281dda4f73bca4296277bfd919ac68cef4dbb508028e0310a24f6f9e23c761fa41ac735cdc87efdee76d5ff985a7@34.185.137.160:30303",
+                "enode://fc5bd3856a4ce6389eef1d6bc637ce7617e6ba8013f7d722d9878cf13f1c5a5a95a9e26ccb0b38bcc330343941ce117ab50db9f61e72ba450dd528a1184d8e6a@34.89.119.250:30303",
+                "enode://945e11d11bdeed301fb23a5c05aae77bfdde39a8f70308131682a5d2fc1f080531314554afc78718a72ae25cc09be7833f760bf8681516b4315ed36217fa8dab@34.89.40.235:30303",
+                // Bor source (0xPolygon/bor params/bootnodes.go)
+                "enode://c9c8c18cde48b41d46ced0c564496aef721a9b58f8724025a0b1f3f26f1b826f31786f890f8f8781e18b16dbb3c7bff805c7304d1273ac11630ed25a3f0dc41c@34.89.39.114:30303",
+                "enode://0ef8758cafc0063405f3f31fe22f2a3b566aa871bd7cd405e35954ec8aa7237c21e1ccc1f65f1b6099ab36db029362bc2fecf001a771b3d9803bbf1968508cef@35.197.249.21:30303",
+                // polygon-cli p2p sensor
+                "enode://b8f1cc9c5d4403703fbf377116469667d2b1823c0daf16b7250aa576bacf399e42c3930ccfcb02c5df6879565a2b8931335565f0e8d3f8e72385ecf4a4bf160a@3.36.224.80:30303",
+                "enode://8729e0c825f3d9cad382555f3e46dcff21af323e89025a0e6312df541f4a9e73abfa562d64906f5e59c51fe6f0501b3e61b07979606c56329c020ed739910759@54.194.245.5:30303",
+            ],
+            _ => &[],
         };
-        serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
-    }
-}
 
-fn get_genesis_contents(network: PublicNetwork) -> &'static str {
-    match network {
-        PublicNetwork::Holesky => HOLESKY_GENESIS_CONTENTS,
-        PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
-        PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
-        PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ethrex_common::H256;
-
-    use super::*;
-
-    fn assert_genesis_hash(network: PublicNetwork, expected_hash: &str) {
-        let genesis = Network::PublicNetwork(network).get_genesis().unwrap();
-        let genesis_hash = genesis.get_block().hash();
-        let expected_hash = hex::decode(expected_hash).unwrap();
-        assert_eq!(genesis_hash, H256::from_slice(&expected_hash));
-    }
-
-    #[test]
-    fn test_holesky_genesis_block_hash() {
-        // Values taken from the geth codebase:
-        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
-        assert_genesis_hash(
-            PublicNetwork::Holesky,
-            "b5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4",
-        );
-    }
-
-    #[test]
-    fn test_sepolia_genesis_block_hash() {
-        // Values taken from the geth codebase:
-        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
-        assert_genesis_hash(
-            PublicNetwork::Sepolia,
-            "25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9",
-        );
-    }
-
-    #[test]
-    fn test_hoodi_genesis_block_hash() {
-        // Values taken from the geth codebase:
-        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
-        assert_genesis_hash(
-            PublicNetwork::Hoodi,
-            "bbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b",
-        );
-    }
-
-    #[test]
-    fn test_mainnet_genesis_block_hash() {
-        // Values taken from the geth codebase:
-        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
-        assert_genesis_hash(
-            PublicNetwork::Mainnet,
-            "d4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",
-        );
-    }
-
-    #[test]
-    fn test_get_bootnodes_works_for_public_networks() {
-        Network::PublicNetwork(PublicNetwork::Holesky).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+        enodes
+            .iter()
+            .filter_map(|e| Node::from_enode_url(e).ok())
+            .collect()
     }
 }

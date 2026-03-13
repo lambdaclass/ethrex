@@ -1,4 +1,8 @@
 use ethrex_common::types::ForkId;
+use ethrex_polygon::{
+    fork_id::{polygon_fork_id, polygon_is_fork_id_valid},
+    genesis::bor_config_for_chain,
+};
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{error::PeerConnectionError, eth::status::StatusMessage, p2p::Capability};
@@ -16,7 +20,11 @@ pub async fn validate_status<ST: StatusMessage>(
         ));
     }
     //Check Protocol Version
-    if msg_data.get_eth_version() != eth_capability.version {
+    // Allow eth/68 status when eth/69 was negotiated: some clients (e.g. Bor)
+    // advertise eth/69 but still send the legacy eth/68-shaped status message.
+    let version_ok = msg_data.get_eth_version() == eth_capability.version
+        || (eth_capability.version == 69 && msg_data.get_eth_version() == 68);
+    if !version_ok {
         return Err(PeerConnectionError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
@@ -50,6 +58,18 @@ pub async fn is_fork_id_valid(
         .get_block_header(0)?
         .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
     let latest_block_number = storage.get_latest_block_number().await?;
+
+    // Polygon uses its own fork schedule — validate against Polygon forks.
+    if let Some(bor_config) = bor_config_for_chain(chain_config.chain_id) {
+        let genesis_hash = genesis_header.hash();
+        return Ok(polygon_is_fork_id_valid(
+            genesis_hash,
+            &bor_config,
+            latest_block_number,
+            remote_fork_id,
+        ));
+    }
+
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
         .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
@@ -66,6 +86,27 @@ pub async fn is_fork_id_valid(
         chain_config,
         genesis_header,
     ))
+}
+
+/// Returns the correct fork ID for the current network.
+///
+/// Uses `polygon_fork_id` for Polygon networks (chain 137, 80002),
+/// falls back to the standard Ethereum `ForkId::new` otherwise.
+/// Call sites in P2P discovery should use this instead of `storage.get_fork_id()`.
+pub async fn get_fork_id(storage: &Store) -> Result<ForkId, StoreError> {
+    let chain_config = storage.get_chain_config();
+    if let Some(bor_config) = bor_config_for_chain(chain_config.chain_id) {
+        let genesis_header = storage
+            .get_block_header(0)?
+            .ok_or(StoreError::Custom("Genesis block not in DB".to_string()))?;
+        let latest_block_number = storage.get_latest_block_number().await?;
+        return Ok(polygon_fork_id(
+            genesis_header.hash(),
+            &bor_config,
+            latest_block_number,
+        ));
+    }
+    storage.get_fork_id().await
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ use crate::rlpx::{
 };
 use bytes::BufMut;
 use ethrex_common::types::{BlockHash, ForkId};
+use ethrex_polygon::{fork_id::polygon_fork_id, genesis::bor_config_for_chain};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -94,12 +95,26 @@ impl StatusMessage69 {
 
         let genesis = genesis_header.hash();
         let lastest_block_hash = block_header.hash();
-        let fork_id = ForkId::new(
-            chain_config,
-            genesis_header,
-            block_header.timestamp,
-            lastest_block,
-        );
+        let is_polygon = network_id == 137 || network_id == 80002;
+        let fork_id = if is_polygon {
+            if let Some(bor_config) = bor_config_for_chain(network_id) {
+                polygon_fork_id(genesis, &bor_config, lastest_block)
+            } else {
+                ForkId::new(
+                    chain_config,
+                    genesis_header,
+                    block_header.timestamp,
+                    lastest_block,
+                )
+            }
+        } else {
+            ForkId::new(
+                chain_config,
+                genesis_header,
+                block_header.timestamp,
+                lastest_block,
+            )
+        };
 
         Ok(StatusMessage69 {
             eth_version: 69,

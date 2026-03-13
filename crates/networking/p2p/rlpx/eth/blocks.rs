@@ -3,7 +3,8 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
+use ethrex_common::U256;
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -341,6 +342,86 @@ impl RLPxMessage for BlockBodies {
         let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;
 
         Ok(Self::new(id, block_bodies))
+    }
+}
+
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblockhashes-0x01
+// Broadcast message: announces new block hashes
+//
+// Used by Polygon PoS for block propagation (not used by Ethereum post-merge).
+#[derive(Debug, Clone)]
+pub struct NewBlockHashes {
+    pub block_hashes: Vec<(BlockHash, BlockNumber)>,
+}
+
+impl NewBlockHashes {
+    pub fn new(block_hashes: Vec<(BlockHash, BlockNumber)>) -> Self {
+        Self { block_hashes }
+    }
+}
+
+impl RLPxMessage for NewBlockHashes {
+    const CODE: u8 = 0x01;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        let mut encoder = Encoder::new(&mut encoded_data);
+        for (hash, number) in &self.block_hashes {
+            encoder = encoder.encode_field(&(*hash, *number));
+        }
+        encoder.finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (block_hashes, _): (Vec<(BlockHash, BlockNumber)>, _) =
+            decoder.decode_field("blockHashes")?;
+        Ok(Self::new(block_hashes))
+    }
+}
+
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblock-0x07
+// Broadcast message: announces a new complete block
+//
+// Used by Polygon PoS for block propagation (not used by Ethereum post-merge).
+// Format: [[header, [txs], [uncles]], td]
+#[derive(Debug, Clone)]
+pub struct NewBlock {
+    pub block: Block,
+    pub total_difficulty: U256,
+}
+
+impl NewBlock {
+    pub fn new(block: Block, total_difficulty: U256) -> Self {
+        Self {
+            block,
+            total_difficulty,
+        }
+    }
+}
+
+impl RLPxMessage for NewBlock {
+    const CODE: u8 = 0x07;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.block)
+            .encode_field(&self.total_difficulty)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (block, decoder): (Block, _) = decoder.decode_field("block")?;
+        let (total_difficulty, _): (U256, _) = decoder.decode_field("totalDifficulty")?;
+        Ok(Self::new(block, total_difficulty))
     }
 }
 

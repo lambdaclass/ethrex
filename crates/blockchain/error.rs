@@ -119,6 +119,12 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("Transaction gas price below minimum (25 Gwei)")]
+    TxGasPriceBelowMinimum,
+    #[error("Blob transactions (type 3) are not supported on Polygon")]
+    BlobTxNotSupported,
+    #[error("Transaction type {0} is not supported on Polygon")]
+    UnsupportedTxType(u8),
 }
 
 #[derive(Debug)]

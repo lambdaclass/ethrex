@@ -115,6 +115,12 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
+        // Deferred fee accumulators for Polygon
+        let mut deferred_base_fee_total = U256::zero();
+        let mut deferred_tip_total = U256::zero();
+        let is_polygon = matches!(vm_type, VMType::Polygon(_));
+        let base_fee_per_gas = block.header.base_fee_per_gas.unwrap_or_default();
+
         let transactions_with_sender =
             block
                 .body
@@ -140,6 +146,13 @@ impl LEVM {
                 }
             }
 
+            // Compute effective gas price before execution (needed for deferred fees)
+            let effective_gas_price = if is_polygon {
+                calculate_gas_price_for_tx(tx, base_fee_per_gas, &vm_type)?
+            } else {
+                U256::zero()
+            };
+
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
             // EIP-7778: Separate gas tracking
@@ -147,6 +160,16 @@ impl LEVM {
             // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
+
+            // Accumulate deferred fees for Polygon
+            if is_polygon {
+                let gas_spent = U256::from(report.gas_spent);
+                let base_fee = U256::from(base_fee_per_gas);
+                deferred_base_fee_total += base_fee.saturating_mul(gas_spent);
+                deferred_tip_total += effective_gas_price
+                    .saturating_sub(base_fee)
+                    .saturating_mul(gas_spent);
+            }
 
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -156,6 +179,27 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // Polygon: Apply deferred fee distribution after all transactions
+        if let VMType::Polygon(ref polygon_fee_config) = vm_type {
+            // Transfer base fee revenue to burnt contract
+            if let Some(burnt_contract) = polygon_fee_config.burnt_contract
+                && !deferred_base_fee_total.is_zero()
+            {
+                let account = db.get_account_mut(burnt_contract).map_err(|_| {
+                    EvmError::DB(format!("Burnt contract account {burnt_contract} not found"))
+                })?;
+                account.info.balance += deferred_base_fee_total;
+            }
+            // Transfer tip revenue to BorConfig coinbase
+            let coinbase = polygon_fee_config.coinbase;
+            if !deferred_tip_total.is_zero() {
+                let account = db.get_account_mut(coinbase).map_err(|_| {
+                    EvmError::DB(format!("Polygon coinbase account {coinbase} not found"))
+                })?;
+                account.info.balance += deferred_tip_total;
+            }
         }
 
         // Set BAL index for post-execution phase (requests + withdrawals, uint16)
@@ -180,7 +224,7 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            VMType::L2(_) | VMType::Polygon(_) => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -254,7 +298,7 @@ impl LEVM {
                 VMType::L1 => {
                     extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                 }
-                VMType::L2(_) => Default::default(),
+                VMType::L2(_) | VMType::Polygon(_) => Default::default(),
             };
 
             if let Some(withdrawals) = &block.body.withdrawals {
@@ -377,7 +421,7 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            VMType::L2(_) | VMType::Polygon(_) => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -1650,7 +1694,7 @@ impl LEVM {
         let fork = chain_config.fork(block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2(_) = vm_type {
+        if matches!(vm_type, VMType::L2(_) | VMType::Polygon(_)) {
             return Ok(());
         }
 
@@ -1882,8 +1926,8 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
     // Validate slot_number for Amsterdam+ blocks
-    // For L2 chains, slot_number is always 0
-    let slot_number = if let VMType::L2(_) = vm_type {
+    // For L2 and Polygon chains, slot_number is always 0
+    let slot_number = if matches!(vm_type, VMType::L2(_) | VMType::Polygon(_)) {
         U256::zero()
     } else if config.fork >= Fork::Amsterdam {
         header
