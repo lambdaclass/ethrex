@@ -12,7 +12,7 @@ use crate::{
     metrics::METRICS,
     peer_table::{DiscoveryProtocol, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
-    types::{Node, NodeRecord},
+    types::{INITIAL_ENR_SEQ, Node, NodeRecord},
     utils::{distance, node_id},
 };
 use bytes::{Bytes, BytesMut};
@@ -143,7 +143,7 @@ impl DiscoveryServer {
     ) -> Result<GenServerHandle<Self>, DiscoveryServerError> {
         info!(protocol = "discv5", "Starting discovery server");
 
-        let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
         if let Ok(fork_id) = storage.get_fork_id().await {
             local_node_record
@@ -325,7 +325,7 @@ impl DiscoveryServer {
                 trace!(from = %src_id, "Handshake ENR signature verification failed");
                 return Ok(());
             }
-            let pairs = record.decode_pairs();
+            let pairs = record.pairs();
             let pubkey = pairs
                 .secp256k1
                 .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
@@ -903,7 +903,7 @@ impl DiscoveryServer {
             return;
         };
         // Preserve fork_id if present
-        if let Some(fork_id) = self.local_node_record.decode_pairs().eth
+        if let Some(fork_id) = self.local_node_record.get_fork_id().cloned()
             && new_record.set_fork_id(fork_id, &self.signer).is_err()
         {
             error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");
@@ -1048,7 +1048,7 @@ mod tests {
     use crate::{
         discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
         peer_table::PeerTable,
-        types::{Node, NodeRecord},
+        types::{INITIAL_ENR_SEQ, Node, NodeRecord},
     };
     use bytes::Bytes;
     use ethrex_common::H256;
@@ -1070,7 +1070,8 @@ mod tests {
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
@@ -1104,7 +1105,8 @@ mod tests {
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
         // Use port 0 to let the OS assign an available port
         let mut server = DiscoveryServer {
             local_node,
@@ -1165,7 +1167,8 @@ mod tests {
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
 
         // Create remote node - use a template node for IP/ports, but the record will use remote_signer's key
         let remote_signer = SecretKey::new(&mut rand::rngs::OsRng);
@@ -1278,7 +1281,8 @@ mod tests {
         ).expect("Bad enode url");
         let original_ip = local_node.ip;
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
         let original_seq = local_node_record.seq;
 
         let mut server = DiscoveryServer {
@@ -1330,7 +1334,8 @@ mod tests {
         ).expect("Bad enode url");
         let original_ip = local_node.ip;
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
 
         let mut server = DiscoveryServer {
             local_node,
@@ -1372,7 +1377,8 @@ mod tests {
         ).expect("Bad enode url");
         let original_ip = local_node.ip;
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
         let original_seq = local_node_record.seq;
 
         let mut server = DiscoveryServer {
@@ -1421,7 +1427,8 @@ mod tests {
         ).expect("Bad enode url");
         let original_ip = local_node.ip;
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
 
         let mut server = DiscoveryServer {
             local_node,
@@ -1473,7 +1480,8 @@ mod tests {
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
 
         let mut server = DiscoveryServer {
             local_node,
@@ -1518,7 +1526,8 @@ mod tests {
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
 
         let mut server = DiscoveryServer {
             local_node,
