@@ -4,15 +4,21 @@ use ethrex_common::types::{BlockHash, BlockNumber, ForkId};
 
 use crate::bor_config::BorConfig;
 
-/// Gathers Polygon-specific fork block numbers from BorConfig.
+/// Gathers all fork block numbers that contribute to the Polygon fork ID.
 ///
-/// On Polygon, all standard Ethereum forks are active at genesis (block 0)
-/// and don't contribute to the fork ID. Only the Polygon-specific forks
-/// (Jaipur, Delhi, Indore, ...) matter for fork ID computation.
+/// Bor computes fork IDs using ALL forks: both EVM-level forks (London,
+/// Shanghai, Cancun, Prague) and Polygon-specific forks (Jaipur, Delhi, …).
+/// On Polygon, these are all block-number-activated (no timestamp forks).
 ///
 /// Returns sorted, deduplicated, non-zero fork block numbers.
 pub fn gather_polygon_forks(bor_config: &BorConfig) -> Vec<u64> {
     let mut forks: Vec<u64> = [
+        // EVM-level forks (stored as block numbers in Bor)
+        bor_config.london_block,
+        bor_config.shanghai_block,
+        bor_config.cancun_block,
+        bor_config.prague_block,
+        // Polygon-specific forks
         bor_config.jaipur_block,
         bor_config.delhi_block,
         bor_config.indore_block,
@@ -23,8 +29,8 @@ pub fn gather_polygon_forks(bor_config: &BorConfig) -> Vec<u64> {
         bor_config.madhugiri_pro_block,
         bor_config.dandeli_block,
         bor_config.lisovo_block,
-        bor_config.lisovo_pro_block,
-        bor_config.giugliano_block,
+        // NOTE: LisovoProBlock and GiuglianoBlock are intentionally excluded.
+        // Bor's GatherForks() does not include them in fork ID computation.
     ]
     .into_iter()
     .flatten()

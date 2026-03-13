@@ -72,6 +72,22 @@ pub struct BorConfig {
     #[serde(default, deserialize_with = "deserialize_string_key_map")]
     pub state_sync_confirmation_delay: BTreeMap<BlockNumber, u64>,
 
+    // ---- EVM-level fork blocks (stored as block numbers in Bor) ----
+    // Bor activates Shanghai/Cancun/Prague at block numbers, not timestamps.
+    // These are needed for fork ID computation (EIP-2124).
+    /// London (EIP-1559) activation block.
+    #[serde(default)]
+    pub london_block: Option<u64>,
+    /// Shanghai activation block.
+    #[serde(default)]
+    pub shanghai_block: Option<u64>,
+    /// Cancun activation block.
+    #[serde(default)]
+    pub cancun_block: Option<u64>,
+    /// Prague activation block.
+    #[serde(default)]
+    pub prague_block: Option<u64>,
+
     // ---- Polygon fork blocks ----
     /// Jaipur fork block.
     pub jaipur_block: Option<u64>,
