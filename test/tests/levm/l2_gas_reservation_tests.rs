@@ -15,6 +15,7 @@ use ethrex_common::{
         fee_config::{FeeConfig, L1FeeConfig},
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
@@ -202,6 +203,7 @@ fn test_insufficient_gas_for_l1_fee_rejected() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -238,6 +240,7 @@ fn test_gas_limit_exactly_covers_intrinsic_plus_l1() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -269,6 +272,7 @@ fn test_no_l1_fee_config_21000_is_enough() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(no_l1_fee_config),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -297,6 +301,7 @@ fn test_l1_fee_vault_receives_full_payment() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -362,6 +367,7 @@ fn test_contract_execution_with_l1_gas_reservation() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -425,6 +431,7 @@ fn test_oog_revert_still_pays_l1_fee_vault() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -511,6 +518,7 @@ fn test_eip7623_floor_plus_l1_gas_rejected_when_insufficient() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 
@@ -550,6 +558,7 @@ fn test_eip7623_floor_plus_l1_gas_exactly_covered_succeeds() {
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
+        &NativeCrypto,
     )
     .unwrap();
 

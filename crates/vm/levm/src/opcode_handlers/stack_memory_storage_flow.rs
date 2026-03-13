@@ -274,8 +274,8 @@ impl OpcodeHandler for OpSStoreHandler {
             hash
         };
 
-        let current_value = vm.get_storage_value(to, key)?;
-        let original_value = vm.get_original_storage(to, key)?;
+        let (current_value, original_value, storage_slot_was_cold) =
+            vm.access_storage_slot_for_sstore(to, key)?;
 
         // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
         // Per EIP-7928: if SSTORE passes the stipend check but fails the main gas charge,
@@ -287,7 +287,7 @@ impl OpcodeHandler for OpSStoreHandler {
                 original_value,
                 current_value,
                 value,
-                vm.substate.add_accessed_slot(to, key),
+                storage_slot_was_cold,
             )?)?;
         if value != current_value {
             // EIP-2929
