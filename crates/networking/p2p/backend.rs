@@ -4,6 +4,7 @@ use ethrex_polygon::{
     genesis::bor_config_for_chain,
 };
 use ethrex_storage::{Store, error::StoreError};
+use tracing::debug;
 
 use crate::rlpx::{error::PeerConnectionError, eth::status::StatusMessage, p2p::Capability};
 
@@ -40,7 +41,15 @@ pub async fn validate_status<ST: StatusMessage>(
         ));
     }
     // Check ForkID
-    if !is_fork_id_valid(storage, &msg_data.get_fork_id()).await? {
+    let remote_fork_id = msg_data.get_fork_id();
+    if !is_fork_id_valid(storage, &remote_fork_id).await? {
+        // Log both local and remote fork IDs for debugging
+        let local_fork_id = get_fork_id(storage).await.ok();
+        debug!(
+            ?remote_fork_id,
+            ?local_fork_id,
+            "Fork ID validation failed"
+        );
         return Err(PeerConnectionError::HandshakeError(
             "Invalid Fork Id".to_string(),
         ));
