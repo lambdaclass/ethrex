@@ -3,20 +3,26 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { storeApi, bookmarkApi, authApi } from "@/lib/api";
-import { L1_NAMES } from "@/lib/constants";
+import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
 
 interface Appchain {
   id: string;
   name: string;
   description: string | null;
   chain_id: number | null;
+  l2_chain_id: number | null;
   rpc_url: string | null;
   status: string;
   phase: string;
   bridge_address: string | null;
   proposer_address: string | null;
+  identity_contract: string | null;
   l1_chain_id: number | null;
   network_mode: string | null;
+  stack_type: string | null;
+  rollup_type: string | null;
+  native_token_symbol: string | null;
+  operator_name: string | null;
   program_name: string;
   program_slug: string;
   category: string;
@@ -39,18 +45,24 @@ export default function ShowroomPage() {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [stackFilter, setStackFilter] = useState<string>("");
+  const [l1Filter, setL1Filter] = useState<string>("");
 
   const loadAppchains = useCallback(async (searchTerm?: string) => {
     setLoading(true);
     try {
-      const data = await storeApi.appchains(searchTerm ? { search: searchTerm } : undefined);
+      const params: { search?: string; stack_type?: string; l1_chain_id?: string } = {};
+      if (searchTerm) params.search = searchTerm;
+      if (stackFilter) params.stack_type = stackFilter;
+      if (l1Filter) params.l1_chain_id = l1Filter;
+      const data = await storeApi.appchains(Object.keys(params).length > 0 ? params : undefined);
       setAppchains(data);
     } catch {
       setAppchains([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [stackFilter, l1Filter]);
 
   // Check login status and load bookmarks
   useEffect(() => {
@@ -67,8 +79,8 @@ export default function ShowroomPage() {
   }, []);
 
   useEffect(() => {
-    loadAppchains();
-  }, [loadAppchains]);
+    loadAppchains(search || undefined);
+  }, [loadAppchains, search]);
 
   // Check live status for each appchain (fire and forget, no blocking)
   useEffect(() => {
@@ -175,7 +187,31 @@ export default function ShowroomPage() {
         </button>
       </form>
 
-      {/* Filters + hashtags */}
+      {/* Stack type & L1 network filters */}
+      <div className="flex gap-3 mb-4">
+        <select
+          value={stackFilter}
+          onChange={(e) => setStackFilter(e.target.value)}
+          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">All Stacks</option>
+          {Object.entries(STACK_LABELS).map(([key, label]) => (
+            <option key={key} value={key}>{label}</option>
+          ))}
+        </select>
+        <select
+          value={l1Filter}
+          onChange={(e) => setL1Filter(e.target.value)}
+          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">All L1 Networks</option>
+          {Object.entries(L1_NAMES).map(([id, name]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Sort filters + hashtags */}
       <div className="flex items-center gap-4 mb-6 flex-wrap">
         <div className="flex gap-1.5 flex-wrap">
           {filters.map((f) => {
@@ -246,6 +282,9 @@ export default function ShowroomPage() {
           {filtered.map((chain) => {
             const online = onlineMap[chain.id];
             const l1Name = chain.l1_chain_id ? (L1_NAMES[chain.l1_chain_id] || `Chain ${chain.l1_chain_id}`) : null;
+            const stackLabel = chain.stack_type ? STACK_LABELS[chain.stack_type] || chain.stack_type : null;
+            const displayName = chain.operator_name || chain.owner_name;
+            const chainId = chain.l2_chain_id || chain.chain_id;
             const isBookmarked = bookmarkedIds.has(chain.id);
             return (
               <Link href={`/explore/${chain.id}`} key={chain.id}>
@@ -254,7 +293,7 @@ export default function ShowroomPage() {
                     <div>
                       <h3 className="font-semibold text-lg">{chain.name}</h3>
                       <p className="text-sm text-gray-500">
-                        by {chain.owner_name}
+                        by {displayName}
                         {l1Name && <span className="ml-1.5 text-xs text-purple-600">{l1Name}</span>}
                       </p>
                     </div>
@@ -311,16 +350,31 @@ export default function ShowroomPage() {
                   )}
 
                   <div className="space-y-2 mb-4">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="text-gray-500">Program:</span>
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
-                        {chain.program_name}
-                      </span>
-                    </div>
-                    {chain.chain_id && (
+                    {stackLabel ? (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-gray-500">Stack:</span>
+                        <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs">
+                          {stackLabel}
+                        </span>
+                      </div>
+                    ) : chain.program_name ? (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-gray-500">Program:</span>
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
+                          {chain.program_name}
+                        </span>
+                      </div>
+                    ) : null}
+                    {chainId && (
                       <div className="flex items-center gap-2 text-sm">
                         <span className="text-gray-500">Chain ID:</span>
-                        <span className="font-mono">{chain.chain_id}</span>
+                        <span className="font-mono">{chainId}</span>
+                      </div>
+                    )}
+                    {chain.native_token_symbol && chain.native_token_symbol !== "ETH" && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-gray-500">Token:</span>
+                        <span className="font-mono">{chain.native_token_symbol}</span>
                       </div>
                     )}
                   </div>

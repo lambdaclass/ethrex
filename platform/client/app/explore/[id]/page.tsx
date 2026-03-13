@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import Markdown from "react-markdown";
 import { storeApi, socialApi, announcementApi, authApi } from "@/lib/api";
-import { L1_NAMES } from "@/lib/constants";
+import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
 import {
   type ApiWalletSession,
   connectWalletForApi,
@@ -29,18 +29,31 @@ interface AppchainDetail {
   name: string;
   description: string | null;
   chain_id: number | null;
+  l2_chain_id: number | null;
   rpc_url: string | null;
   status: string;
   phase: string;
   bridge_address: string | null;
   proposer_address: string | null;
+  identity_contract: string | null;
   explorer_url: string | null;
   dashboard_url: string | null;
+  bridge_url: string | null;
   screenshots: string[];
   social_links: Record<string, string>;
+  l1_contracts: Record<string, string>;
   l1_chain_id: number | null;
   network_mode: string | null;
+  stack_type: string | null;
+  rollup_type: string | null;
+  native_token_type: string | null;
+  native_token_symbol: string | null;
+  native_token_decimals: number | null;
+  native_token_l1_address: string | null;
+  operator_name: string | null;
+  operator_website: string | null;
   owner_wallet: string | null;
+  signed_by: string | null;
   program_name: string;
   program_slug: string;
   category: string;
@@ -151,9 +164,9 @@ export default function AppchainDetailPage() {
   const [showAnnouncementForm, setShowAnnouncementForm] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<string | null>(null);
 
-  // Owner check: wallet address matches appchain.owner_wallet
-  const isOwner = !!(wallet && appchain?.owner_wallet &&
-    wallet.address.toLowerCase() === appchain.owner_wallet.toLowerCase());
+  // Owner check: wallet address matches appchain.owner_wallet or signed_by
+  const ownerAddr = (appchain?.owner_wallet || appchain?.signed_by || "").toLowerCase();
+  const isOwner = !!(wallet && ownerAddr && wallet.address.toLowerCase() === ownerAddr);
 
   const fetchAnnouncements = useCallback(async () => {
     try {
@@ -418,10 +431,17 @@ export default function AppchainDetailPage() {
   }
 
   const l1Name = appchain.l1_chain_id ? (L1_NAMES[appchain.l1_chain_id] || `Chain ${appchain.l1_chain_id}`) : null;
-  const contracts = [
-    { label: "OnChainProposer", addr: appchain.proposer_address },
-    { label: "CommonBridge", addr: appchain.bridge_address },
-  ].filter((c) => c.addr);
+  const stackLabel = appchain.stack_type ? STACK_LABELS[appchain.stack_type] || appchain.stack_type : null;
+  const chainId = appchain.l2_chain_id || appchain.chain_id;
+  const displayName = appchain.operator_name || appchain.owner_name;
+
+  // Build contracts list from l1_contracts (listings) or legacy fields
+  const contracts = appchain.l1_contracts && Object.keys(appchain.l1_contracts).length > 0
+    ? Object.entries(appchain.l1_contracts).map(([label, addr]) => ({ label, addr }))
+    : [
+        { label: "OnChainProposer", addr: appchain.proposer_address },
+        { label: "CommonBridge", addr: appchain.bridge_address },
+      ].filter((c) => c.addr);
 
   const isSafeUrl = (url: string) => /^https?:\/\//i.test(url);
   const socialEntries = Object.entries(appchain.social_links || {}).filter(([, v]) => v && isSafeUrl(v));
@@ -431,7 +451,7 @@ export default function AppchainDetailPage() {
   const isMyComment = (comment: Comment) =>
     wallet && comment.wallet_address.toLowerCase() === wallet.address.toLowerCase();
 
-  const hasServices = !!(appchain.explorer_url || appchain.dashboard_url || appchain.rpc_url);
+  const hasServices = !!(appchain.explorer_url || appchain.dashboard_url || appchain.bridge_url || appchain.rpc_url);
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -449,9 +469,10 @@ export default function AppchainDetailPage() {
           <div>
             <h1 className="text-2xl font-bold">{appchain.name}</h1>
             <p className="text-gray-500 mt-1">
-              by {appchain.owner_name}
+              by {displayName}
+              {stackLabel && <span className="ml-2 text-xs px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded">{stackLabel}</span>}
               {l1Name && <span className="ml-2 text-xs px-2 py-0.5 bg-purple-50 text-purple-700 rounded">{l1Name}</span>}
-              {appchain.chain_id && <span className="ml-2 text-xs font-mono text-gray-400">Chain ID: {appchain.chain_id}</span>}
+              {chainId && <span className="ml-2 text-xs font-mono text-gray-400">Chain ID: {chainId}</span>}
             </p>
             {/* Rating summary */}
             {appchain.avg_rating !== null && (
@@ -482,18 +503,20 @@ export default function AppchainDetailPage() {
           </div>
         </div>
         {/* Add to Wallet */}
-        {appchain.chain_id && appchain.rpc_url && (
+        {chainId && appchain.rpc_url && (
           <button
             onClick={async () => {
               try {
                 const eth = (window as unknown as { ethereum?: { request: (args: unknown) => Promise<unknown> } }).ethereum;
                 if (!eth) return;
+                const tokenSymbol = appchain.native_token_symbol || "TON";
+                const tokenDecimals = appchain.native_token_decimals ?? 18;
                 await eth.request({
                   method: "wallet_addEthereumChain",
                   params: [{
-                    chainId: `0x${appchain.chain_id!.toString(16)}`,
+                    chainId: `0x${chainId.toString(16)}`,
                     chainName: appchain.name,
-                    nativeCurrency: { name: "TON", symbol: "TON", decimals: 18 },
+                    nativeCurrency: { name: tokenSymbol, symbol: tokenSymbol, decimals: tokenDecimals },
                     rpcUrls: [appchain.rpc_url],
                     blockExplorerUrls: appchain.explorer_url ? [appchain.explorer_url] : undefined,
                   }],
@@ -538,6 +561,50 @@ export default function AppchainDetailPage() {
         <div className="bg-white rounded-xl border p-6 mb-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">About</h2>
           <p className="text-gray-700 whitespace-pre-wrap">{appchain.description}</p>
+        </div>
+      )}
+
+      {/* Appchain Details (listing-specific) */}
+      {(appchain.native_token_symbol || appchain.operator_name || appchain.rollup_type) && (
+        <div className="bg-white rounded-xl border p-6 mb-4">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Details</h2>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+            {appchain.rollup_type && (
+              <div>
+                <span className="text-xs text-gray-500">Rollup Type</span>
+                <p className="text-sm font-medium">{appchain.rollup_type}</p>
+              </div>
+            )}
+            {appchain.native_token_symbol && (
+              <div>
+                <span className="text-xs text-gray-500">Native Token</span>
+                <p className="text-sm font-medium">
+                  {appchain.native_token_symbol}
+                  {appchain.native_token_type === "erc20" && (
+                    <span className="ml-1 text-xs text-gray-400">(ERC-20)</span>
+                  )}
+                </p>
+              </div>
+            )}
+            {appchain.operator_name && (
+              <div>
+                <span className="text-xs text-gray-500">Operator</span>
+                <p className="text-sm font-medium">
+                  {appchain.operator_website ? (
+                    <a href={appchain.operator_website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                      {appchain.operator_name}
+                    </a>
+                  ) : appchain.operator_name}
+                </p>
+              </div>
+            )}
+            {appchain.signed_by && (
+              <div>
+                <span className="text-xs text-gray-500">Signed By</span>
+                <p className="text-sm font-mono text-gray-600">{shortenAddress(appchain.signed_by)}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -603,10 +670,20 @@ export default function AppchainDetailPage() {
             )}
             {appchain.dashboard_url && isSafeUrl(appchain.dashboard_url) && (
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">Bridge Dashboard</span>
+                <span className="text-sm text-gray-600">Dashboard</span>
                 <a href={appchain.dashboard_url} target="_blank" rel="noopener noreferrer"
                   className="text-sm text-blue-600 hover:underline flex items-center gap-1 truncate max-w-[60%]">
                   {appchain.dashboard_url.replace(/^https?:\/\//, "").slice(0, 40)}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </a>
+              </div>
+            )}
+            {appchain.bridge_url && isSafeUrl(appchain.bridge_url) && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Bridge</span>
+                <a href={appchain.bridge_url} target="_blank" rel="noopener noreferrer"
+                  className="text-sm text-blue-600 hover:underline flex items-center gap-1 truncate max-w-[60%]">
+                  {appchain.bridge_url.replace(/^https?:\/\//, "").slice(0, 40)}
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </a>
               </div>
