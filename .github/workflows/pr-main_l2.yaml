@@ -928,6 +928,117 @@ jobs:
           cargo test -p ethrex-test forced_inclusion --release --features l2 -- --nocapture --test-threads=1
           killall ethrex -s SIGINT
 
+  replay-witness-test:
+    name: Replay Witness Test
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-docker]
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Download ethrex image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex_image
+          path: /tmp
+
+      - name: Load ethrex image
+        run: docker load --input /tmp/ethrex_image.tar
+
+      - name: Start L1 dev node
+        run: |
+          cd crates/l2
+          docker compose up --detach ethrex_l1
+
+      - name: Wait for L1 to be ready
+        run: |
+          MAX_TRIES=30
+          for i in $(seq 1 $MAX_TRIES); do
+            if curl -sf -X POST http://localhost:8545 \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
+              echo "L1 is ready"
+              exit 0
+            fi
+            echo "Waiting for L1... (attempt $i)"
+            sleep 2
+          done
+          echo "L1 failed to start"
+          docker logs ethrex_l1
+          exit 1
+
+      - name: Install rex
+        run: |
+          curl -L https://github.com/lambdaclass/rex/releases/download/v8.0.0/rex-linux-x86_64 -o /tmp/rex
+          chmod +x /tmp/rex
+          sudo mv /tmp/rex /usr/local/bin/rex
+
+      - name: Clone and build ethrex-replay
+        run: |
+          git clone https://github.com/lambdaclass/ethrex-replay.git /tmp/ethrex-replay
+          cd /tmp/ethrex-replay
+
+          # Override ethrex deps with the local checkout from the current PR.
+          # This ensures ethrex-replay always builds against the PR's code,
+          # regardless of what branch ethrex-replay's Cargo.toml points to.
+          cat >> Cargo.toml << PATCH
+
+          [patch."https://github.com/lambdaclass/ethrex"]
+          ethrex-common = { path = "$GITHUB_WORKSPACE/crates/common" }
+          ethrex-config = { path = "$GITHUB_WORKSPACE/crates/common/config" }
+          ethrex-crypto = { path = "$GITHUB_WORKSPACE/crates/common/crypto" }
+          ethrex-rlp = { path = "$GITHUB_WORKSPACE/crates/common/rlp" }
+          ethrex-trie = { path = "$GITHUB_WORKSPACE/crates/common/trie" }
+          ethrex-storage = { path = "$GITHUB_WORKSPACE/crates/storage" }
+          ethrex-vm = { path = "$GITHUB_WORKSPACE/crates/vm" }
+          ethrex-levm = { path = "$GITHUB_WORKSPACE/crates/vm/levm" }
+          ethrex-blockchain = { path = "$GITHUB_WORKSPACE/crates/blockchain" }
+          ethrex-rpc = { path = "$GITHUB_WORKSPACE/crates/networking/rpc" }
+          ethrex-p2p = { path = "$GITHUB_WORKSPACE/crates/networking/p2p" }
+          ethrex-l2 = { path = "$GITHUB_WORKSPACE/crates/l2" }
+          ethrex-l2-common = { path = "$GITHUB_WORKSPACE/crates/l2/common" }
+          ethrex-l2-rpc = { path = "$GITHUB_WORKSPACE/crates/l2/networking/rpc" }
+          ethrex-storage-rollup = { path = "$GITHUB_WORKSPACE/crates/l2/storage" }
+          ethrex-sdk = { path = "$GITHUB_WORKSPACE/crates/l2/sdk" }
+          ethrex-prover = { path = "$GITHUB_WORKSPACE/crates/l2/prover" }
+          ethrex-guest-program = { path = "$GITHUB_WORKSPACE/crates/guest-program" }
+          PATCH
+
+          cargo build --release
+
+      - name: Send test transaction and run replay
+        run: |
+          # Use a pre-funded dev account (from l1.json genesis)
+          PRIVATE_KEY="0x850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c"
+          TX_HASH=$(rex send 0x0000000000000000000000000000000000000001 \
+            --value 1000000000000000000 \
+            -k "$PRIVATE_KEY" \
+            --rpc-url http://localhost:8545 2>&1 | head -1)
+          echo "Sent transaction: $TX_HASH"
+
+          # Wait for receipt and extract block number
+          sleep 3
+          BLOCK_NUMBER=$(curl -sf -X POST http://localhost:8545 \
+            -H "Content-Type: application/json" \
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getTransactionReceipt\",\"params\":[\"$TX_HASH\"],\"id\":1}" \
+            | python3 -c "import sys,json; r=json.load(sys.stdin); print(int(r['result']['blockNumber'], 16))")
+          echo "Transaction included in block $BLOCK_NUMBER"
+
+          # Run replay on the block containing the transaction
+          cd /tmp/ethrex-replay
+          RUST_LOG=info ./target/release/ethrex-replay block "$BLOCK_NUMBER" \
+            --rpc-url http://localhost:8545 \
+            --no-zkvm
+
+      - name: Dump L1 logs on failure
+        if: ${{ failure() }}
+        run: docker logs ethrex_l1 2>&1 | tail -100
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test L2" is a required check, don't change the name
@@ -941,9 +1052,10 @@ jobs:
         integration-test-tdx,
         uniswap-swap,
         integration-test-shared-bridge,
+        replay-witness-test,
       ]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' && needs.integration-test-shared-bridge.result != 'skipped' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' && needs.integration-test-tdx.result != 'skipped' && needs.uniswap-swap.result != 'skipped' && needs.integration-test-shared-bridge.result != 'skipped' && needs.replay-witness-test.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
@@ -964,5 +1076,10 @@ jobs:
 
           if [ "${{ needs.integration-test-shared-bridge.result }}" != "success" ]; then
             echo "Job Integration test shared bridge failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.replay-witness-test.result }}" != "success" ]; then
+            echo "Job Replay Witness Test failed"
             exit 1
           fi
