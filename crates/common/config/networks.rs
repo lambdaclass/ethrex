@@ -136,6 +136,8 @@ impl Network {
                 // polygon-cli p2p sensor
                 "enode://b8f1cc9c5d4403703fbf377116469667d2b1823c0daf16b7250aa576bacf399e42c3930ccfcb02c5df6879565a2b8931335565f0e8d3f8e72385ecf4a4bf160a@3.36.224.80:30303",
                 "enode://8729e0c825f3d9cad382555f3e46dcff21af323e89025a0e6312df541f4a9e73abfa562d64906f5e59c51fe6f0501b3e61b07979606c56329c020ed739910759@54.194.245.5:30303",
+                // Community node
+                "enode://3ef9bb36b0df8dff269a555e334de9bd703f42836a3d88a77804b6ffcebb9c706448b2a1088cbdb252ca70ed52c63b9c27821f1624992be89e92873eb89a67f4@194.233.65.96:30313",
             ],
             _ => &[],
         };
