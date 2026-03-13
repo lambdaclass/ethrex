@@ -96,6 +96,8 @@ pub struct Contact {
     pub knows_us: bool,
     /// This is a known-bad peer (on another network, no matching capabilities, etc)
     pub unwanted: bool,
+    /// Bootnodes are never discarded — they're our lifeline for discovery.
+    pub is_bootnode: bool,
     /// Whether the last known fork ID is valid, None if unknown.
     pub is_fork_id_valid: Option<bool>,
     /// Session information for discv5 (None for discv4 contacts)
@@ -150,6 +152,7 @@ impl Contact {
             disposable: false,
             knows_us: true,
             unwanted: false,
+            is_bootnode: false,
             is_fork_id_valid: None,
             session: None,
         }
@@ -217,6 +220,14 @@ impl PeerTable {
         PeerTable {
             handle: PeerTableServer::new(target_peers, store).start(),
         }
+    }
+
+    /// Mark a set of node IDs as bootnodes. Bootnodes are exempt from permanent discard.
+    pub async fn mark_bootnodes(&mut self, node_ids: Vec<H256>) -> Result<(), PeerTableError> {
+        self.handle
+            .cast(CastMessage::MarkBootnodes { node_ids })
+            .await?;
+        Ok(())
     }
 
     /// We received a list of Nodes to contact. No connection has been established yet.
@@ -761,6 +772,8 @@ struct PeerTableServer {
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
     discarded_contacts: FxHashSet<H256>,
+    /// Node IDs of bootnodes — never permanently discarded.
+    bootnode_ids: FxHashSet<H256>,
     target_peers: usize,
     store: Store,
 }
@@ -772,6 +785,7 @@ impl PeerTableServer {
             peers: Default::default(),
             already_tried_peers: Default::default(),
             discarded_contacts: Default::default(),
+            bootnode_ids: Default::default(),
             target_peers,
             store,
         }
@@ -813,7 +827,13 @@ impl PeerTableServer {
         let disposable_contacts = self
             .contacts
             .iter()
-            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
+            .filter_map(|(c_id, c)| {
+                // Never discard bootnodes — they're our lifeline for discovery.
+                if c.is_bootnode {
+                    return None;
+                }
+                c.disposable.then_some(*c_id)
+            })
             .collect::<Vec<_>>();
 
         for contact_to_discard_id in disposable_contacts {
@@ -946,12 +966,17 @@ impl PeerTableServer {
     ) {
         for node in nodes {
             let node_id = node.node_id();
-            if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+            // Bootnodes are exempt from the discard list.
+            let is_discarded =
+                self.discarded_contacts.contains(&node_id) && !self.bootnode_ids.contains(&node_id);
+            if is_discarded || node_id == local_node_id {
                 continue;
             }
             match self.contacts.entry(node_id) {
                 Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(Contact::new(node, protocol));
+                    let mut contact = Contact::new(node, protocol);
+                    contact.is_bootnode = self.bootnode_ids.contains(&node_id);
+                    vacant_entry.insert(contact);
                     METRICS.record_new_discovery().await;
                 }
                 Entry::Occupied(mut occupied_entry) => {
@@ -969,7 +994,9 @@ impl PeerTableServer {
             }
             if let Ok(node) = Node::from_enr(&node_record) {
                 let node_id = node.node_id();
-                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                let is_discarded = self.discarded_contacts.contains(&node_id)
+                    && !self.bootnode_ids.contains(&node_id);
+                if is_discarded || node_id == local_node_id {
                     continue;
                 }
                 match self.contacts.entry(node_id) {
@@ -978,6 +1005,7 @@ impl PeerTableServer {
                             Self::evaluate_fork_id(&node_record, &self.store).await;
                         let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                         contact.is_fork_id_valid = is_fork_id_valid;
+                        contact.is_bootnode = self.bootnode_ids.contains(&node_id);
                         contact.record = Some(node_record);
                         vacant_entry.insert(contact);
                         METRICS.record_new_discovery().await;
@@ -1161,6 +1189,9 @@ enum CastMessage {
     },
     SetDisposable {
         node_id: H256,
+    },
+    MarkBootnodes {
+        node_ids: Vec<H256>,
     },
     IncrementFindNodeSent {
         node_id: H256,
@@ -1504,9 +1535,23 @@ impl GenServer for PeerTableServer {
                 });
             }
             CastMessage::SetDisposable { node_id } => {
-                self.contacts
-                    .entry(node_id)
-                    .and_modify(|contact| contact.disposable = true);
+                // Never mark bootnodes as disposable.
+                if !self.bootnode_ids.contains(&node_id) {
+                    self.contacts
+                        .entry(node_id)
+                        .and_modify(|contact| contact.disposable = true);
+                }
+            }
+            CastMessage::MarkBootnodes { node_ids } => {
+                for node_id in &node_ids {
+                    self.bootnode_ids.insert(*node_id);
+                    // Also set the flag on existing contacts.
+                    self.contacts
+                        .entry(*node_id)
+                        .and_modify(|contact| contact.is_bootnode = true);
+                    // Remove from discarded set in case they were already blacklisted.
+                    self.discarded_contacts.remove(node_id);
+                }
             }
             CastMessage::IncrementFindNodeSent { node_id } => {
                 self.contacts

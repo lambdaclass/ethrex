@@ -35,7 +35,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
@@ -152,7 +152,7 @@ impl DiscoveryServer {
                 .expect("Failed to set fork_id on local node record");
         }
 
-        let discovery_server = Self {
+        let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
             signer,
@@ -174,8 +174,24 @@ impl DiscoveryServer {
             "Adding bootnodes"
         );
         peer_table
-            .new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)
+            .new_contacts(
+                bootnodes.clone(),
+                local_node.node_id(),
+                DiscoveryProtocol::Discv5,
+            )
             .await?;
+
+        // Send initial pings to bootnodes to start the WHOAREYOU handshake.
+        for bootnode in &bootnodes {
+            if let Err(e) = discovery_server.send_ping(bootnode).await {
+                debug!(
+                    protocol = "discv5",
+                    addr = %bootnode.udp_addr(),
+                    err = ?e,
+                    "Failed to ping bootnode (will retry via lookup)"
+                );
+            }
+        }
 
         Ok(discovery_server.start())
     }

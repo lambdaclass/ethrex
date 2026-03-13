@@ -78,6 +78,35 @@ impl RLPxMessage for StatusMessage68 {
 }
 
 impl StatusMessage68 {
+    /// Decode Bor's hybrid eth/69 status format.
+    ///
+    /// Bor (Polygon) includes TD in its eth/69 status and omits `head`:
+    ///   `[version, networkid, TD, genesis, forkid, earliest, latest, latesthash]`
+    ///
+    /// This is neither standard eth/68 (which has `head` between TD and genesis)
+    /// nor standard eth/69 (which drops TD entirely).
+    pub fn decode_bor_hybrid(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (eth_version, decoder): (u32, _) = decoder.decode_field("protocolVersion")?;
+        let (network_id, decoder): (u64, _) = decoder.decode_field("networkId")?;
+        let (total_difficulty, decoder): (U256, _) = decoder.decode_field("totalDifficulty")?;
+        // Bor omits `head` — genesis is right after TD
+        let (genesis, decoder): (BlockHash, _) = decoder.decode_field("genesis")?;
+        let (fork_id, decoder): (ForkId, _) = decoder.decode_field("forkId")?;
+        // Bor appends block range fields (earliest, latest, latesthash) — ignore them
+        let _padding = decoder.finish_unchecked();
+
+        Ok(Self {
+            eth_version: eth_version as u8,
+            network_id,
+            total_difficulty,
+            block_hash: genesis,
+            genesis,
+            fork_id,
+        })
+    }
+
     pub async fn new(storage: &Store) -> Result<Self, PeerConnectionError> {
         let chain_config = storage.get_chain_config();
         let network_id = chain_config.chain_id;

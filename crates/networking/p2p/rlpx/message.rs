@@ -192,12 +192,15 @@ impl Message {
                     Ok(Message::Status68(StatusMessage68::decode(data)?))
                 }
                 StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
-                    // Try eth/69 format first; fall back to eth/68 layout for
-                    // clients (e.g. Bor) that advertise eth/69 but still send
-                    // the legacy status shape with totalDifficulty.
+                    // Try standard eth/69, then Bor hybrid (eth/69 with TD, no head),
+                    // then standard eth/68.  Bor advertises eth/69 but sends
+                    // [version, networkid, TD, genesis, forkid, earliest, latest, hash].
                     match StatusMessage69::decode(data) {
                         Ok(msg) => Ok(Message::Status69(msg)),
-                        Err(_) => Ok(Message::Status68(StatusMessage68::decode(data)?)),
+                        Err(_) => match StatusMessage68::decode_bor_hybrid(data) {
+                            Ok(msg) => Ok(Message::Status68(msg)),
+                            Err(_) => Ok(Message::Status68(StatusMessage68::decode(data)?)),
+                        },
                     }
                 }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),

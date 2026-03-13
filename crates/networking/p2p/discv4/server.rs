@@ -41,6 +41,8 @@ pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+/// How often to re-ping bootnodes until we have peers.
+const BOOTNODE_REPING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -68,6 +70,7 @@ pub enum InMessage {
     EnrLookup,
     Prune,
     ChangeFindNodeMessage,
+    RepingBootnodes,
     Shutdown,
 }
 
@@ -87,6 +90,8 @@ pub struct DiscoveryServer {
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
     find_node_message: BytesMut,
+    /// Bootnodes to periodically re-ping for discovery bootstrap.
+    bootnodes: Vec<Node>,
     initial_lookup_interval: f64,
 }
 
@@ -123,6 +128,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            bootnodes: bootnodes.clone(),
         };
 
         info!(
@@ -138,6 +144,10 @@ impl DiscoveryServer {
                 DiscoveryProtocol::Discv4,
             )
             .await?;
+
+        // Mark bootnodes in the peer table so they're exempt from permanent discard.
+        let bootnode_ids: Vec<H256> = bootnodes.iter().map(|n| n.node_id()).collect();
+        peer_table.mark_bootnodes(bootnode_ids).await?;
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await?;
@@ -180,7 +190,7 @@ impl DiscoveryServer {
                 });
             }
             Message::Pong(pong_message) => {
-                trace!(protocol = "discv4", received = "Pong", msg = ?pong_message, from = %format!("{:#x}", sender_public_key));
+                debug!(protocol = "discv4", received = "Pong", from_addr = %from, from_key = %format!("{:#x}", sender_public_key));
 
                 let node_id = node_id(&sender_public_key);
 
@@ -198,7 +208,7 @@ impl DiscoveryServer {
                     .await?;
             }
             Message::Neighbors(neighbors_message) => {
-                trace!(protocol = "discv4", received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
+                debug!(protocol = "discv4", received = "Neighbors", count = neighbors_message.nodes.len(), from_addr = %from, from_key = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(neighbors_message.expiration) {
                     trace!(protocol = "discv4", "Neighbors expired, skipping");
@@ -259,12 +269,48 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    /// Re-ping all bootnodes that haven't responded yet.
+    /// Runs every 30s to ensure we maintain contact with discovery seeds.
+    async fn reping_bootnodes(&mut self) -> Result<(), DiscoveryServerError> {
+        for bootnode in self.bootnodes.clone() {
+            let node_id = bootnode.node_id();
+            // Only re-ping if the contact has a pending (unanswered) ping or was never validated.
+            if let Some(contact) = self.peer_table.get_contact(node_id).await? {
+                if !contact.was_validated() {
+                    debug!(
+                        protocol = "discv4",
+                        addr = %bootnode.udp_addr(),
+                        "Re-pinging bootnode (not yet validated)"
+                    );
+                    self.send_ping(&bootnode).await?;
+                }
+            } else {
+                // Contact was somehow removed — re-add and ping.
+                debug!(
+                    protocol = "discv4",
+                    addr = %bootnode.udp_addr(),
+                    "Re-adding missing bootnode contact"
+                );
+                self.peer_table
+                    .new_contacts(
+                        vec![bootnode.clone()],
+                        self.local_node.node_id(),
+                        DiscoveryProtocol::Discv4,
+                    )
+                    .await?;
+                self.send_ping(&bootnode).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self
             .peer_table
             .get_contact_for_lookup(DiscoveryProtocol::Discv4)
             .await?
         {
+            debug!(protocol = "discv4", sent = "FindNode", addr = %contact.node.udp_addr());
             if let Err(e) = self
                 .udp_socket
                 .send_to(&self.find_node_message, &contact.node.udp_addr())
@@ -325,7 +371,7 @@ impl DiscoveryServer {
         let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         let ping_hash = self.send_else_dispose(ping, node).await?;
-        trace!(protocol = "discv4", sent = "Ping", to = %format!("{:#x}", node.public_key));
+        debug!(protocol = "discv4", sent = "Ping", addr = %node.udp_addr(), to = %format!("{:#x}", node.public_key));
         METRICS.record_ping_sent().await;
         // Convert H256 hash to Bytes for unified peer table
         let ping_id = Bytes::copy_from_slice(ping_hash.as_bytes());
@@ -667,10 +713,28 @@ impl DiscoveryServer {
         let message_hash: [u8; 32] = buf[..32]
             .try_into()
             .expect("first 32 bytes are the message hash");
-        if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
-            error!(protocol = "discv4", sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
-            self.peer_table.set_disposable(&node.node_id()).await?;
-            METRICS.record_new_discarded_node();
+        match self.udp_socket.send_to(&buf, node.udp_addr()).await {
+            Ok(bytes_sent) => {
+                debug!(
+                    protocol = "discv4",
+                    sending = ?message,
+                    addr = %node.udp_addr(),
+                    bytes = bytes_sent,
+                    "Sent UDP message"
+                );
+            }
+            Err(e) => {
+                error!(
+                    protocol = "discv4",
+                    sending = ?message,
+                    addr = %node.udp_addr(),
+                    to = ?node.node_id(),
+                    err = ?e,
+                    "Error sending message"
+                );
+                self.peer_table.set_disposable(&node.node_id()).await?;
+                METRICS.record_new_discarded_node();
+            }
         }
         Ok(H256::from(message_hash))
     }
@@ -696,6 +760,11 @@ impl GenServer for DiscoveryServer {
             CHANGE_FIND_NODE_MESSAGE_INTERVAL,
             handle.clone(),
             InMessage::ChangeFindNodeMessage,
+        );
+        send_interval(
+            BOOTNODE_REPING_INTERVAL,
+            handle.clone(),
+            InMessage::RepingBootnodes,
         );
         let _ = handle.clone().cast(InMessage::Lookup).await;
         let _ = handle.clone().cast(InMessage::EnrLookup).await;
@@ -747,6 +816,11 @@ impl GenServer for DiscoveryServer {
             }
             Self::CastMsg::ChangeFindNodeMessage => {
                 self.find_node_message = Self::random_message(&self.signer);
+            }
+            Self::CastMsg::RepingBootnodes => {
+                let _ = self.reping_bootnodes().await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error re-pinging bootnodes"),
+                );
             }
             Self::CastMsg::Shutdown => return CastResponse::Stop,
         }
