@@ -10,4 +10,7 @@ pub trait StatusMessage {
     fn get_fork_id(&self) -> ForkId;
 
     fn get_genesis(&self) -> BlockHash;
+
+    /// Returns the remote peer's head block hash (for sync targeting).
+    fn get_block_hash(&self) -> BlockHash;
 }

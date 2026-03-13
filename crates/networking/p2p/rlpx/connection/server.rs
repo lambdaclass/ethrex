@@ -691,7 +691,7 @@ where
             Some(msg) => msg?,
             None => return Err(PeerConnectionError::Disconnected),
         };
-        match msg {
+        let remote_head = match msg {
             Message::Status68(msg_data) => {
                 trace!(peer=%state.node, "Received Status(68)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
@@ -711,6 +711,17 @@ where
                     "Expected a Status message".to_string(),
                 ));
             }
+        };
+
+        // On Polygon chains, signal the sync manager with the remote peer's head.
+        let chain_id = state.storage.get_chain_config().chain_id;
+        if (chain_id == 137 || chain_id == 80002) && !remote_head.is_zero() {
+            debug!(
+                peer=%state.node,
+                head=?remote_head,
+                "Setting Polygon sync target from peer status"
+            );
+            state.blockchain.set_polygon_sync_head(remote_head);
         }
     }
     Ok(())
@@ -934,13 +945,13 @@ async fn handle_incoming_message(
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
-            };
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
+            }
         }
         Message::Status69(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
-            };
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
+            }
         }
         Message::GetAccountRange(req) => {
             let response = process_account_range_request(req, state.storage.clone()).await?;

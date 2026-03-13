@@ -211,15 +211,37 @@ pub async fn init_rpc_api(
     };
 
     // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        syncmode,
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-        opts.datadir.clone(),
-    )
-    .await;
+    let syncer = Arc::new(
+        SyncManager::new(
+            peer_handler.clone(),
+            syncmode,
+            cancel_token,
+            blockchain.clone(),
+            store.clone(),
+            opts.datadir.clone(),
+        )
+        .await,
+    );
+
+    // Polygon sync bridge: polls blockchain.polygon_sync_head (set by P2P
+    // after status exchange) and triggers the sync manager. Polygon has no
+    // Engine API, so this replaces the FCU-based sync trigger.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_polygon = chain_id == 137 || chain_id == 80002;
+    if is_polygon {
+        let syncer_clone = syncer.clone();
+        let blockchain_clone = blockchain.clone();
+        tracker.spawn(async move {
+            loop {
+                if let Some(head) = blockchain_clone.take_polygon_sync_head() {
+                    tracing::info!(?head, "Polygon sync bridge: triggering sync to peer head");
+                    syncer_clone.sync_to_head(head);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        });
+    }
 
     let ws_socket_opts = if opts.ws_enabled {
         Some(get_ws_socket_addr(opts))

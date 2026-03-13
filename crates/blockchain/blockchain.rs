@@ -186,6 +186,9 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Polygon sync target: set by P2P after status exchange with a Polygon peer.
+    /// The sync bridge task reads this to trigger the sync manager.
+    polygon_sync_head: std::sync::Mutex<Option<H256>>,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -297,6 +300,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
+            polygon_sync_head: std::sync::Mutex::new(None),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
         }
@@ -307,6 +311,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            polygon_sync_head: std::sync::Mutex::new(None),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
         }
@@ -2760,6 +2765,18 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    /// Sets a sync target for Polygon chains (called by P2P after status exchange).
+    pub fn set_polygon_sync_head(&self, head: H256) {
+        if let Ok(mut target) = self.polygon_sync_head.lock() {
+            *target = Some(head);
+        }
+    }
+
+    /// Takes the Polygon sync target (returns and clears it).
+    pub fn take_polygon_sync_head(&self) -> Option<H256> {
+        self.polygon_sync_head.lock().ok()?.take()
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {

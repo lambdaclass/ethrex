@@ -144,4 +144,8 @@ impl StatusMessage for StatusMessage69 {
     fn get_genesis(&self) -> BlockHash {
         self.genesis
     }
+
+    fn get_block_hash(&self) -> BlockHash {
+        self.lastest_block_hash
+    }
 }

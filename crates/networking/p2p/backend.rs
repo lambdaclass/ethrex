@@ -8,11 +8,14 @@ use tracing::debug;
 
 use crate::rlpx::{error::PeerConnectionError, eth::status::StatusMessage, p2p::Capability};
 
+use ethrex_common::types::BlockHash;
+
+/// Validates a remote status message and returns the remote peer's head block hash.
 pub async fn validate_status<ST: StatusMessage>(
     msg_data: ST,
     storage: &Store,
     eth_capability: &Capability,
-) -> Result<(), PeerConnectionError> {
+) -> Result<BlockHash, PeerConnectionError> {
     //Check networkID
     let chain_config = storage.get_chain_config();
     if msg_data.get_network_id() != chain_config.chain_id {
@@ -61,7 +64,7 @@ pub async fn validate_status<ST: StatusMessage>(
             ));
         }
     }
-    Ok(())
+    Ok(msg_data.get_block_hash())
 }
 
 /// Validates the fork id from a remote node is valid.
