@@ -51,7 +51,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       if (appchain?.screenshots && appchain.screenshots.length > 0) {
         setScreenshots(appchain.screenshots)
       }
-    }).catch(() => {})
+    }).catch((err) => console.warn('[publish] Failed to load appchain data:', err))
   }, [l2.platformDeploymentId, l2.isPublic])
 
   // Auto-save description with debounce (guard against concurrent saves)
@@ -65,8 +65,8 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       await platformAPI.updateDeployment(platformId, { description: desc })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch {
-      // Silently fail — user can retry
+    } catch (err) {
+      console.warn('[publish] Failed to save description:', err)
     } finally {
       setSaving(false)
       savingRef.current = false
@@ -91,7 +91,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       await platformAPI.updateDeployment(platformId, { social_links: JSON.stringify(filtered) })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch { /* ignore */ }
+    } catch (err) { console.warn('[publish] Failed to save social links:', err) }
     finally { setSaving(false) }
   }, [l2.platformDeploymentId, isPublic])
 
@@ -239,7 +239,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                   setIsPublic(false)
                   // Deactivate on Platform
                   if (l2.platformDeploymentId) {
-                    try { await platformAPI.updateDeployment(l2.platformDeploymentId, { status: 'inactive' }) } catch { /* ignore */ }
+                    try { await platformAPI.updateDeployment(l2.platformDeploymentId, { status: 'inactive' }) } catch (err) { console.warn('[publish] Failed to deactivate:', err) }
                   }
                   // Clear local DB
                   try {
@@ -248,7 +248,7 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                       platform_deployment_id: null,
                     })
                   } catch {
-                    try { await invoke('update_appchain_public', { id: l2.id, isPublic: false }) } catch { /* ignore */ }
+                    try { await invoke('update_appchain_public', { id: l2.id, isPublic: false }) } catch (err) { console.warn('[publish] Fallback unpublish failed:', err) }
                   }
                   onRefresh?.()
                 }

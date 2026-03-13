@@ -95,6 +95,23 @@ router.post("/appchains/:id/rpc-proxy", async (req, res) => {
       return res.status(404).json({ error: "Appchain not found or no RPC URL" });
     }
 
+    // SSRF protection: only allow http(s) URLs, block private/internal IPs
+    try {
+      const rpcUrl = new URL(appchain.rpc_url);
+      if (!["http:", "https:"].includes(rpcUrl.protocol)) {
+        return res.status(400).json({ error: "Invalid RPC URL protocol" });
+      }
+      const host = rpcUrl.hostname;
+      if (host === "localhost" || host === "127.0.0.1" || host === "::1" ||
+          host.startsWith("10.") || host.startsWith("192.168.") ||
+          host.startsWith("169.254.") || host.endsWith(".internal") ||
+          /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+        return res.status(400).json({ error: "RPC URL cannot point to internal addresses" });
+      }
+    } catch {
+      return res.status(400).json({ error: "Invalid RPC URL" });
+    }
+
     const allowedMethods = [
       "eth_blockNumber", "eth_chainId", "eth_gasPrice",
       "ethrex_batchNumber", "ethrex_metadata", "net_version",
@@ -119,7 +136,8 @@ router.post("/appchains/:id/rpc-proxy", async (req, res) => {
     const data = await response.json();
     res.json(data);
   } catch (e) {
-    res.status(502).json({ error: "L2 node unreachable", detail: e.message });
+    console.error(`[rpc-proxy] Error proxying to ${req.params.id}:`, e.message);
+    res.status(502).json({ error: "L2 node unreachable" });
   }
 });
 
