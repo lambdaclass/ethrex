@@ -59,6 +59,21 @@ function runMigrations(database) {
     }
   }
 
+  // Add explore_listings columns for existing DBs
+  const tables = database.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name);
+  if (tables.includes("explore_listings")) {
+    const listingCols = database.prepare("PRAGMA table_info(explore_listings)").all().map((c) => c.name);
+    const listingNewCols = [
+      { name: "repo_sha", type: "TEXT" },
+      { name: "synced_at", type: "INTEGER" },
+    ];
+    for (const col of listingNewCols) {
+      if (!listingCols.includes(col.name)) {
+        database.exec(`ALTER TABLE explore_listings ADD COLUMN ${col.name} ${col.type}`);
+      }
+    }
+  }
+
   // Add deleted_at to comments for soft-delete (existing DBs)
   const commentCols = database.prepare("PRAGMA table_info(comments)").all().map((c) => c.name);
   const commentNewCols = [
@@ -68,6 +83,72 @@ function runMigrations(database) {
     if (!commentCols.includes(col.name)) {
       database.exec(`ALTER TABLE comments ADD COLUMN ${col.name} ${col.type}`);
     }
+  }
+
+  // Migrate social tables: remove FK constraints on deployment_id (supports listing IDs too)
+  // Check if reviews still has FK constraint by inspecting table SQL
+  const reviewTableSql = database.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'"
+  ).get();
+  if (reviewTableSql && reviewTableSql.sql.includes("REFERENCES deployments")) {
+    database.exec("PRAGMA foreign_keys = OFF");
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS reviews_new (
+        id TEXT PRIMARY KEY,
+        deployment_id TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO reviews_new SELECT id, deployment_id, wallet_address, rating, content, created_at FROM reviews;
+      DROP TABLE reviews;
+      ALTER TABLE reviews_new RENAME TO reviews;
+      CREATE INDEX IF NOT EXISTS idx_reviews_deployment ON reviews(deployment_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_unique ON reviews(deployment_id, wallet_address);
+
+      CREATE TABLE IF NOT EXISTS comments_new (
+        id TEXT PRIMARY KEY,
+        deployment_id TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        content TEXT NOT NULL,
+        parent_id TEXT REFERENCES comments_new(id),
+        deleted_at INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO comments_new SELECT id, deployment_id, wallet_address, content, parent_id, deleted_at, created_at FROM comments;
+      DROP TABLE comments;
+      ALTER TABLE comments_new RENAME TO comments;
+      CREATE INDEX IF NOT EXISTS idx_comments_deployment ON comments(deployment_id);
+
+      CREATE TABLE IF NOT EXISTS bookmarks_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        deployment_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO bookmarks_new SELECT id, user_id, deployment_id, created_at FROM bookmarks;
+      DROP TABLE bookmarks;
+      ALTER TABLE bookmarks_new RENAME TO bookmarks;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_unique ON bookmarks(user_id, deployment_id);
+      CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
+
+      CREATE TABLE IF NOT EXISTS announcements_new (
+        id TEXT PRIMARY KEY,
+        deployment_id TEXT NOT NULL,
+        wallet_address TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        pinned INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO announcements_new SELECT id, deployment_id, wallet_address, title, content, pinned, created_at FROM announcements;
+      DROP TABLE announcements;
+      ALTER TABLE announcements_new RENAME TO announcements;
+      CREATE INDEX IF NOT EXISTS idx_announcements_deployment ON announcements(deployment_id);
+    `);
+    database.exec("PRAGMA foreign_keys = ON");
+    console.log("[migration] Removed FK constraints from social tables for listing ID support");
   }
 }
 

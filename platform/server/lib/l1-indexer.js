@@ -10,6 +10,7 @@
  */
 
 const { updateDeployment, getActiveDeployments } = require("../db/deployments");
+const { getListings, updateListingEnrichment } = require("../db/listings");
 
 const CHAINS = [
   { name: "sepolia", chainId: 11155111, rpcUrl: process.env.SEPOLIA_RPC_URL },
@@ -60,39 +61,49 @@ async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId) {
     }
     const metadata = await res.json();
 
-    // Find deployment by proposer_address and l1_chain_id
-    const deployments = getActiveDeployments({ limit: 1000 });
-    const match = deployments.find(
-      (d) =>
-        d.proposer_address?.toLowerCase() === proposerAddr.toLowerCase() &&
-        d.l1_chain_id === l1ChainId
-    );
-
-    if (!match) {
-      console.log(
-        `[indexer] No matching deployment for proposer ${proposerAddr} on chain ${l1ChainId}`
-      );
-      return;
-    }
-
-    // Update DB cache
+    // Build updates from IPFS metadata
     const updates = {};
     if (metadata.description) updates.description = metadata.description;
     if (metadata.screenshots)
       updates.screenshots = JSON.stringify(metadata.screenshots);
     if (metadata.services?.explorer)
       updates.explorer_url = metadata.services.explorer;
-    if (metadata.services?.bridgeUI)
+    if (metadata.services?.bridgeUI) {
       updates.dashboard_url = metadata.services.bridgeUI;
+      updates.bridge_url = metadata.services.bridgeUI;
+    }
     if (metadata.socialLinks)
       updates.social_links = JSON.stringify(metadata.socialLinks);
     if (metadata.network?.networkMode)
       updates.network_mode = metadata.network.networkMode;
 
-    if (Object.keys(updates).length > 0) {
-      updateDeployment(match.id, updates);
+    if (Object.keys(updates).length === 0) return;
+
+    // Check listings first (identity_contract matches proposer address for tokamak-appchain)
+    const listings = getListings({ l1ChainId: l1ChainId, limit: 1000 });
+    const listingMatch = listings.find(
+      (l) => l.identity_contract?.toLowerCase() === proposerAddr.toLowerCase()
+    );
+    if (listingMatch) {
+      updateListingEnrichment(listingMatch.id, updates);
+      console.log(`[indexer] Updated listing ${listingMatch.id} from IPFS metadata`);
+    }
+
+    // Also check legacy deployments
+    const deployments = getActiveDeployments({ limit: 1000 });
+    const deploymentMatch = deployments.find(
+      (d) =>
+        d.proposer_address?.toLowerCase() === proposerAddr.toLowerCase() &&
+        d.l1_chain_id === l1ChainId
+    );
+    if (deploymentMatch) {
+      updateDeployment(deploymentMatch.id, updates);
+      console.log(`[indexer] Updated deployment ${deploymentMatch.id} from IPFS metadata`);
+    }
+
+    if (!listingMatch && !deploymentMatch) {
       console.log(
-        `[indexer] Updated deployment ${match.id} from IPFS metadata`
+        `[indexer] No matching listing or deployment for proposer ${proposerAddr} on chain ${l1ChainId}`
       );
     }
   } catch (err) {
@@ -239,6 +250,7 @@ function startIndexer(intervalMs = 30000) {
 
     try {
       const deployments = getActiveDeployments({ limit: 1000 });
+      const allListings = getListings({ limit: 1000 });
 
       for (const chain of activeChains) {
         // On first poll, initialize lastBlock to current head (skip genesis scan)
@@ -263,15 +275,24 @@ function startIndexer(intervalMs = 30000) {
           }
         }
 
+        // Collect proposer addresses from both deployments and listings
         const proposers = deployments
           .filter(
             (d) => d.proposer_address && d.l1_chain_id === chain.chainId
           )
           .map((d) => d.proposer_address);
 
-        if (proposers.length === 0) continue;
+        // Listings: identity_contract serves as the proposer for tokamak-appchain stack
+        const listingProposers = allListings
+          .filter(
+            (l) => l.identity_contract && l.l1_chain_id === chain.chainId
+          )
+          .map((l) => l.identity_contract);
 
-        const uniqueProposers = [...new Set(proposers)];
+        const allProposers = [...proposers, ...listingProposers];
+        if (allProposers.length === 0) continue;
+
+        const uniqueProposers = [...new Set(allProposers)];
         lastBlocks[chain.name] = await pollChain(
           chain,
           uniqueProposers,
