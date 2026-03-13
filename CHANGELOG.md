@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-05
+
+- Switch hot EVM and mempool HashMaps to FxHashMap for faster hashing [#6303](https://github.com/lambdaclass/ethrex/pull/6303)
+
 ### 2026-03-02
 
 - SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
