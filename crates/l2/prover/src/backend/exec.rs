@@ -1,7 +1,9 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
+use ethrex_guest_program::crypto::NativeCrypto;
 use ethrex_guest_program::{input::ProgramInput, output::ProgramOutput};
 use ethrex_l2_common::{
     calldata::Value,
@@ -24,7 +26,9 @@ impl ExecBackend {
 
     /// Core execution - runs the guest program directly.
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
-        ethrex_guest_program::execution::execution_program(input).map_err(BackendError::execution)
+        let crypto = Arc::new(NativeCrypto);
+        ethrex_guest_program::execution::execution_program(input, crypto)
+            .map_err(BackendError::execution)
     }
 
     fn to_calldata() -> ProofCalldata {

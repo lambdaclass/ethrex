@@ -1,20 +1,20 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
-    #[cfg(all(not(clippy), feature = "risc0"))]
+    #[cfg(all(not(clippy), feature = "risc0-build-elf"))]
     build_risc0_program();
 
-    #[cfg(all(not(clippy), feature = "sp1"))]
+    #[cfg(all(not(clippy), feature = "sp1-build-elf"))]
     build_sp1_program();
 
-    #[cfg(all(not(clippy), feature = "zisk"))]
+    #[cfg(all(not(clippy), feature = "zisk-build-elf"))]
     build_zisk_program();
 
-    #[cfg(all(not(clippy), feature = "openvm"))]
+    #[cfg(all(not(clippy), feature = "openvm-build-elf"))]
     build_openvm_program();
 }
 
-#[cfg(all(not(clippy), feature = "risc0"))]
+#[cfg(all(not(clippy), feature = "risc0-build-elf"))]
 fn build_risc0_program() {
     use hex;
     use risc0_build::{DockerOptionsBuilder, GuestOptionsBuilder, embed_methods_with_options};
@@ -62,7 +62,7 @@ fn build_risc0_program() {
     .expect("could not write Risc0 vk to file");
 }
 
-#[cfg(all(not(clippy), feature = "sp1"))]
+#[cfg(all(not(clippy), feature = "sp1-build-elf"))]
 fn build_sp1_program() {
     use hex;
     use sp1_sdk::{HashableKey, ProverClient};
@@ -105,7 +105,7 @@ fn build_sp1_program() {
     .expect("could not write SP1 vk-u32 to file");
 }
 
-#[cfg(all(not(clippy), feature = "zisk"))]
+#[cfg(all(not(clippy), feature = "zisk-build-elf"))]
 fn build_zisk_program() {
     // cargo-zisk rom-setup fails with `Os { code: 2, kind: NotFound, message: "No such file or directory" }`
     // when building in a GitHub CI environment. This command is not required if we won't generate a proof
@@ -186,7 +186,7 @@ fn build_zisk_program() {
     .expect("could not copy Zisk elf to output directory");
 }
 
-#[cfg(all(not(clippy), feature = "openvm"))]
+#[cfg(all(not(clippy), feature = "openvm-build-elf"))]
 fn build_openvm_program() {
     use std::{
         fs,
@@ -219,7 +219,7 @@ fn build_openvm_program() {
     fs::copy(&elf_src, &elf_dst).expect("failed to copy ethrex-guest-openvm");
 }
 
-#[cfg(all(not(clippy), feature = "zisk"))]
+#[cfg(all(not(clippy), feature = "zisk-build-elf"))]
 /// Returns the path to `rustc` executable of the given toolchain.
 ///
 /// Taken from https://github.com/eth-act/ere/blob/master/crates/compile-utils/src/rust.rs#L166
