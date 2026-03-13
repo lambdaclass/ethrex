@@ -280,16 +280,16 @@ fn finalize_mutation_failure_reverts_all_changes() {
 }
 
 /// Fee token variant: the fee token contract reverts on `payFee` calls during
-/// finalization, triggering rollback of `undo_value_transfer` mutations.
+/// finalization, triggering rollback of Phase 2 mutations only.
 ///
 /// Flow:
 /// 1. prepare_execution_fee_token: lockFee succeeds, value transferred to contract
 /// 2. Execution: called contract REVERTs
-/// 3. Finalize: undo_value_transfer runs (backed up after prepare clears backup)
+/// 3. Finalize: undo_value_transfer runs, then backup is cleared (checkpoint after undo)
 /// 4. apply_finalize_mutations → refund_sender_fee_token → pay_fee_token → REVERT
-/// 5. restore_cache_state undoes undo_value_transfer
+/// 5. restore_cache_state undoes only Phase 2 mutations (undo_value_transfer preserved)
 ///
-/// Assertions verify the contract still holds the value (undo was rolled back).
+/// Assertions verify the contract has 0 balance (value returned to sender, not rolled back).
 #[test]
 fn fee_token_revert_during_finalize_triggers_rollback() {
     let sender = Address::from_low_u64_be(SENDER);

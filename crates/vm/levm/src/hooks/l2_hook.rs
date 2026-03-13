@@ -145,6 +145,9 @@ fn finalize_non_privileged_execution(
     // === Phase 1: Fallible computations (no state mutations) ===
     // Perform contract calls and conversions that can fail BEFORE any
     // mutations, so an error here leaves the DB state unchanged.
+    // NOTE: get_fee_token_ratio now runs before delete_self_destruct_accounts
+    // (which moved into Phase 2). This is safe because the fee token ratio
+    // contract should never be in the selfdestruct set.
     let fee_token_ratio: u64 = if let Some(fee_token) = vm.env.fee_token {
         get_fee_token_ratio(vm, fee_token)?
             .try_into()
@@ -175,6 +178,11 @@ fn finalize_non_privileged_execution(
     );
 
     if let Err(e) = result {
+        // Rollback DB cache to undo partial Phase 2 mutations.
+        // Note: substate (logs, selfdestruct) is NOT rolled back here because
+        // the substate parent was already consumed by handle_state_backup()
+        // during run_execution(). This is safe because the Err propagates to
+        // the caller, which discards the entire VM context.
         vm.restore_cache_state()?;
         return Err(e);
     }
@@ -698,6 +706,12 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
     for (key, new_value) in &new_storage {
         let old_value = current_storage.get(key).copied().unwrap_or_default();
         if old_value != *new_value {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+    // Back up slots that will be removed by the bulk replacement
+    for (key, &old_value) in &current_storage {
+        if !new_storage.contains_key(key) {
             vm.backup_storage_slot(fee_token, *key, old_value)?;
         }
     }
