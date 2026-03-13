@@ -177,6 +177,10 @@ mod tests {
                 "backupMultiplier": {"0": 2},
                 "validatorContract": "0x0000000000000000000000000000000000001000",
                 "stateReceiverContract": "0x0000000000000000000000000000000000001001",
+                "londonBlock": 23850000,
+                "shanghaiBlock": 50523000,
+                "cancunBlock": 54876000,
+                "pragueBlock": 73440256,
                 "jaipurBlock": 23850000,
                 "delhiBlock": 38189056,
                 "indoreBlock": 44934656,
@@ -200,19 +204,21 @@ mod tests {
         let forks = gather_polygon_forks(&config);
 
         // Should be sorted and deduplicated
+        // London=23850000 coincides with Jaipur, Prague=73440256 with Bhilai (both deduped)
         assert_eq!(
             forks,
             vec![
-                23_850_000, // Jaipur
+                23_850_000, // London + Jaipur (deduplicated)
                 38_189_056, // Delhi
                 44_934_656, // Indore
+                50_523_000, // Shanghai
+                54_876_000, // Cancun
                 62_278_656, // Ahmedabad
-                73_440_256, // Bhilai
+                73_440_256, // Prague + Bhilai (deduplicated)
                 77_414_656, // Rio
                 80_084_800, // Madhugiri + MadhugiriPro (deduplicated)
                 81_424_000, // Dandeli
-                83_756_500, // Lisovo + LisovoPro (deduplicated)
-                90_000_000, // Giugliano
+                83_756_500, // Lisovo (LisovoPro coincides, but excluded from fork ID)
             ]
         );
     }
