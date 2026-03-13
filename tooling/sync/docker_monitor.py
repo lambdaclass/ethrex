@@ -215,7 +215,7 @@ VALIDATION_PROGRESS_PATTERNS = [
     ("Starting validate_storage_root", "validating storage roots"),
     ("Starting validate_bytecodes", "validating bytecodes"),
     ("Finished validate_storage_root", "storage validation complete"),
-    ("Succesfully validated tree", "state validation complete"),
+    ("Successfully validated tree", "state validation complete"),
 ]
 
 

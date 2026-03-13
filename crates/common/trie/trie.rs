@@ -152,7 +152,7 @@ impl Trie {
     }
 
     /// Remove a value from the trie given its RLP-encoded path.
-    /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
+    /// Returns the value if it was successfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         self.dirty.insert(Nibbles::from_bytes(path));
         if !self.root.is_valid() {
