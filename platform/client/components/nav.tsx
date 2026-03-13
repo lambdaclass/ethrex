@@ -1,7 +1,28 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useAuth } from "./auth-provider";
+
+function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isActive = pathname === href || pathname.startsWith(href + "/");
+  return (
+    <Link
+      href={href}
+      className={`relative ${
+        isActive
+          ? "text-blue-600 font-medium"
+          : "text-gray-600 hover:text-gray-900"
+      }`}
+    >
+      {children}
+      {isActive && (
+        <span className="absolute left-0 right-0 -bottom-[21px] h-0.5 bg-blue-600" />
+      )}
+    </Link>
+  );
+}
 
 export function Nav() {
   const { user, logout } = useAuth();
@@ -12,35 +33,21 @@ export function Nav() {
         <div className="flex justify-between h-16 items-center">
           <div className="flex items-center gap-8">
             <Link href="/" className="text-xl font-bold text-gray-900">
-              Tokamak App Store
+              Tokamak Appchain
             </Link>
             <div className="flex gap-4">
-              <Link href="/store" className="text-gray-600 hover:text-gray-900">
-                Store
-              </Link>
-              <Link href="/showroom" className="text-gray-600 hover:text-gray-900">
-                Showroom
-              </Link>
-              <Link href="/launch" className="text-gray-600 hover:text-gray-900">
-                Launch L2
-              </Link>
+              <NavLink href="/explore">Explore</NavLink>
+              <NavLink href="/store">Store</NavLink>
+              <NavLink href="/launch">Launch L2</NavLink>
               {user && (
                 <>
-                  <Link href="/creator" className="text-gray-600 hover:text-gray-900">
-                    My Apps
-                  </Link>
-                  <Link href="/deployments" className="text-gray-600 hover:text-gray-900">
-                    My L2s
-                  </Link>
-                  <Link href="/settings" className="text-gray-600 hover:text-gray-900">
-                    Settings
-                  </Link>
+                  <NavLink href="/creator">My Apps</NavLink>
+                  <NavLink href="/deployments">My L2s</NavLink>
+                  <NavLink href="/settings">Settings</NavLink>
                 </>
               )}
               {user?.role === "admin" && (
-                <Link href="/admin" className="text-gray-600 hover:text-gray-900">
-                  Admin
-                </Link>
+                <NavLink href="/admin">Admin</NavLink>
               )}
             </div>
           </div>

@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS deployments (
   social_links TEXT,
   l1_chain_id INTEGER,
   network_mode TEXT,
+  hashtags TEXT,
+  owner_wallet TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -96,3 +98,65 @@ CREATE INDEX IF NOT EXISTS idx_program_usage_program ON program_usage(program_id
 CREATE INDEX IF NOT EXISTS idx_program_usage_user ON program_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_deployments_user ON deployments(user_id);
 CREATE INDEX IF NOT EXISTS idx_deployments_program ON deployments(program_id);
+
+-- Social: Reviews (one per wallet per deployment)
+CREATE TABLE IF NOT EXISTS reviews (
+  id TEXT PRIMARY KEY,
+  deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  wallet_address TEXT NOT NULL,
+  rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_deployment ON reviews(deployment_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_unique ON reviews(deployment_id, wallet_address);
+
+-- Social: Comments
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  wallet_address TEXT NOT NULL,
+  content TEXT NOT NULL,
+  parent_id TEXT REFERENCES comments(id),
+  deleted_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_deployment ON comments(deployment_id);
+
+-- Social: Reactions (likes, one per wallet per target)
+CREATE TABLE IF NOT EXISTS reactions (
+  id TEXT PRIMARY KEY,
+  target_type TEXT NOT NULL CHECK(target_type IN ('review', 'comment')),
+  target_id TEXT NOT NULL,
+  wallet_address TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reactions_target ON reactions(target_type, target_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(target_type, target_id, wallet_address);
+
+-- Bookmarks (account-based, one per user per deployment)
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_unique ON bookmarks(user_id, deployment_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
+
+-- Announcements (owner-posted, max 3 per deployment)
+CREATE TABLE IF NOT EXISTS announcements (
+  id TEXT PRIMARY KEY,
+  deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  wallet_address TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  pinned INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_announcements_deployment ON announcements(deployment_id);

@@ -202,4 +202,83 @@ export const adminApi = {
   },
 };
 
+// Social (public + wallet auth)
+type Wallet = { address: string; signature: string };
+
+function walletHeaders(wallet: Wallet): Record<string, string> {
+  return { "x-wallet-address": wallet.address, "x-wallet-signature": wallet.signature };
+}
+
+export const socialApi = {
+  getReviews: async (id: string, walletAddress?: string) => {
+    const headers: Record<string, string> = {};
+    if (walletAddress) headers["x-wallet-address"] = walletAddress;
+    return apiFetch(`/api/store/appchains/${id}/reviews`, { headers });
+  },
+  createReview: async (id: string, body: { rating: number; content: string }, wallet: Wallet) => {
+    const data = await apiFetch(`/api/store/appchains/${id}/reviews`, {
+      method: "POST", headers: walletHeaders(wallet), body: JSON.stringify(body),
+    });
+    return data.review;
+  },
+  deleteReview: async (deploymentId: string, reviewId: string, wallet: Wallet) => {
+    return apiFetch(`/api/store/appchains/${deploymentId}/reviews/${reviewId}`, {
+      method: "DELETE", headers: walletHeaders(wallet),
+    });
+  },
+  getComments: async (id: string, walletAddress?: string) => {
+    const headers: Record<string, string> = {};
+    if (walletAddress) headers["x-wallet-address"] = walletAddress;
+    return apiFetch(`/api/store/appchains/${id}/comments`, { headers });
+  },
+  createComment: async (id: string, body: { content: string; parentId?: string }, wallet: Wallet) => {
+    const data = await apiFetch(`/api/store/appchains/${id}/comments`, {
+      method: "POST", headers: walletHeaders(wallet), body: JSON.stringify(body),
+    });
+    return data.comment;
+  },
+  deleteComment: async (deploymentId: string, commentId: string, wallet: Wallet) => {
+    return apiFetch(`/api/store/appchains/${deploymentId}/comments/${commentId}`, {
+      method: "DELETE", headers: walletHeaders(wallet),
+    });
+  },
+  toggleReaction: async (id: string, body: { targetType: string; targetId: string }, wallet: Wallet) => {
+    return apiFetch(`/api/store/appchains/${id}/reactions`, {
+      method: "POST", headers: walletHeaders(wallet), body: JSON.stringify(body),
+    });
+  },
+};
+
+// Bookmarks (account-based auth)
+export const bookmarkApi = {
+  toggle: (id: string) =>
+    apiFetch(`/api/store/appchains/${id}/bookmark`, { method: "POST" }),
+  list: async (): Promise<string[]> => {
+    const data = await apiFetch("/api/store/bookmarks");
+    return data.bookmarks;
+  },
+};
+
+// Announcements (owner wallet create/delete, public read)
+export const announcementApi = {
+  list: (id: string) => apiFetch(`/api/store/appchains/${id}/announcements`),
+  create: (id: string, body: { title: string; content: string; pinned?: boolean }, wallet: Wallet) =>
+    apiFetch(`/api/store/appchains/${id}/announcements`, {
+      method: "POST",
+      headers: walletHeaders(wallet),
+      body: JSON.stringify(body),
+    }),
+  update: (deploymentId: string, announcementId: string, body: { title: string; content: string; pinned?: boolean }, wallet: Wallet) =>
+    apiFetch(`/api/store/appchains/${deploymentId}/announcements/${announcementId}`, {
+      method: "PUT",
+      headers: walletHeaders(wallet),
+      body: JSON.stringify(body),
+    }),
+  delete: (deploymentId: string, announcementId: string, wallet: Wallet) =>
+    apiFetch(`/api/store/appchains/${deploymentId}/announcements/${announcementId}`, {
+      method: "DELETE",
+      headers: walletHeaders(wallet),
+    }),
+};
+
 // Hosts and filesystem APIs moved to Desktop local-server

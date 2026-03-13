@@ -87,7 +87,7 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Tokamak App Store server running on port ${PORT}`);
+  console.log(`Tokamak Appchain server running on port ${PORT}`);
 
   // Start L1 indexer (watches MetadataURIUpdated events, optional)
   try {

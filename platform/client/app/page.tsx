@@ -17,7 +17,7 @@ export default function Home() {
       {/* Hero */}
       <div className="text-center mb-16">
         <h1 className="text-5xl font-bold text-gray-900 mb-4">
-          Tokamak App Store
+          Tokamak Appchain
         </h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
           Create your own circuits and contracts, share them with everyone.
@@ -25,22 +25,16 @@ export default function Home() {
         </p>
         <div className="mt-8 flex gap-4 justify-center">
           <Link
+            href="/explore"
+            className="w-40 text-center px-6 py-3 bg-blue-600 text-white rounded-lg text-lg font-medium hover:bg-blue-700"
+          >
+            Explore
+          </Link>
+          <Link
             href="/launch"
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg text-lg font-medium hover:bg-blue-700"
+            className="w-40 text-center px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg text-lg font-medium hover:bg-gray-50"
           >
-            Create L2
-          </Link>
-          <Link
-            href="/store"
-            className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg text-lg font-medium hover:bg-gray-50"
-          >
-            Explore Store
-          </Link>
-          <Link
-            href="/creator/new"
-            className="px-6 py-3 bg-white text-gray-700 border border-gray-300 rounded-lg text-lg font-medium hover:bg-gray-50"
-          >
-            Create App
+            Launch L2
           </Link>
         </div>
       </div>

@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
-
 export const metadata: Metadata = {
-  title: "Tokamak App Store",
+  title: "Tokamak Appchain",
   description: "Create and share apps for specialized L2s",
 };
 
