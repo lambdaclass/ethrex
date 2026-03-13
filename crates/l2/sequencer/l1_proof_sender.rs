@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::remove_dir_all,
     path::PathBuf,
 };
 
@@ -40,7 +39,7 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
+    sequencer::{errors::ProofSenderError, utils::remove_batch_checkpoint},
 };
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
@@ -190,10 +189,9 @@ impl L1ProofSender {
     async fn verify_and_send_proofs(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
-        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if self.aligned_mode {
-            let (latest_sent_to_aligned, sent_at) =
+            let (mut latest_sent_to_aligned, sent_at) =
                 self.rollup_store.get_latest_sent_to_aligned().await?;
 
             // Sync aligned cursor if on-chain verification advanced past it
@@ -205,6 +203,7 @@ impl L1ProofSender {
                 self.rollup_store
                     .set_latest_sent_to_aligned(last_verified_batch, now)
                     .await?;
+                latest_sent_to_aligned = last_verified_batch;
             }
 
             // Time-based resubmission: if we sent a proof but verification hasn't
@@ -218,7 +217,7 @@ impl L1ProofSender {
                     warn!(
                         latest_sent_to_aligned,
                         last_verified_batch,
-                        elapsed_secs = now - sent_at,
+                        elapsed_secs = now.saturating_sub(sent_at),
                         "Aligned verification timed out, resending proof"
                     );
                     let batch_to_send = last_verified_batch + 1;
@@ -229,6 +228,8 @@ impl L1ProofSender {
             let batch_to_send = std::cmp::max(latest_sent_to_aligned, last_verified_batch) + 1;
             return self.verify_and_send_proofs_aligned(batch_to_send).await;
         }
+
+        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
 
         // If the DB is behind on-chain, sync it up to avoid stalling the proof coordinator
         if latest_sent_batch_db < last_verified_batch {
@@ -568,16 +569,7 @@ impl L1ProofSender {
         self.rollup_store
             .set_latest_sent_batch_proof(batch_number)
             .await?;
-        let checkpoint_path = self
-            .checkpoints_dir
-            .join(batch_checkpoint_name(batch_number - 1));
-        if checkpoint_path.exists() {
-            let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
-                error!(
-                    "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
-                )
-            });
-        }
+        remove_batch_checkpoint(&self.checkpoints_dir, batch_number);
         Ok(())
     }
 

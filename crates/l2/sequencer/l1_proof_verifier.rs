@@ -35,7 +35,7 @@ use super::{
     configs::AlignedConfig,
     errors::SequencerError,
     utils::{
-        ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, batch_checkpoint_name, send_verify_tx,
+        ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, remove_batch_checkpoint, send_verify_tx,
         sleep_random,
     },
 };
@@ -291,12 +291,7 @@ impl L1ProofVerifier {
 
         // Clean up checkpoint directories for verified batches
         for bn in first_batch_number..=last_batch_number {
-            let cp = self.checkpoints_dir.join(batch_checkpoint_name(bn - 1));
-            if cp.exists() {
-                let _ = std::fs::remove_dir_all(&cp).inspect_err(|e| {
-                    error!("Failed to remove checkpoint {cp:?}: {e}");
-                });
-            }
+            remove_batch_checkpoint(&self.checkpoints_dir, bn);
         }
 
         Ok(Some(verify_tx_hash))
