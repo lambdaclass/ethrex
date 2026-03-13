@@ -9,7 +9,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
-type AccountHashSet = FxHashSet<H256>;
+pub(crate) type AccountHashSet = FxHashSet<H256>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TrieLayer {

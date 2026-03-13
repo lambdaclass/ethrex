@@ -38,7 +38,7 @@ use ethrex_rlp::{
     encode::RLPEncode,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
-use ethrex_trie::{Node, NodeRLP};
+use ethrex_trie::{Node, NodeRLP, TrieError};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
@@ -1874,6 +1874,7 @@ impl Store {
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
+            destroyed_accounts: AccountHashSet::default(),
         };
 
         Ok((storage_tries, account_updates_list))
