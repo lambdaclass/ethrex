@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::remove_dir_all,
     path::PathBuf,
 };
 
@@ -40,7 +39,7 @@ use super::{
 
 use crate::{
     CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
-    sequencer::{errors::ProofSenderError, utils::batch_checkpoint_name},
+    sequencer::{errors::ProofSenderError, utils::remove_batch_checkpoint},
 };
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
@@ -81,6 +80,8 @@ pub struct L1ProofSender {
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
     aligned_mode: bool,
+    /// Timeout in seconds before resending a proof not yet verified on-chain (aligned mode).
+    resubmission_timeout_secs: u64,
     /// Cached SP1 verifying key for aligned mode
     #[cfg(feature = "sp1")]
     sp1_vk: Option<SP1VerifyingKey>,
@@ -144,6 +145,7 @@ impl L1ProofSender {
             network: aligned_cfg.network.clone(),
             checkpoints_dir,
             aligned_mode: aligned_cfg.aligned_mode,
+            resubmission_timeout_secs: aligned_cfg.resubmission_timeout_secs,
             #[cfg(feature = "sp1")]
             sp1_vk,
         })
@@ -187,12 +189,49 @@ impl L1ProofSender {
     async fn verify_and_send_proofs(&self) -> Result<(), ProofSenderError> {
         let last_verified_batch =
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
-        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
 
         if self.aligned_mode {
-            let batch_to_send = std::cmp::max(latest_sent_batch_db, last_verified_batch) + 1;
+            let (mut latest_sent_to_aligned, sent_at) =
+                self.rollup_store.get_latest_sent_to_aligned().await?;
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
+                .as_secs();
+
+            // Sync aligned cursor if on-chain verification advanced past it
+            if latest_sent_to_aligned < last_verified_batch {
+                self.rollup_store
+                    .set_latest_sent_to_aligned(last_verified_batch, now)
+                    .await?;
+                latest_sent_to_aligned = last_verified_batch;
+            }
+
+            // Time-based resubmission: if we sent a proof but verification hasn't
+            // advanced after the timeout, reset cursor to resend
+            if latest_sent_to_aligned > last_verified_batch
+                && sent_at > 0
+                && now.saturating_sub(sent_at) > self.resubmission_timeout_secs
+            {
+                error!(
+                    latest_sent_to_aligned,
+                    last_verified_batch,
+                    elapsed_secs = now.saturating_sub(sent_at),
+                    "Aligned verification timed out, attempting resubmission"
+                );
+                // Reset resubmission clock so we don't spam on every tick
+                self.rollup_store
+                    .set_latest_sent_to_aligned(latest_sent_to_aligned, now)
+                    .await?;
+                let batch_to_send = last_verified_batch + 1;
+                return self.verify_and_send_proofs_aligned(batch_to_send).await;
+            }
+
+            let batch_to_send = latest_sent_to_aligned + 1;
             return self.verify_and_send_proofs_aligned(batch_to_send).await;
         }
+
+        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
 
         // If the DB is behind on-chain, sync it up to avoid stalling the proof coordinator
         if latest_sent_batch_db < last_verified_batch {
@@ -275,7 +314,15 @@ impl L1ProofSender {
         if missing_proof_types.is_empty() {
             self.send_proof_to_aligned(batch_to_send, proofs.values())
                 .await?;
-            self.finalize_batch_proof(batch_to_send).await?;
+            // Only advance the aligned cursor, NOT the main cursor.
+            // Main cursor is advanced by the verifier after on-chain verification.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
+                .as_secs();
+            self.rollup_store
+                .set_latest_sent_to_aligned(batch_to_send, now)
+                .await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
                 .iter()
@@ -524,16 +571,7 @@ impl L1ProofSender {
         self.rollup_store
             .set_latest_sent_batch_proof(batch_number)
             .await?;
-        let checkpoint_path = self
-            .checkpoints_dir
-            .join(batch_checkpoint_name(batch_number - 1));
-        if checkpoint_path.exists() {
-            let _ = remove_dir_all(&checkpoint_path).inspect_err(|e| {
-                error!(
-                    "Failed to remove checkpoint directory at path {checkpoint_path:?}. Should be removed manually. Error: {e}"
-                )
-            });
-        }
+        remove_batch_checkpoint(&self.checkpoints_dir, batch_number);
         Ok(())
     }
 

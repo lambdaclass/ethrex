@@ -32,7 +32,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 20] = [
+const DB_SCHEMA: [&str; 22] = [
     "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE IF NOT EXISTS l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS l2_rolling_hashes (batch INT PRIMARY KEY, value BLOB)",
@@ -53,6 +53,8 @@ const DB_SCHEMA: [&str; 20] = [
     "CREATE TABLE IF NOT EXISTS batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
     "CREATE TABLE IF NOT EXISTS batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
     "CREATE TABLE IF NOT EXISTS fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
+    "CREATE TABLE IF NOT EXISTS latest_sent_to_aligned (_id INT PRIMARY KEY, batch INT, sent_at INT)",
+    "INSERT INTO latest_sent_to_aligned VALUES (0, 0, 0) ON CONFLICT(_id) DO NOTHING",
 ];
 
 impl SQLStore {
@@ -761,6 +763,36 @@ impl StoreEngineRollup for SQLStore {
         self.execute(
             "INSERT OR REPLACE INTO latest_sent (_id, batch) VALUES (0, ?1)",
             [batch_number],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT batch, sent_at FROM latest_sent_to_aligned WHERE _id = 0",
+                (),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            let batch = read_from_row_int(&row, 0)?;
+            let sent_at = read_from_row_int(&row, 1)?;
+            return Ok((batch, sent_at));
+        }
+        Err(RollupStoreError::Custom(
+            "missing latest_sent_to_aligned row".to_string(),
+        ))
+    }
+
+    async fn set_latest_sent_to_aligned(
+        &self,
+        batch_number: u64,
+        timestamp: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.execute(
+            "INSERT OR REPLACE INTO latest_sent_to_aligned (_id, batch, sent_at) VALUES (0, ?1, ?2)",
+            (batch_number, timestamp),
         )
         .await?;
         Ok(())
