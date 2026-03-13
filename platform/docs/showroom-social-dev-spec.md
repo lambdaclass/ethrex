@@ -811,33 +811,69 @@ export async function publishReview(
 }
 ```
 
-### 3.3 인증: Platform 계정 → Nostr 키
+### 3.3 인증: EVM 지갑 서명 → Nostr 키 파생
 
-**방식:** Platform 로그인 시 Nostr 키페어를 생성하고 브라우저 localStorage에 저장.
+**원칙:** Nostr 키를 EVM 지갑 주소에서 deterministic하게 파생한다.
+같은 지갑 = 항상 같은 Nostr 키. 별도의 키 관리가 필요 없다.
+
+**플로우:**
+```
+1. 사용자가 "Sign in with Wallet" 클릭
+2. MetaMask 등 EVM 지갑에서 고정 메시지 서명 요청
+   → "Sign in to Tokamak Appchain Showroom\nThis signature links your wallet to your social identity."
+3. 서명 결과(65 bytes)에서 앞 32 bytes를 Nostr secret key로 사용
+4. Nostr pubkey = getPublicKey(sk)
+5. sk를 sessionStorage에 캐시 (탭 닫으면 삭제, 다시 서명하면 복구)
+6. 지갑 주소 + Nostr pubkey 매핑은 리뷰/댓글에 태그로 포함
+```
+
+**구현:**
 
 ```typescript
-// 최초 로그인 시
-function getOrCreateNostrKeys(): { sk: Uint8Array; pk: string } {
-  const stored = localStorage.getItem('nostr_sk');
-  if (stored) {
-    const sk = new Uint8Array(JSON.parse(stored));
-    return { sk, pk: getPublicKey(sk) };
-  }
+const SIGN_MESSAGE =
+  "Sign in to Tokamak Appchain Showroom\n\nDomain: platform.tokamak.network\nPurpose: Nostr key derivation\n\nThis signature links your wallet to your social identity.";
 
-  // Option A: NIP-07 browser extension (recommended — keys never touch our code)
-  if (window.nostr) {
-    const pk = await window.nostr.getPublicKey();
-    return { sk: null, pk }; // signing delegated to extension
-  }
+async function connectWallet(): Promise<{ sk: Uint8Array; pk: string; address: string }> {
+  const ethereum = (window as any).ethereum;
+  if (!ethereum) throw new Error("No wallet found");
 
-  // Option B: Generate ephemeral key — kept in memory only, never persisted
-  const sk = generateSecretKey();
-  // NOTE: sk lives only for this session. User must back up or use NIP-07.
-  return { sk, pk: getPublicKey(sk) };
+  // 1. 지갑 연결 & 주소 획득
+  const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+  if (!accounts?.length) throw new Error("No accounts returned");
+  const address = accounts[0];
+
+  // 2. 고정 메시지 서명 → deterministic 결과
+  const signature = await ethereum.request({
+    method: "personal_sign",
+    params: [SIGN_MESSAGE, address],
+  });
+
+  // 3. SHA-256 해시로 Nostr secret key 파생 (domain-separated, KDF)
+  const sigBytes = hexToBytes(signature.slice(2)); // 0x 제거
+  const hashBuffer = await crypto.subtle.digest("SHA-256", sigBytes);
+  const sk = new Uint8Array(hashBuffer);
+
+  return { sk, pk: getPublicKey(sk), address };
 }
 ```
 
-**Platform 계정 연결:** 사용자 프로필에 Nostr pubkey를 저장하여 "이 리뷰는 Alice의 것"을 확인 가능.
+**장점:**
+- 지갑 주소로 리뷰 작성자 검증 가능
+- 여러 디바이스에서 같은 키 (같은 지갑이면 같은 서명)
+- localStorage 삭제해도 다시 서명하면 복구
+- 별도의 Nostr 키 관리/백업 불필요
+- 리뷰/댓글에 `["wallet", "0x..."]` 태그 포함 → UI-level self-asserted metadata (향후 EVM 서명 증명 추가 가능)
+
+**이벤트 태그 확장:**
+```typescript
+// 리뷰 이벤트에 지갑 주소 태그 추가
+tags: [
+  ["d", chainId],
+  ["rating", rating.toString()],
+  ["L", "tokamak-appchain"],
+  ["wallet", walletAddress],  // EVM 지갑 주소
+]
+```
 
 ### 3.4 스팸 방지
 
@@ -880,5 +916,35 @@ function getOrCreateNostrKeys(): { sk: Uint8Array; pk: string } {
 
 | 파일 | 변경 유형 | 내용 |
 |------|----------|------|
-| `platform/client/lib/nostr.ts` | **신규** | Nostr 클라이언트 |
-| `platform/client/app/showroom/[id]/page.tsx` | 수정 | 소셜 섹션 추가 |
+| `platform/client/lib/nostr.ts` | **신규** | Nostr 클라이언트 (EVM 지갑 서명 기반) |
+| `platform/client/app/showroom/[id]/page.tsx` | 수정 | 소셜 섹션 + 지갑 연결 UI |
+
+---
+
+## 미구현 항목 (TODO)
+
+> 아래 항목은 Phase 1~3 설계 중 아직 코드로 반영되지 않은 항목들이다.
+> 각 항목은 다음 작업 사이클에서 별도 브랜치로 진행한다.
+
+### Phase 1 미구현
+
+| 항목 | 설명 | 우선순위 |
+|------|------|---------|
+| Desktop 공개 설정 연동 | `L2DetailPublishTab`에서 Platform API로 description/screenshots 실제 저장, `platform_deployment_id` SQLite 컬럼 추가 | 높음 |
+| IPFS 스크린샷 업로드 | Pinata API 연동, Desktop Settings에 JWT 입력 UI, `ipfsToHttp` 게이트웨이 변환 | 중간 |
+
+### Phase 2 미구현
+
+| 항목 | 설명 | 우선순위 |
+|------|------|---------|
+| Deployer `set_metadata_uri` | Rust `cmd/ethrex/l2/deployer.rs`에 배포 후 metadataURI 설정 함수 추가 | 높음 |
+| `ethrex_metadata` RPC 엔드포인트 | `crates/l2/networking/rpc/l2/metadata.rs` — L2 노드에서 chain_id, proposer, bridge, metadataURI 반환 | 중간 |
+| L1 인덱서 | `platform/server/lib/l1-indexer.js` — MetadataURIUpdated 이벤트 감시 → IPFS fetch → DB 캐시 | 중간 |
+| Desktop L1 트랜잭션 서명 | `set_metadata_uri` Tauri 커맨드 — Keychain 개인키로 L1 트랜잭션 서명/전송 | 낮음 |
+
+### Phase 3 미구현
+
+| 항목 | 설명 | 우선순위 |
+|------|------|---------|
+| Nostr Relay 배포 | `nostr-rs-relay` Docker 배포, `wss://relay.tokamak.network` 설정 | 높음 |
+| 스팸 방지 | Relay IP rate limiting, 부적절한 콘텐츠 신고/삭제 기능 | 낮음 |

@@ -101,6 +101,14 @@ interface IOnChainProposer {
         bytes memory customPublicValues
     ) external;
 
+    /// @notice The metadata URI has been updated.
+    /// @param newURI The new metadata URI (typically an IPFS CID).
+    event MetadataURIUpdated(string newURI);
+
+    /// @notice Sets the metadata URI for this appchain.
+    /// @param _metadataURI The new metadata URI.
+    function setMetadataURI(string calldata _metadataURI) external;
+
     // TODO: imageid, programvkey and riscvvkey should be constants
     // TODO: organize each zkvm proof arguments in their own structs
 

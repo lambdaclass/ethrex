@@ -132,6 +132,11 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 programTypeId => mapping(uint8 verifierId => bytes32 vk)))
         public verificationKeys;
 
+    /// @notice URI pointing to the appchain metadata (e.g. ipfs://Qm...).
+    /// @dev Set by the owner via setMetadataURI(). Contains name, description,
+    /// screenshots, RPC URLs, social links, etc.
+    string public metadataURI;
+
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev The owner is expected to be the Timelock contract.
@@ -871,6 +876,12 @@ contract OnChainProposer is
         lastCommittedBatch = batchNumber - 1;
 
         emit BatchReverted(batchCommitments[lastCommittedBatch].newStateRoot);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setMetadataURI(string calldata _metadataURI) external override onlyOwner {
+        metadataURI = _metadataURI;
+        emit MetadataURIUpdated(_metadataURI);
     }
 
     /// @notice Allow owner to upgrade the contract.

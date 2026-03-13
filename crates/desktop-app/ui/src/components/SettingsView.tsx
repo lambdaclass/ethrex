@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-shell'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useLang, useTheme } from '../App'
 import { t, langNames } from '../i18n'
+import { isPinataConfigured, savePinataJWT, deletePinataJWT } from '../api/ipfs'
 import type { PlatformUser } from '../api/platform'
 import type { Lang } from '../i18n'
 import type { Theme } from '../App'
@@ -198,6 +199,40 @@ export default function SettingsView() {
   const [tgSaving, setTgSaving] = useState(false)
   const [tgResult, setTgResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [tgSystemAlerts, setTgSystemAlerts] = useState(true)
+
+  // Pinata (IPFS)
+  const [pinataConfigured, setPinataConfigured] = useState(false)
+  const [pinataKey, setPinataKey] = useState('')
+  const [pinataSaving, setPinataSaving] = useState(false)
+  const [pinataResult, setPinataResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  useEffect(() => { isPinataConfigured().then(setPinataConfigured) }, [])
+
+  const handlePinataSave = async () => {
+    if (!pinataKey.trim()) return
+    setPinataSaving(true)
+    setPinataResult(null)
+    try {
+      await savePinataJWT(pinataKey.trim())
+      setPinataConfigured(true)
+      setPinataKey('')
+      setPinataResult({ ok: true, msg: lang === 'ko' ? '저장됨' : 'Saved' })
+    } catch (e) {
+      setPinataResult({ ok: false, msg: `${e}` })
+    } finally {
+      setPinataSaving(false)
+    }
+  }
+
+  const handlePinataDelete = async () => {
+    try {
+      await deletePinataJWT()
+      setPinataConfigured(false)
+      setPinataResult({ ok: true, msg: lang === 'ko' ? '삭제됨' : 'Removed' })
+    } catch (e) {
+      setPinataResult({ ok: false, msg: `${e}` })
+    }
+  }
 
   // Local server (L2 Manager)
   const [serverStatus, setServerStatus] = useState<{ running: boolean; healthy: boolean } | null>(null)
@@ -534,6 +569,53 @@ export default function SettingsView() {
               {lang === 'ko'
                 ? 'L2 매니저의 AI Deploy에서도 이 설정을 사용할 수 있습니다.'
                 : 'This setting can also be used in L2 Manager AI Deploy.'}
+            </p>
+          )}
+        </section>
+
+        {/* IPFS (Pinata) */}
+        <section className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 space-y-3 border border-[var(--color-border)]">
+          <h2 className="text-[13px] font-medium">
+            {lang === 'ko' ? 'IPFS 설정 (Pinata)' : 'IPFS Settings (Pinata)'}
+          </h2>
+          <p className="text-[11px] text-[var(--color-text-secondary)]">
+            {lang === 'ko'
+              ? '스크린샷과 메타데이터를 IPFS에 업로드하려면 Pinata JWT가 필요합니다.'
+              : 'Pinata JWT is required to upload screenshots and metadata to IPFS.'}
+          </p>
+          {pinataConfigured && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-[var(--color-success)] font-medium">
+                {lang === 'ko' ? '● 설정됨' : '● Configured'}
+              </span>
+              <button
+                onClick={handlePinataDelete}
+                className="text-[10px] text-[var(--color-error)] hover:underline cursor-pointer"
+              >
+                {lang === 'ko' ? '삭제' : 'Remove'}
+              </button>
+            </div>
+          )}
+          <div>
+            <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">Pinata JWT</label>
+            <input
+              type="password"
+              value={pinataKey}
+              onChange={e => setPinataKey(e.target.value)}
+              placeholder={pinataConfigured ? (lang === 'ko' ? '새 키로 변경...' : 'Enter new key to change...') : 'eyJhbGciOiJIUzI1NiIs...'}
+              className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-[13px] outline-none border border-[var(--color-border)] placeholder-[var(--color-text-secondary)]"
+            />
+          </div>
+          <button
+            onClick={handlePinataSave}
+            disabled={pinataSaving || !pinataKey.trim()}
+            className="w-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 rounded-lg py-2 text-[13px] font-medium transition-colors cursor-pointer text-[var(--color-accent-text)]"
+          >
+            {pinataSaving ? '...' : (lang === 'ko' ? '저장' : 'Save')}
+          </button>
+          {pinataResult && (
+            <p className={`text-[12px] ${pinataResult.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
+              {pinataResult.msg}
             </p>
           )}
         </section>

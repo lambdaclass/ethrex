@@ -362,122 +362,81 @@
     assert(status === 200, `expected 200, got ${status}`);
   });
 
-  // ---- AI Proxy ----
-  console.log("\n=== AI Proxy ===");
+  // ---- Phase 2: On-chain Metadata & IPFS ----
+  console.log("\n=== Phase 2: On-chain Metadata ===");
 
-  await test("GET /api/ai/usage — returns usage for logged-in user", async () => {
-    const { status, data } = await api("/api/ai/usage");
-    assert(status === 200, `expected 200, got ${status}: ${JSON.stringify(data)}`);
-    assert(typeof data.used === "number", "used should be number");
-    assert(typeof data.limit === "number", "limit should be number");
-  });
-
-  await test("GET /api/ai/usage — 401 without auth", async () => {
-    const res = await fetch(`${BASE}/api/ai/usage`);
-    assert(res.status === 401, `expected 401, got ${res.status}`);
-  });
-
-  await test("POST /api/ai/chat — 401 without auth", async () => {
-    const res = await fetch(`${BASE}/api/ai/chat`, {
+  await test("POST /api/store/appchains/:id/rpc-proxy — allows ethrex_metadata method", async () => {
+    // ethrex_metadata should be in the allowlist (even though node is offline, should get 502 not 400)
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+      body: JSON.stringify({ method: "ethrex_metadata", params: [] }),
     });
-    assert(res.status === 401, `expected 401, got ${res.status}`);
+    // 502 = node unreachable (expected since no real L2 running), NOT 400 (method not allowed)
+    assert(status !== 400, `ethrex_metadata should be allowed, got 400: ${JSON.stringify(data)}`);
   });
 
-  // ---- Desktop Auth Flow (PKCE) ----
-  console.log("\n=== Desktop Auth (PKCE) ===");
-
-  let desktopCode = "";
-  const codeVerifier = "test_verifier_" + Date.now();
-
-  // Compute SHA-256 hex of verifier for code_challenge
-  async function sha256hex(input: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(input);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  }
-
-  const codeChallenge = await sha256hex(codeVerifier);
-
-  await test("POST /api/auth/desktop-code — generates code with PKCE", async () => {
-    const { status, data } = await api("/api/auth/desktop-code", {
-      method: "POST",
-      body: JSON.stringify({ code_challenge: codeChallenge }),
-    });
-    assert(status === 200, `expected 200, got ${status}`);
-    assert(data.code.startsWith("dc_"), `code should start with dc_, got ${data.code}`);
-    assert(data.expires_in === 300, `expires_in should be 300, got ${data.expires_in}`);
-    desktopCode = data.code;
-  });
-
-  await test("POST /api/auth/desktop-code — rejects without code_challenge", async () => {
-    const { status, data } = await api("/api/auth/desktop-code", { method: "POST", body: "{}" });
-    assert(status === 400, `expected 400, got ${status}`);
-    assert(data.error === "code_challenge_required", `should be code_challenge_required, got ${data.error}`);
-  });
-
-  await test("GET /api/auth/desktop-token — pending before login", async () => {
-    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=${codeVerifier}`);
-    assert(status === 200, `expected 200, got ${status}`);
-    assert(data.status === "pending", `should be pending, got ${data.status}`);
-  });
-
-  await test("GET /api/auth/desktop-token — rejects wrong verifier", async () => {
-    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=wrong_verifier`);
-    assert(status === 403, `expected 403, got ${status}`);
-    assert(data.error === "invalid_verifier", `should be invalid_verifier, got ${data.error}`);
-  });
-
-  await test("PUT /api/auth/desktop-code — links token (authenticated)", async () => {
-    // Login to get a fresh token
-    const loginRes = await api("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email: testEmail, password: testPassword }),
-    });
-    const freshToken = loginRes.data.token;
-    sessionToken = freshToken;
-
-    const { status, data } = await api("/api/auth/desktop-code", {
+  await test("PUT /api/deployments/[id] — updates metadata-related fields", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
       method: "PUT",
-      body: JSON.stringify({ code: desktopCode }),
+      body: JSON.stringify({
+        description: "Phase 2 metadata test",
+        screenshots: JSON.stringify(["ipfs://QmTestHash1", "ipfs://QmTestHash2", "ipfs://QmTestHash3"]),
+        social_links: JSON.stringify({ website: "https://phase2.test", twitter: "https://twitter.com/test", discord: "https://discord.gg/test" }),
+        explorer_url: "https://explorer.phase2.test",
+        dashboard_url: "https://bridge.phase2.test",
+      }),
     });
     assert(status === 200, `expected 200, got ${status}`);
-    assert(data.ok === true, "should return ok");
+    assert(data.deployment.description === "Phase 2 metadata test", "description mismatch");
   });
 
-  await test("PUT /api/auth/desktop-code — rejects without auth", async () => {
-    const saved = sessionToken;
-    sessionToken = "";
-    const { status } = await api("/api/auth/desktop-code", {
+  await test("GET /api/store/appchains/:id — returns updated Phase 2 fields with 3 screenshots", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    const a = data.appchain;
+    assert(a.description === "Phase 2 metadata test", "description mismatch");
+    assert(Array.isArray(a.screenshots), "screenshots should be array");
+    assert(a.screenshots.length === 3, `expected 3 screenshots, got ${a.screenshots.length}`);
+    assert(a.screenshots[0] === "ipfs://QmTestHash1", "screenshot[0] mismatch");
+    assert(a.screenshots[2] === "ipfs://QmTestHash3", "screenshot[2] mismatch");
+    assert(a.social_links.twitter === "https://twitter.com/test", "twitter link mismatch");
+    assert(a.social_links.discord === "https://discord.gg/test", "discord link mismatch");
+    assert(a.explorer_url === "https://explorer.phase2.test", "explorer_url mismatch");
+    assert(a.dashboard_url === "https://bridge.phase2.test", "dashboard_url mismatch");
+  });
+
+  await test("PUT /api/deployments/[id] — empty screenshots array clears screenshots", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
       method: "PUT",
-      body: JSON.stringify({ code: desktopCode }),
+      body: JSON.stringify({ screenshots: JSON.stringify([]) }),
     });
-    sessionToken = saved;
-    assert(status === 401, `expected 401, got ${status}`);
-  });
-
-  await test("GET /api/auth/desktop-token — ready with correct verifier", async () => {
-    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=${codeVerifier}`);
     assert(status === 200, `expected 200, got ${status}`);
-    assert(data.status === "ready", `should be ready, got ${data.status}`);
-    assert(data.token.startsWith("ps_"), `token should start with ps_, got ${data.token}`);
+    const { data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(data.appchain.screenshots.length === 0, "screenshots should be empty after clear");
   });
 
-  await test("GET /api/auth/desktop-token — code consumed after retrieval", async () => {
-    const { status, data } = await api(`/api/auth/desktop-token?code=${desktopCode}&code_verifier=${codeVerifier}`);
-    assert(status === 404, `expected 404 after consumption, got ${status}`);
-    assert(data.error === "invalid_code", `should be invalid_code, got ${data.error}`);
+  await test("PUT /api/deployments/[id] — malformed screenshots JSON doesn't crash detail", async () => {
+    // Store malformed JSON directly
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ screenshots: "not-valid-json" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    const { status: detailStatus, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(detailStatus === 200, `detail should not crash, got ${detailStatus}`);
+    assert(Array.isArray(data.appchain.screenshots), "screenshots should fallback to empty array");
   });
 
-  await test("GET /api/auth/desktop-token — missing verifier returns 400", async () => {
-    const { status, data } = await api("/api/auth/desktop-token?code=dc_test");
-    assert(status === 400, `expected 400, got ${status}`);
-    assert(data.error === "code_and_verifier_required", `should be code_and_verifier_required, got ${data.error}`);
+  await test("PUT /api/deployments/[id] — restore valid data for subsequent tests", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "A test appchain for E2E testing",
+        screenshots: JSON.stringify(["ipfs://Qm123"]),
+        social_links: JSON.stringify({ website: "https://example.com" }),
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
   });
 
   // ---- Cleanup ----

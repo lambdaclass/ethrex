@@ -114,12 +114,17 @@ router.post("/appchains/:id/rpc-proxy", async (req, res) => {
 
     const allowedMethods = [
       "eth_blockNumber", "eth_chainId", "eth_gasPrice",
-      "ethrex_batchNumber", "net_version",
+      "ethrex_batchNumber", "ethrex_metadata", "net_version",
     ];
 
     const { method, params } = req.body;
     if (!method || !allowedMethods.includes(method)) {
       return res.status(400).json({ error: "Method not allowed" });
+    }
+
+    const appchain = getActiveDeploymentById(req.params.id);
+    if (!appchain || !appchain.rpc_url) {
+      return res.status(404).json({ error: "Appchain not found or no RPC URL" });
     }
 
     const controller = new AbortController();
