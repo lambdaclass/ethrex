@@ -13,7 +13,7 @@ This roadmap outlines a strategic plan to improve the ethrex snap sync module in
 1. **Phase 1: Performance Optimization** - Make snap sync as fast as possible
 2. **Phase 2: Code Quality & Maintainability** - Make the code clear, readable, and easier to understand
 
-The snap sync module currently comprises ~4,650 lines across 12 files. Our goal is to achieve sync times competitive with geth while maintaining code quality standards.
+The snap sync module currently comprises ~4,900 lines across 11 files. Our goal is to achieve sync times competitive with geth while maintaining code quality standards.
 
 ---
 
@@ -22,10 +22,11 @@ The snap sync module currently comprises ~4,650 lines across 12 files. Our goal 
 1. [Current State Analysis](#current-state-analysis)
 2. [Phase 1: Performance Optimization](#phase-1-performance-optimization)
 3. [Phase 2: Code Quality & Maintainability](#phase-2-code-quality--maintainability)
-4. [Success Metrics](#success-metrics)
-5. [Risk Assessment](#risk-assessment)
-6. [Timeline](#timeline)
-7. [Dependencies](#dependencies)
+4. [Phase 3: Pipeline Architecture](#phase-3-pipeline-architecture)
+5. [Success Metrics](#success-metrics)
+6. [Risk Assessment](#risk-assessment)
+7. [Timeline](#timeline)
+8. [Dependencies](#dependencies)
 
 ---
 
@@ -35,26 +36,26 @@ The snap sync module currently comprises ~4,650 lines across 12 files. Our goal 
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `sync/snap_sync.rs` | 1,139 | Main snap sync orchestration |
-| `snap/client.rs` | 1,416 | Client-side snap protocol requests |
-| `sync/healing/storage.rs` | 728 | Storage trie healing |
-| `sync/healing/state.rs` | 460 | State trie healing |
+| `snap/client.rs` | 1,401 | Client-side snap protocol requests |
+| `sync/snap_sync.rs` | 1,181 | Main snap sync orchestration |
+| `sync/healing/storage.rs` | 740 | Storage trie healing |
+| `sync/healing/state.rs` | 463 | State trie healing |
 | `sync/full.rs` | 297 | Full sync implementation |
-| `snap/server.rs` | 173 | Server-side snap protocol responses |
-| `snap/error.rs` | 158 | Unified error types |
-| `snap/constants.rs` | 118 | Protocol constants |
+| `sync.rs` | 290 | Module root: `Syncer`, `AccountStorageRoots`, `SyncError` |
+| `snap/server.rs` | 166 | Server-side snap protocol responses |
+| `snap/error.rs` | 147 | Unified error types |
+| `snap/constants.rs` | 121 | Protocol constants |
 | `sync/code_collector.rs` | 100 | Bytecode collection |
-| Other modules | ~61 | Supporting code |
-| **Total** | **~4,650** | |
+| **Total** | **~4,906** | |
 
 ### Snap Sync Phases
 
 The snap sync process consists of 6 sequential phases:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         SNAP SYNC PIPELINE                               │
-├─────────────────────────────────────────────────────────────────────────┤
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          SNAP SYNC PIPELINE                              │
+├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  1. Header Download ──► 2. Pivot Selection ──► 3. Account Range Download │
 │                                                          │               │
@@ -62,9 +63,9 @@ The snap sync process consists of 6 sequential phases:
 │  6. Full Sync ◄── 5. Bytecode Download ◄── 4. Storage Range Download    │
 │       │                                                                  │
 │       ▼                                                                  │
-│  [State Healing & Storage Healing run in parallel with phases 4-5]      │
+│  [State Healing & Storage Healing run in parallel with phases 4-5]       │
 │                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Current Performance Bottlenecks
@@ -76,13 +77,13 @@ Based on code analysis and profiling data:
 | Sequential header download | `sync_cycle_snap()` | Blocks state download start | Critical |
 | Trie node batching | `heal_state_trie()`, `heal_storage_trie()` | Writes are batched but could use `put_batch_no_alloc` | Medium |
 | Busy-wait loops | Multiple locations | CPU waste (only when no peers available) | Medium |
-| Disk I/O not using `tokio::fs` | Snapshot dumping | Already in `spawn_blocking`, but should use async fs | Low |
+| Sync `std::fs` calls | Snapshot dumping | Already in `spawn_blocking`, but directory ops should use `tokio::fs` | Low |
 
 ### Existing Code Quality Issues
 
 | Issue | Location | Description |
 |-------|----------|-------------|
-| `#[allow(clippy::too_many_arguments)]` | `heal_state_trie()` | 8 parameters - needs context struct |
+| `#[allow(clippy::too_many_arguments)]` | `heal_state_trie()`, `process_node_responses()` | 8+ parameters - needs context struct |
 | Repeated code patterns | `snap/client.rs` | Snapshot dumping logic duplicated |
 | Magic numbers | Various | Hardcoded values without constants |
 | Missing documentation | Healing modules | Complex algorithms undocumented |
@@ -134,7 +135,7 @@ Reduce snap sync time by 50% or more through parallelization, batching optimizat
 
 #### 1.3.1 Use `put_batch_no_alloc()` for Healing
 ```rust
-// Current (healing/state.rs:304)
+// Current (sync/healing/state.rs:302, sync/healing/storage.rs:231)
 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
 
 // Proposed: Pre-allocate buffers, reuse across batches
@@ -144,13 +145,13 @@ struct HealingBatchWriter {
 }
 ```
 
-#### 1.3.2 Dynamic Batch Sizing
+#### 1.3.2 Dynamic Batch Sizing (Needs Measurement)
 Adjust batch sizes based on:
 - Available memory
 - Peer response latency
 - Current healing progress
 
-**Note:** Impact on healing duration needs empirical measurement — current batching may already be sufficient.
+**Note:** Impact on healing duration needs empirical measurement — current batching may already be sufficient. Should only pursue if benchmarks show batch sizing is a bottleneck.
 
 **Expected Impact:** Needs measurement
 
@@ -160,10 +161,14 @@ Adjust batch sizes based on:
 
 ### 1.4 Reduce Busy-Wait Loops (Issue #6140 — Step 9)
 
-**Current State:** Multiple locations use `tokio::time::sleep()` in loops:
-- `sync_cycle_snap()`: 100ms sleep waiting for headers
-- `request_account_range()`: 10ms sleep waiting for peers
-- Healing loops: Various polling intervals
+**Current State:** Multiple locations use `try_recv()` + `tokio::time::sleep()` in loops:
+- `request_account_range()` (`snap/client.rs:193`): 10ms sleep waiting for peers
+- `request_bytecodes()` (`snap/client.rs:383`): 10ms sleep waiting for peers
+- `request_storage_ranges()` (`snap/client.rs:646`): 10ms sleep waiting for peers
+- `heal_state_trie()` (`sync/healing/state.rs:151`): `try_recv` polling
+- `heal_storage_trie()` (`sync/healing/storage.rs:261`): `try_recv` polling
+
+Note: busy-waits only trigger when no peers are available.
 
 **Proposed Change:** Replace with proper async primitives:
 
@@ -197,11 +202,11 @@ match tokio::time::timeout(
 
 ---
 
-### 1.6 Async Disk I/O
+### 1.6 Use `tokio::fs` for Directory Operations
 
-**Current State:** Snapshot dumping is already inside `spawn_blocking`, but uses synchronous `std::fs` operations for directory creation and checks.
+**Current State:** Snapshot dumping is already inside `spawn_blocking`. However, directory creation and existence checks still use synchronous `std::fs` calls.
 
-**Proposed Change:** Use `tokio::fs` for directory operations:
+**Proposed Change:** Replace `std::fs` directory operations with `tokio::fs`:
 
 ```rust
 // Current
@@ -254,9 +259,9 @@ fn max_requests_for_peer(&self, peer_id: &H256) -> u32 {
 }
 ```
 
-**Expected Impact:** 20-30% improvement in peer utilization
+**Expected Impact:** 20-30% improvement in peer utilization (needs empirical measurement)
 
-**Note:** Could introduce excessive complexity. Should evaluate whether the gain justifies the added code.
+**Note:** Could introduce excessive complexity for marginal gain. Should only pursue if benchmarks show peer utilization is actually a bottleneck.
 
 **Effort:** Medium (2 weeks)
 
@@ -264,7 +269,7 @@ fn max_requests_for_peer(&self, peer_id: &H256) -> u32 {
 
 ### 1.8 ~~Parallel Storage Healing~~ (Discarded)
 
-> Discarded — DB write contention makes this impractical without a larger storage refactor.
+> Discarded — storage healing is already parallelized via `JoinSet` with up to `MAX_IN_FLIGHT_REQUESTS` (77) concurrent requests.
 
 ### 1.9 Bytes for Trie Values — O(1) Clones (PR #6057 - In Progress)
 
@@ -289,7 +294,7 @@ Make the codebase clear, well-documented, and easy for new contributors to under
 
 ### 2.1 Extract Context Structs (Issue #6140 — Steps 5, 6)
 
-**Also includes:** `AccountStorageRoots` simplification — replace `BTreeMap<H256, (Option<H256>, Vec<(H256, H256)>)>` with SoA approach and named struct instead of tuple. Named structs for channel types in `healing/state.rs:106` and worker return types in `client.rs:142`.
+**Also includes:** `AccountStorageRoots` simplification (defined in `sync.rs:167`) — replace `BTreeMap<H256, (Option<H256>, Vec<(H256, H256)>)>` with SoA approach and named struct instead of tuple. Named structs for channel types in `sync/healing/state.rs` and worker return types in `snap/client.rs`.
 
 **Current State:** Functions with many parameters:
 ```rust
@@ -329,9 +334,10 @@ async fn heal_state_trie(
 ```
 
 **Files Affected:**
-- `sync/healing/state.rs`
-- `sync/healing/storage.rs`
+- `sync/healing/state.rs` (`#[allow(clippy::too_many_arguments)]` at line 76)
+- `sync/healing/storage.rs` (`#[allow(clippy::too_many_arguments)]` at line 519)
 - `sync/snap_sync.rs`
+- `sync.rs` (`AccountStorageRoots` at line 167)
 
 **Effort:** Low (1 week)
 
@@ -557,9 +563,10 @@ impl Default for SnapSyncConfig {
 
 ### 2.8 Fix Correctness Bugs in `request_storage_ranges` (Issue #6140 — Steps 1, 2)
 
-**Current State:** Two locations crash the node on recoverable errors:
-- `panic!("Should have found the account hash")` (line 735)
-- `.expect()` calls on store lookups (lines 554-558)
+**Current State:** One location crashes the node on a recoverable error:
+- `panic!("Should have found the account hash")` (`snap/client.rs:729`)
+
+Other `.expect()` calls (`snap/client.rs:630-631`) are on `JoinSet` results, not store lookups.
 
 **Proposed Change:** Replace with proper error propagation using `SnapError::InternalError` and `?` operator.
 
@@ -569,25 +576,25 @@ impl Default for SnapSyncConfig {
 
 ### 2.9 Fix Snap Protocol Capability Bug — ✅ DONE
 
-**Status:** Merged in #5975. All `get_best_peer()` calls in `snap/client.rs` now use `SUPPORTED_SNAP_CAPABILITIES`.
+**Status:** Merged in #5975. All `get_best_peer()` calls now use `SUPPORTED_SNAP_CAPABILITIES`.
 
 ---
 
 ### 2.10 Add `spawn_blocking` to Bytecodes Handler — ✅ DONE
 
-**Status:** Merged in #5975. The function in `snap/server.rs:108-131` is `async fn` with `spawn_blocking`, matching the pattern of all other handlers.
+**Status:** Merged in #5975. Bytecodes handler in `snap/server.rs` uses `spawn_blocking`, matching the pattern of all other handlers.
 
 ---
 
 ### 2.11 Remove Dead `DumpError.contents` Field — ✅ DONE
 
-**Status:** Merged in #5975. `DumpError` in `snap/error.rs:132-137` no longer has the `contents` field and uses `#[derive(Debug, thiserror::Error)]` instead of a custom `Debug` impl.
+**Status:** Merged in #5975. `DumpError` in `snap/error.rs` no longer has the `contents` field and uses `#[derive(Debug, thiserror::Error)]` instead of a custom `Debug` impl.
 
 ---
 
 ### 2.12 Use `JoinSet` Instead of Channels for Workers
 
-**Current State:** Both `request_account_range` (line 141) and `request_storage_ranges` (line 589) use `mpsc::channel` for worker communication. If a worker panics, the message is lost silently and the main loop may hang waiting for results.
+**Current State:** Both `request_account_range` (`snap/client.rs:138`) and `request_storage_ranges` (`snap/client.rs:587`) use `mpsc::channel` for worker communication. If a worker panics, the message is lost silently and the main loop may hang waiting for results.
 
 **Proposed Change:** Migrate to `tokio::task::JoinSet` which propagates panics and handles task lifecycle. The bytecodes path already uses `JoinSet` as a reference.
 
@@ -597,7 +604,7 @@ impl Default for SnapSyncConfig {
 
 ### 2.13 Self-Contained `StorageTask` with Hashes
 
-**Current State:** `StorageTask` in `snap/client.rs:77` references `accounts_by_root_hash` by index (`start_index`, `end_index`). Any mutation of the vector would silently corrupt in-flight tasks. The task is not self-contained.
+**Current State:** `StorageTask` in `snap/client.rs:75` references `accounts_by_root_hash` by index (`start_index`, `end_index`). Any mutation of the vector would silently corrupt in-flight tasks. The task is not self-contained.
 
 **Proposed Change:** Include actual account hashes and storage roots in `StorageTask` instead of indices. This makes tasks self-contained and eliminates the implicit coupling to the vector.
 
@@ -607,13 +614,13 @@ impl Default for SnapSyncConfig {
 
 ### 2.14 Move Snap Client Methods Off `PeerHandler` — ✅ DONE
 
-**Status:** Merged in #5975. Snap client methods were extracted from `peer_handler.rs` to `snap/client.rs` and converted from `PeerHandler` methods to standalone functions taking `peers: &mut PeerHandler` as a parameter.
+**Status:** Merged in #5975. Snap client methods extracted from `peer_handler.rs` to `snap/client.rs` as standalone functions taking `peers: &mut PeerHandler`.
 
 ---
 
 ### 2.15 Guard `write_set` in Account Path
 
-**Current State:** `request_account_range` (line 176) spawns disk-write tasks without checking if one is already pending. The storage path (line 629) already does `!disk_joinset.is_empty()` check. Missing the guard can lead to multiple concurrent writes.
+**Current State:** `request_account_range` (`snap/client.rs:170`) spawns disk-write tasks without checking if one is already pending. The storage path (`snap/client.rs:625`) already does `!disk_joinset.is_empty()` check. Missing the guard can lead to multiple concurrent writes.
 
 **Proposed Change:** Add the same `!disk_joinset.is_empty()` guard to the account range disk write path, matching the storage path pattern.
 
@@ -623,7 +630,7 @@ impl Default for SnapSyncConfig {
 
 ### 2.16 Healing Code Unification
 
-**Current State:** `healing/state.rs` (~420 lines) and `healing/storage.rs` (~530 lines) implement the same trie healing algorithm. Differences: path representation (single vs double nibbles) and leaf type (accounts vs U256). Lots of duplicated logic.
+**Current State:** `sync/healing/state.rs` (~463 lines) and `sync/healing/storage.rs` (~740 lines) implement the same trie healing algorithm. Differences: path representation (single vs double nibbles) and leaf type (accounts vs U256). Lots of duplicated logic.
 
 **Proposed Change:** Extract a generic healing function parameterized by path and leaf type. Both modules would call into the shared implementation.
 
@@ -633,12 +640,12 @@ impl Default for SnapSyncConfig {
 
 ### 2.17 Use Existing Constants for Magic Numbers
 
-**Current State:** Several magic numbers in `snap/client.rs` already have named constants in `constants.rs` that aren't being used:
-- Line 569: `300` → should be `STORAGE_BATCH_SIZE`
-- Lines 827, 862: `H256::repeat_byte(0xff)` → should be `HASH_MAX`
-- Line 111: `800` → should be a named constant
+**Current State:** Most magic numbers have been replaced with named constants:
+- `STORAGE_BATCH_SIZE` (used at `snap/client.rs:567`)
+- `HASH_MAX` (used at `snap/client.rs:821,856,1275`)
+- `ACCOUNT_RANGE_CHUNK_COUNT` (used at `snap/client.rs:109`)
 
-**Proposed Change:** Replace magic numbers with existing constants, add new constant for `800`.
+Remaining: channel capacity `1000` appears at lines 138, 370, 587 — could be a named constant.
 
 **Effort:** Very low (trivial)
 
@@ -646,7 +653,7 @@ impl Default for SnapSyncConfig {
 
 ### Issue #6140 — Refactor `request_storage_ranges` (Steps Summary)
 
-9-step plan to refactor `request_storage_ranges` in `crates/networking/p2p/snap/client.rs`. Each step is one independently correct commit. Full details in [Issue #6140](https://github.com/lambdaclass/ethrex/issues/6140).
+9-step plan to refactor `request_storage_ranges` in `snap/client.rs`. Each step is one independently correct commit. Full details in [Issue #6140](https://github.com/lambdaclass/ethrex/issues/6140).
 
 | Step | Description | Sections | Risk |
 |------|-------------|----------|------|
@@ -673,6 +680,147 @@ Step 9 — depends on Step 6
 
 ---
 
+## Phase 3: Pipeline Architecture
+
+### Goal
+Replace the sequential sync phase model with a pipelined actor architecture using Spawned, enabling concurrent execution of phases that are currently blocked on each other.
+
+### Context
+
+The rest of the p2p layer already uses `spawned_concurrency` actors (`ActorRef`, `#[protocol]`, `#[actor]`) for peer table, discovery, RLPx connections, and tx broadcasting. The snap sync module is the main holdout — it uses raw `tokio::spawn` + `mpsc::channel` for concurrency.
+
+Spawned is undergoing a major refactor (branch `feat/approach-b`, being tested on `worktree-spawned-migration`). The new API replaces `GenServer`/`GenServerHandle` with `Actor`/`ActorRef`, and uses `#[protocol]` trait macros to define message interfaces. Phase 3 should target the new Spawned API.
+
+### Motivation
+
+Phases 1 and 2 optimize individual sync stages but don't challenge the fundamental sequential pipeline:
+
+```
+Headers → Pivot → Accounts → Storage → Bytecodes → Healing → Full Sync
+```
+
+In practice, once an account batch is downloaded, its storage and bytecodes are immediately known — there's no reason to wait for ALL accounts before starting storage/bytecode downloads. Similarly, headers can be fetched in the background while state download proceeds. The current code can't express this easily because each phase is a monolithic function that must complete before the next starts.
+
+With actors, each phase becomes a message-driven pipeline stage:
+
+```
+                      ┌──────────────┐
+                      │ HeaderActor  │  (background, feeds into FullSync later)
+                      └──────────────┘
+
+┌──────────────┐    ┌───────────────┐    ┌───────────────┐
+│ AccountActor │───►│ StorageActor  │───►│ HealingActor  │
+│              │───►│ BytecodeActor │    │               │
+└──────────────┘    └───────────────┘    └───────────────┘
+```
+
+Each actor owns its own state, peer management, and timing — no shared mutable state or busy-wait coordination.
+
+---
+
+### 3.1 Migrate Snap Sync to Spawned Actors
+
+**Current State:** `snap_sync.rs` orchestrates everything via sequential function calls. Workers are spawned with `tokio::spawn` and communicate via `mpsc::channel`. Peer acquisition uses `try_recv` + sleep busy-wait loops.
+
+**Proposed Change:** Define a `#[protocol]` for each sync stage and implement them as `Actor`s:
+
+```rust
+#[protocol]
+pub trait AccountDownloaderProtocol: Send + Sync {
+    fn download_range(&self, start: H256, end: H256) -> Result<(), ActorError>;
+    fn account_batch_ready(&self, accounts: Vec<AccountRangeUnit>) -> Result<(), ActorError>;
+}
+
+#[actor(protocol = AccountDownloaderProtocol)]
+impl AccountDownloader {
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) { ... }
+
+    async fn handle_download_range(&mut self, start: H256, end: H256) { ... }
+}
+```
+
+**Actors:**
+- `HeaderActor` — downloads headers in background, notifies orchestrator on completion
+- `AccountActor` — downloads account ranges, sends each batch downstream immediately
+- `StorageActor` — receives account batches, starts storage downloads per-batch
+- `BytecodeActor` — receives code hashes from account batches, downloads in parallel
+- `HealingActor` — starts healing as soon as enough state is available
+- `SyncOrchestrator` — coordinates state machine transitions and pivot updates
+
+**Subsumes:** 1.1 (parallel headers), 2.12 (JoinSet → actors), 2.5 (state machine refactor)
+
+**Effort:** High (6+ weeks)
+
+---
+
+### 3.2 Peer Scoring
+
+**Current State:** `get_best_peer()` selects peers by capability match and in-flight request count. There's no tracking of peer throughput, latency, or reliability beyond simple success/failure scores.
+
+**Proposed Change:** Extend `PeerTable` with richer metrics per peer:
+- Rolling average response latency
+- Throughput (bytes/second)
+- Reliability score (success rate over recent window)
+
+Actors request peers from `PeerTable` with requirements (e.g., "need a peer for storage range, prefer high-throughput"), and `PeerTable` returns the best match.
+
+**Subsumes:** 1.7 (adaptive timeouts, request pipelining)
+
+**Effort:** Medium (2-3 weeks)
+
+---
+
+### 3.3 Pipelined Account → Storage Download
+
+**Current State:** Storage download starts only after ALL accounts are downloaded. In `snap_sync.rs`, `request_account_range()` must complete before `request_storage_ranges()` is called.
+
+**Proposed Change:** `AccountActor` sends each completed account batch to `StorageActor` immediately via actor messages. `StorageActor` starts downloading storage for those accounts while more accounts are still being fetched.
+
+This requires `StorageActor` to handle dynamically growing task queues (new account batches arrive while existing ones are being processed).
+
+**Expected Impact:** Significant — storage is one of the longest phases and can start much earlier.
+
+**Effort:** Medium (2-3 weeks, depends on 3.1)
+
+---
+
+### 3.4 Pipelined Bytecode Download
+
+**Current State:** Bytecodes are downloaded in phase 5, after all storage ranges. Code hashes are known as soon as accounts are downloaded (they're part of the account state).
+
+**Proposed Change:** `AccountActor` sends code hashes to `BytecodeActor` immediately as accounts arrive. `BytecodeActor` downloads bytecodes in parallel with storage downloads.
+
+**Expected Impact:** Removes bytecode download as a sequential bottleneck — it becomes fully overlapped with storage.
+
+**Effort:** Low (1-2 weeks, depends on 3.1)
+
+---
+
+### 3.5 Compute FKV on Insertion
+
+**Current State:** The flat key-value (FKV) store is populated by a background generator (`flatkeyvalue_generator` in `store.rs`) that runs after sync, iterating the trie to build denormalized lookup entries. This adds post-sync latency before the node is fully operational.
+
+**Proposed Change:** Compute and insert FKV entries as account/storage data arrives during snap sync, eliminating the post-sync generation step. Each actor writes FKV entries alongside trie nodes in the same batch.
+
+**Expected Impact:** Eliminates FKV generation as a post-sync step. Node becomes operational immediately after sync completes.
+
+**Effort:** Medium (2-3 weeks)
+
+---
+
+### Phase 3 Dependency Graph
+
+```
+3.1 (Actor migration)
+ ├── 3.2 (Peer scoring)     — independent, can start in parallel
+ ├── 3.3 (Pipelined storage) — depends on 3.1
+ ├── 3.4 (Pipelined bytecodes) — depends on 3.1
+ └── 3.5 (FKV on insertion)  — independent of 3.1, can start earlier
+```
+
+---
+
 ## Success Metrics
 
 ### Phase 1: Performance
@@ -695,6 +843,15 @@ Step 9 — depends on Step 6
 | Cyclomatic complexity | TBD | <15 per function | `cargo clippy` |
 | Functions >100 lines | TBD | 0 | Custom lint |
 
+### Phase 3: Pipeline Architecture
+
+| Metric | Current | Target | Measurement Method |
+|--------|---------|--------|-------------------|
+| Phase overlap | 0% (sequential) | >50% | Phase timing breakdown |
+| Time from first account to first storage download | Full account phase | <30s | Per-phase logs |
+| Post-sync FKV generation time | TBD | 0 (eliminated) | End-to-end benchmark |
+| Total sync time improvement over Phase 1 | Baseline | -30% additional | End-to-end benchmark |
+
 ---
 
 ## Risk Assessment
@@ -706,6 +863,8 @@ Step 9 — depends on Step 6
 | Breaking changes to peer protocol | Low | Medium | Hive test suite validation |
 | Increased complexity | Medium | Medium | Code review; documentation requirements |
 | Schedule overrun | Medium | Medium | Prioritize high-impact items; iterative delivery |
+| Spawned refactor not ready | Medium | High | 3.5 and 3.2 are independent; Phase 1/2 items provide value meanwhile |
+| Pipeline ordering bugs | Medium | High | Pipelining introduces data races if actors process out of order; needs careful invariant tracking |
 
 ---
 
@@ -746,7 +905,19 @@ Week 8-12:  2.6  Test Coverage Improvement (parallel)
 Week 10-14: 2.16 Healing Code Unification
 ```
 
-**Total Duration:** ~16 weeks (phases overlap)
+### Phase 3: Pipeline Architecture (10-14 weeks)
+
+```
+Week 1-2:   3.5  Compute FKV on insertion (independent, can start early)
+Week 1-6:   3.1  Migrate snap sync to Spawned actors (blocked on Spawned refactor)
+Week 3-5:   3.2  Peer scoring (can start in parallel with 3.1)
+Week 7-9:   3.3  Pipelined account → storage download (depends on 3.1)
+Week 7-8:   3.4  Pipelined bytecode download (depends on 3.1)
+```
+
+**Note:** Phase 3 depends on the Spawned `feat/approach-b` refactor landing. 3.5 and 3.2 can start independently.
+
+**Total Duration:** ~20+ weeks (all phases overlap)
 
 ---
 
@@ -757,6 +928,7 @@ Week 10-14: 2.16 Healing Code Unification
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | tokio | 1.x | Async runtime |
+| spawned-concurrency | `feat/approach-b` | Actor framework (Phase 3) |
 | rayon | 1.x | Parallel iterators |
 | tracing | 0.1.x | Logging/metrics |
 
@@ -799,14 +971,22 @@ Week 10-14: 2.16 Healing Code Unification
 
 | Location | Issue | Priority |
 |----------|-------|----------|
-| `healing/storage.rs:156` | Better data receiver design | Medium |
-| `healing/storage.rs:230` | Use `put_batch_no_alloc` | High |
-| `healing/storage.rs:298` | Store error handling | High |
-| `healing/state.rs:149` | Peer scoring for responses | Medium |
-| `healing/state.rs:194` | Optimize trie leaf reaching | Low |
-| `snap/client.rs:567` | Stable sort for binary search | Low |
-| `snap/client.rs:599` | Replace with removable structure | Medium |
-| `snap/client.rs:983` | Unnecessary unzip/memory | Low |
+| `sync/healing/storage.rs:157` | Better data receiver design | Medium |
+| `sync/healing/storage.rs:231` | Use `put_batch_no_alloc` | High |
+| `sync/healing/storage.rs:299` | Store error handling (`.expect()`) | High |
+| `sync/healing/storage.rs:377` | Add error handling | Medium |
+| `sync/healing/state.rs:150` | Peer scoring for responses | Medium |
+| `sync/healing/state.rs:195` | Optimize trie leaf reaching | Low |
+| `sync/healing/state.rs:246` | Check errors for stale block detection | Medium |
+| `sync/healing/state.rs:283` | Reuse buffers | Low |
+| `sync/healing/state.rs:302` | Use `put_batch_no_alloc` | High |
+| `sync/healing/state.rs:346` | Change tuple to struct | Low |
+| `snap/client.rs:175` | Check error type and handle properly | Medium |
+| `snap/client.rs:281` | Repeated code, consider refactoring | Medium |
+| `snap/client.rs:565` | Stable sort for binary search | Low |
+| `snap/client.rs:595` | Replace with removable structure | Medium |
+| `snap/client.rs:808` | DRY — duplicated big-account logic | Medium |
+| `snap/client.rs:976` | Unnecessary unzip/memory | Low |
 
 ---
 
@@ -823,5 +1003,5 @@ Week 10-14: 2.16 Healing Code Unification
 
 ---
 
-*Document Version: 1.0*
-*Last Updated: February 2026*
+*Document Version: 1.1*
+*Last Updated: March 2026*
