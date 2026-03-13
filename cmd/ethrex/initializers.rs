@@ -594,6 +594,7 @@ pub fn migrate_datadir_if_needed(
     for suffix in Network::all_datadir_suffixes() {
         let subdir = base_datadir.join(suffix);
         if subdir.exists() && subdir.is_dir() {
+            info!("Found existing network subdirectory {subdir:?}, skipping migration.");
             return;
         }
     }
