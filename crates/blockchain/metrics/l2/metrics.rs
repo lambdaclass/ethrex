@@ -197,7 +197,7 @@ impl Metrics {
     ) -> Result<(), MetricsError> {
         let builder = self
             .batch_verification_gas
-            .get_metric_with_label_values(&[&batch_number.to_string(), tx_hash])
+            .get_metric_with_label_values(&[&batch_number.to_string(), &tx_hash.to_string()])
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         builder.set(verification_gas);
         Ok(())
