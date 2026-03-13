@@ -69,7 +69,7 @@ fn check_gas_limit(
     tx_gas_limit: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    if block_gas_used + tx_gas_limit > block_gas_limit {
+    if tx_gas_limit > block_gas_limit.saturating_sub(block_gas_used) {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: Block gas used overflow: \
              used {block_gas_used} + tx limit {tx_gas_limit} > block limit {block_gas_limit}"
@@ -128,7 +128,14 @@ impl LEVM {
                 })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            // Pre-tx gas limit guard: on Amsterdam, use max(regular, state) per EIP-8037;
+            // pre-Amsterdam uses cumulative_gas_used (post-refund sum).
+            let pre_tx_gas = if is_amsterdam {
+                block_regular_gas_used.max(block_state_gas_used)
+            } else {
+                cumulative_gas_used
+            };
+            check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -146,9 +153,7 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
-            // EIP-7778: Separate gas tracking
-            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
-            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -159,7 +164,7 @@ impl LEVM {
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
             if is_amsterdam {
-                // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
+                // Amsterdam+: block gas = max(regular_sum, state_sum)
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
                 ::tracing::debug!(
                     "EIP-8037 validate tx[{tx_idx}]: regular={tx_regular_gas} state={tx_state_gas} gas_used={} gas_spent={} block_regular={block_regular_gas_used} block_state={block_state_gas_used} block_max={block_gas_used}",
@@ -415,7 +420,14 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            // Pre-tx gas limit guard: on Amsterdam, use max(regular, state) per EIP-8037;
+            // pre-Amsterdam uses cumulative_gas_used (post-refund sum).
+            let pre_tx_gas = if is_amsterdam {
+                block_regular_gas_used.max(block_state_gas_used)
+            } else {
+                cumulative_gas_used
+            };
+            check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -448,9 +460,7 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            // EIP-7778: Separate gas tracking
-            // - gas_spent (POST-REFUND) for receipt cumulative_gas_used and limit check
-            // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -461,7 +471,7 @@ impl LEVM {
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
             if is_amsterdam {
-                // Amsterdam+: block gas = max(regular_sum, state_sum) for check_gas_limit
+                // Amsterdam+: block gas = max(regular_sum, state_sum)
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
             } else {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
@@ -953,12 +963,11 @@ impl LEVM {
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
         for (tx_idx, _, report, _, _, _) in &exec_results {
-            // Prospective check: same logic as sequential check_gas_limit.
-            // Rejects tx if running_gas + tx.gas_limit() > block_limit,
-            // even if actual usage would fit. This matches sequential behavior.
+            // Prospective check: rejects block if running_gas + tx.gas_limit() > block_limit.
+            // Uses max(regular, state) per EIP-8037 block gas definition.
             let running_block_gas = block_regular_gas_used.max(block_state_gas_used);
             let tx_gas_limit = txs_with_sender[*tx_idx].0.gas_limit();
-            if running_block_gas + tx_gas_limit > header.gas_limit {
+            if tx_gas_limit > header.gas_limit.saturating_sub(running_block_gas) {
                 return Err(EvmError::Transaction(format!(
                     "Gas allowance exceeded: Block gas used overflow: \
                      used {running_block_gas} + tx limit {tx_gas_limit} > block limit {}",
@@ -969,6 +978,9 @@ impl LEVM {
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
+            // Post-tx check: needed because all txs are already executed — if the last tx
+            // pushes actual gas over the limit, there's no next iteration to catch it
+            // like the sequential path does.
             let running_block_gas_after = block_regular_gas_used.max(block_state_gas_used);
             if running_block_gas_after > header.gas_limit {
                 return Err(EvmError::Transaction(format!(
