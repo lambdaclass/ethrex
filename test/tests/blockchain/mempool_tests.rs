@@ -12,9 +12,9 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    MempoolTransaction, Transaction, TxKind,
+    MempoolTransaction, Transaction, TxKind, kzg_commitment_to_versioned_hash,
 };
-use ethrex_common::{Address, Bytes, H256, U256};
+use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
 
@@ -399,4 +399,71 @@ fn blobs_bundle_loadtest() {
         };
         mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
     }
+}
+
+#[test]
+fn blobs_bundle_insert_and_remove() {
+    // Insert two bundles with 2 blobs, and where both bundles contain one specific blob.
+    // Then remove one bundle making sure that blob-version-hash to tx-hash cache still points to
+    // the other txn. And finally remove second bundle as well.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let (blob, commitment, proof) = ([255u8; BYTES_PER_BLOB], [255u8; 48], [255u8; 48]);
+    let versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
+    let mut txn_hash = vec![];
+
+    for i in 1..=2 {
+        let blobs = [blob, [i as u8; BYTES_PER_BLOB]];
+        let commitments = [commitment, [i as u8; 48]];
+        let proofs = [proof, [i as u8; 48]];
+        let bundle = BlobsBundle {
+            blobs: blobs.to_vec(),
+            commitments: commitments.to_vec(),
+            proofs: proofs.to_vec(),
+            version: 0,
+        };
+        let tx = EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: Address::from_low_u64_be(1), // Normal tx
+            ..Default::default()
+        };
+
+        let tx = Transaction::EIP4844Transaction(tx);
+        let sender = H160::random();
+        let hash = H256::random();
+        txn_hash.push(hash);
+        mempool
+            .add_blobs_bundle(txn_hash[i as usize - 1], bundle)
+            .unwrap();
+
+        mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .expect("Failed to add blob transaction");
+    }
+
+    // When a txn is removed it should not remove the associated bundle as another txn also has the same bundle.
+    for txn_hash in txn_hash.into_iter() {
+        assert_eq!(
+            mempool
+                .get_blobs_data_by_versioned_hashes(&[versioned_hash])
+                .expect("should return a bundle")
+                .len(),
+            1
+        );
+
+        mempool
+            .remove_transaction(&txn_hash)
+            .expect("should remove blob bundle by txn_hash");
+    }
+
+    // Once both transactions are removed it should remove the bundle as well.
+    assert_eq!(
+        mempool
+            .get_blobs_data_by_versioned_hashes(&[versioned_hash])
+            .expect("should return empty"),
+        vec![None]
+    );
 }
