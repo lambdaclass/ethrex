@@ -31,7 +31,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -1715,7 +1715,7 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1754,7 +1754,7 @@ impl Store {
                     }
                 }
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
@@ -1763,7 +1763,7 @@ impl Store {
                 account_state.encode_to_vec(),
             )?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -1785,7 +1785,7 @@ impl Store {
 
         let mut code_updates = Vec::new();
 
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -1846,7 +1846,7 @@ impl Store {
                 }
 
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
                 account_state.storage_root = storage_hash;
 
@@ -1856,7 +1856,7 @@ impl Store {
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         let account_updates_list = AccountUpdatesList {
             state_trie_hash,
@@ -1880,7 +1880,7 @@ impl Store {
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
-            let code = Code::from_bytecode(account.code);
+            let code = Code::from_bytecode(account.code, &NativeCrypto);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
 
@@ -1894,7 +1894,7 @@ impl Store {
                 }
             }
 
-            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
+            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
             storage_trie_nodes.extend(
                 storage_nodes
@@ -1912,7 +1912,7 @@ impl Store {
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
         let account_trie_nodes = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
@@ -2698,7 +2698,7 @@ impl Store {
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
-        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
+        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash(&NativeCrypto).finalize(&NativeCrypto);
         Ok(state_root == root_hash)
     }
 
@@ -2959,7 +2959,7 @@ fn flatkeyvalue_generator(
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
         let root: Node = ethrex_trie::Node::decode(&root)?;
-        let state_root = root.compute_hash().finalize();
+        let state_root = root.compute_hash(&NativeCrypto).finalize(&NativeCrypto);
 
         let last_written = read_tx
             .get(MISC_VALUES, "last_written".as_bytes())?

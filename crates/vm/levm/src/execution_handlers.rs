@@ -73,7 +73,7 @@ impl<'a> VM<'a> {
             // Set bytecode to the newly created contract.
             let contract_address = self.current_call_frame.to;
             let code = self.current_call_frame.output.clone();
-            self.update_account_bytecode(contract_address, Code::from_bytecode(code))?;
+            self.update_account_bytecode(contract_address, Code::from_bytecode(code, self.crypto))?;
         }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]

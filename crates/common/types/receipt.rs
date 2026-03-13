@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::Crypto;
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::RLPEncode,
@@ -53,7 +53,7 @@ impl Receipt {
         if self.tx_type != TxType::Legacy {
             encode_buf.push(self.tx_type as u8);
         }
-        let bloom = bloom_from_logs(&self.logs);
+        let bloom = bloom_from_logs(&self.logs, &ethrex_crypto::NativeCrypto);
         Encoder::new(&mut encode_buf)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
@@ -64,13 +64,13 @@ impl Receipt {
     }
 }
 
-pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
+pub fn bloom_from_logs(logs: &[Log], crypto: &dyn Crypto) -> Bloom {
     let mut bloom = Bloom::zero();
     for log in logs {
-        let address_hash = keccak_hash(log.address);
+        let address_hash = crypto.keccak256(log.address.as_bytes());
         bloom.accrue(BloomInput::Hash(&address_hash));
         for topic in log.topics.iter() {
-            let topic_hash = keccak_hash(*topic);
+            let topic_hash = crypto.keccak256(topic.as_bytes());
             bloom.accrue(BloomInput::Hash(&topic_hash));
         }
     }
@@ -129,7 +129,7 @@ impl ReceiptWithBloom {
             tx_type,
             succeeded,
             cumulative_gas_used,
-            bloom: bloom_from_logs(&logs),
+            bloom: bloom_from_logs(&logs, &ethrex_crypto::NativeCrypto),
             logs,
         }
     }
@@ -283,7 +283,7 @@ impl From<&Receipt> for ReceiptWithBloom {
             tx_type: receipt.tx_type,
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
-            bloom: bloom_from_logs(&receipt.logs),
+            bloom: bloom_from_logs(&receipt.logs, &ethrex_crypto::NativeCrypto),
             logs: receipt.logs.clone(),
         }
     }

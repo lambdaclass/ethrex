@@ -335,7 +335,7 @@ impl Blockchain {
 
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -458,7 +458,7 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                        validate_receipts_root(&block.header, &execution_result.receipts)?;
+                        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
                         validate_requests_hash(
                             &block.header,
                             &chain_config,
@@ -725,8 +725,8 @@ impl Blockchain {
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
-                let hash = root.commit(Nibbles::default(), &mut state_updates);
-                hash.finalize()
+                let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
+                hash.finalize(&NativeCrypto)
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 *EMPTY_TRIE_HASH
@@ -914,7 +914,7 @@ impl Blockchain {
                                         }
 
                                         let (root_hash, nodes) =
-                                            trie.collect_changes_since_last_hash();
+                                            trie.collect_changes_since_last_hash(&NativeCrypto);
                                         results.push((idx, root_hash, nodes));
                                     }
                                     Ok(results)
@@ -1033,8 +1033,8 @@ impl Blockchain {
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
                 let mut root = NodeRef::from(root);
-                let hash = root.commit(Nibbles::default(), &mut state_updates);
-                hash.finalize()
+                let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
+                hash.finalize(&NativeCrypto)
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
                 *EMPTY_TRIE_HASH
@@ -1183,8 +1183,8 @@ impl Blockchain {
                             self.collapse_root_node(parent_header, Some(hashed_account), *root)?
                         {
                             let mut root = NodeRef::from(root);
-                            let hash = root.commit(Nibbles::default(), &mut state.nodes);
-                            storage_root = Some(hash.finalize());
+                            let hash = root.commit(Nibbles::default(), &mut state.nodes, &NativeCrypto);
+                            storage_root = Some(hash.finalize(&NativeCrypto));
                         } else {
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
                             storage_root = Some(*EMPTY_TRIE_HASH);
@@ -1259,7 +1259,7 @@ impl Blockchain {
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -1299,7 +1299,7 @@ impl Blockchain {
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let initial_state_root = trie.hash_no_commit();
+        let initial_state_root = trie.hash_no_commit(&NativeCrypto);
 
         let (mut current_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
@@ -1564,7 +1564,7 @@ impl Blockchain {
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
-            .map(|node| (node.compute_hash().finalize(), node))
+            .map(|node| (node.compute_hash(&NativeCrypto).finalize(&NativeCrypto), node))
             .collect();
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
             Trie::get_embedded_root(&nodes, initial_state_root)?
@@ -1630,7 +1630,7 @@ impl Blockchain {
             .state_trie(parent_header.hash())
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let initial_state_root = trie.hash_no_commit();
+        let initial_state_root = trie.hash_no_commit(&NativeCrypto);
 
         let (trie_witness, trie) = TrieLogger::open_trie(trie);
 
@@ -1806,7 +1806,7 @@ impl Blockchain {
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
-            .map(|node| (node.compute_hash().finalize(), node))
+            .map(|node| (node.compute_hash(&NativeCrypto).finalize(&NativeCrypto), node))
             .collect();
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
             Trie::get_embedded_root(&nodes, initial_state_root)?
@@ -2806,7 +2806,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
             .unwrap_or_else(|| Node::Branch(Box::default())),
     );
     trie.root = Node::Branch(root).into();
-    let (_, mut nodes) = trie.collect_changes_since_last_hash();
+    let (_, mut nodes) = trie.collect_changes_since_last_hash(&NativeCrypto);
     nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
 
     let Some(Node::Branch(root)) = trie.root_node()?.map(Arc::unwrap_or_clone) else {
