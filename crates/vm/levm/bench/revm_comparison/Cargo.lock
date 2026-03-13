@@ -1087,6 +1087,7 @@ name = "ethrex-blockchain"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "crossbeam",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-metrics",
