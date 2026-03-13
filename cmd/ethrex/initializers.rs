@@ -158,15 +158,19 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
 
 /// Opens a pre-existing Store or creates a new one
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
-    if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+    let store = if is_memory_datadir(datadir) {
+        Store::new(datadir, EngineType::InMemory)?
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
-    }
+        Store::new(datadir, engine_type)?
+    };
+    // Clear any false positives from a previous bug where transient EVM errors
+    // were cached as permanent block invalidity (see #6274).
+    store.clear_invalid_chains()?;
+    Ok(store)
 }
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
