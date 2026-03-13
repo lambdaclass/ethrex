@@ -168,7 +168,7 @@ pub async fn start_l2(
     let metrics_gatherer = MetricsGatherer::spawn(&cfg, rollup_store.clone(), l2_url)
         .await
         .inspect_err(|err| {
-            error!("Error starting Block Producer: {err}");
+            error!("Error starting Metrics Gatherer: {err}");
         });
     let mut verifier_handle = None;
 
