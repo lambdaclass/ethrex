@@ -194,12 +194,13 @@ impl L1ProofSender {
             let (mut latest_sent_to_aligned, sent_at) =
                 self.rollup_store.get_latest_sent_to_aligned().await?;
 
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
+                .as_secs();
+
             // Sync aligned cursor if on-chain verification advanced past it
             if latest_sent_to_aligned < last_verified_batch {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
-                    .as_secs();
                 self.rollup_store
                     .set_latest_sent_to_aligned(last_verified_batch, now)
                     .await?;
@@ -208,24 +209,25 @@ impl L1ProofSender {
 
             // Time-based resubmission: if we sent a proof but verification hasn't
             // advanced after the timeout, reset cursor to resend
-            if latest_sent_to_aligned > last_verified_batch && sent_at > 0 {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
-                    .as_secs();
-                if now.saturating_sub(sent_at) > self.resubmission_timeout_secs {
-                    warn!(
-                        latest_sent_to_aligned,
-                        last_verified_batch,
-                        elapsed_secs = now.saturating_sub(sent_at),
-                        "Aligned verification timed out, resending proof"
-                    );
-                    let batch_to_send = last_verified_batch + 1;
-                    return self.verify_and_send_proofs_aligned(batch_to_send).await;
-                }
+            if latest_sent_to_aligned > last_verified_batch
+                && sent_at > 0
+                && now.saturating_sub(sent_at) > self.resubmission_timeout_secs
+            {
+                error!(
+                    latest_sent_to_aligned,
+                    last_verified_batch,
+                    elapsed_secs = now.saturating_sub(sent_at),
+                    "Aligned verification timed out, attempting resubmission"
+                );
+                // Reset resubmission clock so we don't spam on every tick
+                self.rollup_store
+                    .set_latest_sent_to_aligned(latest_sent_to_aligned, now)
+                    .await?;
+                let batch_to_send = last_verified_batch + 1;
+                return self.verify_and_send_proofs_aligned(batch_to_send).await;
             }
 
-            let batch_to_send = std::cmp::max(latest_sent_to_aligned, last_verified_batch) + 1;
+            let batch_to_send = latest_sent_to_aligned + 1;
             return self.verify_and_send_proofs_aligned(batch_to_send).await;
         }
 
