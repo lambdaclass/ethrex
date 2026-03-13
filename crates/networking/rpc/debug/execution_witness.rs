@@ -68,7 +68,12 @@ pub fn execution_witness_from_rpc_chain_config(
     let mut storage_trie_roots = BTreeMap::new();
     if let Some(state_trie_root) = &state_trie_root {
         let mut accounts = Vec::new();
-        collect_accounts_from_node(state_trie_root, Nibbles::from_bytes(&[]), &mut accounts);
+        collect_accounts_from_node(
+            state_trie_root,
+            Nibbles::from_raw(&[], false),
+            &mut accounts,
+            &nodes,
+        );
 
         for (hashed_address, storage_root_hash) in accounts {
             if storage_root_hash == *EMPTY_TRIE_HASH {
@@ -105,18 +110,40 @@ pub fn execution_witness_from_rpc_chain_config(
 
 /// Recursively walks an embedded state trie node and collects
 /// `(hashed_address, storage_root)` pairs from leaf nodes.
-fn collect_accounts_from_node(node: &Node, path: Nibbles, accounts: &mut Vec<(H256, H256)>) {
+/// Also resolves `NodeRef::Hash` references using the flat `nodes` map,
+/// in case some children weren't fully embedded by `get_embedded_root`.
+fn collect_accounts_from_node(
+    node: &Node,
+    path: Nibbles,
+    accounts: &mut Vec<(H256, H256)>,
+    nodes: &BTreeMap<H256, Node>,
+) {
     match node {
         Node::Branch(branch) => {
             for (i, child) in branch.choices.iter().enumerate() {
-                if let NodeRef::Node(child_node, _) = child {
-                    collect_accounts_from_node(child_node, path.append_new(i as u8), accounts);
+                let child_node: Option<&Node> = match child {
+                    NodeRef::Node(n, _) => Some(n),
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize()),
+                    _ => None,
+                };
+                if let Some(child_node) = child_node {
+                    collect_accounts_from_node(
+                        child_node,
+                        path.append_new(i as u8),
+                        accounts,
+                        nodes,
+                    );
                 }
             }
         }
         Node::Extension(ext) => {
-            if let NodeRef::Node(child_node, _) = &ext.child {
-                collect_accounts_from_node(child_node, path.concat(&ext.prefix), accounts);
+            let child_node: Option<&Node> = match &ext.child {
+                NodeRef::Node(n, _) => Some(n),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize()),
+                _ => None,
+            };
+            if let Some(child_node) = child_node {
+                collect_accounts_from_node(child_node, path.concat(&ext.prefix), accounts, nodes);
             }
         }
         Node::Leaf(leaf) => {
