@@ -318,17 +318,25 @@ contract CommonBridge is
     function getPendingTransactionsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
+        return getPendingTransactionsVersionedHashWithOffset(0, number);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingTransactionsVersionedHashWithOffset(
+        uint256 offset,
+        uint16 number
+    ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingTxHashesLength(),
-            "CommonBridge: number is greater than the length of pendingTxHashes (get)"
+            uint256(number) + offset <= pendingTxHashesLength(),
+            "CommonBridge: number + offset exceeds pending tx hashes length"
         );
 
         bytes memory hashes;
         for (uint i = 0; i < number; i++) {
             hashes = bytes.concat(
                 hashes,
-                pendingTxHashes[i + pendingPrivilegedTxIndex]
+                pendingTxHashes[i + pendingPrivilegedTxIndex + offset]
             );
         }
 
@@ -342,10 +350,19 @@ contract CommonBridge is
         uint256 chainId,
         uint16 number
     ) public view returns (bytes32) {
+        return getPendingL2MessagesVersionedHashWithOffset(chainId, 0, number);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesVersionedHashWithOffset(
+        uint256 chainId,
+        uint256 offset,
+        uint16 number
+    ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= pendingL2MessagesLength(chainId),
-            "CommonBridge: number is greater than the length of pendingL2Messages (get)"
+            uint256(number) + offset <= pendingL2MessagesLength(chainId),
+            "CommonBridge: number + offset exceeds pending L2 messages length"
         );
 
         bytes memory hashes;
@@ -357,7 +374,7 @@ contract CommonBridge is
         for (uint i = 0; i < number; i++) {
             hashes = bytes.concat(
                 hashes,
-                pendingMessagesHashes[i + pendingMessageIndex]
+                pendingMessagesHashes[i + pendingMessageIndex + offset]
             );
         }
 
