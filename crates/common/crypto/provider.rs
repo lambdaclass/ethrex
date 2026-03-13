@@ -630,41 +630,31 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 // ── BLS12-381 helpers (used by trait default methods) ──────────────────────
 
 /// Parse an unpadded BLS12-381 G1 point from two 48-byte field elements.
+///
+/// `Fp::from_bytes` validates that each coordinate is strictly less than the
+/// field modulus, which also prevents the top bits from being misinterpreted
+/// as BLS serialization flags.
 fn parse_bls12_g1(
     (x_bytes, y_bytes): ([u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G1Affine, CryptoError> {
     use bls12_381::{Fp, G1Affine};
 
-    const ALL_ZERO: [u8; 48] = [0u8; 48];
-
-    if x_bytes == ALL_ZERO && y_bytes == ALL_ZERO {
-        return Ok(G1Affine::identity());
-    }
-
-    // Validate that coordinates are strictly less than the BLS12-381 field modulus.
-    // The bls12_381 crate's from_uncompressed interprets the top bits of the first
-    // byte as BLS serialization flags (compression, infinity, sort), masking them
-    // away. EIP-2537 uses a different encoding where all 48 bytes are pure coordinate
-    // data. Rejecting values >= p here prevents the crate from misinterpreting
-    // coordinate bits as flags.
-    Fp::from_bytes(&x_bytes)
+    let x = Fp::from_bytes(&x_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidInput(
             "G1 x coordinate >= field modulus",
         ))?;
-    Fp::from_bytes(&y_bytes)
+    let y = Fp::from_bytes(&y_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidInput(
             "G1 y coordinate >= field modulus",
         ))?;
 
-    let mut g1_bytes = [0u8; 96];
-    g1_bytes[..48].copy_from_slice(&x_bytes);
-    g1_bytes[48..].copy_from_slice(&y_bytes);
+    if x.is_zero().into() && y.is_zero().into() {
+        return Ok(G1Affine::identity());
+    }
 
-    let affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
-        .into_option()
-        .ok_or(CryptoError::InvalidPoint("invalid BLS12-381 G1 point"))?;
+    let affine = G1Affine::new_unchecked(x, y);
 
     if !bool::from(affine.is_on_curve()) {
         return Err(CryptoError::InvalidPoint("G1 point not on curve"));
@@ -675,40 +665,29 @@ fn parse_bls12_g1(
 
 /// Parse an unpadded BLS12-381 G2 point from four 48-byte field elements.
 /// EIP-2537 encodes G2 as (x_0, x_1, y_0, y_1) where x = x_0 + x_1*u in Fp2.
-/// bls12_381 crate serializes as x_1 || x_0 || y_1 || y_0.
 fn parse_bls12_g2(
     (x0, x1, y0, y1): ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G2Affine, CryptoError> {
-    use bls12_381::{Fp, G2Affine};
+    use bls12_381::{Fp, Fp2, G2Affine};
 
-    const ALL_ZERO: [u8; 48] = [0u8; 48];
+    let x0 = Fp::from_bytes(&x0)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("G2 x0 >= field modulus"))?;
+    let x1 = Fp::from_bytes(&x1)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("G2 x1 >= field modulus"))?;
+    let y0 = Fp::from_bytes(&y0)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("G2 y0 >= field modulus"))?;
+    let y1 = Fp::from_bytes(&y1)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("G2 y1 >= field modulus"))?;
 
-    if x0 == ALL_ZERO && x1 == ALL_ZERO && y0 == ALL_ZERO && y1 == ALL_ZERO {
+    if x0.is_zero().into() && x1.is_zero().into() && y0.is_zero().into() && y1.is_zero().into() {
         return Ok(G2Affine::identity());
     }
 
-    // Validate that all four coordinates are strictly less than the BLS12-381
-    // field modulus. See comment in parse_bls12_g1 for why this is needed.
-    for (coord, label) in [
-        (&x0, "G2 x0"),
-        (&x1, "G2 x1"),
-        (&y0, "G2 y0"),
-        (&y1, "G2 y1"),
-    ] {
-        Fp::from_bytes(coord)
-            .into_option()
-            .ok_or(CryptoError::InvalidInput(label))?;
-    }
-
-    let mut g2_bytes = [0u8; 192];
-    g2_bytes[0..48].copy_from_slice(&x1);
-    g2_bytes[48..96].copy_from_slice(&x0);
-    g2_bytes[96..144].copy_from_slice(&y1);
-    g2_bytes[144..192].copy_from_slice(&y0);
-
-    let affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
-        .into_option()
-        .ok_or(CryptoError::InvalidPoint("invalid BLS12-381 G2 point"))?;
+    let affine = G2Affine::new_unchecked(Fp2 { c0: x0, c1: x1 }, Fp2 { c0: y0, c1: y1 });
 
     if !bool::from(affine.is_on_curve()) {
         return Err(CryptoError::InvalidPoint("G2 point not on curve"));

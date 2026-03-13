@@ -24,8 +24,8 @@ use ethrex_common::{
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
-use std::collections::HashMap;
-pub type Storage = HashMap<U256, H256>;
+use rustc_hash::FxHashMap;
+pub type Storage = FxHashMap<U256, H256>;
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
@@ -79,6 +79,8 @@ pub fn restore_cache_state(
     for (address, account) in callframe_backup.original_accounts_info {
         if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
+            current_account.status = account.status;
+            current_account.has_storage = account.has_storage;
         }
     }
 
