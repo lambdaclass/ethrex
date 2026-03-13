@@ -130,9 +130,17 @@ fn finalize_non_privileged_execution(
     // EIP-7778: pre-refund gas for block accounting
     let total_gas_pre_refund = ctx_result.gas_used;
 
-    default_hook::delete_self_destruct_accounts(vm)?;
+    // Clear the backup so that Phase 2's rollback only undoes mutations
+    // from apply_finalize_mutations, not the gas-overuse revert above.
+    vm.current_call_frame.call_frame_backup.clear();
 
-    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
+    // === Phase 1: Fallible computations (no state mutations) ===
+    // Perform contract calls and conversions that can fail BEFORE any
+    // mutations, so an error here leaves the DB state unchanged.
+    // NOTE: get_fee_token_ratio now runs before delete_self_destruct_accounts
+    // (which moved into Phase 2). This is safe because the fee token ratio
+    // contract should never be in the selfdestruct set.
+    let fee_token_ratio: u64 = if let Some(fee_token) = vm.env.fee_token {
         get_fee_token_ratio(vm, fee_token)?
             .try_into()
             .map_err(|_| {
@@ -143,6 +151,53 @@ fn finalize_non_privileged_execution(
     } else {
         1u64
     };
+
+    // === Phase 2: State mutations (with rollback on error) ===
+    // Mutations record original values in call_frame_backup via
+    // backup_account_info / backup_storage_slot. If any step fails,
+    // we restore the cache to undo all partial mutations.
+    let result = apply_finalize_mutations(
+        vm,
+        ctx_result,
+        fee_config,
+        use_fee_token,
+        fee_token_ratio,
+        l1_gas,
+        gas_refunded,
+        execution_gas,
+        actual_gas_used,
+        total_gas_pre_refund,
+    );
+
+    if let Err(e) = result {
+        // Rollback DB cache to undo partial Phase 2 mutations.
+        // Note: substate (logs, selfdestruct) is NOT rolled back here because
+        // the substate parent was already consumed by handle_state_backup()
+        // during run_execution(). This is safe because the Err propagates to
+        // the caller, which discards the entire VM context.
+        vm.restore_cache_state()?;
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Applies all finalize mutations atomically: if any step fails, the caller
+/// reverts the DB cache using `restore_cache_state`.
+#[allow(clippy::too_many_arguments)]
+fn apply_finalize_mutations(
+    vm: &mut VM<'_>,
+    ctx_result: &mut ContextResult,
+    fee_config: &FeeConfig,
+    use_fee_token: bool,
+    fee_token_ratio: u64,
+    l1_gas: u64,
+    gas_refunded: u64,
+    execution_gas: u64,
+    actual_gas_used: u64,
+    total_gas_pre_refund: u64,
+) -> Result<(), crate::errors::VMError> {
+    default_hook::delete_self_destruct_accounts(vm)?;
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
@@ -670,8 +725,25 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-    let fee_storage = db_clone.get_account(fee_token)?.storage.clone();
-    vm.db.get_account_mut(fee_token)?.storage = fee_storage;
+    let new_storage = db_clone.get_account(fee_token)?.storage.clone();
+    let current_storage = vm.db.get_account(fee_token)?.storage.clone();
+
+    // Back up original values for changed slots so restore_cache_state can revert them
+    for (key, new_value) in &new_storage {
+        let old_value = current_storage.get(key).copied().unwrap_or_default();
+        if old_value != *new_value {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+    // Back up slots that will be removed by the bulk replacement
+    for (key, &old_value) in &current_storage {
+        if !new_storage.contains_key(key) {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+
+    // Apply new storage
+    vm.db.get_account_mut(fee_token)?.storage = new_storage;
 
     // update the initial state account
     let initial_state_fee_token = db_clone
