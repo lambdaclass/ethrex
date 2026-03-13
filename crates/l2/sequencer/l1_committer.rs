@@ -1625,6 +1625,13 @@ async fn estimate_blob_gas(
 /// re-applying the blocks from the last known state root up to the head block.
 ///
 /// This function performs that regeneration.
+///
+/// When `target_block_number` is `Some(n)`, this function regenerates state up
+/// to block `n - 1` (exclusive of `n`). The intent is to prepare the state so
+/// that block `n` can be applied by the caller afterwards.
+///
+/// When `target_block_number` is `None`, the function regenerates state up to
+/// the latest block number stored in the database (inclusive).
 pub async fn regenerate_state(
     store: &Store,
     rollup_store: &StoreRollup,
@@ -1632,7 +1639,8 @@ pub async fn regenerate_state(
     target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
     let target_block_number = match target_block_number {
-        Some(n) => n,
+        Some(0) => return Ok(()),
+        Some(n) => n - 1,
         None => store.get_latest_block_number().await?,
     };
     if target_block_number == 0 {
