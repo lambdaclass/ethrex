@@ -39,7 +39,6 @@ let
       lockFile = ./Cargo.lock;
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
-        "spawned-concurrency-0.5.0" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       };
     };
 
