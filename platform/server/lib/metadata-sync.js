@@ -7,7 +7,7 @@
  * Flow: GitHub API → parse JSON → upsert explore_listings → detect deletions
  */
 
-const { upsertListingWithSha, getAllRepoFilePaths, deleteListing } = require("../db/listings");
+const { upsertListing, getAllRepoFilePaths, deleteListing } = require("../db/listings");
 
 const REPO_OWNER = process.env.METADATA_REPO_OWNER || "tokamak-network";
 const REPO_NAME = process.env.METADATA_REPO_NAME || "tokamak-rollup-metadata-repository";
@@ -129,7 +129,7 @@ async function syncOnce() {
           metadata.identityContract = pathInfo.identityContract;
         }
 
-        upsertListingWithSha(metadata, item.path, item.sha);
+        upsertListing(metadata, item.path, item.sha);
         synced++;
       }));
 
@@ -141,7 +141,7 @@ async function syncOnce() {
       }
     }
 
-    // 4. Detect and remove deleted files
+    // 5. Detect and remove deleted files
     for (const listing of existingListings) {
       if (listing.repo_file_path && !currentPaths.has(listing.repo_file_path)) {
         deleteListing(listing.id);

@@ -10,7 +10,7 @@ function listingId(l1ChainId, stackType, identityContract) {
 /**
  * Upsert a listing from metadata-repo JSON.
  */
-function upsertListing(metadata, repoFilePath) {
+function upsertListing(metadata, repoFilePath, sha) {
   const db = getDb();
   const id = listingId(metadata.l1ChainId, metadata.stackType, metadata.identityContract);
   const now = Date.now();
@@ -23,7 +23,7 @@ function upsertListing(metadata, repoFilePath) {
       l1_contracts, operator_name, operator_website, operator_social_links,
       description, screenshots, hashtags,
       signed_by, signature, owner_wallet,
-      repo_file_path, synced_at, created_at
+      repo_file_path, repo_sha, synced_at, created_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?, ?,
@@ -31,7 +31,7 @@ function upsertListing(metadata, repoFilePath) {
       ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?
+      ?, ?, ?, ?
     )
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
@@ -56,6 +56,7 @@ function upsertListing(metadata, repoFilePath) {
       signature = excluded.signature,
       owner_wallet = excluded.owner_wallet,
       repo_file_path = excluded.repo_file_path,
+      repo_sha = excluded.repo_sha,
       synced_at = excluded.synced_at
   `).run(
     id, metadata.l1ChainId, metadata.l2ChainId, metadata.stackType,
@@ -78,20 +79,9 @@ function upsertListing(metadata, repoFilePath) {
     metadata.metadata?.signature || null,
     metadata.metadata?.signedBy || null, // owner_wallet = signer
     repoFilePath || null,
+    sha || null,
     now, now,
   );
-
-}
-
-/**
- * Upsert listing and store the blob SHA for change detection.
- */
-function upsertListingWithSha(metadata, repoFilePath, sha) {
-  upsertListing(metadata, repoFilePath);
-  if (sha) {
-    const db = getDb();
-    db.prepare("UPDATE explore_listings SET repo_sha = ? WHERE repo_file_path = ?").run(sha, repoFilePath);
-  }
 }
 
 /**
@@ -194,7 +184,6 @@ function updateListingEnrichment(id, fields) {
 module.exports = {
   listingId,
   upsertListing,
-  upsertListingWithSha,
   getListingById,
   getListingByIdentityContract,
   getListings,

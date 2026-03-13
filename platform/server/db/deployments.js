@@ -94,4 +94,12 @@ function getActiveDeployments({ limit = 50, offset = 0, search } = {}) {
   return db.prepare(sql).all(...params);
 }
 
-module.exports = { createDeployment, getDeploymentById, getDeploymentsByUser, updateDeployment, deleteDeployment, getActiveDeployments, getActiveDeploymentById };
+function getDeploymentByProposer(proposerAddress, l1ChainId) {
+  const db = getDb();
+  return db.prepare(
+    `SELECT id FROM deployments
+     WHERE proposer_address = ? AND l1_chain_id = ? AND status = 'active'`
+  ).get(proposerAddress.toLowerCase(), l1ChainId);
+}
+
+module.exports = { createDeployment, getDeploymentById, getDeploymentsByUser, updateDeployment, deleteDeployment, getActiveDeployments, getActiveDeploymentById, getDeploymentByProposer };

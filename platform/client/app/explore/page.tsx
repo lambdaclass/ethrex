@@ -4,35 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { storeApi, bookmarkApi, authApi } from "@/lib/api";
 import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
-
-interface Appchain {
-  id: string;
-  name: string;
-  description: string | null;
-  chain_id: number | null;
-  l2_chain_id: number | null;
-  rpc_url: string | null;
-  status: string;
-  phase: string;
-  bridge_address: string | null;
-  proposer_address: string | null;
-  identity_contract: string | null;
-  l1_chain_id: number | null;
-  network_mode: string | null;
-  stack_type: string | null;
-  rollup_type: string | null;
-  native_token_symbol: string | null;
-  operator_name: string | null;
-  program_name: string;
-  program_slug: string;
-  category: string;
-  owner_name: string;
-  created_at: number;
-  hashtags: string[];
-  avg_rating: number | null;
-  review_count: number;
-  comment_count: number;
-}
+import { type Appchain, getAppchainDisplayName, getAppchainChainId } from "@/lib/types";
 
 type Filter = "all" | "bookmarked" | "top-rated" | "newest" | "most-reviewed";
 
@@ -284,7 +256,7 @@ export default function ShowroomPage() {
             const l1Name = chain.l1_chain_id ? (L1_NAMES[chain.l1_chain_id] || `Chain ${chain.l1_chain_id}`) : null;
             const stackLabel = chain.stack_type ? STACK_LABELS[chain.stack_type] || chain.stack_type : null;
             const displayName = chain.operator_name || chain.owner_name;
-            const chainId = chain.l2_chain_id || chain.chain_id;
+            const chainId = getAppchainChainId(chain);
             const isBookmarked = bookmarkedIds.has(chain.id);
             return (
               <Link href={`/explore/${chain.id}`} key={chain.id}>

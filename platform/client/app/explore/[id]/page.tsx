@@ -6,6 +6,7 @@ import Link from "next/link";
 import Markdown from "react-markdown";
 import { storeApi, socialApi, announcementApi, authApi } from "@/lib/api";
 import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
+import { type AppchainDetail, getAppchainChainId } from "@/lib/types";
 import {
   type ApiWalletSession,
   connectWalletForApi,
@@ -21,48 +22,6 @@ interface Announcement {
   content: string;
   pinned: number;
   created_at: number;
-}
-
-interface AppchainDetail {
-  id: string;
-  user_id: string;
-  name: string;
-  description: string | null;
-  chain_id: number | null;
-  l2_chain_id: number | null;
-  rpc_url: string | null;
-  status: string;
-  phase: string;
-  bridge_address: string | null;
-  proposer_address: string | null;
-  identity_contract: string | null;
-  explorer_url: string | null;
-  dashboard_url: string | null;
-  bridge_url: string | null;
-  screenshots: string[];
-  social_links: Record<string, string>;
-  l1_contracts: Record<string, string>;
-  l1_chain_id: number | null;
-  network_mode: string | null;
-  stack_type: string | null;
-  rollup_type: string | null;
-  native_token_type: string | null;
-  native_token_symbol: string | null;
-  native_token_decimals: number | null;
-  native_token_l1_address: string | null;
-  operator_name: string | null;
-  operator_website: string | null;
-  owner_wallet: string | null;
-  signed_by: string | null;
-  program_name: string;
-  program_slug: string;
-  category: string;
-  owner_name: string;
-  owner_picture: string | null;
-  created_at: number;
-  avg_rating: number | null;
-  review_count: number;
-  comment_count: number;
 }
 
 interface LiveStatus {
@@ -458,7 +417,7 @@ export default function AppchainDetailPage() {
 
   const l1Name = appchain.l1_chain_id ? (L1_NAMES[appchain.l1_chain_id] || `Chain ${appchain.l1_chain_id}`) : null;
   const stackLabel = appchain.stack_type ? STACK_LABELS[appchain.stack_type] || appchain.stack_type : null;
-  const chainId = appchain.l2_chain_id || appchain.chain_id;
+  const chainId = getAppchainChainId(appchain);
   const displayName = appchain.operator_name || appchain.owner_name;
 
   // Build contracts list from l1_contracts (listings) or legacy fields

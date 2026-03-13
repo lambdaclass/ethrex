@@ -9,7 +9,7 @@
  * not the source of truth (Phase 2 architecture).
  */
 
-const { updateDeployment, getActiveDeployments } = require("../db/deployments");
+const { updateDeployment, getActiveDeployments, getDeploymentByProposer } = require("../db/deployments");
 const { getListingByIdentityContract, getListingAddressesForChain, updateListingEnrichment } = require("../db/listings");
 
 const CHAINS = [
@@ -86,13 +86,8 @@ async function fetchAndCacheMetadata(proposerAddr, uri, l1ChainId) {
       console.log(`[indexer] Updated listing ${listingMatch.id} from IPFS metadata`);
     }
 
-    // Also check legacy deployments
-    const deployments = getActiveDeployments({ limit: 1000 });
-    const deploymentMatch = deployments.find(
-      (d) =>
-        d.proposer_address?.toLowerCase() === proposerAddr.toLowerCase() &&
-        d.l1_chain_id === l1ChainId
-    );
+    // Also check legacy deployments (direct index lookup)
+    const deploymentMatch = getDeploymentByProposer(proposerAddr, l1ChainId);
     if (deploymentMatch) {
       updateDeployment(deploymentMatch.id, updates);
       console.log(`[indexer] Updated deployment ${deploymentMatch.id} from IPFS metadata`);
