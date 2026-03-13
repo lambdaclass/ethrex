@@ -42,8 +42,11 @@ impl GuestProgramStateWrapper {
         self.lock_mutex()?.state_trie_root(crypto)
     }
 
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
-        self.lock_mutex()?.get_first_invalid_block_hash()
+    pub fn get_first_invalid_block_hash(
+        &self,
+        crypto: &dyn Crypto,
+    ) -> Result<Option<u64>, GuestProgramStateError> {
+        self.lock_mutex()?.get_first_invalid_block_hash(crypto)
     }
 
     pub fn get_block_parent_header(
@@ -83,7 +86,7 @@ impl VmDatabase for GuestProgramStateWrapper {
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_block_hash(block_number)
+            .get_block_hash(block_number, self.crypto.as_ref())
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

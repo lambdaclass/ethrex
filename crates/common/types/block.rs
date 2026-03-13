@@ -350,7 +350,7 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 

@@ -46,14 +46,14 @@ impl Receipt {
         encoded_data
     }
 
-    pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
+    pub fn encode_inner_with_bloom(&self, crypto: &dyn Crypto) -> Vec<u8> {
         // Bloom is already 256 bytes, so we preallocate at least that much plus some,
         // to avoid multiple small allocations.
         let mut encode_buf = Vec::with_capacity(512);
         if self.tx_type != TxType::Legacy {
             encode_buf.push(self.tx_type as u8);
         }
-        let bloom = bloom_from_logs(&self.logs, &ethrex_crypto::NativeCrypto);
+        let bloom = bloom_from_logs(&self.logs, crypto);
         Encoder::new(&mut encode_buf)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
@@ -441,7 +441,7 @@ mod test {
                 data: Bytes::from_static(b"bar"),
             }],
         };
-        let encoded_receipt = receipt.encode_inner_with_bloom();
+        let encoded_receipt = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
 
         let correct_bloom = {
             let mut bloom = Bloom::zero();

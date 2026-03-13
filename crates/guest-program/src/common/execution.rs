@@ -53,8 +53,7 @@ where
 
     let ethrex_guest_program_state: GuestProgramState =
         report_cycles("ethrex_guest_program_state_initialization", || {
-            execution_witness
-                .try_into()
+            GuestProgramState::from_witness(execution_witness, crypto.as_ref())
                 .map_err(ExecutionError::GuestProgramState)
         })?;
 
@@ -71,7 +70,7 @@ where
 
     // Validate execution witness' block hashes
     report_cycles("get_first_invalid_block_hash", || {
-        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
+        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash(crypto.as_ref()) {
             return Err(ExecutionError::InvalidBlockHash(invalid_block_header));
         }
         Ok(())

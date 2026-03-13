@@ -162,10 +162,11 @@ pub enum GuestProgramStateError {
     Custom(String),
 }
 
-impl TryFrom<ExecutionWitness> for GuestProgramState {
-    type Error = GuestProgramStateError;
-
-    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
+impl GuestProgramState {
+    pub fn from_witness(
+        value: ExecutionWitness,
+        crypto: &dyn Crypto,
+    ) -> Result<Self, GuestProgramStateError> {
         let block_headers: BTreeMap<u64, BlockHeader> = value
             .block_headers_bytes
             .into_iter()
@@ -196,13 +197,13 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         } else {
             Trie::new_temp()
         };
-        state_trie.hash_no_commit(&ethrex_crypto::NativeCrypto);
+        state_trie.hash_no_commit(crypto);
 
         let mut storage_tries = BTreeMap::new();
         for (address, storage_trie_root) in value.storage_trie_roots {
             // hash storage trie nodes
             let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
-            storage_trie.hash_no_commit(&ethrex_crypto::NativeCrypto);
+            storage_trie.hash_no_commit(crypto);
             storage_tries.insert(address, storage_trie);
         }
 
@@ -212,12 +213,12 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .codes
             .into_iter()
             .map(|code| {
-                let code = Code::from_bytecode(code.into(), &ethrex_crypto::NativeCrypto);
+                let code = Code::from_bytecode(code.into(), crypto);
                 (code.hash, code)
             })
             .collect();
 
-        let ethrex_guest_program_state = GuestProgramState {
+        Ok(GuestProgramState {
             codes_hashed,
             state_trie,
             storage_tries,
@@ -227,9 +228,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
             verified_storage_roots: BTreeMap::new(),
-        };
-
-        Ok(ethrex_guest_program_state)
+        })
     }
 }
 
@@ -314,7 +313,10 @@ impl GuestProgramState {
     ///
     /// Keep in mind that the last block hash (which is a batch's parent hash)
     /// can't be validated against the next header, because it has no successor.
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
+    pub fn get_first_invalid_block_hash(
+        &self,
+        crypto: &dyn Crypto,
+    ) -> Result<Option<u64>, GuestProgramStateError> {
         // Enforces there's at least one block header, so windows() call doesn't panic.
         if self.block_headers.is_empty() {
             return Err(GuestProgramStateError::NoBlockHeaders);
@@ -338,7 +340,7 @@ impl GuestProgramState {
                 return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
 
-            if next_header.parent_hash != header.hash() {
+            if next_header.parent_hash != header.compute_block_hash(crypto) {
                 return Ok(Some(*number));
             }
         }
@@ -381,10 +383,14 @@ impl GuestProgramState {
 
     /// Fetches the block hash for a specific block number.
     /// Looks up `self.block_headers` and computes the hash if it is not already computed.
-    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, GuestProgramStateError> {
+    pub fn get_block_hash(
+        &self,
+        block_number: u64,
+        crypto: &dyn Crypto,
+    ) -> Result<H256, GuestProgramStateError> {
         self.block_headers
             .get(&block_number)
-            .map(|header| header.hash())
+            .map(|header| header.compute_block_hash(crypto))
             .ok_or_else(|| {
                 GuestProgramStateError::Database(format!(
                     "Block hash not found for block number {block_number}"
