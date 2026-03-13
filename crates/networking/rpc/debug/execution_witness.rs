@@ -151,8 +151,15 @@ fn collect_accounts_from_node(
             let path_bytes = full_path.to_bytes();
             if path_bytes.len() == 32 {
                 let hashed_address = H256::from_slice(&path_bytes);
-                if let Ok(account_state) = AccountState::decode(&leaf.value) {
-                    accounts.push((hashed_address, account_state.storage_root));
+                match AccountState::decode(&leaf.value) {
+                    Ok(account_state) => {
+                        accounts.push((hashed_address, account_state.storage_root));
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Failed to decode AccountState from state trie leaf at {hashed_address:?}: {e}"
+                        );
+                    }
                 }
             }
         }
