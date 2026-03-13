@@ -71,6 +71,7 @@ pub struct AppchainConfig {
 
     // Public
     pub is_public: bool,
+    pub platform_deployment_id: Option<String>,
     pub hashtags: Vec<String>,
 
     // Status
@@ -168,10 +169,15 @@ impl AppchainManager {
         self.save_appchains();
     }
 
-    pub fn update_public(&self, id: &str, is_public: bool) {
+    pub fn update_public(&self, id: &str, is_public: bool, platform_deployment_id: Option<String>) {
         let mut map = self.appchains.lock().unwrap();
         if let Some(chain) = map.get_mut(id) {
             chain.is_public = is_public;
+            chain.platform_deployment_id = if is_public {
+                platform_deployment_id.or(chain.platform_deployment_id.clone())
+            } else {
+                None
+            };
         }
         drop(map);
         self.save_appchains();
@@ -327,6 +333,7 @@ mod tests {
             bridge_address: None,
             on_chain_proposer_address: None,
             is_public: false,
+            platform_deployment_id: None,
             hashtags: vec!["test".to_string()],
             status: AppchainStatus::Created,
             created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -369,8 +376,10 @@ mod tests {
         am.create_appchain(sample_config("chain-4")).unwrap();
 
         assert!(!am.get_appchain("chain-4").unwrap().is_public);
-        am.update_public("chain-4", true);
-        assert!(am.get_appchain("chain-4").unwrap().is_public);
+        am.update_public("chain-4", true, Some("plat-123".to_string()));
+        let chain = am.get_appchain("chain-4").unwrap();
+        assert!(chain.is_public);
+        assert_eq!(chain.platform_deployment_id, Some("plat-123".to_string()));
     }
 
     #[test]

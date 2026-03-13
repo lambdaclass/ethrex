@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useLang } from '../App'
 import { t } from '../i18n'
 import { platformAPI } from '../api/platform'
+import { localServerAPI } from '../api/local-server'
 import { SectionHeader } from './ui-atoms'
 import type { L2Config } from './MyL2View'
 
@@ -19,10 +20,79 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
   const [publishDesc, setPublishDesc] = useState('')
-  const [publishScreenshots, setPublishScreenshots] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [socialLinks, setSocialLinks] = useState<Record<string, string>>({})
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const socialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sync isPublic when parent re-fetches
   useEffect(() => { setIsPublic(l2.isPublic) }, [l2.isPublic])
+
+  // Load existing data from Platform on mount (if already published)
+  useEffect(() => {
+    if (!l2.platformDeploymentId || !l2.isPublic) return
+    platformAPI.getPublicAppchain(l2.platformDeploymentId).then(appchain => {
+      if (appchain?.description) setPublishDesc(appchain.description)
+      if (appchain?.social_links && Object.keys(appchain.social_links).length > 0) {
+        setSocialLinks(appchain.social_links)
+      }
+    }).catch((err) => console.warn('[publish] Failed to load appchain data:', err))
+  }, [l2.platformDeploymentId, l2.isPublic])
+
+  // Auto-save description with debounce
+  const saveDescription = useCallback(async (desc: string) => {
+    const platformId = l2.platformDeploymentId
+    if (!platformId || !isPublic) return
+    setSaving(true)
+    try {
+      await platformAPI.updateDeployment(platformId, { description: desc })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      console.warn('[publish] Failed to save description:', err)
+    } finally {
+      setSaving(false)
+    }
+  }, [l2.platformDeploymentId, isPublic])
+
+  const handleDescChange = (value: string) => {
+    setPublishDesc(value)
+    setSaved(false)
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => saveDescription(value), 1500)
+  }
+
+  // Save social links with debounce
+  const saveSocialLinks = useCallback(async (links: Record<string, string>) => {
+    const platformId = l2.platformDeploymentId
+    if (!platformId || !isPublic) return
+    // Filter out empty values
+    const filtered = Object.fromEntries(Object.entries(links).filter(([, v]) => v.trim()))
+    setSaving(true)
+    try {
+      await platformAPI.updateDeployment(platformId, { social_links: JSON.stringify(filtered) })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) { console.warn('[publish] Failed to save social links:', err) }
+    finally { setSaving(false) }
+  }, [l2.platformDeploymentId, isPublic])
+
+  const handleSocialChange = (key: string, value: string) => {
+    const updated = { ...socialLinks, [key]: value }
+    setSocialLinks(updated)
+    setSaved(false)
+    if (socialTimerRef.current) clearTimeout(socialTimerRef.current)
+    socialTimerRef.current = setTimeout(() => saveSocialLinks(updated), 1500)
+  }
+
+  // Cleanup debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      if (socialTimerRef.current) clearTimeout(socialTimerRef.current)
+    }
+  }, [])
 
   return (
     <>
@@ -43,17 +113,58 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
                   if (!platformLoggedIn) { setPublishError(ko ? 'Platform 로그인 필요' : 'Login required'); return }
                   setPublishing(true); setPublishError('')
                   try {
-                    const r = await platformAPI.registerDeployment({ programId: 'ethrex-appchain', name: l2.name, chainId: l2.chainId, rpcUrl: `http://localhost:${l2.rpcPort}` })
-                    await platformAPI.activateDeployment(r.deployment.id)
+                    const r = await platformAPI.registerDeployment({
+                      programId: 'ethrex-appchain',
+                      name: l2.name,
+                      chainId: l2.chainId,
+                      rpcUrl: `http://localhost:${l2.rpcPort}`,
+                    })
+                    const platformId = r.deployment.id
+
+                    // Update Platform deployment with chain details + service URLs
+                    const explorerUrl = l2.toolsL2ExplorerPort ? `http://localhost:${l2.toolsL2ExplorerPort}` : undefined
+                    const dashboardUrl = l2.toolsBridgeUIPort ? `http://localhost:${l2.toolsBridgeUIPort}` : undefined
+                    await platformAPI.updateDeployment(platformId, {
+                      bridge_address: l2.bridgeAddress || undefined,
+                      proposer_address: l2.proposerAddress || undefined,
+                      network_mode: l2.networkMode || 'local',
+                      l1_chain_id: l2.l1ChainId || undefined,
+                      explorer_url: explorerUrl,
+                      dashboard_url: dashboardUrl,
+                    })
+
+                    await platformAPI.activateDeployment(platformId)
                     setIsPublic(true)
-                    await invoke('update_appchain_public', { id: l2.id, isPublic: true })
+
+                    // Save platformDeploymentId to local DB
+                    try {
+                      await localServerAPI.updateDeployment(l2.id, {
+                        is_public: 1,
+                        platform_deployment_id: platformId,
+                      })
+                    } catch {
+                      // Fallback: try Rust appchain manager (for non-Docker appchains)
+                      await invoke('update_appchain_public', { id: l2.id, isPublic: true, platformDeploymentId: platformId })
+                    }
                     onRefresh?.()
                   } catch (e: unknown) { setPublishError(e instanceof Error ? e.message : String(e)) }
                   finally { setPublishing(false) }
                 } else {
                   setIsPublic(false)
-                  try { await invoke('update_appchain_public', { id: l2.id, isPublic: false }); onRefresh?.() }
-                  catch { /* ignore */ }
+                  // Deactivate on Platform
+                  if (l2.platformDeploymentId) {
+                    try { await platformAPI.updateDeployment(l2.platformDeploymentId, { status: 'inactive' }) } catch (err) { console.warn('[publish] Failed to deactivate:', err) }
+                  }
+                  // Clear local DB
+                  try {
+                    await localServerAPI.updateDeployment(l2.id, {
+                      is_public: 0,
+                      platform_deployment_id: null,
+                    })
+                  } catch {
+                    try { await invoke('update_appchain_public', { id: l2.id, isPublic: false }) } catch (err) { console.warn('[publish] Fallback unpublish failed:', err) }
+                  }
+                  onRefresh?.()
                 }
               }}
               className={`w-10 h-5 rounded-full flex items-center px-0.5 cursor-pointer transition-colors disabled:opacity-50 flex-shrink-0 ${isPublic ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-border)]'}`}
@@ -69,10 +180,15 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
       {/* Publish Details (shown when public) */}
       {isPublic && (<>
         <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
-          <SectionHeader title={ko ? '소개글' : 'Description'} />
+          <div className="flex items-center justify-between">
+            <SectionHeader title={ko ? '소개글' : 'Description'} />
+            <div className="text-[9px] text-[var(--color-text-secondary)]">
+              {saving ? (ko ? '저장 중...' : 'Saving...') : saved ? (ko ? '저장됨' : 'Saved') : ''}
+            </div>
+          </div>
           <textarea
             value={publishDesc}
-            onChange={e => setPublishDesc(e.target.value)}
+            onChange={e => handleDescChange(e.target.value)}
             placeholder={ko ? '앱체인을 소개하는 글을 작성하세요. 다른 사용자에게 보여집니다.' : 'Describe your appchain. This is shown to other users.'}
             rows={4}
             className="w-full mt-1 bg-[var(--color-bg-main)] rounded-lg px-2.5 py-2 text-[11px] outline-none border border-[var(--color-border)] resize-none"
@@ -82,30 +198,35 @@ export default function L2DetailPublishTab({ l2, ko, platformLoggedIn, onRefresh
         <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
           <SectionHeader title={ko ? '스크린샷' : 'Screenshots'} />
           <div className="flex gap-2 flex-wrap mt-1">
-            {publishScreenshots.map((_, i) => (
-              <div key={i} className="relative w-20 h-14 rounded-lg bg-[var(--color-bg-main)] border border-[var(--color-border)] flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--color-text-secondary)]">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                </svg>
-                <button
-                  onClick={() => setPublishScreenshots(publishScreenshots.filter((_, j) => j !== i))}
-                  className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[var(--color-error)] text-white text-[8px] flex items-center justify-center cursor-pointer"
-                >×</button>
-              </div>
-            ))}
-            {publishScreenshots.length < 5 && (
-              <button
-                onClick={() => setPublishScreenshots([...publishScreenshots, `screenshot-${Date.now()}`])}
-                className="w-20 h-14 rounded-lg border-2 border-dashed border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[#3b82f6] hover:text-[#3b82f6] cursor-pointer transition-colors"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
-              </button>
-            )}
+            {/* TODO: Phase 2 — IPFS upload integration. For now show placeholder UI */}
+            <button
+              className="w-20 h-14 rounded-lg border-2 border-dashed border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] hover:border-[#3b82f6] hover:text-[#3b82f6] cursor-pointer transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+            </button>
           </div>
           <div className="text-[9px] text-[var(--color-text-secondary)] mt-1">
-            {ko ? '앱체인의 화면 캡쳐를 추가하세요 (최대 5장)' : 'Add screenshots of your appchain (max 5)'}
+            {ko ? '스크린샷 업로드는 Phase 2에서 지원됩니다 (IPFS)' : 'Screenshot upload coming in Phase 2 (IPFS)'}
+          </div>
+        </div>
+
+        <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+          <SectionHeader title={ko ? '소셜 링크' : 'Social Links'} />
+          <div className="mt-1 space-y-1.5">
+            {(['website', 'github', 'twitter', 'discord', 'telegram'] as const).map(key => (
+              <div key={key} className="flex items-center gap-2">
+                <span className="text-[10px] text-[var(--color-text-secondary)] w-14 flex-shrink-0 capitalize">{key}</span>
+                <input
+                  type="text"
+                  value={socialLinks[key] || ''}
+                  onChange={e => handleSocialChange(key, e.target.value)}
+                  placeholder={`https://...`}
+                  className="flex-1 bg-[var(--color-bg-main)] rounded-lg px-2 py-1.5 text-[10px] outline-none border border-[var(--color-border)]"
+                />
+              </div>
+            ))}
           </div>
         </div>
       </>)}

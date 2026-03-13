@@ -32,6 +32,7 @@ function updateDeployment(id, fields) {
     "tools_l1_explorer_port", "tools_l2_explorer_port",
     "tools_bridge_ui_port", "tools_db_port", "tools_metrics_port",
     "env_project_id", "env_updated_at", "ever_running",
+    "platform_deployment_id",
   ];
   const updates = [];
   const values = [];

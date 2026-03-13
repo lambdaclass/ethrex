@@ -752,6 +752,7 @@ impl TelegramBot {
             bridge_address: None,
             on_chain_proposer_address: None,
             is_public: false,
+            platform_deployment_id: None,
             hashtags: vec![],
             status: AppchainStatus::Created,
             created_at: chrono::Utc::now().to_rfc3339(),

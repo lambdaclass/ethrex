@@ -1,17 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { storeApi } from "@/lib/api";
 
 interface Appchain {
   id: string;
   name: string;
+  description: string | null;
   chain_id: number | null;
   rpc_url: string | null;
   status: string;
   phase: string;
   bridge_address: string | null;
   proposer_address: string | null;
+  l1_chain_id: number | null;
+  network_mode: string | null;
   program_name: string;
   program_slug: string;
   category: string;
@@ -19,16 +23,19 @@ interface Appchain {
   created_at: number;
 }
 
+const L1_NAMES: Record<number, string> = {
+  1: "Mainnet",
+  11155111: "Sepolia",
+  17000: "Holesky",
+};
+
 export default function ShowroomPage() {
   const [appchains, setAppchains] = useState<Appchain[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [onlineMap, setOnlineMap] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    loadAppchains();
-  }, []);
-
-  const loadAppchains = async (searchTerm?: string) => {
+  const loadAppchains = useCallback(async (searchTerm?: string) => {
     setLoading(true);
     try {
       const data = await storeApi.appchains(searchTerm ? { search: searchTerm } : undefined);
@@ -38,7 +45,31 @@ export default function ShowroomPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadAppchains();
+  }, [loadAppchains]);
+
+  // Check live status for each appchain (fire and forget, no blocking)
+  useEffect(() => {
+    if (appchains.length === 0) return;
+    const checkAll = async () => {
+      const results: Record<string, boolean> = {};
+      await Promise.allSettled(
+        appchains.map(async (chain) => {
+          try {
+            const block = await storeApi.appchainRpc(chain.id, "eth_blockNumber");
+            results[chain.id] = block !== null;
+          } catch {
+            results[chain.id] = false;
+          }
+        })
+      );
+      setOnlineMap(results);
+    };
+    checkAll();
+  }, [appchains]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,56 +123,72 @@ export default function ShowroomPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {appchains.map((chain) => (
-            <div
-              key={chain.id}
-              className="bg-white rounded-xl border p-6 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="font-semibold text-lg">{chain.name}</h3>
-                  <p className="text-sm text-gray-500">by {chain.owner_name}</p>
-                </div>
-                <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
-                  Active
-                </span>
-              </div>
+          {appchains.map((chain) => {
+            const online = onlineMap[chain.id];
+            const l1Name = chain.l1_chain_id ? (L1_NAMES[chain.l1_chain_id] || `Chain ${chain.l1_chain_id}`) : null;
+            return (
+              <Link href={`/showroom/${chain.id}`} key={chain.id}>
+                <div className="bg-white rounded-xl border p-6 hover:shadow-md transition-shadow cursor-pointer">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <h3 className="font-semibold text-lg">{chain.name}</h3>
+                      <p className="text-sm text-gray-500">
+                        by {chain.owner_name}
+                        {l1Name && <span className="ml-1.5 text-xs text-purple-600">{l1Name}</span>}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {chain.network_mode && (
+                        <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs font-medium">
+                          {chain.network_mode}
+                        </span>
+                      )}
+                      {online === true ? (
+                        <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                          Online
+                        </span>
+                      ) : online === false ? (
+                        <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium">
+                          Offline
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-              <div className="space-y-2 mb-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-gray-500">Program:</span>
-                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
-                    {chain.program_name}
-                  </span>
-                </div>
-                {chain.chain_id && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-gray-500">Chain ID:</span>
-                    <span className="font-mono">{chain.chain_id}</span>
-                  </div>
-                )}
-                {chain.rpc_url && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-gray-500">RPC:</span>
-                    <span className="font-mono text-xs truncate max-w-[200px]">{chain.rpc_url}</span>
-                  </div>
-                )}
-                {chain.bridge_address && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-gray-500">Bridge:</span>
-                    <span className="font-mono text-xs truncate max-w-[200px]">{chain.bridge_address}</span>
-                  </div>
-                )}
-              </div>
+                  {chain.description && (
+                    <p className="text-sm text-gray-600 mb-3 line-clamp-2">{chain.description}</p>
+                  )}
 
-              <div className="flex items-center justify-between pt-3 border-t">
-                <span className="text-xs text-gray-400">
-                  {new Date(chain.created_at).toLocaleDateString()}
-                </span>
-                <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{chain.category}</span>
-              </div>
-            </div>
-          ))}
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-500">Program:</span>
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
+                        {chain.program_name}
+                      </span>
+                    </div>
+                    {chain.chain_id && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-gray-500">Chain ID:</span>
+                        <span className="font-mono">{chain.chain_id}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t">
+                    <span className="text-xs text-gray-400">
+                      {new Date(chain.created_at).toLocaleDateString()}
+                    </span>
+                    <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{chain.category}</span>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

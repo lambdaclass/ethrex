@@ -62,6 +62,24 @@ export const storeApi = {
     const data = await apiFetch(`/api/store/appchains${qs}`);
     return data.appchains;
   },
+  appchain: async (id: string) => {
+    const data = await apiFetch(`/api/store/appchains/${id}`);
+    return data.appchain;
+  },
+  appchainRpc: async (id: string, method: string, params: unknown[] = []) => {
+    try {
+      const res = await fetch(`${API_URL}/api/store/appchains/${id}/rpc-proxy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, params }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.result ?? null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 // File upload helper (multipart/form-data)
