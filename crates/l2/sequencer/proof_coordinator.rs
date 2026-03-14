@@ -9,8 +9,12 @@ use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
-use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorStart as _, Context, Handler},
+};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -24,14 +28,9 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
 
-#[derive(Clone)]
-pub enum ProofCordInMessage {
-    Listen { listener: Arc<TcpListener> },
-}
-
-#[derive(Clone, PartialEq)]
-pub enum ProofCordOutMessage {
-    Done,
+#[protocol]
+pub trait ProofCoordinatorProtocol: Send + Sync {
+    fn listen(&self, listener: Arc<TcpListener>) -> Result<(), ActorError>;
 }
 
 #[derive(Clone)]
@@ -54,6 +53,7 @@ pub struct ProofCoordinator {
     prover_timeout: Duration,
 }
 
+#[actor(protocol = ProofCoordinatorProtocol)]
 impl ProofCoordinator {
     pub fn new(
         config: &SequencerConfig,
@@ -105,11 +105,21 @@ impl ProofCoordinator {
         let state = Self::new(&cfg, rollup_store, needed_proof_types)?;
         let listener =
             Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
-        let mut proof_coordinator = ProofCoordinator::start(state);
-        let _ = proof_coordinator
-            .cast(ProofCordInMessage::Listen { listener })
-            .await;
+        let actor_ref = state.start();
+        actor_ref
+            .send(proof_coordinator_protocol::Listen { listener })
+            .map_err(|e| ProofCoordinatorError::InternalError(e.to_string()))?;
         Ok(())
+    }
+
+    #[send_handler]
+    async fn handle_listen(
+        &mut self,
+        msg: proof_coordinator_protocol::Listen,
+        ctx: &Context<Self>,
+    ) {
+        self.handle_listens(msg.listener).await;
+        ctx.stop();
     }
 
     async fn handle_listens(&self, listener: Arc<TcpListener>) {
@@ -353,24 +363,9 @@ impl ProofCoordinator {
     }
 }
 
-impl GenServer for ProofCoordinator {
-    type CallMsg = Unused;
-    type CastMsg = ProofCordInMessage;
-    type OutMsg = ProofCordOutMessage;
-    type Error = ProofCoordinatorError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            ProofCordInMessage::Listen { listener } => {
-                self.handle_listens(listener).await;
-            }
-        }
-        CastResponse::Stop
-    }
+#[protocol]
+pub trait ConnectionHandlerProtocol: Send + Sync {
+    fn connection(&self, stream: Arc<TcpStream>, addr: SocketAddr) -> Result<(), ActorError>;
 }
 
 #[derive(Clone)]
@@ -378,6 +373,7 @@ struct ConnectionHandler {
     proof_coordinator: ProofCoordinator,
 }
 
+#[actor(protocol = ConnectionHandlerProtocol)]
 impl ConnectionHandler {
     fn new(proof_coordinator: ProofCoordinator) -> Self {
         Self { proof_coordinator }
@@ -388,14 +384,28 @@ impl ConnectionHandler {
         stream: TcpStream,
         addr: SocketAddr,
     ) -> Result<(), ConnectionHandlerError> {
-        let mut connection_handler = Self::new(proof_coordinator).start();
-        connection_handler
-            .cast(ConnInMessage::Connection {
+        let connection_handler = Self::new(proof_coordinator);
+        let actor_ref = connection_handler.start();
+        actor_ref
+            .send(connection_handler_protocol::Connection {
                 stream: Arc::new(stream),
                 addr,
             })
-            .await
             .map_err(ConnectionHandlerError::InternalError)
+    }
+
+    #[send_handler]
+    async fn handle_connection_msg(
+        &mut self,
+        msg: connection_handler_protocol::Connection,
+        ctx: &Context<Self>,
+    ) {
+        if let Err(err) = self.handle_connection(msg.stream).await {
+            error!("Error handling connection from {}: {err}", msg.addr);
+        } else {
+            debug!("Connection from {} handled successfully", msg.addr);
+        }
+        ctx.stop();
     }
 
     async fn handle_connection(
@@ -458,43 +468,6 @@ impl ConnectionHandler {
             error!("Unable to use stream");
         }
         Ok(())
-    }
-}
-
-#[derive(Clone)]
-pub enum ConnInMessage {
-    Connection {
-        stream: Arc<TcpStream>,
-        addr: SocketAddr,
-    },
-}
-
-#[derive(Clone, PartialEq)]
-pub enum ConnOutMessage {
-    Done,
-}
-
-impl GenServer for ConnectionHandler {
-    type CallMsg = Unused;
-    type CastMsg = ConnInMessage;
-    type OutMsg = ConnOutMessage;
-    type Error = ProofCoordinatorError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            ConnInMessage::Connection { stream, addr } => {
-                if let Err(err) = self.handle_connection(stream).await {
-                    error!("Error handling connection from {addr}: {err}");
-                } else {
-                    debug!("Connection from {addr} handled successfully");
-                }
-            }
-        }
-        CastResponse::Stop
     }
 }
 
