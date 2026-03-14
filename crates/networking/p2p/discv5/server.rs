@@ -1040,7 +1040,7 @@ fn generate_req_id() -> Bytes {
 mod tests {
     use crate::{
         discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
-        peer_table::{PeerTable, PeerTableServer},
+        peer_table::{PeerTableServer, PeerTableServerProtocol as _},
         types::{Node, NodeRecord},
     };
     use bytes::Bytes;
@@ -1173,7 +1173,7 @@ mod tests {
         let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
         let remote_node_id = remote_node.node_id();
 
-        let mut peer_table = PeerTableServer::spawn(
+        let peer_table = PeerTableServer::spawn(
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         );

@@ -17,7 +17,7 @@ use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, PeerTableServer},
+    peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
