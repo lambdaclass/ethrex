@@ -237,8 +237,22 @@ pub async fn init_rpc_api(
     if is_polygon {
         let syncer_clone = syncer.clone();
         let blockchain_clone = blockchain.clone();
+        let store_clone = store.clone();
         tracker.spawn(async move {
+            // On Polygon post-snap, we already know we're behind — start forward sync
+            // immediately without waiting for a peer status hash (which would be stale anyway).
             let mut pending_head: Option<ethrex_common::H256> = None;
+            if matches!(syncer_clone.sync_mode(), SyncMode::Full) {
+                let latest = store_clone.get_latest_block_number().await.unwrap_or(0);
+                if latest > 0 {
+                    tracing::info!(
+                        latest,
+                        "Polygon bridge: post-snap full sync mode, triggering immediate forward sync"
+                    );
+                    // Use a sentinel hash — Polygon full sync ignores it and syncs by number
+                    pending_head = Some(ethrex_common::H256::from_low_u64_be(1));
+                }
+            }
             loop {
                 // Check for a new head from P2P (status exchange or NewBlock gap)
                 if let Some(new_head) = blockchain_clone.take_polygon_sync_head() {
@@ -248,7 +262,7 @@ pub async fn init_rpc_api(
                 // If we have a target and the syncer is idle, trigger sync
                 if let Some(head) = pending_head {
                     if !syncer_clone.is_active() {
-                        tracing::info!(?head, "Polygon sync bridge: triggering sync to peer head");
+                        tracing::info!(?head, "Polygon sync bridge: triggering sync");
                         syncer_clone.sync_to_head(head);
                     }
                 }

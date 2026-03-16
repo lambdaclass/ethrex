@@ -159,11 +159,16 @@ impl SyncManager {
                     };
                     *sync_head
                 };
-                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start.
+                // On Polygon, skip this wait — forward sync doesn't need a target hash.
                 if sync_head.is_zero() {
-                    info!("Resuming sync after node restart, waiting for next FCU");
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
+                    let chain_id = store.get_chain_config().chain_id;
+                    let is_polygon = chain_id == 137 || chain_id == 80002;
+                    if !is_polygon {
+                        info!("Resuming sync after node restart, waiting for next FCU");
+                        sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
                 }
                 // Start the sync cycle
                 syncer.start_sync(sync_head, store.clone()).await;
