@@ -124,8 +124,10 @@ contract CommonBridge is
         public pendingMessagesIndexPerChain;
 
     modifier onlyOnChainProposer() {
-        if (msg.sender != ON_CHAIN_PROPOSER)
-            revert CallerNotOnChainProposer();
+        require(
+            msg.sender == ON_CHAIN_PROPOSER,
+            "CommonBridge: caller is not the OnChainProposer"
+        );
         _;
     }
 
@@ -142,8 +144,10 @@ contract CommonBridge is
         address _sharedBridgeRouter,
         uint256 chainId
     ) public initializer {
-        if (onChainProposer == address(0))
-            revert OnChainProposerIsZeroAddress();
+        require(
+            onChainProposer != address(0),
+            "CommonBridge: onChainProposer is the zero address"
+        );
         ON_CHAIN_PROPOSER = onChainProposer;
 
         lastFetchedL1Block = block.number;
@@ -293,7 +297,7 @@ contract CommonBridge is
         address destination,
         uint256 amount
     ) external whenNotPaused {
-        if (amount == 0) revert DepositAmountIsZero();
+        require(amount > 0, "CommonBridge: amount to deposit is zero");
         deposits[tokenL1][tokenL2] += amount;
         IERC20(tokenL1).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -315,14 +319,18 @@ contract CommonBridge is
         uint256 offset,
         uint16 number
     ) public view returns (bytes32) {
-        if (number == 0) revert NumberIsZero();
-        if (uint256(number) + offset > pendingTxHashesLength())
-            revert OffsetExceedsPendingTxHashes();
+        require(number > 0, "CommonBridge: number is zero (get)");
+        require(
+            uint256(number) + offset <= pendingTxHashesLength(),
+            "CommonBridge: number + offset exceeds pending tx hashes length"
+        );
 
         bytes memory hashes;
-        uint256 start = pendingPrivilegedTxIndex + offset;
         for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(hashes, pendingTxHashes[i + start]);
+            hashes = bytes.concat(
+                hashes,
+                pendingTxHashes[i + pendingPrivilegedTxIndex + offset]
+            );
         }
 
         return
@@ -336,18 +344,23 @@ contract CommonBridge is
         uint256 offset,
         uint16 number
     ) public view returns (bytes32) {
-        if (number == 0) revert NumberIsZero();
-        if (uint256(number) + offset > pendingL2MessagesLength(chainId))
-            revert OffsetExceedsPendingL2Messages();
+        require(number > 0, "CommonBridge: number is zero (get)");
+        require(
+            uint256(number) + offset <= pendingL2MessagesLength(chainId),
+            "CommonBridge: number + offset exceeds pending L2 messages length"
+        );
 
         bytes memory hashes;
         bytes32[] memory pendingMessagesHashes = pendingMessagesHashesPerChain[
             chainId
         ];
-        uint256 start = pendingMessagesIndexPerChain[chainId] + offset;
+        uint256 pendingMessageIndex = pendingMessagesIndexPerChain[chainId];
 
         for (uint i = 0; i < number; i++) {
-            hashes = bytes.concat(hashes, pendingMessagesHashes[i + start]);
+            hashes = bytes.concat(
+                hashes,
+                pendingMessagesHashes[i + pendingMessageIndex + offset]
+            );
         }
 
         return
@@ -359,8 +372,10 @@ contract CommonBridge is
     function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {
-        if (number > pendingTxHashesLength())
-            revert ExceedsPendingTxHashesLength();
+        require(
+            number <= pendingTxHashesLength(),
+            "CommonBridge: number is greater than the length of pendingTxHashes (remove)"
+        );
 
         pendingPrivilegedTxIndex += number;
     }
@@ -370,8 +385,10 @@ contract CommonBridge is
         uint256 chainId,
         uint16 number
     ) public onlyOnChainProposer {
-        if (number > pendingL2MessagesLength(chainId))
-            revert ExceedsPendingL2MessagesLength();
+        require(
+            number <= pendingL2MessagesLength(chainId),
+            "CommonBridge: number is greater than the length of pendingL2Messages (remove)"
+        );
 
         pendingMessagesIndexPerChain[chainId] += number;
     }
@@ -426,8 +443,11 @@ contract CommonBridge is
         uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) public onlyOnChainProposer {
-        if (batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] != bytes32(0))
-            revert WithdrawalLogsAlreadyPublished();
+        require(
+            batchWithdrawalLogsMerkleRoots[withdrawalLogsBatchNumber] ==
+                bytes32(0),
+            "CommonBridge: withdrawal logs already published"
+        );
         batchWithdrawalLogsMerkleRoots[
             withdrawalLogsBatchNumber
         ] = withdrawalsLogsMerkleRoot;
@@ -451,8 +471,10 @@ contract CommonBridge is
             // Send ERC20 values if any
             for (uint j = 0; j < balanceDiffs[i].assetDiffs.length; j++) {
                 AssetDiff memory tv = balanceDiffs[i].assetDiffs[j];
-                if (deposits[tv.tokenL1][tv.tokenL2] < tv.value)
-                    revert InsufficientTokenDeposits();
+                require(
+                    deposits[tv.tokenL1][tv.tokenL2] >= tv.value,
+                    "CommonBridge: trying to withdraw more tokens than were deposited"
+                );
                 deposits[tv.tokenL1][tv.tokenL2] -= tv.value;
                 IERC20(tv.tokenL1).forceApprove(SHARED_BRIDGE_ROUTER, tv.value);
                 IRouter(SHARED_BRIDGE_ROUTER).sendERC20Message(
@@ -474,8 +496,10 @@ contract CommonBridge is
         uint256 chainId,
         bytes32[] calldata message_hashes
     ) external override {
-        if (msg.sender != SHARED_BRIDGE_ROUTER)
-            revert CallerNotSharedBridgeRouter();
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
         for (uint i = 0; i < message_hashes.length; i++) {
             pendingMessagesHashesPerChain[chainId].push(message_hashes[i]);
 
@@ -487,8 +511,10 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function receiveETHFromSharedBridge() public payable override {
-        if (msg.sender != SHARED_BRIDGE_ROUTER)
-            revert CallerNotSharedBridgeRouter();
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
         deposits[ETH_TOKEN][ETH_TOKEN] += msg.value;
     }
 
@@ -498,8 +524,10 @@ contract CommonBridge is
         address tokenL2,
         uint256 amount
     ) public payable override {
-        if (msg.sender != SHARED_BRIDGE_ROUTER)
-            revert CallerNotSharedBridgeRouter();
+        require(
+            msg.sender == SHARED_BRIDGE_ROUTER,
+            "CommonBridge: caller is not the shared bridge router"
+        );
         deposits[tokenL1][tokenL2] += amount;
     }
 
@@ -519,7 +547,7 @@ contract CommonBridge is
             withdrawalProof
         );
         (bool success, ) = payable(msg.sender).call{value: claimedAmount}("");
-        if (!success) revert FailedToSendClaimedAmount();
+        require(success, "CommonBridge: failed to send the claimed amount");
     }
 
     /// @inheritdoc ICommonBridge
@@ -539,7 +567,10 @@ contract CommonBridge is
             withdrawalMessageId,
             withdrawalProof
         );
-        if (tokenL1 == ETH_TOKEN) revert UseClaimWithdrawalForETH();
+        require(
+            tokenL1 != ETH_TOKEN,
+            "CommonBridge: attempted to withdraw ETH as if it were ERC20, use claimWithdrawal()"
+        );
         IERC20(tokenL1).safeTransfer(msg.sender, claimedAmount);
     }
 
@@ -551,30 +582,38 @@ contract CommonBridge is
         uint256 withdrawalMessageId,
         bytes32[] calldata withdrawalProof
     ) private {
-        if (deposits[tokenL1][tokenL2] < claimedAmount)
-            revert InsufficientDeposits();
+        require(
+            deposits[tokenL1][tokenL2] >= claimedAmount,
+            "CommonBridge: trying to withdraw more tokens/ETH than were deposited"
+        );
         deposits[tokenL1][tokenL2] -= claimedAmount;
         bytes32 msgHash = keccak256(
             abi.encodePacked(tokenL1, tokenL2, msg.sender, claimedAmount)
         );
-        if (batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] == bytes32(0))
-            revert WithdrawalBatchNotCommitted();
-        if (
-            withdrawalBatchNumber >
-            IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch()
-        ) revert WithdrawalBatchNotVerified();
-        if (claimedWithdrawalIDs[withdrawalMessageId])
-            revert WithdrawalAlreadyClaimed();
+        require(
+            batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber] != bytes32(0),
+            "CommonBridge: the batch that emitted the withdrawal logs was not committed"
+        );
+        require(
+            withdrawalBatchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+            "CommonBridge: the batch that emitted the withdrawal logs was not verified"
+        );
+        require(
+            claimedWithdrawalIDs[withdrawalMessageId] == false,
+            "CommonBridge: the withdrawal was already claimed"
+        );
         claimedWithdrawalIDs[withdrawalMessageId] = true;
         emit WithdrawalClaimed(withdrawalMessageId);
-        if (
-            !_verifyMessageProof(
+        require(
+            _verifyMessageProof(
                 msgHash,
                 withdrawalBatchNumber,
                 withdrawalMessageId,
                 withdrawalProof
-            )
-        ) revert InvalidWithdrawalProof();
+            ),
+            "CommonBridge: Invalid proof"
+        );
     }
 
     function _verifyMessageProof(
