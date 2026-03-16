@@ -127,6 +127,8 @@ pub struct L1Committer {
     genesis: Genesis,
     /// Directory where checkpoints are stored.
     checkpoints_dir: PathBuf,
+    /// Delay before the first commit check after startup.
+    first_wake_up_ms: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -222,6 +224,7 @@ impl L1Committer {
             current_checkpoint_store,
             genesis,
             checkpoints_dir,
+            first_wake_up_ms: committer_config.first_wake_up_time_ms,
         })
     }
 
@@ -248,18 +251,12 @@ impl L1Committer {
         )
         .await?;
         let actor_ref = state.start_with_backend(Backend::Blocking);
-        let first_wake_up = cfg.l1_committer.first_wake_up_time_ms;
-        match actor_ref
-            .request(l1_committer_protocol::StartCommitter {
-                delay: first_wake_up,
-            })
-            .await?
-        {
-            Err(reason) => Err(CommitterError::UnexpectedError(format!(
-                "Failed to send first wake up message to committer {reason}"
-            ))),
-            Ok(()) => Ok(actor_ref),
-        }
+        Ok(actor_ref)
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        self.do_schedule_commit(self.first_wake_up_ms, ctx.clone());
     }
 
     // --- Send handlers ---

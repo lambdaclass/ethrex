@@ -9,7 +9,7 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_message_on, spawn_listener},
+    tasks::{Actor, ActorRef, Context, Handler, send_message_on, spawn_listener},
 };
 use thiserror::Error;
 use tokio::net::UdpSocket;

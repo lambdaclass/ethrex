@@ -413,7 +413,7 @@ impl PeerTableServer {
     ) {
         self.peers
             .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.requests -= 1);
+            .and_modify(|peer_data| peer_data.requests = peer_data.requests.saturating_sub(1));
     }
 
     #[send_handler]

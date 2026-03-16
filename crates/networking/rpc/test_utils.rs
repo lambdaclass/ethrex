@@ -317,12 +317,12 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
     let peer_table = PeerTableServer::spawn(TARGET_PEERS, store);
-    PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
+    PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
 }
 
 /// Creates a dummy RLPx initiator actor for tests
 /// This should only be used in tests
-pub async fn dummy_gen_server(peer_table: PeerTable) -> ActorRef<RLPxInitiator> {
+pub async fn dummy_actor(peer_table: PeerTable) -> ActorRef<RLPxInitiator> {
     RLPxInitiator::spawn_on_thread(dummy_p2p_context(peer_table).await)
 }
 

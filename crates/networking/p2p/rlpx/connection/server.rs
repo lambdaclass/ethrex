@@ -394,7 +394,7 @@ impl PeerConnectionServer {
                 "Received outgoing request",
             );
             let Some(sender) = Arc::<oneshot::Sender<Message>>::into_inner(msg.sender) else {
-                debug!("Could not obtain sender channel: Arc has multiple references");
+                warn!("Could not obtain sender channel: Arc has multiple references");
                 return;
             };
             let result = handle_outgoing_request(established_state, msg.message, sender).await;

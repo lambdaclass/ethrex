@@ -66,11 +66,14 @@ impl MetricsGatherer {
         l2_url: Url,
     ) -> Result<ActorRef<MetricsGatherer>, MetricsGathererError> {
         let metrics = Self::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url)?;
-        let actor_ref = metrics.start();
-        actor_ref
+        Ok(metrics.start())
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
             .send(metrics_gatherer_protocol::Gather)
-            .map_err(MetricsGathererError::InternalError)?;
-        Ok(actor_ref)
+            .inspect_err(|e| error!("Failed to send initial Gather: {e}"));
     }
 
     #[send_handler]

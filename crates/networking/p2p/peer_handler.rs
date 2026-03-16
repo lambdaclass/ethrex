@@ -50,7 +50,7 @@ pub enum BlockRequestOrder {
 async fn ask_peer_head_number(
     peer_id: H256,
     connection: &mut PeerConnection,
-    peer_table: &mut PeerTable,
+    peer_table: &PeerTable,
     sync_head: H256,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
@@ -106,7 +106,7 @@ impl PeerHandler {
     pub(crate) async fn make_request(
         // TODO: We should receive the PeerHandler (or self) instead, but since it is not yet spawnified it cannot be shared
         // Fix this to avoid passing the PeerTable as a parameter
-        peer_table: &mut PeerTable,
+        peer_table: &PeerTable,
         peer_id: H256,
         connection: &mut PeerConnection,
         message: RLPxMessage,
@@ -168,7 +168,7 @@ impl PeerHandler {
                 match ask_peer_head_number(
                     peer_id,
                     &mut connection,
-                    &mut self.peer_table,
+                    &self.peer_table,
                     sync_head,
                     retries,
                 )
@@ -323,7 +323,7 @@ impl PeerHandler {
             };
             let tx = task_sender.clone();
             debug!("Downloader {peer_id} is now busy");
-            let mut peer_table = self.peer_table.clone();
+            let peer_table = self.peer_table.clone();
 
             // run download_chunk_from_peer in a different Tokio task
             tokio::spawn(async move {
@@ -333,7 +333,7 @@ impl PeerHandler {
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
-                    &mut peer_table,
+                    &peer_table,
                     startblock,
                     chunk_limit,
                 )
@@ -411,7 +411,7 @@ impl PeerHandler {
                     id: _,
                     block_headers,
                 })) = PeerHandler::make_request(
-                    &mut self.peer_table,
+                    &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
@@ -445,7 +445,7 @@ impl PeerHandler {
     async fn download_chunk_from_peer(
         peer_id: H256,
         connection: &mut PeerConnection,
-        peer_table: &mut PeerTable,
+        peer_table: &PeerTable,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -497,7 +497,7 @@ impl PeerHandler {
                     id: _,
                     block_bodies,
                 })) = PeerHandler::make_request(
-                    &mut self.peer_table,
+                    &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
@@ -586,7 +586,7 @@ impl PeerHandler {
         });
         debug!("get_block_header: requesting header with number {block_number}");
         match PeerHandler::make_request(
-            &mut self.peer_table,
+            &self.peer_table,
             peer_id,
             connection,
             request,

@@ -1017,19 +1017,7 @@ impl Discv5Message {
     }
 }
 
-pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
-    // Smooth progression curve
-    // See https://easings.net/#easeInOutCubic
-    let ease_in_out_cubic = if progress < 0.5 {
-        4.0 * progress.powf(3.0)
-    } else {
-        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
-    };
-    Duration::from_micros(
-        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
-        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
-    )
-}
+pub use crate::discovery::lookup_interval_function;
 
 fn generate_req_id() -> Bytes {
     let mut rng = OsRng;

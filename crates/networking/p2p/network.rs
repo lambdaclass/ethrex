@@ -216,9 +216,9 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_table: PeerTable) {
-    periodically_show_peer_stats_during_syncing(blockchain, &mut peer_table).await;
-    periodically_show_peer_stats_after_sync(&mut peer_table).await;
+pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, peer_table: PeerTable) {
+    periodically_show_peer_stats_during_syncing(blockchain, &peer_table).await;
+    periodically_show_peer_stats_after_sync(&peer_table).await;
 }
 
 /// Tracks metric values at phase start and from the previous interval for rate calculations
@@ -255,7 +255,7 @@ impl PhaseCounters {
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
-    peer_table: &mut PeerTable,
+    peer_table: &PeerTable,
 ) {
     let start = std::time::Instant::now();
     let mut previous_step = CurrentStepValue::None;
@@ -700,7 +700,7 @@ fn format_thousands(n: u64) -> String {
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable) {
+pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
