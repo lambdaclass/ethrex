@@ -104,8 +104,17 @@ pub const MIN_FULL_BLOCKS: u64 = 10_000;
 /// Number of blocks to execute in a single batch during full sync.
 pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
-/// Average time between blocks (used for timestamp-based calculations).
+/// Default average time between blocks for Ethereum mainnet (used for timestamp-based calculations).
 pub const SECONDS_PER_BLOCK: u64 = 12;
+
+/// Returns the average seconds per block for the given chain.
+/// Polygon (chain_id 137) and Polygon Amoy (chain_id 80002) use 2s blocks.
+pub fn seconds_per_block_for_chain(chain_id: u64) -> u64 {
+    match chain_id {
+        137 | 80002 => 2,
+        _ => SECONDS_PER_BLOCK,
+    }
+}
 
 /// Assumed percentage of slots that are missing blocks.
 ///

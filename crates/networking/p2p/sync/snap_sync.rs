@@ -29,7 +29,7 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     constants::{
         BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        SNAP_LIMIT, seconds_per_block_for_chain,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
@@ -254,6 +254,8 @@ pub async fn snap_sync(
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
     // - Execute blocks after the pivot (like in full-sync)
+    let seconds_per_block = seconds_per_block_for_chain(store.get_chain_config().chain_id);
+
     let pivot_hash = block_sync_state
         .block_hashes
         .last()
@@ -262,12 +264,13 @@ pub async fn snap_sync(
         .get_block_header_by_hash(*pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
-    while block_is_stale(&pivot_header) {
+    while block_is_stale(&pivot_header, seconds_per_block) {
         pivot_header = update_pivot(
             pivot_header.number,
             pivot_header.timestamp,
             peers,
             block_sync_state,
+            seconds_per_block,
         )
         .await?;
     }
@@ -305,6 +308,7 @@ pub async fn snap_sync(
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,
             block_sync_state,
+            seconds_per_block,
         )
         .await?;
         info!("Finish downloading account ranges from peers");
@@ -342,12 +346,13 @@ pub async fn snap_sync(
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
-            while block_is_stale(&pivot_header) {
+            while block_is_stale(&pivot_header, seconds_per_block) {
                 pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
                     peers,
                     block_sync_state,
+                    seconds_per_block,
                 )
                 .await?;
             }
@@ -357,7 +362,7 @@ pub async fn snap_sync(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
-                calculate_staleness_timestamp(pivot_header.timestamp),
+                calculate_staleness_timestamp(pivot_header.timestamp, seconds_per_block),
                 &mut state_leafs_healed,
                 &mut storage_accounts,
                 &mut code_hash_collector,
@@ -380,6 +385,7 @@ pub async fn snap_sync(
                     chunk_index,
                     &mut pivot_header,
                     store.clone(),
+                    seconds_per_block,
                 )
                 .await?;
             } else {
@@ -415,7 +421,7 @@ pub async fn snap_sync(
                 // because we don't know if the storage root is still valid
                 storage_accounts.healed_accounts.len(),
             );
-            if !block_is_stale(&pivot_header) {
+            if !block_is_stale(&pivot_header, seconds_per_block) {
                 break;
             }
             info!("We stopped because of staleness, restarting loop");
@@ -449,12 +455,13 @@ pub async fn snap_sync(
     let mut healing_done = false;
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
-        if block_is_stale(&pivot_header) {
+        if block_is_stale(&pivot_header, seconds_per_block) {
             pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                seconds_per_block,
             )
             .await?;
         }
@@ -462,7 +469,7 @@ pub async fn snap_sync(
             pivot_header.state_root,
             store.clone(),
             peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, seconds_per_block),
             &mut global_state_leafs_healed,
             &mut storage_accounts,
             &mut code_hash_collector,
@@ -477,7 +484,7 @@ pub async fn snap_sync(
             peers,
             store.clone(),
             HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, seconds_per_block),
             &mut global_storage_leafs_healed,
         )
         .await?;
@@ -629,10 +636,11 @@ pub async fn update_pivot(
     block_timestamp: u64,
     peers: &mut PeerHandler,
     block_sync_state: &mut SnapBlockSyncState,
+    seconds_per_block: u64,
 ) -> Result<BlockHeader, SyncError> {
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
-        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+        + ((current_unix_time().saturating_sub(block_timestamp) / seconds_per_block) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
@@ -685,12 +693,12 @@ pub async fn update_pivot(
     }
 }
 
-pub fn block_is_stale(block_header: &BlockHeader) -> bool {
-    calculate_staleness_timestamp(block_header.timestamp) < current_unix_time()
+pub fn block_is_stale(block_header: &BlockHeader, seconds_per_block: u64) -> bool {
+    calculate_staleness_timestamp(block_header.timestamp, seconds_per_block) < current_unix_time()
 }
 
-pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+pub fn calculate_staleness_timestamp(timestamp: u64, seconds_per_block: u64) -> u64 {
+    timestamp + (SNAP_LIMIT as u64 * seconds_per_block)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
