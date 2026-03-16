@@ -367,8 +367,9 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address));
 
-        let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address) else {
-            return Ok(None);
+        let encoded_state = match self.state_trie.get(hashed_address)? {
+            Some(encoded_state) => encoded_state,
+            None => return Ok(None),
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
@@ -400,17 +401,14 @@ impl GuestProgramState {
         let Some(storage_trie) = self.get_valid_storage_trie(address)? else {
             return Ok(None);
         };
-        if let Some(encoded_key) = storage_trie
-            .get(&hashed_key)
-            .map_err(|e| GuestProgramStateError::Database(e.to_string()))?
-        {
-            U256::decode(&encoded_key)
+
+        match storage_trie.get(&hashed_key)? {
+            Some(encoded_key) => U256::decode(&encoded_key)
                 .map_err(|_| {
                     GuestProgramStateError::Database("failed to read storage from trie".to_string())
                 })
-                .map(Some)
-        } else {
-            Ok(None)
+                .map(Some),
+            None => Ok(None),
         }
     }
 
@@ -425,19 +423,12 @@ impl GuestProgramState {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => {
-                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
-                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
-                // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                    hex::encode(code_hash)
-                );
-                Ok(Code::default())
-            }
-        }
+        self.codes_hashed.get(&code_hash).cloned().ok_or_else(|| {
+            GuestProgramStateError::Custom(format!(
+                "Missing bytecode for hash {} in witness",
+                hex::encode(code_hash)
+            ))
+        })
     }
 
     /// Retrieves code metadata (length) for a specific code hash.
