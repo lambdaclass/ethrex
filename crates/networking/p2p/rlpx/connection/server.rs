@@ -925,10 +925,10 @@ async fn handle_incoming_message(
     match message {
         Message::Disconnect(msg_data) => {
             let reason = msg_data.reason();
-            trace!(
+            warn!(
                 peer=%state.node,
                 ?reason,
-                "Received Disconnect"
+                "Received Disconnect from peer"
             );
             state.disconnect_reason = Some(reason);
 
