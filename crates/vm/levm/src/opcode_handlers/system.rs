@@ -756,7 +756,6 @@ impl<'a> VM<'a> {
         self.increment_account_nonce(deployer)?;
 
         // EIP-8037: Save snapshot AFTER charging CREATE's account state gas
-        let create_reservoir_snapshot = self.state_gas_reservoir;
         let create_state_gas_used_snapshot = self.state_gas_used;
 
         // Deployment will fail (consuming all gas) if the contract already exists.
@@ -802,8 +801,6 @@ impl<'a> VM<'a> {
         );
         // Store BAL checkpoint in the call frame's backup for restoration on revert
         new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
-        // EIP-8037: Store reservoir snapshot for revert restoration
-        new_call_frame.reservoir_snapshot = create_reservoir_snapshot;
         new_call_frame.state_gas_used_snapshot = create_state_gas_used_snapshot;
 
         self.add_callframe(new_call_frame);
@@ -1019,8 +1016,6 @@ impl<'a> VM<'a> {
             );
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
-            // EIP-8037: Save snapshot for potential revert restoration
-            new_call_frame.reservoir_snapshot = self.state_gas_reservoir;
             new_call_frame.state_gas_used_snapshot = self.state_gas_used;
 
             self.add_callframe(new_call_frame);
