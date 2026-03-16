@@ -502,40 +502,6 @@ async fn test_simulate_contract_logs() {
     assert_ne!(bloom, format!("0x{}", "0".repeat(512)));
 }
 
-// -- ethSimulate-simple-send-from-contract: contract address as sender
-// TODO: In non-validation mode the spec says sending from a contract should succeed
-// (sender-is-EOA check should be skipped). Currently LEVM's DefaultHook rejects it.
-#[tokio::test]
-async fn test_simulate_send_from_contract() {
-    let ctx = test_context().await;
-    let result = simulate(
-        &ctx,
-        r#"[{
-            "blockStateCalls": [{
-                "stateOverrides": {
-                    "0xc000000000000000000000000000000000000000": {
-                        "code": "0x00",
-                        "balance": "0x3e8"
-                    }
-                },
-                "calls": [{
-                    "from": "0xc000000000000000000000000000000000000000",
-                    "to": "0xc100000000000000000000000000000000000000",
-                    "value": "0x3e8"
-                }]
-            }],
-            "traceTransfers": true
-        }, "latest"]"#,
-    )
-    .await
-    .unwrap();
-
-    let calls = result[0]["calls"].as_array().unwrap();
-    // Known limitation: DefaultHook rejects sender-is-not-EOA even in non-validation mode.
-    // Per spec this should return "0x1". Fix requires skipping EOA check in simulate path.
-    assert_eq!(calls[0]["status"], "0x0");
-}
-
 // -- ethSimulate-no-fields-call: call with empty object {}
 #[tokio::test]
 async fn test_simulate_no_fields_call() {
@@ -665,37 +631,6 @@ async fn test_simulate_state_override_full_replacement() {
     );
 }
 
-// -- ethSimulate-contract-calls-itself: contract calling itself with block context
-// TODO: This test fails because the sender (0xc0...) has code (from override), so
-// DefaultHook rejects it as "sender is not EOA". Same root cause as send_from_contract.
-#[tokio::test]
-async fn test_simulate_contract_calls_itself() {
-    let ctx = test_context().await;
-    // Contract that returns block properties (number, timestamp, coinbase, etc.)
-    let result = simulate(
-        &ctx,
-        r#"[{
-            "blockStateCalls": [{
-                "stateOverrides": {
-                    "0xc000000000000000000000000000000000000000": {
-                        "code": "0x608060405234801561001057600080fd5b506000366060484641444543425a3a60014361002c919061009b565b406040516020016100469a99989796959493929190610138565b6040516020818303038152906040529050915050805190602001f35b6000819050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100a682610062565b91506100b183610062565b92508282039050818111156100c9576100c861006c565b5b92915050565b6100d881610062565b82525050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b6000610109826100de565b9050919050565b610119816100fe565b82525050565b6000819050919050565b6101328161011f565b82525050565b60006101408201905061014e600083018d6100cf565b61015b602083018c6100cf565b610168604083018b610110565b610175606083018a6100cf565b61018260808301896100cf565b61018f60a08301886100cf565b61019c60c08301876100cf565b6101a960e08301866100cf565b6101b76101008301856100cf565b6101c5610120830184610129565b9b9a505050505050505050505056fea26469706673582212205139ae3ba8d46d11c29815d001b725f9840c90e330884ed070958d5af4813d8764736f6c63430008120033"
-                    }
-                },
-                "calls": [{
-                    "from": "0xc000000000000000000000000000000000000000",
-                    "to": "0xc000000000000000000000000000000000000000"
-                }]
-            }]
-        }, "latest"]"#,
-    )
-    .await
-    .unwrap();
-
-    let calls = result[0]["calls"].as_array().unwrap();
-    // Known limitation: sender-is-EOA check not skipped in simulate. Should be "0x1".
-    assert_eq!(calls[0]["status"], "0x0");
-}
-
 // -- ethSimulate-two-blocks-with-complete-eth-sends: multi-block with traceTransfers
 #[tokio::test]
 async fn test_simulate_two_blocks_trace_transfers() {
@@ -749,4 +684,68 @@ async fn test_simulate_two_blocks_trace_transfers() {
 
     // Second block's parentHash should match first block's hash
     assert_eq!(blocks[1]["parentHash"], blocks[0]["hash"]);
+}
+
+// -- ethSimulate-simple-send-from-contract: contract address as sender
+// Per spec, sender-is-EOA check should be skipped in simulate mode.
+#[tokio::test]
+#[ignore = "bug: DefaultHook rejects contract sender in simulate mode"]
+async fn test_simulate_send_from_contract() {
+    let ctx = test_context().await;
+    let result = simulate(
+        &ctx,
+        r#"[{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc000000000000000000000000000000000000000": {
+                        "code": "0x00",
+                        "balance": "0x3e8"
+                    }
+                },
+                "calls": [{
+                    "from": "0xc000000000000000000000000000000000000000",
+                    "to": "0xc100000000000000000000000000000000000000",
+                    "value": "0x3e8"
+                }]
+            }],
+            "traceTransfers": true
+        }, "latest"]"#,
+    )
+    .await
+    .unwrap();
+
+    let calls = result[0]["calls"].as_array().unwrap();
+    // Spec: sending from contract should succeed in simulate (no EOA check)
+    assert_eq!(calls[0]["status"], "0x1");
+}
+
+// -- ethSimulate-contract-calls-itself: contract calling itself
+// Same root cause — sender has code from override, DefaultHook rejects.
+#[tokio::test]
+#[ignore = "bug: DefaultHook rejects contract sender in simulate mode"]
+async fn test_simulate_contract_calls_itself() {
+    let ctx = test_context().await;
+    let result = simulate(
+        &ctx,
+        r#"[{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    "0xc000000000000000000000000000000000000000": {
+                        "code": "0x608060405234801561001057600080fd5b506000366060484641444543425a3a60014361002c919061009b565b406040516020016100469a99989796959493929190610138565b6040516020818303038152906040529050915050805190602001f35b6000819050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100a682610062565b91506100b183610062565b92508282039050818111156100c9576100c861006c565b5b92915050565b6100d881610062565b82525050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b6000610109826100de565b9050919050565b610119816100fe565b82525050565b6000819050919050565b6101328161011f565b82525050565b60006101408201905061014e600083018d6100cf565b61015b602083018c6100cf565b610168604083018b610110565b610175606083018a6100cf565b61018260808301896100cf565b61018f60a08301886100cf565b61019c60c08301876100cf565b6101a960e08301866100cf565b6101b76101008301856100cf565b6101c5610120830184610129565b9b9a505050505050505050505056fea26469706673582212205139ae3ba8d46d11c29815d001b725f9840c90e330884ed070958d5af4813d8764736f6c63430008120033"
+                    }
+                },
+                "calls": [{
+                    "from": "0xc000000000000000000000000000000000000000",
+                    "to": "0xc000000000000000000000000000000000000000"
+                }]
+            }]
+        }, "latest"]"#,
+    )
+    .await
+    .unwrap();
+
+    let calls = result[0]["calls"].as_array().unwrap();
+    assert_eq!(calls[0]["status"], "0x1");
+    let return_data = calls[0]["returnData"].as_str().unwrap();
+    assert!(return_data.len() > 2);
 }
