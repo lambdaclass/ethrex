@@ -39,7 +39,7 @@ use lazy_static::lazy_static;
 lazy_static! {
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
     pub static ref EMPTY_TRIE_HASH: H256 = H256(
-        global_keccak(&[RLP_NULL]),
+        global_keccak([RLP_NULL]),
     );
 }
 

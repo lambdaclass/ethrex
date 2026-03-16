@@ -42,7 +42,7 @@ pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
     )
 });
 
-pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(global_keccak(&[RLP_NULL])));
+pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(global_keccak([RLP_NULL])));
 
 // Request related
 pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {
