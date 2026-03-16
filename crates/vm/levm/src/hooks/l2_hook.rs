@@ -62,6 +62,9 @@ impl Hook for L2Hook {
         // Different from L1:
         // Max fee per gas must be sufficient to cover base fee + operator fee
         validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
+        // Reserve L1 gas from the execution budget so execution can't consume it.
+        // If gas_limit < intrinsic_gas + l1_gas, this returns IntrinsicGasTooLow.
+        reserve_l1_gas(vm, &self.fee_config.l1_fee_config)?;
         Ok(())
     }
 
@@ -103,37 +106,41 @@ fn finalize_non_privileged_execution(
         default_hook::undo_value_transfer(vm)?;
     }
 
-    let gas_refunded: u64 = default_hook::compute_gas_refunded(vm, ctx_result)?;
-    let actual_gas_used =
-        default_hook::compute_actual_gas_used(vm, gas_refunded, ctx_result.gas_used)?;
+    let l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
 
-    let mut l1_gas = calculate_l1_fee_gas(vm, &fee_config.l1_fee_config)?;
+    // ctx_result.gas_used includes l1_gas (reserved in prepare_execution).
+    // Separate execution gas for refund calculation — l1_gas is not refundable.
+    let execution_gas_pre_refund = ctx_result
+        .gas_used
+        .checked_sub(l1_gas)
+        .ok_or(InternalError::Underflow)?;
 
-    let mut total_gas = actual_gas_used
+    // Refund cap based on execution gas only (EIP-3529)
+    let gas_refunded: u64 = vm
+        .substate
+        .refunded_gas
+        .min(execution_gas_pre_refund / default_hook::MAX_REFUND_QUOTIENT);
+    let execution_gas =
+        default_hook::compute_actual_gas_used(vm, gas_refunded, execution_gas_pre_refund)?;
+
+    let actual_gas_used = execution_gas
         .checked_add(l1_gas)
         .ok_or(InternalError::Overflow)?;
 
-    if total_gas > vm.current_call_frame.gas_limit {
-        vm.substate.revert_backup();
-        vm.restore_cache_state()?;
+    // EIP-7778: pre-refund gas for block accounting
+    let total_gas_pre_refund = ctx_result.gas_used;
 
-        default_hook::undo_value_transfer(vm)?;
+    // Clear the backup so that Phase 2's rollback only undoes mutations
+    // from apply_finalize_mutations, not the gas-overuse revert above.
+    vm.current_call_frame.call_frame_backup.clear();
 
-        ctx_result.result =
-            crate::errors::TxResult::Revert(TxValidationError::InsufficientMaxFeePerGas.into());
-        ctx_result.gas_used = vm.current_call_frame.gas_limit;
-        ctx_result.output = Bytes::new();
-
-        l1_gas = vm
-            .current_call_frame
-            .gas_limit
-            .saturating_sub(actual_gas_used);
-        total_gas = vm.current_call_frame.gas_limit;
-    }
-
-    default_hook::delete_self_destruct_accounts(vm)?;
-
-    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
+    // === Phase 1: Fallible computations (no state mutations) ===
+    // Perform contract calls and conversions that can fail BEFORE any
+    // mutations, so an error here leaves the DB state unchanged.
+    // NOTE: get_fee_token_ratio now runs before delete_self_destruct_accounts
+    // (which moved into Phase 2). This is safe because the fee token ratio
+    // contract should never be in the selfdestruct set.
+    let fee_token_ratio: u64 = if let Some(fee_token) = vm.env.fee_token {
         get_fee_token_ratio(vm, fee_token)?
             .try_into()
             .map_err(|_| {
@@ -145,6 +152,53 @@ fn finalize_non_privileged_execution(
         1u64
     };
 
+    // === Phase 2: State mutations (with rollback on error) ===
+    // Mutations record original values in call_frame_backup via
+    // backup_account_info / backup_storage_slot. If any step fails,
+    // we restore the cache to undo all partial mutations.
+    let result = apply_finalize_mutations(
+        vm,
+        ctx_result,
+        fee_config,
+        use_fee_token,
+        fee_token_ratio,
+        l1_gas,
+        gas_refunded,
+        execution_gas,
+        actual_gas_used,
+        total_gas_pre_refund,
+    );
+
+    if let Err(e) = result {
+        // Rollback DB cache to undo partial Phase 2 mutations.
+        // Note: substate (logs, selfdestruct) is NOT rolled back here because
+        // the substate parent was already consumed by handle_state_backup()
+        // during run_execution(). This is safe because the Err propagates to
+        // the caller, which discards the entire VM context.
+        vm.restore_cache_state()?;
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Applies all finalize mutations atomically: if any step fails, the caller
+/// reverts the DB cache using `restore_cache_state`.
+#[allow(clippy::too_many_arguments)]
+fn apply_finalize_mutations(
+    vm: &mut VM<'_>,
+    ctx_result: &mut ContextResult,
+    fee_config: &FeeConfig,
+    use_fee_token: bool,
+    fee_token_ratio: u64,
+    l1_gas: u64,
+    gas_refunded: u64,
+    execution_gas: u64,
+    actual_gas_used: u64,
+    total_gas_pre_refund: u64,
+) -> Result<(), crate::errors::VMError> {
+    default_hook::delete_self_destruct_accounts(vm)?;
+
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
             vm,
@@ -155,14 +209,27 @@ fn finalize_non_privileged_execution(
     }
 
     if use_fee_token {
-        refund_sender_fee_token(vm, ctx_result, gas_refunded, total_gas, fee_token_ratio)?;
+        refund_sender_fee_token(
+            vm,
+            ctx_result,
+            gas_refunded,
+            actual_gas_used,
+            total_gas_pre_refund,
+            fee_token_ratio,
+        )?;
     } else {
-        default_hook::refund_sender(vm, ctx_result, gas_refunded, total_gas)?;
+        default_hook::refund_sender(
+            vm,
+            ctx_result,
+            gas_refunded,
+            actual_gas_used,
+            total_gas_pre_refund,
+        )?;
     }
 
     pay_coinbase_l2(
         vm,
-        actual_gas_used.saturating_mul(fee_token_ratio),
+        execution_gas.saturating_mul(fee_token_ratio),
         &fee_config.operator_fee_config,
         use_fee_token,
     )?;
@@ -174,14 +241,14 @@ fn finalize_non_privileged_execution(
     if let Some(base_fee_vault) = fee_config.base_fee_vault {
         pay_base_fee_vault(
             vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
+            execution_gas.saturating_mul(fee_token_ratio),
             base_fee_vault,
             use_fee_token,
         )?;
     } else if use_fee_token {
         pay_base_fee_vault(
             vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
+            execution_gas.saturating_mul(fee_token_ratio),
             Address::zero(),
             use_fee_token,
         )?;
@@ -190,13 +257,14 @@ fn finalize_non_privileged_execution(
     if let Some(operator_fee_config) = fee_config.operator_fee_config {
         pay_operator_fee(
             vm,
-            actual_gas_used.saturating_mul(fee_token_ratio),
+            execution_gas.saturating_mul(fee_token_ratio),
             operator_fee_config,
             use_fee_token,
         )?;
     }
 
-    ctx_result.gas_used = total_gas;
+    // Note: ctx_result.gas_used is already correctly set by refund_sender/refund_sender_fee_token
+    // based on EIP-7778 (pre-refund for Amsterdam+, post-refund for earlier forks)
 
     Ok(())
 }
@@ -213,12 +281,46 @@ fn validate_sufficient_max_fee_per_gas_l2(
     let total_fee = vm
         .env
         .base_fee_per_gas
-        .checked_add(U256::from(fee_config.operator_fee_per_gas))
+        .checked_add(fee_config.operator_fee_per_gas.into())
         .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
 
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
+    Ok(())
+}
+
+/// Reserves L1 data availability gas from the execution budget.
+///
+/// By consuming l1_gas from gas_remaining during prepare_execution,
+/// execution physically cannot use the L1 fee portion. This guarantees
+/// the L1 fee vault always receives the full l1_gas payment, eliminating
+/// the griefing vector where a user sets gas_limit = intrinsic_gas.
+///
+/// If gas_limit < intrinsic_gas + l1_gas, increase_consumed_gas returns
+/// OutOfGas, which we map to IntrinsicGasTooLow to reject the tx upfront.
+///
+/// On Prague+, also validates gas_limit >= floor + l1_gas (EIP-7623).
+/// Finalize computes actual_gas_used = max(execution_gas, floor) + l1_gas,
+/// so without this check a tx with heavy calldata could pass validation
+/// but underflow in refund_sender.
+fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Result<(), VMError> {
+    let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)?;
+
+    // On Prague+, the EIP-7623 gas floor can raise execution_gas above
+    // intrinsic_gas at finalize time. Since actual_gas_used = execution_gas + l1_gas,
+    // we must ensure gas_limit can cover floor + l1_gas.
+    if vm.env.config.fork >= Fork::Prague {
+        let floor = vm.get_min_gas_used()?;
+        let floor_plus_l1 = floor.checked_add(l1_gas).ok_or(InternalError::Overflow)?;
+        if vm.env.gas_limit < floor_plus_l1 {
+            return Err(TxValidationError::IntrinsicGasTooLow.into());
+        }
+    }
+
+    vm.current_call_frame
+        .increase_consumed_gas(l1_gas)
+        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
     Ok(())
 }
 
@@ -242,10 +344,19 @@ fn pay_coinbase_l2(
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    if use_fee_token {
-        pay_fee_token(vm, vm.env.coinbase, coinbase_fee)?;
-    } else {
-        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
+    // even if the priority fee is zero. In L2, this function is only called for
+    // non-privileged (user) transactions, so no gas_price check is needed.
+    if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+        recorder.record_touched_address(vm.env.coinbase);
+    }
+
+    if !coinbase_fee.is_zero() {
+        if use_fee_token {
+            pay_fee_token(vm, vm.env.coinbase, coinbase_fee)?;
+        } else {
+            vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+        }
     }
 
     Ok(())
@@ -332,15 +443,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         let value = vm.current_call_frame.msg_value;
         if value > sender_balance {
             tx_should_fail = true;
-        } else {
-            // This should never fail, since we just checked the balance is enough.
-            vm.decrease_account_balance(sender_address, value)
-                .map_err(|_| {
-                    InternalError::Custom(
-                        "Insufficient funds in privileged transaction".to_string(),
-                    )
-                })?;
         }
+        // NOTE: Balance is NOT debited here — it is deferred until after all
+        // validation passes. This avoids permanent fund loss if a later check
+        // (e.g. intrinsic gas) triggers the failure path, which zeroes msg_value
+        // and makes undo_value_transfer a no-op.
     }
 
     // if fork > prague: default_hook::validate_min_gas_limit
@@ -396,6 +503,17 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
             jump_targets: Vec::new(),
         })?;
         return Ok(());
+    }
+
+    // Debit sender balance now that all validation has passed.
+    // This must happen after the tx_should_fail checks above to avoid
+    // permanent fund loss when the failure path zeroes msg_value.
+    if sender_address != COMMON_BRIDGE_L2_ADDRESS {
+        let value = vm.current_call_frame.msg_value;
+        vm.decrease_account_balance(sender_address, value)
+            .map_err(|_| {
+                InternalError::Custom("Insufficient funds in privileged transaction".to_string())
+            })?;
     }
 
     default_hook::transfer_value(vm)?;
@@ -607,8 +725,25 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-    let fee_storage = db_clone.get_account(fee_token)?.storage.clone();
-    vm.db.get_account_mut(fee_token)?.storage = fee_storage;
+    let new_storage = db_clone.get_account(fee_token)?.storage.clone();
+    let current_storage = vm.db.get_account(fee_token)?.storage.clone();
+
+    // Back up original values for changed slots so restore_cache_state can revert them
+    for (key, new_value) in &new_storage {
+        let old_value = current_storage.get(key).copied().unwrap_or_default();
+        if old_value != *new_value {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+    // Back up slots that will be removed by the bulk replacement
+    for (key, &old_value) in &current_storage {
+        if !new_storage.contains_key(key) {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+
+    // Apply new storage
+    vm.db.get_account_mut(fee_token)?.storage = new_storage;
 
     // update the initial state account
     let initial_state_fee_token = db_clone
@@ -664,6 +799,7 @@ fn simulate_common_bridge_call(
         &tx,
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
+        vm.crypto,
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;
@@ -679,18 +815,29 @@ fn refund_sender_fee_token(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
-    actual_gas_used: u64,
+    gas_spent: u64,
+    gas_used_pre_refund: u64,
     fee_token_ratio: u64,
 ) -> Result<(), VMError> {
-    // c. Update gas used and refunded.
-    ctx_result.gas_used = actual_gas_used;
     vm.substate.refunded_gas = refunded_gas;
 
-    // d. Finally, return unspent gas to the sender.
+    // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    if vm.env.config.fork >= Fork::Amsterdam {
+        // Block accounting uses pre-refund gas
+        ctx_result.gas_used = gas_used_pre_refund;
+        // User pays post-refund gas
+        ctx_result.gas_spent = gas_spent;
+    } else {
+        // Pre-Amsterdam: both use post-refund value
+        ctx_result.gas_used = gas_spent;
+        ctx_result.gas_spent = gas_spent;
+    }
+
+    // Return unspent gas to the sender.
     let gas_to_return = vm
         .env
         .gas_limit
-        .checked_sub(actual_gas_used)
+        .checked_sub(gas_spent)
         .ok_or(InternalError::Underflow)?;
 
     let erc20_return_amount = vm

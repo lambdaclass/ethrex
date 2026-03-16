@@ -5,7 +5,7 @@ use ethrex_common::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -62,7 +62,7 @@ impl RpcHandler for BlobsV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Received new engine request: Requested Blobs");
+        debug!("Received new engine request: Requested Blobs");
 
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
@@ -114,7 +114,7 @@ impl RpcHandler for BlobsV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Received new engine request: Requested Blobs V2");
+        debug!("Received new engine request: Requested Blobs V2");
         let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 2).await?;
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
@@ -137,7 +137,7 @@ impl RpcHandler for BlobsV3Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        info!("Received new engine request: Requested Blobs V3");
+        debug!("Received new engine request: Requested Blobs V3");
         let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 3).await?;
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -162,7 +162,7 @@ async fn get_blobs_and_proof(
             .is_osaka_activated(current_block_header.timestamp)
     {
         // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
-        return Err(RpcErr::UnsuportedFork(format!(
+        return Err(RpcErr::UnsupportedFork(format!(
             "getBlobsV{} engine only supported for Osaka",
             version
         )));
@@ -303,7 +303,7 @@ mod tests {
         };
 
         let err = request.handle(context).await.unwrap_err();
-        assert!(matches!(err, RpcErr::UnsuportedFork(_)));
+        assert!(matches!(err, RpcErr::UnsupportedFork(_)));
     }
 
     #[tokio::test]

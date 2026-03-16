@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -122,13 +122,13 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     if std::fs::exists(&storage_path).unwrap_or(false) {
         std::fs::remove_dir_all(&storage_path).unwrap();
     }
-    let genesis_file = include_bytes!("../../fixtures/genesis/l1-dev.json");
+    let genesis_file = include_bytes!("../../fixtures/genesis/l1.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     let mut store = Store::new(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: u64::MAX.into(),
             nonce: 0,
         };
@@ -146,6 +146,7 @@ fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
         random: genesis_block.header.prev_randao,
         withdrawals: None,
         beacon_root: genesis_block.header.parent_beacon_block_root,
+        slot_number: None,
         version: 3,
         elasticity_multiplier: 1,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,

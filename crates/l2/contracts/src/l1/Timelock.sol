@@ -32,6 +32,7 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
     }
 
     /// @notice Disables the parent initialize function to prevent accidental misuse.
+    /// @custom:oz-upgrades-unsafe-allow missing-initializer-call
     function initialize(
         uint256,
         address[] memory,
@@ -107,36 +108,30 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
     }
 
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.
-    function verifyBatch(
-        uint256 batchNumber,
-        bytes memory risc0BlockProof,
-        bytes calldata risc0Journal,
-        bytes calldata sp1PublicValues,
-        bytes memory sp1ProofBytes,
-        bytes calldata tdxPublicValues,
-        bytes memory tdxSignature
+    function verifyBatches(
+        uint256 firstBatchNumber,
+        bytes[] calldata risc0BlockProofs,
+        bytes[] calldata sp1ProofsBytes,
+        bytes[] calldata tdxSignatures
     ) external onlyRole(SEQUENCER) {
-        onChainProposer.verifyBatch(
-            batchNumber,
-            risc0BlockProof,
-            risc0Journal,
-            sp1PublicValues,
-            sp1ProofBytes,
-            tdxPublicValues,
-            tdxSignature
+        onChainProposer.verifyBatches(
+            firstBatchNumber,
+            risc0BlockProofs,
+            sp1ProofsBytes,
+            tdxSignatures
         );
     }
 
     /// @custom:access Restricted to accounts with the `SEQUENCER` role.
     function verifyBatchesAligned(
         uint256 firstBatchNumber,
-        bytes[] calldata publicInputsList,
+        uint256 lastBatchNumber,
         bytes32[][] calldata sp1MerkleProofsList,
         bytes32[][] calldata risc0MerkleProofsList
     ) external onlyRole(SEQUENCER) {
         onChainProposer.verifyBatchesAligned(
             firstBatchNumber,
-            publicInputsList,
+            lastBatchNumber,
             sp1MerkleProofsList,
             risc0MerkleProofsList
         );

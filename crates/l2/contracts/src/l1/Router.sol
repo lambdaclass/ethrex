@@ -65,7 +65,7 @@ contract Router is
     }
 
     /// @inheritdoc IRouter
-    function sendETHValue(uint256 chainId) public payable override {
+    function sendETHValue(uint256 chainId) public payable override whenNotPaused {
         uint256 senderChainId = registeredAddresses[msg.sender];
         if (senderChainId == 0) {
             revert CallerNotBridge(msg.sender);
@@ -87,7 +87,7 @@ contract Router is
         address tokenL1,
         address destTokenL2,
         uint256 amount
-    ) public payable override {
+    ) public payable override whenNotPaused {
         if (bridges[senderChainId] != msg.sender) {
             revert InvalidSender(senderChainId, msg.sender);
         }
@@ -120,7 +120,7 @@ contract Router is
     function injectMessageHashes(
         uint256 chainId,
         bytes32[] calldata message_hashes
-    ) external override {
+    ) external override whenNotPaused {
         uint256 senderChainId = registeredAddresses[msg.sender];
         if (senderChainId == 0) {
             revert CallerNotBridge(msg.sender);

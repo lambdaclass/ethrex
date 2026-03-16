@@ -39,6 +39,7 @@ pub enum KzgError {
     #[cfg(feature = "c-kzg")]
     #[error("c-kzg error: {0}")]
     CKzg(#[from] c_kzg::Error),
+    #[cfg(feature = "kzg-rs")]
     #[error("kzg-rs error: {0}")]
     KzgRs(kzg_rs::KzgError),
     #[cfg(feature = "openvm-kzg")]
@@ -51,6 +52,7 @@ pub enum KzgError {
     Unimplemented(String),
 }
 
+#[cfg(feature = "kzg-rs")]
 impl From<kzg_rs::KzgError> for KzgError {
     fn from(value: kzg_rs::KzgError) -> Self {
         KzgError::KzgRs(value)
@@ -113,7 +115,21 @@ pub fn verify_blob_kzg_proof(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<bool, KzgError> {
-    #[cfg(all(not(feature = "c-kzg"), not(feature = "openvm-kzg")))]
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        not(feature = "kzg-rs")
+    ))]
+    {
+        return Err(KzgError::Unimplemented(
+            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
+        ));
+    }
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        feature = "kzg-rs"
+    ))]
     {
         kzg_rs::KzgProof::verify_blob_kzg_proof(
             kzg_rs::Blob(blob),
@@ -175,7 +191,21 @@ pub fn verify_kzg_proof(
     y: [u8; 32],
     proof_bytes: [u8; 48],
 ) -> Result<bool, KzgError> {
-    #[cfg(all(not(feature = "c-kzg"), not(feature = "openvm-kzg")))]
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        not(feature = "kzg-rs")
+    ))]
+    {
+        return Err(KzgError::Unimplemented(
+            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
+        ));
+    }
+    #[cfg(all(
+        not(feature = "c-kzg"),
+        not(feature = "openvm-kzg"),
+        feature = "kzg-rs"
+    ))]
     {
         kzg_rs::KzgProof::verify_kzg_proof(
             &kzg_rs::Bytes48(commitment_bytes),

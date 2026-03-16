@@ -1,4 +1,4 @@
-use ethrex_common::types::ChainConfig;
+use ethrex_common::types::{BlockHash, ChainConfig};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
@@ -13,11 +13,13 @@ mod peers;
 pub use peers::{add_peer, peers};
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct NodeInfo {
     enode: String,
     enr: String,
     id: String,
     ip: String,
+    listen_addr: String,
     name: String,
     ports: Ports,
     protocols: HashMap<String, Protocol>,
@@ -32,26 +34,58 @@ struct Ports {
 #[derive(Serialize, Debug)]
 #[serde(untagged)]
 enum Protocol {
-    Eth(ChainConfig),
+    Eth(EthProtocolInfo),
 }
 
-pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
+#[derive(Serialize, Debug)]
+struct EthProtocolInfo {
+    network: u64,
+    genesis: BlockHash,
+    config: ChainConfig,
+    head: BlockHash,
+}
+
+pub async fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
     let enode_url = node_data.local_p2p_node.enode_url();
     let enr_url = match node_data.local_node_record.enr_url() {
         Ok(enr) => enr,
         Err(_) => "".into(),
     };
-    let mut protocols = HashMap::new();
 
     let chain_config = storage.get_chain_config();
-    protocols.insert("eth".to_string(), Protocol::Eth(chain_config));
+
+    let genesis_hash = storage
+        .get_block_header(0)
+        .map_err(|e| RpcErr::Internal(e.to_string()))?
+        .map(|h| h.hash())
+        .unwrap_or_default();
+
+    let head_hash = storage
+        .get_latest_canonical_block_hash()
+        .await
+        .map_err(|e| RpcErr::Internal(e.to_string()))?
+        .unwrap_or_default();
+
+    let eth_info = EthProtocolInfo {
+        network: chain_config.chain_id,
+        genesis: genesis_hash,
+        config: chain_config,
+        head: head_hash,
+    };
+
+    let mut protocols = HashMap::new();
+    protocols.insert("eth".to_string(), Protocol::Eth(eth_info));
 
     let node_info = NodeInfo {
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(node_data.local_p2p_node.node_id()),
-        name: node_data.client_version.clone(),
         ip: node_data.local_p2p_node.ip.to_string(),
+        listen_addr: format!(
+            "{}:{}",
+            node_data.local_p2p_node.ip, node_data.local_p2p_node.tcp_port
+        ),
+        name: node_data.client_version.to_string(),
         ports: Ports {
             discovery: node_data.local_p2p_node.udp_port,
             listener: node_data.local_p2p_node.tcp_port,

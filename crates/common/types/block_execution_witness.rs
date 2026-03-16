@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use bytes::Bytes;
+
 use crate::rkyv_utils::H160Wrapper;
-use crate::types::{Block, Code};
+use crate::serde_utils;
+use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
@@ -80,6 +83,59 @@ pub struct ExecutionWitness {
     /// are needed for stateless execution.
     #[rkyv(with = crate::rkyv_utils::VecVecWrapper)]
     pub keys: Vec<Vec<u8>>,
+}
+
+/// RPC-friendly representation of an execution witness.
+///
+/// This is the format returned by the `debug_executionWitness` RPC method.
+/// The trie nodes are pre-serialized (via `encode_subtrie`) to avoid
+/// expensive traversal on every RPC request.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RpcExecutionWitness {
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub state: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub keys: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub codes: Vec<Bytes>,
+    #[serde(
+        serialize_with = "serde_utils::bytes::vec::serialize",
+        deserialize_with = "serde_utils::bytes::vec::deserialize"
+    )]
+    pub headers: Vec<Bytes>,
+}
+
+impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
+    type Error = TrieError;
+
+    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
+        let mut nodes = Vec::new();
+        if let Some(state_trie_root) = value.state_trie_root {
+            state_trie_root.encode_subtrie(&mut nodes)?;
+        }
+        for node in value.storage_trie_roots.values() {
+            node.encode_subtrie(&mut nodes)?;
+        }
+        Ok(Self {
+            state: nodes.into_iter().map(Bytes::from).collect(),
+            keys: value.keys.into_iter().map(Bytes::from).collect(),
+            codes: value.codes.into_iter().map(Bytes::from).collect(),
+            headers: value
+                .block_headers_bytes
+                .into_iter()
+                .map(Bytes::from)
+                .collect(),
+        })
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -161,7 +217,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             })
             .collect();
 
-        let guest_program_state = GuestProgramState {
+        let ethrex_guest_program_state = GuestProgramState {
             codes_hashed,
             state_trie,
             storage_tries,
@@ -173,7 +229,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             verified_storage_roots: BTreeMap::new(),
         };
 
-        Ok(guest_program_state)
+        Ok(ethrex_guest_program_state)
     }
 }
 
@@ -193,19 +249,12 @@ impl GuestProgramState {
 
             if update.removed {
                 // Remove account from trie
-                self.state_trie
-                    .remove(hashed_address)
-                    .expect("failed to remove from trie");
+                self.state_trie.remove(hashed_address)?;
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
-                let mut account_state = match self
-                    .state_trie
-                    .get(hashed_address)
-                    .expect("failed to get account state from trie")
-                {
-                    Some(encoded_state) => AccountState::decode(&encoded_state)
-                        .expect("failed to decode account state"),
+                let mut account_state = match self.state_trie.get(hashed_address)? {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
@@ -235,15 +284,11 @@ impl GuestProgramState {
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
-                        storage_trie
-                            .insert(hashed_key, storage_value.encode_to_vec())
-                            .expect("failed to insert in trie");
+                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                     }
 
                     for (hashed_key, _) in deletes {
-                        storage_trie
-                            .remove(&hashed_key)
-                            .expect("failed to remove key");
+                        storage_trie.remove(&hashed_key)?;
                     }
 
                     let storage_root = storage_trie.hash_no_commit();
@@ -251,8 +296,7 @@ impl GuestProgramState {
                 }
 
                 self.state_trie
-                    .insert(hashed_address.clone(), account_state.encode_to_vec())
-                    .expect("failed to insert into storage");
+                    .insert(hashed_address.clone(), account_state.encode_to_vec())?;
             }
         }
         Ok(())
@@ -392,6 +436,32 @@ impl GuestProgramState {
                     hex::encode(code_hash)
                 );
                 Ok(Code::default())
+            }
+        }
+    }
+
+    /// Retrieves code metadata (length) for a specific code hash.
+    /// This is an optimized path for EXTCODESIZE opcode.
+    pub fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<CodeMetadata, GuestProgramStateError> {
+        use crate::constants::EMPTY_KECCACK_HASH;
+
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(CodeMetadata { length: 0 });
+        }
+        match self.codes_hashed.get(&code_hash) {
+            Some(code) => Ok(CodeMetadata {
+                length: code.bytecode.len() as u64,
+            }),
+            None => {
+                // Same as get_account_code - default to empty for missing bytecode
+                println!(
+                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
+                    hex::encode(code_hash)
+                );
+                Ok(CodeMetadata { length: 0 })
             }
         }
     }

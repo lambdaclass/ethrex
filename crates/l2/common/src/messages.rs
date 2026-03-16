@@ -219,14 +219,14 @@ pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
                 message_hashes: Vec::new(),
             });
         if let Some(value_per_token_decoded) = value_per_token_decoded {
-            for value_per_token in &mut entry.value_per_token {
-                if value_per_token.token_l1 == value_per_token_decoded.token_l1
-                    && value_per_token.token_src_l2 == value_per_token_decoded.token_src_l2
-                    && value_per_token.token_dst_l2 == value_per_token_decoded.token_dst_l2
-                {
-                    value_per_token.value += value_per_token_decoded.value;
-                    break;
-                }
+            if let Some(existing) = entry.value_per_token.iter_mut().find(|v| {
+                v.token_l1 == value_per_token_decoded.token_l1
+                    && v.token_src_l2 == value_per_token_decoded.token_src_l2
+                    && v.token_dst_l2 == value_per_token_decoded.token_dst_l2
+            }) {
+                existing.value += value_per_token_decoded.value;
+            } else {
+                entry.value_per_token.push(value_per_token_decoded);
             }
         }
         entry.value += value;
