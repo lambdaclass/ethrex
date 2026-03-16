@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rpc::clients::auth::RpcResponse;
+use ethrex_rpc::utils::RpcResponse;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

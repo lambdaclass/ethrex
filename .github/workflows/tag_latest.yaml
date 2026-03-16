@@ -1,6 +1,7 @@
 name: Ethrex Latest Release
 
 on:
+  workflow_dispatch:
   release:
     types:
       - edited
@@ -58,10 +59,12 @@ jobs:
           docker buildx imagetools create \
             -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }} \
             -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}
           docker buildx imagetools create \
             -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2 \
             -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2 \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance-l2 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2
 
   publish-apt:

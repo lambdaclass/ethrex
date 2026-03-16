@@ -249,7 +249,7 @@ Our RLP lib uses a temp buffer to write encoded payloads to, and in the end it `
 
 First I tried preallocating the buffers (which are vecs) by estimating a node’s final RLP length.
 
-This was done in the `l2/opt_rlp_buffer`, this had an influence the `memcpy` length by reducing it almost 15%:
+This was done in the `l2/opt_rlp_buffer`, this had an influence on the `memcpy` length by reducing it almost 15%:
 
 then I tried to bypass our RLP encoder altogether by implementing a small and fast encoding for the `Branch` node only (which is the majoritarian node type), this reduced `memcpy`  further, 30% over `main`:
 

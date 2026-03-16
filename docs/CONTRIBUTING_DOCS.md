@@ -26,7 +26,7 @@ We use some mdBook preprocessors and backends for extra features:
 
 - [`mdbook-alerts`](https://github.com/lambdalisue/rs-mdbook-alerts) for custom markdown syntax.
 - [`mdbook-mermaid`](https://github.com/badboy/mdbook-mermaid) for diagrams.
-- [`mdbook-linkcheck`](https://github.com/Michael-F-Bryan/mdbook-linkcheck) for checking broken links (optional).
+- [`lychee`](https://github.com/lycheeverse/lychee) for checking broken links (optional, runs automatically in CI).
 
 You can install mdBook and all dependencies with:
 

@@ -8,7 +8,7 @@ use std::{
 };
 
 use ethrex_common::{U256, types::GenesisAccount};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::Address;
@@ -400,13 +400,13 @@ fn add_with_proxy(
         impl_address,
         GenesisAccount {
             code: Bytes::from(code),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
     );
 
-    let mut storage = HashMap::new();
+    let mut storage = BTreeMap::new();
 
     storage.insert(
         get_erc1967_slot("eip1967.proxy.implementation"),
@@ -434,7 +434,7 @@ fn add_placeholder_proxy(
     address: Address,
     out_dir: &Path,
 ) -> Result<(), SystemContractsUpdaterError> {
-    let storage: HashMap<U256, U256> = HashMap::from([(
+    let storage: BTreeMap<U256, U256> = BTreeMap::from([(
         get_erc1967_slot("eip1967.proxy.admin"),
         address_to_word(ADMIN_ADDRESS),
     )]);
@@ -505,7 +505,7 @@ fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
         DETERMINISTIC_DEPLOYMENT_PROXY_ADDRESS,
         GenesisAccount {
             code: Bytes::from_static(&DETERMINISTIC_DEPLOYMENT_CODE),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
@@ -515,7 +515,7 @@ fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
         SAFE_SINGLETON_FACTORY_ADDRESS,
         GenesisAccount {
             code: Bytes::from_static(&DETERMINISTIC_DEPLOYMENT_CODE),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },
@@ -525,7 +525,7 @@ fn add_deterministic_deployers(genesis: &mut Genesis, out_dir: &Path) {
         CREATE2DEPLOYER_ADDRESS,
         GenesisAccount {
             code: Bytes::from(create2deployer_runtime(out_dir)),
-            storage: HashMap::new(),
+            storage: BTreeMap::new(),
             balance: U256::zero(),
             nonce: 1,
         },

@@ -1,7 +1,5 @@
-use ethrex_rpc::{
-    RpcErr,
-    debug::execution_witness::{ExecutionWitnessRequest, RpcExecutionWitness},
-};
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+use ethrex_rpc::{RpcErr, debug::execution_witness::ExecutionWitnessRequest};
 use serde_json::Value;
 use tracing::debug;
 

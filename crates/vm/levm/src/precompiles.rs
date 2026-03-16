@@ -1,54 +1,19 @@
-use ark_bn254::{Fr as FrArk, G1Affine as G1AffineArk};
-use ark_ec::CurveGroup;
-use ark_ff::{BigInteger, PrimeField as ArkPrimeField, Zero};
-use bls12_381::{
-    Fp, Fp2, G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, Scalar,
-    hash_to_curve::MapToCurve, multi_miller_loop,
-};
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H256, U256, serde_utils::bool, types::Fork, types::Fork::*,
-    utils::u256_from_big_endian,
+    Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
-use ethrex_crypto::{blake2f::blake2b_f, kzg::verify_kzg_proof};
-use k256::elliptic_curve::Field;
-use lambdaworks_math::cyclic_group::IsGroup;
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bn_254::curve::{
-    BN254FieldElement, BN254TwistCurveFieldElement,
-};
-use lambdaworks_math::elliptic_curve::short_weierstrass::point::ShortWeierstrassProjectivePoint;
-use lambdaworks_math::{
-    elliptic_curve::{
-        short_weierstrass::curves::{
-            bls12_381::{curve::BLS12381TwistCurveFieldElement, twist::BLS12381TwistCurve},
-            bn_254::{curve::BN254Curve, pairing::BN254AtePairing, twist::BN254TwistCurve},
-        },
-        traits::{IsEllipticCurve, IsPairing},
-    },
-    field::extensions::quadratic::QuadraticExtensionFieldElement,
-    traits::ByteConversion,
-    unsigned_integer::element::UnsignedInteger,
-};
-use malachite::base::num::arithmetic::traits::ModPow as _;
-use malachite::base::num::basic::traits::Zero as _;
-use malachite::{Natural, base::num::conversion::traits::*};
-use p256::{
-    EncodedPoint, FieldElement as P256FieldElement,
-    ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
-    elliptic_curve::bigint::U256 as P256Uint,
-};
-use sha2::Digest;
+use ethrex_crypto::{Crypto, CryptoError};
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::ops::Mul;
+use std::sync::RwLock;
 
-use crate::constants::{P256_A, P256_B, P256_N};
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
-    constants::{P256_P, VERSIONED_HASH_VERSION_KZG},
-    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
+    constants::VERSIONED_HASH_VERSION_KZG,
+    errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
@@ -56,12 +21,6 @@ use crate::{
         POINT_EVALUATION_COST,
     },
 };
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::curve::{
-    BLS12381Curve, BLS12381FieldElement,
-};
-use lambdaworks_math::elliptic_curve::short_weierstrass::curves::bls12_381::field_extension::BLS12381FieldModulus;
-use lambdaworks_math::elliptic_curve::short_weierstrass::traits::IsShortWeierstrass;
-use lambdaworks_math::field::fields::montgomery_backed_prime_fields::IsModulus;
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -79,6 +38,12 @@ const BLS12_381_FP_VALID_INPUT_LENGTH: usize = 64;
 pub const FIELD_ELEMENT_WITHOUT_PADDING_LENGTH: usize = 48;
 pub const PADDED_FIELD_ELEMENT_SIZE_IN_BYTES: usize = 64;
 
+pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
+pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
+
+/// Precomputed result for MAP_FP2_TO_G2 when input is (Fp::zero(), Fp::zero()).
+/// The bls12_381 crate's map_to_curve does not handle the zero Fp2 case correctly,
+/// so we return the known-correct padded result directly.
 const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 131, 32, 137, 110, 201, 238, 249, 213, 230,
     25, 132, 141, 194, 156, 226, 102, 244, 19, 208, 45, 211, 29, 155, 157, 68, 236, 12, 121, 205,
@@ -93,8 +58,6 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
     172, 127, 112, 38, 109, 25, 155, 79, 118, 174, 39, 198, 38, 154, 60, 238, 189, 174, 48, 128,
     110, 154, 118, 170, 223, 92,
 ];
-pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
-pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
 pub struct Precompile {
     pub address: H160,
@@ -264,7 +227,7 @@ pub const P256VERIFY: Precompile = Precompile {
     active_since_fork: Osaka,
 };
 
-pub const PRECOMPILES: [Precompile; 19] = [
+pub const PRECOMPILES: [Precompile; 18] = [
     ECRECOVER,
     SHA2_256,
     RIPEMD_160,
@@ -279,10 +242,9 @@ pub const PRECOMPILES: [Precompile; 19] = [
     BLS12_G1MSM,
     BLS12_G2ADD,
     BLS12_G2MSM,
+    BLS12_PAIRING_CHECK,
     BLS12_MAP_FP_TO_G1,
     BLS12_MAP_FP2_TO_G2,
-    BLS12_MAP_FP_TO_G1,
-    BLS12_PAIRING_CHECK,
     P256VERIFY,
 ];
 
@@ -297,14 +259,53 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
+/// Per-block cache for precompile results shared between warmer and executor.
+pub struct PrecompileCache {
+    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+}
+
+impl Default for PrecompileCache {
+    fn default() -> Self {
+        Self {
+            cache: RwLock::new(FxHashMap::default()),
+        }
+    }
+}
+
+impl PrecompileCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+        // Graceful degradation: if the lock is poisoned (a thread panicked while
+        // holding it), skip the cache rather than propagating the panic. The cache
+        // is a pure optimization — missing it only costs a recomputation.
+        self.cache
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&(*address, calldata.clone()))
+            .cloned()
+    }
+
+    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
+        self.cache
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((address, calldata), (output, gas_cost));
+    }
+}
+
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    cache: Option<&PrecompileCache>,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
-    type PrecompileFn = fn(&Bytes, &mut u64, Fork) -> Result<Bytes, VMError>;
+    type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
@@ -328,7 +329,7 @@ pub fn execute_precompile(
         precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
             Some(bls12_map_fp_to_g1 as PrecompileFn);
         precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
-            Some(bls12_map_fp2_tp_g2 as PrecompileFn);
+            Some(bls12_map_fp2_to_g2 as PrecompileFn);
         precompiles
             [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
             Some(p_256_verify as PrecompileFn);
@@ -346,16 +347,34 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
+    // Check cache (skip identity -- copy is cheaper than lookup)
+    if address != IDENTITY.address
+        && let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata))
+    {
+        increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+        return Ok(output);
+    }
+
     #[cfg(feature = "perf_opcode_timings")]
     let precompile_time_start = std::time::Instant::now();
 
-    let result = precompile(calldata, gas_remaining, fork);
+    let gas_before = *gas_remaining;
+    let result = precompile(calldata, gas_remaining, fork, crypto);
 
     #[cfg(feature = "perf_opcode_timings")]
     {
         let time = precompile_time_start.elapsed();
         let mut timings = crate::timings::PRECOMPILES_TIMINGS.lock().expect("poison");
         timings.update(address, time);
+    }
+
+    // Cache result on success (skip identity)
+    if address != IDENTITY.address
+        && let Some(cache) = cache
+        && let Ok(output) = &result
+    {
+        let gas_cost = gas_before.saturating_sub(*gas_remaining);
+        cache.insert(address, calldata.clone(), output.clone(), gas_cost);
     }
 
     result
@@ -385,66 +404,44 @@ pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     padded_calldata.into()
 }
 
-#[cfg(all(
-    not(feature = "sp1"),
-    not(feature = "risc0"),
-    not(feature = "zisk"),
-    feature = "secp256k1"
-))]
-pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    use crate::gas_cost::ECRECOVER_COST;
+fn crypto_error_to_precompile(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::InvalidPoint.into(),
+        CryptoError::InvalidInput(_) => PrecompileError::ParsingInputError.into(),
+        CryptoError::InvalidSignature => PrecompileError::ParsingInputError.into(),
+        CryptoError::InvalidRecoveryId => PrecompileError::ParsingInputError.into(),
+        CryptoError::RecoveryFailed => PrecompileError::ParsingInputError.into(),
+        CryptoError::VerificationFailed => PrecompileError::ParsingInputError.into(),
+        CryptoError::Other(_) => PrecompileError::ParsingInputError.into(),
+    }
+}
 
-    increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
+/// Map crypto errors for BLS12-381 G1 operations (add).
+/// The old code returned BLS12381G1PointNotInCurve for invalid G1 points.
+fn bls12_g1_crypto_error(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::BLS12381G1PointNotInCurve.into(),
+        other => crypto_error_to_precompile(other),
+    }
+}
 
-    const INPUT_LEN: usize = 128;
-    const WORD: usize = 32;
+/// Map crypto errors for BLS12-381 G2 operations (add).
+/// The old code returned BLS12381G2PointNotInCurve for invalid G2 points.
+fn bls12_g2_crypto_error(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::BLS12381G2PointNotInCurve.into(),
+        other => crypto_error_to_precompile(other),
+    }
+}
 
-    let input = fill_with_zeros(calldata, INPUT_LEN);
-
-    // len(raw_hash) == 32, len(raw_v) == 32, len(raw_sig) == 64
-    let (raw_hash, tail) = input.split_at(WORD);
-    let (raw_v, raw_sig) = tail.split_at(WORD);
-
-    // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let recovery_id_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
-        Ok(27) => 0_i32,
-        Ok(28) => 1_i32,
-        _ => return Ok(Bytes::new()),
-    };
-
-    // Recovery id from the adjusted byte.
-    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(recovery_id_byte) else {
-        return Ok(Bytes::new());
-    };
-
-    let Ok(recoverable_signature) =
-        secp256k1::ecdsa::RecoverableSignature::from_compact(raw_sig, recovery_id)
-    else {
-        return Ok(Bytes::new());
-    };
-
-    let message = secp256k1::Message::from_digest(
-        raw_hash
-            .try_into()
-            .map_err(|_err| InternalError::msg("Invalid message length for ecrecover"))?,
-    );
-
-    let Ok(public_key) = recoverable_signature.recover(&message) else {
-        return Ok(Bytes::new());
-    };
-
-    // We need to take the 64 bytes from the public key (discarding the first pos of the slice)
-    let public_key_hash =
-        ethrex_crypto::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
-
-    // Address is the last 20 bytes of the hash.
-    let recovered_address_bytes = &public_key_hash[12..];
-
-    let mut out = [0u8; 32];
-
-    out[12..32].copy_from_slice(recovered_address_bytes);
-
-    Ok(Bytes::copy_from_slice(&out))
+/// Map crypto errors for BLS12-381 MSM and pairing operations.
+/// The old code used `G1Affine::from_uncompressed` (checked), which returned
+/// ParsingInputError for any invalid point (not on curve or not in subgroup).
+fn bls12_msm_pairing_crypto_error(e: CryptoError) -> VMError {
+    match e {
+        CryptoError::InvalidPoint(_) => PrecompileError::ParsingInputError.into(),
+        other => crypto_error_to_precompile(other),
+    }
 }
 
 /// ## ECRECOVER precompile.
@@ -456,16 +453,12 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 ///   [64..128): r||s (64 bytes)
 ///
 /// Returns the recovered address.
-#[cfg(any(
-    feature = "sp1",
-    feature = "risc0",
-    feature = "zisk",
-    not(feature = "secp256k1"),
-))]
-pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
-    use ethrex_common::utils::keccak;
-    use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-
+pub fn ecrecover(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     use crate::gas_cost::ECRECOVER_COST;
 
     increase_precompile_consumed_gas(ECRECOVER_COST, gas_remaining)?;
@@ -475,57 +468,55 @@ pub fn ecrecover(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
 
     let input = fill_with_zeros(calldata, INPUT_LEN);
 
-    let (raw_hash, tail) = input.split_at(WORD);
-    let (raw_v, raw_sig) = tail.split_at(WORD);
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fill_with_zeros guarantees len >= 128"
+    )]
+    let raw_hash: &[u8] = &input[0..WORD];
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fill_with_zeros guarantees len >= 128"
+    )]
+    let raw_v: &[u8] = &input[WORD..WORD * 2];
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fill_with_zeros guarantees len >= 128"
+    )]
+    let raw_sig: &[u8] = &input[WORD * 2..WORD * 2 + 64];
 
     // EVM expects v ∈ {27, 28}. Anything else is invalid → empty return.
-    let mut recid_byte = match u8::try_from(u256_from_big_endian(raw_v)) {
+    let recid_byte: u8 = match u8::try_from(u256_from_big_endian(raw_v)) {
         Ok(27) => 0,
         Ok(28) => 1,
         _ => return Ok(Bytes::new()),
     };
 
-    // Parse signature (r||s). If malformed → empty return.
-    let Ok(mut sig) = Signature::from_slice(raw_sig) else {
-        return Ok(Bytes::new());
+    let msg_hash: [u8; 32] = raw_hash
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let sig: [u8; 64] = raw_sig
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+
+    let pk_hash = match crypto.secp256k1_ecrecover(&sig, recid_byte, &msg_hash) {
+        Ok(h) => h,
+        Err(_) => return Ok(Bytes::new()),
     };
 
-    // k256 enforces canonical low-S for recovery.
-    // If S is high, normalize s := n - s and flip the recovery parity bit.
-    if let Some(low_s) = sig.normalize_s() {
-        sig = low_s;
-        recid_byte ^= 1;
-    }
-
-    // Recovery id from the adjusted byte.
-    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
-        return Ok(Bytes::new());
-    };
-
-    // Recover the verifying key from the prehash (32-byte digest).
-    let Ok(vk) = VerifyingKey::recover_from_prehash(raw_hash, &sig, recid) else {
-        return Ok(Bytes::new());
-    };
-
-    // SEC1 uncompressed: 0x04 || X(32) || Y(32). We need X||Y (64 bytes).
-    let uncompressed = vk.to_encoded_point(false);
-    let mut uncompressed = uncompressed.to_bytes();
-    #[allow(clippy::indexing_slicing)]
-    let xy = &mut uncompressed[1..65];
-
-    // keccak256(X||Y).
-    let xy = keccak(xy);
-
-    // Address is the last 20 bytes of the hash.
+    // Address is the last 20 bytes of the keccak hash of the public key.
     let mut out = [0u8; 32];
-    #[allow(clippy::indexing_slicing)]
-    out[12..32].copy_from_slice(&xy[12..32]);
+    out[12..32].copy_from_slice(&pk_hash[12..32]);
 
     Ok(Bytes::copy_from_slice(&out))
 }
 
 /// Returns the calldata received
-pub fn identity(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn identity(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    _crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::identity(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
@@ -534,12 +525,17 @@ pub fn identity(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resul
 }
 
 /// Returns the calldata hashed by sha2-256 algorithm
-pub fn sha2_256(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn sha2_256(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::sha2_256(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let digest = sha2::Sha256::digest(calldata);
+    let digest = crypto.sha256(calldata);
     Ok(Bytes::copy_from_slice(&digest))
 }
 
@@ -548,24 +544,24 @@ pub fn ripemd_160(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     let gas_cost = gas_cost::ripemd_160(calldata.len())?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut hasher = ripemd::Ripemd160::new();
-    hasher.update(calldata);
-    let result = hasher.finalize();
-
-    let mut output = vec![0; 12];
-    output.extend_from_slice(&result);
-
-    Ok(Bytes::from(output))
+    let result = crypto.ripemd160(calldata);
+    Ok(Bytes::copy_from_slice(&result))
 }
 
 /// Returns the result of the module-exponentiation operation
 #[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
-pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<Bytes, VMError> {
+pub fn modexp(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
@@ -621,21 +617,13 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
     let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
     let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
 
-    let base = Natural::from_power_of_2_digits_desc(8u64, b.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
-    let exponent = Natural::from_power_of_2_digits_desc(8u64, e.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
-    let modulus = Natural::from_power_of_2_digits_desc(8u64, m.iter().cloned())
-        .ok_or(InternalError::TypeConversion)?;
-
-    // First 32 bytes of exponent or exponent if e_size < 32
-    let bytes_to_take = 32.min(exponent_size);
-    // Use of unwrap_or_default because if e == 0 get_slice_or_default returns an empty vec
-    let exp_first_32 = Natural::from_power_of_2_digits_desc(
-        8u64,
-        e.get(0..bytes_to_take).unwrap_or_default().iter().cloned(),
-    )
-    .ok_or(InternalError::TypeConversion)?;
+    // Gas computation uses malachite Natural to compute bit length of exponent
+    use malachite::Natural;
+    use malachite::base::num::conversion::traits::*;
+    let exp_first_32_bytes = e.get(0..32.min(exponent_size)).unwrap_or_default();
+    let exp_first_32 =
+        Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
+            .ok_or(InternalError::TypeConversion)?;
 
     let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
 
@@ -645,10 +633,11 @@ pub fn modexp(calldata: &Bytes, gas_remaining: &mut u64, fork: Fork) -> Result<B
         return Ok(Bytes::new());
     }
 
-    let result = mod_exp(base, exponent, modulus);
+    let result = crypto
+        .modexp(&b, &e, &m)
+        .map_err(|_| VMError::from(PrecompileError::ParsingInputError))?;
 
-    let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
-    let res_bytes = increase_left_pad(&Bytes::from(res_bytes), modulus_size);
+    let res_bytes = increase_left_pad(&Bytes::from(result), modulus_size);
 
     Ok(res_bytes.slice(..modulus_size))
 }
@@ -679,33 +668,6 @@ fn get_slice_or_default<'c>(
     Vec::new().into()
 }
 
-#[allow(clippy::arithmetic_side_effects)]
-#[inline(always)]
-fn mod_exp(base: Natural, exponent: Natural, modulus: Natural) -> Natural {
-    if modulus == Natural::ZERO {
-        Natural::ZERO
-    } else if exponent == Natural::ZERO {
-        Natural::from(1_u8) % modulus
-    } else {
-        #[cfg(not(feature = "zisk"))]
-        {
-            let base_mod = base % &modulus; // malachite requires base to be reduced to modulus first
-            base_mod.mod_pow(&exponent, &modulus)
-        }
-
-        #[cfg(feature = "zisk")]
-        {
-            use ziskos::zisklib::modexp_u64;
-            let (mut base, mut exponent, mut modulus) = (base, exponent, modulus);
-            let base_limbs = base.to_limbs_asc();
-            let exponent_limbs = exponent.to_limbs_asc();
-            let modulus_limbs = modulus.to_limbs_asc();
-            let result_limbs = modexp_u64(&base_limbs, &exponent_limbs, &modulus_limbs);
-            Natural::from_owned_limbs_asc(result_limbs)
-        }
-    }
-}
-
 /// If the result size is less than needed, pads left with zeros.
 #[inline(always)]
 pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
@@ -727,7 +689,12 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
 }
 
 /// Makes a point addition on the elliptic curve 'alt_bn128'
-pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecadd(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128);
 
@@ -740,230 +707,40 @@ pub fn ecadd(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<B
     };
     validate_bn254_g1_coords(&first_point)?;
     validate_bn254_g1_coords(&second_point)?;
-    bn254_g1_add(first_point, second_point)
-}
 
-#[cfg(not(feature = "zisk"))]
-#[inline]
-pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
-    let first_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.0.to_big_endian());
-    let first_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&first_point.1.to_big_endian());
-    let second_point_x = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.0.to_big_endian());
-    let second_point_y = ark_bn254::Fq::from_be_bytes_mod_order(&second_point.1.to_big_endian());
+    #[expect(clippy::indexing_slicing, reason = "calldata padded to 128 bytes")]
+    let result = crypto
+        .bn254_g1_add(&calldata[..64], &calldata[64..128])
+        .map_err(crypto_error_to_precompile)?;
 
-    let first_point_is_zero = first_point_x.is_zero() && first_point_y.is_zero();
-    let second_point_is_zero = second_point_x.is_zero() && second_point_y.is_zero();
-
-    let result: G1AffineArk = match (first_point_is_zero, second_point_is_zero) {
-        (true, true) => {
-            return Ok(Bytes::from([0u8; 64].to_vec()));
-        }
-        (false, true) => {
-            let first_point = G1AffineArk::new_unchecked(first_point_x, first_point_y);
-            if !first_point.is_on_curve() {
-                return Err(PrecompileError::InvalidPoint.into());
-            }
-            first_point
-        }
-        (true, false) => {
-            let second_point = G1AffineArk::new_unchecked(second_point_x, second_point_y);
-            if !second_point.is_on_curve() {
-                return Err(PrecompileError::InvalidPoint.into());
-            }
-            second_point
-        }
-        (false, false) => {
-            let first_point = G1AffineArk::new_unchecked(first_point_x, first_point_y);
-            if !first_point.is_on_curve() {
-                return Err(PrecompileError::InvalidPoint.into());
-            }
-            let second_point = G1AffineArk::new_unchecked(second_point_x, second_point_y);
-            if !second_point.is_on_curve() {
-                return Err(PrecompileError::InvalidPoint.into());
-            }
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "Valid operation between two elliptic curve points"
-            )]
-            let sum = first_point + second_point;
-            sum.into_affine()
-        }
-    };
-
-    let out = [
-        result.x.into_bigint().to_bytes_be(),
-        result.y.into_bigint().to_bytes_be(),
-    ]
-    .concat();
-
-    Ok(Bytes::from(out))
-}
-
-#[cfg(feature = "zisk")]
-#[inline]
-pub fn bn254_g1_add(first_point: G1, second_point: G1) -> Result<Bytes, VMError> {
-    // SP1 patches the substrate-bn crate too, but some Ethereum Mainnet blocks fail to execute with it with a GasMismatch error
-    // so for now we will only use it for ZisK.
-    use substrate_bn::{AffineG1, Fq, G1 as SubstrateG1, Group};
-
-    if first_point.is_zero() && second_point.is_zero() {
-        return Ok(Bytes::from([0u8; 64].to_vec()));
-    }
-
-    if first_point.is_zero() {
-        let (g1_x, g1_y) = (
-            Fq::from_slice(&second_point.0.to_big_endian())
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-            Fq::from_slice(&second_point.1.to_big_endian())
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-        );
-        // Validate that the point is on the curve
-        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
-
-        let mut x_bytes = [0u8; 32];
-        let mut y_bytes = [0u8; 32];
-        g1_x.to_big_endian(&mut x_bytes);
-        g1_y.to_big_endian(&mut y_bytes);
-        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
-    }
-
-    if second_point.is_zero() {
-        let (g1_x, g1_y) = (
-            Fq::from_slice(&first_point.0.to_big_endian())
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-            Fq::from_slice(&first_point.1.to_big_endian())
-                .map_err(|_| PrecompileError::ParsingInputError)?,
-        );
-        // Validate that the point is on the curve
-        AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
-
-        let mut x_bytes = [0u8; 32];
-        let mut y_bytes = [0u8; 32];
-        g1_x.to_big_endian(&mut x_bytes);
-        g1_y.to_big_endian(&mut y_bytes);
-        return Ok(Bytes::from([x_bytes, y_bytes].concat()));
-    }
-
-    let (first_x, first_y) = (
-        Fq::from_slice(&first_point.0.to_big_endian())
-            .map_err(|_| PrecompileError::ParsingInputError)?,
-        Fq::from_slice(&first_point.1.to_big_endian())
-            .map_err(|_| PrecompileError::ParsingInputError)?,
-    );
-
-    let (second_x, second_y) = (
-        Fq::from_slice(&second_point.0.to_big_endian())
-            .map_err(|_| PrecompileError::ParsingInputError)?,
-        Fq::from_slice(&second_point.1.to_big_endian())
-            .map_err(|_| PrecompileError::ParsingInputError)?,
-    );
-
-    let first: SubstrateG1 = AffineG1::new(first_x, first_y)
-        .map_err(|_| PrecompileError::InvalidPoint)?
-        .into();
-
-    let second: SubstrateG1 = AffineG1::new(second_x, second_y)
-        .map_err(|_| PrecompileError::InvalidPoint)?
-        .into();
-
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "G1 addition doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
-    )]
-    let result = first + second;
-
-    let mut x_bytes = [0u8; 32];
-    let mut y_bytes = [0u8; 32];
-    result.x().to_big_endian(&mut x_bytes);
-    result.y().to_big_endian(&mut y_bytes);
-    let out = [x_bytes, y_bytes].concat();
-
-    Ok(Bytes::from(out))
+    Ok(Bytes::copy_from_slice(&result))
 }
 
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
-pub fn ecmul(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecmul(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
     increase_precompile_consumed_gas(ECMUL_COST, gas_remaining)?;
 
-    let (Some(g1), Some(scalar)) = (
+    let (Some(g1), Some(_scalar)) = (
         parse_bn254_g1(&calldata, 0),
         parse_bn254_scalar(&calldata, 64),
     ) else {
         return Err(InternalError::Slicing.into());
     };
     validate_bn254_g1_coords(&g1)?;
-    bn254_g1_mul(g1, scalar)
-}
 
-#[cfg(not(any(feature = "sp1", feature = "zisk")))]
-#[inline]
-pub fn bn254_g1_mul(point: G1, scalar: U256) -> Result<Bytes, VMError> {
-    let x = ark_bn254::Fq::from_be_bytes_mod_order(&point.0.to_big_endian());
-    let y = ark_bn254::Fq::from_be_bytes_mod_order(&point.1.to_big_endian());
+    #[expect(clippy::indexing_slicing, reason = "calldata padded to 96 bytes")]
+    let result = crypto
+        .bn254_g1_mul(&calldata[..64], &calldata[64..96])
+        .map_err(crypto_error_to_precompile)?;
 
-    if x.is_zero() && y.is_zero() {
-        return Ok(Bytes::from([0u8; 64].to_vec()));
-    }
-
-    let point = G1AffineArk::new_unchecked(x, y);
-    if !point.is_on_curve() {
-        return Err(PrecompileError::InvalidPoint.into());
-    }
-
-    let scalar = FrArk::from_be_bytes_mod_order(&scalar.to_big_endian());
-    if scalar.is_zero() {
-        return Ok(Bytes::from([0u8; 64].to_vec()));
-    }
-
-    let result = point.mul(scalar).into_affine();
-
-    let out = [
-        result.x.into_bigint().to_bytes_be(),
-        result.y.into_bigint().to_bytes_be(),
-    ]
-    .concat();
-
-    Ok(Bytes::from(out))
-}
-
-#[cfg(any(feature = "sp1", feature = "zisk"))]
-#[inline]
-pub fn bn254_g1_mul(g1: G1, scalar: U256) -> Result<Bytes, VMError> {
-    use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
-
-    if g1.is_zero() || scalar.is_zero() {
-        return Ok(Bytes::from([0u8; 64].to_vec()));
-    }
-
-    let (g1_x, g1_y) = (
-        Fq::from_slice(&g1.0.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
-        Fq::from_slice(&g1.1.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?,
-    );
-
-    let g1 = AffineG1::new(g1_x, g1_y).map_err(|_| PrecompileError::InvalidPoint)?;
-
-    // Small difference between the patched versions of substrate-bn
-    #[cfg(feature = "zisk")]
-    let g1: G1 = g1.into();
-
-    let scalar =
-        Fr::from_slice(&scalar.to_big_endian()).map_err(|_| PrecompileError::ParsingInputError)?;
-
-    #[allow(
-        clippy::arithmetic_side_effects,
-        reason = "G1 scalar multiplication doesn't overflow, intermediate operations that could overflow should be handled correctly by the library"
-    )]
-    let result = g1 * scalar;
-
-    let mut x_bytes = [0u8; 32];
-    let mut y_bytes = [0u8; 32];
-    result.x().to_big_endian(&mut x_bytes);
-    result.y().to_big_endian(&mut y_bytes);
-    let out = [x_bytes, y_bytes].concat();
-
-    Ok(Bytes::from(out))
+    Ok(Bytes::copy_from_slice(&result))
 }
 
 const ALT_BN128_PRIME: U256 = U256([
@@ -1043,7 +820,12 @@ fn validate_bn254_g2_coords(g2: &G2) -> Result<(), VMError> {
 }
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
-pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn ecpairing(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     // The input must always be a multiple of 192 (6 32-byte values)
     if !calldata.len().is_multiple_of(192) {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1053,20 +835,23 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     let gas_cost = gas_cost::ecpairing(inputs_amount)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut batch = Vec::new();
+    let mut pairs: Vec<(&[u8], &[u8])> = Vec::new();
     for input in calldata.chunks_exact(192) {
         let (Some(g1), Some(g2)) = (parse_bn254_g1(input, 0), parse_bn254_g2(input, 64)) else {
             return Err(InternalError::Slicing.into());
         };
         validate_bn254_g1_coords(&g1)?;
         validate_bn254_g2_coords(&g2)?;
-        batch.push((g1, g2));
+        #[expect(clippy::indexing_slicing, reason = "chunks_exact guarantees 192 bytes")]
+        pairs.push((&input[..64], &input[64..192]));
     }
 
-    let pairing_check = if batch.is_empty() {
+    let pairing_check = if pairs.is_empty() {
         true
     } else {
-        pairing_check(&batch)?
+        crypto
+            .bn254_pairing_check(&pairs)
+            .map_err(crypto_error_to_precompile)?
     };
 
     let mut result = [0; 32];
@@ -1074,122 +859,13 @@ pub fn ecpairing(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Resu
     Ok(Bytes::from_owner(result))
 }
 
-#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
-#[inline]
-pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
-    use substrate_bn::{AffineG1, AffineG2, Fq, Fq2, G1 as SubstrateG1, G2 as SubstrateG2, Group};
-
-    if batch.is_empty() {
-        return Ok(true);
-    }
-    let mut valid_batch = Vec::with_capacity(batch.len());
-    for (g1, g2) in batch {
-        let g1: SubstrateG1 = if g1.is_zero() {
-            SubstrateG1::zero()
-        } else {
-            let (g1_x, g1_y) = (
-                Fq::from_slice(&g1.0.to_big_endian())
-                    .map_err(|_| PrecompileError::ParsingInputError)?,
-                Fq::from_slice(&g1.1.to_big_endian())
-                    .map_err(|_| PrecompileError::ParsingInputError)?,
-            );
-            AffineG1::new(g1_x, g1_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-                .into()
-        };
-        let g2: SubstrateG2 = if g2.is_zero() {
-            SubstrateG2::zero()
-        } else {
-            let (g2_x, g2_y) = (
-                Fq2::new(
-                    Fq::from_slice(&g2.0.to_big_endian())
-                        .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g2.1.to_big_endian())
-                        .map_err(|_| PrecompileError::ParsingInputError)?,
-                ),
-                Fq2::new(
-                    Fq::from_slice(&g2.2.to_big_endian())
-                        .map_err(|_| PrecompileError::ParsingInputError)?,
-                    Fq::from_slice(&g2.3.to_big_endian())
-                        .map_err(|_| PrecompileError::ParsingInputError)?,
-                ),
-            );
-            AffineG2::new(g2_x, g2_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-                .into()
-        };
-
-        if g1.is_zero() || g2.is_zero() {
-            continue;
-        }
-        valid_batch.push((g1, g2));
-    }
-
-    let result = substrate_bn::pairing_batch(&valid_batch);
-
-    Ok(result == substrate_bn::Gt::one())
-}
-
-#[cfg(all(not(feature = "sp1"), not(feature = "risc0"), not(feature = "zisk")))]
-#[inline]
-pub fn pairing_check(batch: &[(G1, G2)]) -> Result<bool, VMError> {
-    use lambdaworks_math::errors::PairingError;
-
-    type Fq = BN254FieldElement;
-    type Fq2 = BN254TwistCurveFieldElement;
-    type LambdaworksG1 = BN254Curve;
-    type LambdaworksG2 = BN254TwistCurve;
-    type ProjectiveG1 = ShortWeierstrassProjectivePoint<LambdaworksG1>;
-    type ProjectiveG2 = ShortWeierstrassProjectivePoint<LambdaworksG2>;
-
-    if batch.is_empty() {
-        return Ok(true);
-    }
-
-    let mut valid_batch = Vec::with_capacity(batch.len());
-    for (g1, g2) in batch {
-        let g1 = if g1.is_zero() {
-            ProjectiveG1::neutral_element()
-        } else {
-            let (g1_x, g1_y) = (
-                Fq::from_bytes_be(&g1.0.to_big_endian())
-                    .map_err(|_| InternalError::msg("failed to parse g1 x"))?,
-                Fq::from_bytes_be(&g1.1.to_big_endian())
-                    .map_err(|_| InternalError::msg("failed to parse g1 y"))?,
-            );
-            LambdaworksG1::create_point_from_affine(g1_x, g1_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-        };
-        let g2 = if g2.is_zero() {
-            ProjectiveG2::neutral_element()
-        } else {
-            let (g2_x, g2_y) = {
-                let x_bytes = [g2.0.to_big_endian(), g2.1.to_big_endian()].concat();
-                let y_bytes = [g2.2.to_big_endian(), g2.3.to_big_endian()].concat();
-                let (x, y) = (
-                    Fq2::from_bytes_be(&x_bytes)
-                        .map_err(|_| InternalError::msg("failed to parse g2 x"))?,
-                    Fq2::from_bytes_be(&y_bytes)
-                        .map_err(|_| InternalError::msg("failed to parse g2 y"))?,
-                );
-                (x, y)
-            };
-            LambdaworksG2::create_point_from_affine(g2_x, g2_y)
-                .map_err(|_| PrecompileError::InvalidPoint)?
-        };
-        valid_batch.push((g1, g2));
-    }
-    let valid_batch_refs: Vec<_> = valid_batch.iter().map(|(p1, p2)| (p1, p2)).collect();
-    let result = BN254AtePairing::compute_batch(&valid_batch_refs).map_err(|e| match e {
-        PairingError::PointNotInSubgroup => PrecompileError::PointNotInSubgroup,
-        PairingError::DivisionByZero => PrecompileError::InvalidPoint,
-    })?;
-
-    Ok(result == QuadraticExtensionFieldElement::one())
-}
-
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
-pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result<Bytes, VMError> {
+pub fn blake2f(
+    calldata: &Bytes,
+    gas_remaining: &mut u64,
+    _fork: Fork,
+    crypto: &dyn Crypto,
+) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
         return Err(PrecompileError::ParsingInputError.into());
     }
@@ -1220,8 +896,7 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result
     }
     let f = f == 1;
 
-    #[expect(clippy::as_conversions)] // safe to convert a u32 to usize
-    blake2b_f(rounds as usize, &mut h, &m, &t, f);
+    crypto.blake2_compress(rounds, &mut h, m, t, f);
 
     Ok(Bytes::from_iter(
         h.into_iter().flat_map(|value| value.to_le_bytes()),
@@ -1229,10 +904,8 @@ pub fn blake2f(calldata: &Bytes, gas_remaining: &mut u64, _fork: Fork) -> Result
 }
 
 /// Converts the provided commitment to match the provided versioned_hash.
-/// Taken from the same name function from crates/common/types/blobs_bundle.rs
-fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48]) -> H256 {
-    use sha2::{Digest, Sha256};
-    let mut versioned_hash: [u8; 32] = Sha256::digest(commitment_bytes).into();
+fn kzg_commitment_to_versioned_hash(commitment_bytes: &[u8; 48], crypto: &dyn Crypto) -> H256 {
+    let mut versioned_hash: [u8; 32] = crypto.sha256(commitment_bytes);
     versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     versioned_hash.into()
 }
@@ -1251,6 +924,7 @@ fn point_evaluation(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != 192 {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1267,7 +941,7 @@ fn point_evaluation(
         .try_into()
         .map_err(|_| InternalError::TypeConversion)?;
 
-    let x: [u8; 32] = calldata
+    let z: [u8; 32] = calldata
         .get(32..64)
         .ok_or(InternalError::Slicing)?
         .try_into()
@@ -1294,14 +968,14 @@ fn point_evaluation(
     // Perform the evaluation
 
     // This checks if the commitment is equal to the versioned hash
-    if kzg_commitment_to_versioned_hash(&commitment) != H256::from(versioned_hash) {
+    if kzg_commitment_to_versioned_hash(&commitment, crypto) != H256::from(versioned_hash) {
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    // This verifies the proof from a point (x, y) and a commitment
-    if !verify_kzg_proof(commitment, x, y, proof).unwrap_or(false) {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
+    // This verifies the proof from a point (z, y) and a commitment
+    crypto
+        .verify_kzg_proof(&z, &y, &commitment, &proof)
+        .map_err(|_| VMError::from(PrecompileError::ParsingInputError))?;
 
     // The first 32 bytes consist of the number of field elements in the blob, and the
     // other 32 bytes consist of the modulus used in the BLS signature scheme.
@@ -1310,7 +984,7 @@ fn point_evaluation(
     Ok(Bytes::from(output))
 }
 
-/// Signature verification in the “secp256r1” elliptic curve
+/// Signature verification in the "secp256r1" elliptic curve
 /// If the verification succeeds, returns 1 in a 32-bit big-endian format.
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md
@@ -1318,6 +992,7 @@ pub fn p_256_verify(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     increase_precompile_consumed_gas(P256_VERIFY_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
@@ -1332,59 +1007,26 @@ pub fn p_256_verify(
         clippy::indexing_slicing,
         reason = "length of the calldata is checked before slicing"
     )]
-    let (message_hash, r, s, x, y) = (
-        &calldata[0..32],
-        &calldata[32..64],
-        &calldata[64..96],
-        &calldata[96..128],
-        &calldata[128..160],
-    );
+    let msg: &[u8; 32] = calldata[0..32].try_into()?;
+    #[expect(clippy::indexing_slicing, reason = "length checked")]
+    let r: &[u8; 32] = calldata[32..64].try_into()?;
+    #[expect(clippy::indexing_slicing, reason = "length checked")]
+    let s: &[u8; 32] = calldata[64..96].try_into()?;
+    #[expect(clippy::indexing_slicing, reason = "length checked")]
+    let pk_x: &[u8; 32] = calldata[96..128].try_into()?;
+    #[expect(clippy::indexing_slicing, reason = "length checked")]
+    let pk_y: &[u8; 32] = calldata[128..160].try_into()?;
 
-    {
-        let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
+    // Build 64-byte sig (r||s) and 64-byte pk (x||y)
+    let mut sig_bytes = [0u8; 64];
+    sig_bytes[..32].copy_from_slice(r);
+    sig_bytes[32..].copy_from_slice(s);
 
-        // Verify that the r and s values are in (0, n) (exclusive)
-        if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N ||
-        // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
-        x >= P256_P || y >= P256_P ||
-        // Verify that the point (x,y) isn't at infinity
-        (x == P256Uint::ZERO && y == P256Uint::ZERO)
-        {
-            return Ok(Bytes::new());
-        }
+    let mut pk_bytes = [0u8; 64];
+    pk_bytes[..32].copy_from_slice(pk_x);
+    pk_bytes[32..].copy_from_slice(pk_y);
 
-        // Verify that the point formed by (x, y) is on the curve
-        let x: Option<P256FieldElement> = P256FieldElement::from_uint(x).into();
-        let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
-
-        let (Some(x), Some(y)) = (x, y) else {
-            return Err(InternalError::Slicing.into());
-        };
-
-        // Curve equation: `y² = x³ + ax + b`
-        let a_x = P256_A.multiply(&x);
-        if y.square() != x.pow_vartime(&[3u64]).add(&a_x).add(&P256_B) {
-            return Ok(Bytes::new());
-        }
-    }
-
-    // Build verifier
-    let Ok(verifier) = p256::ecdsa::VerifyingKey::from_encoded_point(
-        &EncodedPoint::from_affine_coordinates(x.into(), y.into(), false),
-    ) else {
-        return Ok(Bytes::new());
-    };
-
-    // Build signature
-    let r: [u8; 32] = r.try_into()?;
-    let s: [u8; 32] = s.try_into()?;
-
-    let Ok(signature) = P256Signature::from_scalars(r, s) else {
-        return Ok(Bytes::new());
-    };
-
-    // Verify message signature
-    let success = verifier.verify_prehash(message_hash, &signature).is_ok();
+    let success = crypto.secp256r1_verify(msg, &sig_bytes, &pk_bytes);
 
     // If the verification succeeds, returns 1 in a 32-bit big-endian format.
     // If the verification fails, returns an empty `Bytes` object.
@@ -1399,12 +1041,24 @@ pub fn p_256_verify(
     }
 }
 
+/// Parse a 64-byte padded BLS12-381 field element into a 48-byte unpadded element.
+/// The first 16 bytes must be zero (padding). Returns error if padding is invalid.
+fn parse_bls12_padded_fp(padded: &[u8; 64]) -> Result<[u8; 48], VMError> {
+    if padded[..16] != [0u8; 16] {
+        return Err(PrecompileError::ParsingInputError.into());
+    }
+    let fp: [u8; 48] = padded[16..64]
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    Ok(fp)
+}
+
 pub fn bls12_g1add(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
-    // TODO: Use `as_chunks` after upgrading to Rust 1.88.0.
     let (x_data, calldata) = calldata
         .split_first_chunk::<128>()
         .ok_or(PrecompileError::ParsingInputError)?;
@@ -1419,85 +1073,44 @@ pub fn bls12_g1add(
     increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    type FElem = BLS12381FieldElement;
-    type U384 = UnsignedInteger<6>;
-    fn parse_g1_point(data: &[u8; 128]) -> Result<Option<(FElem, FElem)>, PrecompileError> {
-        if data[0..16] != [0; 16] || data[64..80] != [0; 16] {
-            return Err(PrecompileError::ParsingInputError);
-        }
+    // Parse two 128-byte padded G1 points into 48-byte unpadded coordinates.
+    let ax = parse_bls12_padded_fp(
+        x_data[..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let ay = parse_bls12_padded_fp(
+        x_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let bx = parse_bls12_padded_fp(
+        y_data[..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let by = parse_bls12_padded_fp(
+        y_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
-        let x = U384::from_bytes_be(&data[16..64]).unwrap_or_default();
-        let y = U384::from_bytes_be(&data[80..128]).unwrap_or_default();
-        if x >= BLS12381FieldModulus::MODULUS || y >= BLS12381FieldModulus::MODULUS {
-            return Err(PrecompileError::ParsingInputError);
-        }
+    let result = crypto
+        .bls12_381_g1_add((ax, ay), (bx, by))
+        .map_err(bls12_g1_crypto_error)?;
 
-        if x == U384::from_u64(0) && y == U384::from_u64(0) {
-            return Ok(None);
-        }
-
-        let x = FElem::new(x);
-        let y = FElem::new(y);
-        if BLS12381Curve::defining_equation(&x, &y) != FElem::zero() {
-            return Err(PrecompileError::BLS12381G1PointNotInCurve);
-        }
-
-        Ok(Some((x, y)))
-    }
-
-    let p0 = parse_g1_point(x_data)?;
-    let p1 = parse_g1_point(y_data)?;
-
-    #[expect(clippy::arithmetic_side_effects, reason = "modular arithmetic")]
-    let p2 = match (p0, p1) {
-        (None, None) => (FElem::zero(), FElem::zero()),
-        (None, Some(p1)) => p1,
-        (Some(p0), None) => p0,
-        (Some(p0), Some(p1)) => 'block: {
-            if p0.0 == p1.0 {
-                if p0.1 == p1.1 {
-                    // The division may panic only when `p0.1.double()` has no inverse. This can
-                    // only happen if `p0.1 == 0`, which is impossible as long as the defining
-                    // equation holds since it has no solutions for an `x` coordinate where `y` is
-                    // zero within the prime field space.
-                    let x_squared = p0.0.square();
-                    let s = ((x_squared.double() + &x_squared + BLS12381Curve::a())
-                        / p0.1.double())
-                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
-
-                    let x = s.square() - p0.0.double();
-                    let y = s * (p0.0 - &x) - p0.1;
-                    break 'block (x, y);
-                } else if &p0.1 + &p1.1 == FElem::zero() {
-                    break 'block (FElem::zero(), FElem::zero());
-                }
-            }
-
-            // The division may panic only when `t` has no inverse. This can only happen if
-            // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
-            // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
-                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
-
-            let x = l.square() - &p0.0 - p1.0;
-            let y = l * (p0.0 - &x) - p0.1;
-            (x, y)
-        }
-    };
-
-    let x = p2.0.representative().limbs.map(|x| x.to_be_bytes());
-    let y = p2.1.representative().limbs.map(|x| x.to_be_bytes());
-    let buffer: [[u8; 8]; 16] = [
-        [0; 8], [0; 8], x[0], x[1], x[2], x[3], x[4], x[5], // Padded x coordinate.
-        [0; 8], [0; 8], y[0], y[1], y[2], y[3], y[4], y[5], // Padded y coordinate.
-    ];
-    Ok(Bytes::copy_from_slice(buffer.as_flattened()))
+    // Re-pad the 96-byte unpadded result (x||y each 48 bytes) to 128 bytes.
+    let mut output = [0u8; 128];
+    output[16..64].copy_from_slice(&result[..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 pub fn bls12_g1msm(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1507,44 +1120,47 @@ pub fn bls12_g1msm(
     let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, G1_MUL_COST)?;
     increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
-    let mut result = G1Projective::identity();
-    // R = s_P_1 + s_P_2 + ... + s_P_k
-    // Where:
-    // s_i are scalars (numbers)
-    // P_i are points in the group (in this case, points in G1)
+    #[allow(clippy::type_complexity)]
+    let mut pairs: Vec<(([u8; 48], [u8; 48]), [u8; 32])> = Vec::with_capacity(k);
+
     #[expect(
         clippy::arithmetic_side_effects,
         clippy::indexing_slicing,
         reason = "bounds checked"
     )]
     for i in 0..k {
-        // this operation can't overflow because i < k and  k * BLS12_381_G1_MSM_PAIR_LENGTH = calldata.len()
         let point_offset = i * BLS12_381_G1_MSM_PAIR_LENGTH;
         let scalar_offset = point_offset + 128;
         let pair_end = scalar_offset + 32;
 
-        // slicing is ok because pair_end = point_offset + 160 = (k-1) * 160 + 160 = k * 160 = calldata.len()
-        let point = parse_g1_point(&calldata[point_offset..scalar_offset], false)?;
-        let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
+        let point_bytes = &calldata[point_offset..scalar_offset];
+        let scalar_bytes = &calldata[scalar_offset..pair_end];
 
-        if !bool::from(scalar.is_zero()) {
-            let scaled_point: G1Projective = point * scalar;
-            result += scaled_point;
-        }
+        let px = parse_bls12_padded_fp(
+            point_bytes[..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let py = parse_bls12_padded_fp(
+            point_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let scalar: [u8; 32] = scalar_bytes
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+
+        pairs.push(((px, py), scalar));
     }
+
+    let result = crypto
+        .bls12_381_g1_msm(&pairs)
+        .map_err(bls12_msm_pairing_crypto_error)?;
+
+    // Re-pad output: 96-byte result → 128-byte padded
     let mut output = [0u8; 128];
-
-    if result.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&output));
-    }
-
-    let result_bytes = G1Affine::from(result).to_uncompressed();
-    let (x_bytes, y_bytes) = result_bytes
-        .split_at_checked(FIELD_ELEMENT_WITHOUT_PADDING_LENGTH)
-        .ok_or(InternalError::Slicing)?;
-    output[16..64].copy_from_slice(x_bytes);
-    output[80..128].copy_from_slice(y_bytes);
-
+    output[16..64].copy_from_slice(&result[..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
     Ok(Bytes::copy_from_slice(&output))
 }
 
@@ -1552,8 +1168,8 @@ pub fn bls12_g2add(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
-    // TODO: Use `as_chunks` after upgrading to Rust 1.88.0.
     let (x_data, calldata) = calldata
         .split_first_chunk::<256>()
         .ok_or(PrecompileError::ParsingInputError)?;
@@ -1568,112 +1184,70 @@ pub fn bls12_g2add(
     increase_precompile_consumed_gas(BLS12_381_G2ADD_COST, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
-    type FElem = BLS12381TwistCurveFieldElement;
-    type U384 = UnsignedInteger<6>;
-    fn parse_g2_point(data: &[u8; 256]) -> Result<Option<(FElem, FElem)>, PrecompileError> {
-        if data[0..16] != [0; 16]
-            || data[64..80] != [0; 16]
-            || data[128..144] != [0; 16]
-            || data[192..208] != [0; 16]
-        {
-            return Err(PrecompileError::ParsingInputError);
-        }
+    // Parse two 256-byte padded G2 points into four 48-byte unpadded coordinates each.
+    // G2 point layout: x_0(64) || x_1(64) || y_0(64) || y_1(64) = 256 bytes
+    let ax0 = parse_bls12_padded_fp(
+        x_data[0..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let ax1 = parse_bls12_padded_fp(
+        x_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let ay0 = parse_bls12_padded_fp(
+        x_data[128..192]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let ay1 = parse_bls12_padded_fp(
+        x_data[192..256]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
-        let x = [
-            U384::from_bytes_be(&data[16..64]).unwrap_or_default(),
-            U384::from_bytes_be(&data[80..128]).unwrap_or_default(),
-        ];
-        let y = [
-            U384::from_bytes_be(&data[144..192]).unwrap_or_default(),
-            U384::from_bytes_be(&data[208..256]).unwrap_or_default(),
-        ];
-        if x[0] >= BLS12381FieldModulus::MODULUS
-            || x[1] >= BLS12381FieldModulus::MODULUS
-            || y[0] >= BLS12381FieldModulus::MODULUS
-            || y[1] >= BLS12381FieldModulus::MODULUS
-        {
-            return Err(PrecompileError::ParsingInputError);
-        }
+    let bx0 = parse_bls12_padded_fp(
+        y_data[0..64]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let bx1 = parse_bls12_padded_fp(
+        y_data[64..128]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let by0 = parse_bls12_padded_fp(
+        y_data[128..192]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+    let by1 = parse_bls12_padded_fp(
+        y_data[192..256]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
-        if x[0] == U384::from_u64(0)
-            && x[1] == U384::from_u64(0)
-            && y[0] == U384::from_u64(0)
-            && y[1] == U384::from_u64(0)
-        {
-            return Ok(None);
-        }
+    let result = crypto
+        .bls12_381_g2_add((ax0, ax1, ay0, ay1), (bx0, bx1, by0, by1))
+        .map_err(bls12_g2_crypto_error)?;
 
-        let x = FElem::from_raw(x.map(BLS12381FieldElement::new));
-        let y = FElem::from_raw(y.map(BLS12381FieldElement::new));
-        if BLS12381TwistCurve::defining_equation(&x, &y) != FElem::zero() {
-            return Err(PrecompileError::BLS12381G2PointNotInCurve);
-        }
-
-        Ok(Some((x, y)))
-    }
-
-    let p0 = parse_g2_point(x_data)?;
-    let p1 = parse_g2_point(y_data)?;
-
-    #[expect(clippy::arithmetic_side_effects, reason = "modular arithmetic")]
-    let p2 = match (p0, p1) {
-        (None, None) => (FElem::zero(), FElem::zero()),
-        (None, Some(p1)) => p1,
-        (Some(p0), None) => p0,
-        (Some(p0), Some(p1)) => 'block: {
-            if p0.0 == p1.0 {
-                if p0.1 == p1.1 {
-                    // The division may panic only when `p0.1.double()` has no inverse. This can
-                    // only happen if `p0.1 == 0`, which is impossible as long as the defining
-                    // equation holds since it has no solutions for an `x` coordinate where `y` is
-                    // zero within the prime field space.
-                    let x_squared = p0.0.square();
-                    let s = ((x_squared.double() + &x_squared + BLS12381TwistCurve::a())
-                        / p0.1.double())
-                    .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
-
-                    let x = s.square() - p0.0.double();
-                    let y = s * (p0.0 - &x) - p0.1;
-                    break 'block (x, y);
-                } else if &p0.1 + &p1.1 == FElem::zero() {
-                    break 'block (FElem::zero(), FElem::zero());
-                }
-            }
-
-            // The division may panic only when `t` has no inverse. This can only happen if
-            // `p0.0 == p1.0`, for which the defining equation gives us two possible values for
-            // `p0.1` and `p1.1`, which are 2 and -2. Both cases have already been handled before.
-            let l = ((&p0.1 - p1.1) / (&p0.0 - &p1.0))
-                .map_err(|_e| VMError::Internal(InternalError::DivisionByZero))?;
-
-            let x = l.square() - &p0.0 - p1.0;
-            let y = l * (p0.0 - &x) - p0.1;
-            (x, y)
-        }
-    };
-
-    let p2 = (p2.0.to_raw(), p2.1.to_raw());
-    let x = (
-        p2.0[0].representative().limbs.map(|x| x.to_be_bytes()),
-        p2.0[1].representative().limbs.map(|x| x.to_be_bytes()),
-    );
-    let y = (
-        p2.1[0].representative().limbs.map(|x| x.to_be_bytes()),
-        p2.1[1].representative().limbs.map(|x| x.to_be_bytes()),
-    );
-    let buffer: [[u8; 8]; 32] = [
-        [0; 8], [0; 8], x.0[0], x.0[1], x.0[2], x.0[3], x.0[4], x.0[5], //
-        [0; 8], [0; 8], x.1[0], x.1[1], x.1[2], x.1[3], x.1[4], x.1[5], //
-        [0; 8], [0; 8], y.0[0], y.0[1], y.0[2], y.0[3], y.0[4], y.0[5], //
-        [0; 8], [0; 8], y.1[0], y.1[1], y.1[2], y.1[3], y.1[4], y.1[5], //
-    ];
-    Ok(Bytes::copy_from_slice(buffer.as_flattened()))
+    // Re-pad the 192-byte unpadded result to 256 bytes.
+    // Unpadded: x_0(48) || x_1(48) || y_0(48) || y_1(48) = 192 bytes
+    // Padded output: x_0_padded(64) || x_1_padded(64) || y_0_padded(64) || y_1_padded(64) = 256 bytes
+    let mut output = [0u8; 256];
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    output[144..192].copy_from_slice(&result[96..144]);
+    output[208..256].copy_from_slice(&result[144..192]);
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 pub fn bls12_g2msm(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1683,7 +1257,9 @@ pub fn bls12_g2msm(
     let required_gas = gas_cost::bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, G2_MUL_COST)?;
     increase_precompile_consumed_gas(required_gas, gas_remaining)?;
 
-    let mut result = G2Projective::identity();
+    #[allow(clippy::type_complexity)]
+    let mut pairs: Vec<(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])> =
+        Vec::with_capacity(k);
 
     #[expect(
         clippy::indexing_slicing,
@@ -1691,44 +1267,58 @@ pub fn bls12_g2msm(
         reason = "bounds checked"
     )]
     for i in 0..k {
-        // this operation can't overflow because i < k and  k * BLS12_381_G2_MSM_PAIR_LENGTH = calldata.len()
         let point_offset = i * BLS12_381_G2_MSM_PAIR_LENGTH;
         let scalar_offset = point_offset + 256;
         let pair_end = scalar_offset + 32;
 
-        // slicing is ok because at the max value of i,
-        // (k-1) * BLS12_381_G2_MSM_PAIR_LENGTH + 256 ≤ k * BLS12_381_G2_MSM_PAIR_LENGTH
-        let point = parse_g2_point(&calldata[point_offset..scalar_offset], false)?;
-        let scalar = parse_scalar(&calldata[scalar_offset..pair_end])?;
+        let point_bytes = &calldata[point_offset..scalar_offset];
+        let scalar_bytes = &calldata[scalar_offset..pair_end];
 
-        // skip zero scalars
-        if scalar != Scalar::zero() {
-            let scaled_point: G2Projective = point * scalar;
-            result += scaled_point;
-        }
+        let x0 = parse_bls12_padded_fp(
+            point_bytes[0..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let x1 = parse_bls12_padded_fp(
+            point_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let y0 = parse_bls12_padded_fp(
+            point_bytes[128..192]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let y1 = parse_bls12_padded_fp(
+            point_bytes[192..256]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let scalar: [u8; 32] = scalar_bytes
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+
+        pairs.push(((x0, x1, y0, y1), scalar));
     }
 
-    let result_bytes = if result.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
-    } else {
-        G2Affine::from(result).to_uncompressed()
-    };
+    let result = crypto
+        .bls12_381_g2_msm(&pairs)
+        .map_err(bls12_msm_pairing_crypto_error)?;
 
-    let mut padded_result = Vec::with_capacity(256);
-    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
-    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
-
-    Ok(Bytes::from(padded_result))
+    // Re-pad the 192-byte unpadded result to 256 bytes.
+    let mut output = [0u8; 256];
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    output[144..192].copy_from_slice(&result[96..144]);
+    output[208..256].copy_from_slice(&result[144..192]);
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 pub fn bls12_pairing_check(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.is_empty()
         || !calldata
@@ -1743,39 +1333,68 @@ pub fn bls12_pairing_check(
     let gas_cost = gas_cost::bls12_pairing_check(k)?;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    let mut points: Vec<(G1Affine, G2Prepared)> = Vec::new();
+    #[allow(clippy::type_complexity)]
+    let mut pairs: Vec<(
+        ([u8; 48], [u8; 48]),
+        ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+    )> = Vec::with_capacity(k);
+
     #[expect(
         clippy::indexing_slicing,
         clippy::arithmetic_side_effects,
         reason = "bounds checked"
     )]
     for i in 0..k {
-        let g1_point_offset = i * BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
-        let g2_point_offset = g1_point_offset + 128;
-        let pair_end = g2_point_offset + 256;
+        let g1_offset = i * BLS12_381_PAIRING_CHECK_PAIR_LENGTH;
+        let g2_offset = g1_offset + 128;
+        let pair_end = g2_offset + 256;
 
-        // The check for the subgroup is required
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L194
-        let g1 = G1Affine::from(parse_g1_point(
-            &calldata[g1_point_offset..g2_point_offset],
-            false,
-        )?);
-        let g2 = G2Affine::from(parse_g2_point(&calldata[g2_point_offset..pair_end], false)?);
-        points.push((g1, G2Prepared::from(g2)));
+        let g1_bytes = &calldata[g1_offset..g2_offset];
+        let g2_bytes = &calldata[g2_offset..pair_end];
+
+        let g1x = parse_bls12_padded_fp(
+            g1_bytes[0..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g1y = parse_bls12_padded_fp(
+            g1_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+
+        let g2x0 = parse_bls12_padded_fp(
+            g2_bytes[0..64]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g2x1 = parse_bls12_padded_fp(
+            g2_bytes[64..128]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g2y0 = parse_bls12_padded_fp(
+            g2_bytes[128..192]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+        let g2y1 = parse_bls12_padded_fp(
+            g2_bytes[192..256]
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?,
+        )?;
+
+        pairs.push(((g1x, g1y), (g2x0, g2x1, g2y0, g2y1)));
     }
 
-    // The crate bls12_381 expects a reference to the points
-    let points: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
+    let result = crypto
+        .bls12_381_pairing_check(&pairs)
+        .map_err(bls12_msm_pairing_crypto_error)?;
 
-    // perform the final exponentiation to get the result of the pairing check
-    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/pairings.rs.html#43-48
-    let result: Gt = multi_miller_loop(&points).final_exponentiation();
-
-    // follows this https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L188
-    if result == Gt::identity() {
-        let mut result = vec![0_u8; 31];
-        result.push(1);
-        Ok(Bytes::from(result))
+    if result {
+        let mut out = vec![0_u8; 31];
+        out.push(1);
+        Ok(Bytes::from(out))
     } else {
         Ok(Bytes::copy_from_slice(&[0_u8; 32]))
     }
@@ -1785,6 +1404,7 @@ pub fn bls12_map_fp_to_g1(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1793,37 +1413,30 @@ pub fn bls12_map_fp_to_g1(
     // GAS
     increase_precompile_consumed_gas(BLS12_381_MAP_FP_TO_G1_COST, gas_remaining)?;
 
-    // PADDED_FIELD_ELEMENT_SIZE_IN_BYTES == BLS12_381_FP_VALID_INPUT_LENGTH, so this slice is ok.
+    // Parse the 64-byte padded field element into 48-byte unpadded.
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    let coordinate_bytes = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
-    let fp = Fp::from_bytes(&coordinate_bytes)
-        .into_option()
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
+    let fp = parse_bls12_padded_fp(
+        calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
 
-    // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
-    // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
-    // clear_h: clears the cofactor
-    let point = G1Projective::map_to_curve(&fp).clear_h();
+    let result = crypto
+        .bls12_381_fp_to_g1(&fp)
+        .map_err(crypto_error_to_precompile)?;
 
-    let result_bytes = if point.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&G1_POINT_AT_INFINITY));
-    } else {
-        G1Affine::from(point).to_uncompressed()
-    };
-
-    let mut padded_result = Vec::with_capacity(128);
-    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
-
-    Ok(Bytes::from(padded_result))
+    // Re-pad the 96-byte unpadded G1 result to 128 bytes.
+    let mut output = [0u8; 128];
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    Ok(Bytes::copy_from_slice(&output))
 }
 
-pub fn bls12_map_fp2_tp_g2(
+pub fn bls12_map_fp2_to_g2(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     _fork: Fork,
+    crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != BLS12_381_FP2_VALID_INPUT_LENGTH {
         return Err(PrecompileError::ParsingInputError.into());
@@ -1832,390 +1445,35 @@ pub fn bls12_map_fp2_tp_g2(
     // GAS
     increase_precompile_consumed_gas(BLS12_381_MAP_FP2_TO_G2_COST, gas_remaining)?;
 
-    // slices are ok because of the previous len check.
-    // Parse the input to two Fp and create a Fp2
+    // Parse the two 64-byte padded field elements into 48-byte unpadded.
     #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    let c0 = parse_coordinate(&calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES])?;
-    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-    let c1 = parse_coordinate(
-        &calldata[PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH],
+    let c0 = parse_bls12_padded_fp(
+        calldata[0..PADDED_FIELD_ELEMENT_SIZE_IN_BYTES]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
     )?;
-    let fp_0 = Fp::from_bytes(&c0)
-        .into_option()
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    let fp_1 = Fp::from_bytes(&c1)
-        .into_option()
-        .ok_or(ExceptionalHalt::Precompile(
-            PrecompileError::ParsingInputError,
-        ))?;
-    if fp_0 == Fp::zero() && fp_1 == Fp::zero() {
+    #[expect(clippy::indexing_slicing, reason = "bounds checked")]
+    let c1 = parse_bls12_padded_fp(
+        calldata[PADDED_FIELD_ELEMENT_SIZE_IN_BYTES..BLS12_381_FP2_VALID_INPUT_LENGTH]
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    )?;
+
+    if c0 == [0u8; 48] && c1 == [0u8; 48] {
         return Ok(Bytes::copy_from_slice(&FP2_ZERO_MAPPED_TO_G2));
     }
 
-    let fp2 = Fp2 { c0: fp_0, c1: fp_1 };
+    let result = crypto
+        .bls12_381_fp2_to_g2((c0, c1))
+        .map_err(crypto_error_to_precompile)?;
 
-    // following https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/field_to_curve.md?plain=1#L3-L6, we do:
-    // map_to_curve: map a field element to a another curve, then isogeny is applied to map to the curve bls12_381
-    // clear_h: clears the cofactor
-    let point = G2Projective::map_to_curve(&fp2).clear_h();
-    let result_bytes = if point.is_identity().into() {
-        return Ok(Bytes::copy_from_slice(&G2_POINT_AT_INFINITY));
-    } else {
-        G2Affine::from(point).to_uncompressed()
-    };
-
-    let mut padded_result = Vec::with_capacity(256);
-    // The crate bls12_381 deserialize the G2 point as x_1 || x_0 || y_1 || y_0
-    // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#284-299
-    add_padded_coordinate(&mut padded_result, &result_bytes[48..96]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[0..48]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[144..192]);
-    add_padded_coordinate(&mut padded_result, &result_bytes[96..144]);
-
-    Ok(Bytes::from(padded_result))
-}
-
-/// coordinate raw bytes should have a len of 64
-#[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
-#[inline]
-fn parse_coordinate(coordinate_raw_bytes: &[u8]) -> Result<[u8; 48], VMError> {
-    const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
-
-    if coordinate_raw_bytes.len() != 64 {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    if coordinate_raw_bytes[0..16] != SIXTEEN_ZEROES {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    #[expect(
-        unsafe_code,
-        reason = "The bounds are confirmed to be correct due to the previous checks."
-    )]
-    unsafe {
-        Ok(coordinate_raw_bytes[16..64].try_into().unwrap_unchecked())
-    }
-}
-
-/// point_bytes must have atleast 128 bytes.
-#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
-fn parse_g1_point(point_bytes: &[u8], unchecked: bool) -> Result<G1Projective, VMError> {
-    if point_bytes.len() != 128 {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    let x = parse_coordinate(&point_bytes[0..64])?;
-    let y = parse_coordinate(&point_bytes[64..128])?;
-
-    const ALL_ZERO: [u8; 48] = [0; 48];
-
-    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g1_point: G1Projective = if x == ALL_ZERO && y == ALL_ZERO {
-        G1Projective::identity()
-    } else {
-        let g1_bytes: [u8; 96] = [x, y]
-            .concat()
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
-
-        if unchecked {
-            // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-            // note that there is no subgroup check for the G1 addition precompile
-            let g1_affine = G1Affine::from_uncompressed_unchecked(&g1_bytes)
-                .into_option()
-                .ok_or(ExceptionalHalt::Precompile(
-                    PrecompileError::ParsingInputError,
-                ))?;
-
-            // We still need to check if the point is on the curve
-            if !bool::from(g1_affine.is_on_curve()) {
-                return Err(ExceptionalHalt::Precompile(
-                    PrecompileError::BLS12381G1PointNotInCurve,
-                )
-                .into());
-            }
-
-            G1Projective::from(g1_affine)
-        } else {
-            let g1_affine = G1Affine::from_uncompressed(&g1_bytes)
-                .into_option()
-                .ok_or(PrecompileError::ParsingInputError)?;
-
-            G1Projective::from(g1_affine)
-        }
-    };
-    Ok(g1_point)
-}
-
-/// point_bytes always has atleast 256 bytes
-#[expect(clippy::indexing_slicing, reason = "slice bounds checked at start")]
-fn parse_g2_point(point_bytes: &[u8], unchecked: bool) -> Result<G2Projective, VMError> {
-    if point_bytes.len() != 256 {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    const ALL_ZERO: [u8; 48] = [0; 48];
-
-    let x_0 = parse_coordinate(&point_bytes[0..64])?;
-    let x_1 = parse_coordinate(&point_bytes[64..128])?;
-    let y_0 = parse_coordinate(&point_bytes[128..192])?;
-    let y_1 = parse_coordinate(&point_bytes[192..256])?;
-
-    // if a g1 point decode to (0,0) by convention it is interpreted as a point to infinity
-    let g2_point: G2Projective =
-        if x_0 == ALL_ZERO && x_1 == ALL_ZERO && y_0 == ALL_ZERO && y_1 == ALL_ZERO {
-            G2Projective::identity()
-        } else {
-            // The crate serialize the coordinates in a reverse order
-            // https://docs.rs/bls12_381/0.8.0/src/bls12_381/g2.rs.html#401-464
-            let mut g2_bytes: [u8; 192] = [0; 192];
-            g2_bytes[0..48].copy_from_slice(&x_1);
-            g2_bytes[48..96].copy_from_slice(&x_0);
-            g2_bytes[96..144].copy_from_slice(&y_1);
-            g2_bytes[144..192].copy_from_slice(&y_0);
-
-            if unchecked {
-                // We use unchecked because in the https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2537.md?plain=1#L141
-                // note that there is no subgroup check for the G1 addition precompile
-                let g2_affine = G2Affine::from_uncompressed_unchecked(&g2_bytes)
-                    .into_option()
-                    .ok_or(ExceptionalHalt::Precompile(
-                        PrecompileError::ParsingInputError,
-                    ))?;
-
-                // We still need to check if the point is on the curve
-                if !bool::from(g2_affine.is_on_curve()) {
-                    return Err(ExceptionalHalt::Precompile(
-                        PrecompileError::BLS12381G2PointNotInCurve,
-                    )
-                    .into());
-                }
-
-                G2Projective::from(g2_affine)
-            } else {
-                let g2_affine = G2Affine::from_uncompressed(&g2_bytes)
-                    .into_option()
-                    .ok_or(PrecompileError::ParsingInputError)?;
-
-                G2Projective::from(g2_affine)
-            }
-        };
-    Ok(g2_point)
-}
-
-// coordinate_raw_bytes usually has 48 bytes
-#[inline]
-fn add_padded_coordinate(result: &mut Vec<u8>, coordinate_raw_bytes: &[u8]) {
-    // add the padding to satisfy the convention of encoding
-    // https://eips.ethereum.org/EIPS/eip-2537
-    const SIXTEEN_ZEROES: [u8; 16] = [0; 16];
-    result.reserve(16 + 48);
-    result.extend_from_slice(&SIXTEEN_ZEROES);
-    result.extend_from_slice(coordinate_raw_bytes);
-}
-
-#[allow(clippy::indexing_slicing, reason = "bounds checked at start")]
-#[inline]
-fn parse_scalar(scalar_bytes: &[u8]) -> Result<Scalar, VMError> {
-    if scalar_bytes.len() != 32 {
-        return Err(PrecompileError::ParsingInputError.into());
-    }
-
-    let scalar_le = [
-        u64::from_be_bytes([
-            scalar_bytes[24],
-            scalar_bytes[25],
-            scalar_bytes[26],
-            scalar_bytes[27],
-            scalar_bytes[28],
-            scalar_bytes[29],
-            scalar_bytes[30],
-            scalar_bytes[31],
-        ]),
-        u64::from_be_bytes([
-            scalar_bytes[16],
-            scalar_bytes[17],
-            scalar_bytes[18],
-            scalar_bytes[19],
-            scalar_bytes[20],
-            scalar_bytes[21],
-            scalar_bytes[22],
-            scalar_bytes[23],
-        ]),
-        u64::from_be_bytes([
-            scalar_bytes[8],
-            scalar_bytes[9],
-            scalar_bytes[10],
-            scalar_bytes[11],
-            scalar_bytes[12],
-            scalar_bytes[13],
-            scalar_bytes[14],
-            scalar_bytes[15],
-        ]),
-        u64::from_be_bytes([
-            scalar_bytes[0],
-            scalar_bytes[1],
-            scalar_bytes[2],
-            scalar_bytes[3],
-            scalar_bytes[4],
-            scalar_bytes[5],
-            scalar_bytes[6],
-            scalar_bytes[7],
-        ]),
-    ];
-    Ok(Scalar::from_raw(scalar_le))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
-        let calldata = Bytes::from(hex::decode(calldata).unwrap());
-        let expected_output = Bytes::from(hex::decode(expected_output).unwrap());
-        let output = ecpairing(&calldata, &mut gas, Fork::Cancun).unwrap();
-        assert_eq!(output, expected_output);
-        assert!(gas.is_zero());
-    }
-
-    // ec pairing precompile test data taken from https://github.com/ethereum/go-ethereum/blob/master/core/vm/testdata/precompiles/bn256Pairing.json
-
-    #[test]
-    fn test_ec_pairing_a() {
-        test_ec_pairing(
-            "1c76476f4def4bb94541d57ebba1193381ffa7aa76ada664dd31c16024c43f593034dd2920f673e204fee2811c678745fc819b55d3e9d294e45c9b03a76aef41209dd15ebff5d46c4bd888e51a93cf99a7329636c63514396b4a452003a35bf704bf11ca01483bfa8b34b43561848d28905960114c8ac04049af4b6315a416782bb8324af6cfc93537a2ad1a445cfd0ca2a71acd7ac41fadbf933c2a51be344d120a2a4cf30c1bf9845f20c6fe39e07ea2cce61f0c9bb048165fe5e4de877550111e129f1cf1097710d41c4ac70fcdfa5ba2023c6ff1cbeac322de49d1b6df7c2032c61a830e3c17286de9462bf242fca2883585b93870a73853face6a6bf411198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        );
-    }
-
-    #[test]
-    fn test_ec_pairing_b() {
-        test_ec_pairing(
-            "2eca0c7238bf16e83e7a1e6c5d49540685ff51380f309842a98561558019fc0203d3260361bb8451de5ff5ecd17f010ff22f5c31cdf184e9020b06fa5997db841213d2149b006137fcfb23036606f848d638d576a120ca981b5b1a5f9300b3ee2276cf730cf493cd95d64677bbb75fc42db72513a4c1e387b476d056f80aa75f21ee6226d31426322afcda621464d0611d226783262e21bb3bc86b537e986237096df1f82dff337dd5972e32a8ad43e28a78a96a823ef1cd4debe12b6552ea5f06967a1237ebfeca9aaae0d6d0bab8e28c198c5a339ef8a2407e31cdac516db922160fa257a5fd5b280642ff47b65eca77e626cb685c84fa6d3b6882a283ddd1198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        );
-    }
-    #[test]
-    fn test_ec_pairing_c() {
-        test_ec_pairing(
-            "0f25929bcb43d5a57391564615c9e70a992b10eafa4db109709649cf48c50dd216da2f5cb6be7a0aa72c440c53c9bbdfec6c36c7d515536431b3a865468acbba2e89718ad33c8bed92e210e81d1853435399a271913a6520736a4729cf0d51eb01a9e2ffa2e92599b68e44de5bcf354fa2642bd4f26b259daa6f7ce3ed57aeb314a9a87b789a58af499b314e13c3d65bede56c07ea2d418d6874857b70763713178fb49a2d6cd347dc58973ff49613a20757d0fcc22079f9abd10c3baee245901b9e027bd5cfc2cb5db82d4dc9677ac795ec500ecd47deee3b5da006d6d049b811d7511c78158de484232fc68daf8a45cf217d1c2fae693ff5871e8752d73b21198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_d() {
-        test_ec_pairing(
-            "2f2ea0b3da1e8ef11914acf8b2e1b32d99df51f5f4f206fc6b947eae860eddb6068134ddb33dc888ef446b648d72338684d678d2eb2371c61a50734d78da4b7225f83c8b6ab9de74e7da488ef02645c5a16a6652c3c71a15dc37fe3a5dcb7cb122acdedd6308e3bb230d226d16a105295f523a8a02bfc5e8bd2da135ac4c245d065bbad92e7c4e31bf3757f1fe7362a63fbfee50e7dc68da116e67d600d9bf6806d302580dc0661002994e7cd3a7f224e7ddc27802777486bf80f40e4ca3cfdb186bac5188a98c45e6016873d107f5cd131f3a3e339d0375e58bd6219347b008122ae2b09e539e152ec5364e7e2204b03d11d3caa038bfc7cd499f8176aacbee1f39e4e4afc4bc74790a4a028aff2c3d2538731fb755edefd8cb48d6ea589b5e283f150794b6736f670d6a1033f9b46c6f5204f50813eb85c8dc4b59db1c5d39140d97ee4d2b36d99bc49974d18ecca3e7ad51011956051b464d9e27d46cc25e0764bb98575bd466d32db7b15f582b2d5c452b36aa394b789366e5e3ca5aabd415794ab061441e51d01e94640b7e3084a07e02c78cf3103c542bc5b298669f211b88da1679b0b64a63b7e0e7bfe52aae524f73a55be7fe70c7e9bfc94b4cf0da1213d2149b006137fcfb23036606f848d638d576a120ca981b5b1a5f9300b3ee2276cf730cf493cd95d64677bbb75fc42db72513a4c1e387b476d056f80aa75f21ee6226d31426322afcda621464d0611d226783262e21bb3bc86b537e986237096df1f82dff337dd5972e32a8ad43e28a78a96a823ef1cd4debe12b6552ea5f",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            147000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_e() {
-        test_ec_pairing(
-            "20a754d2071d4d53903e3b31a7e98ad6882d58aec240ef981fdf0a9d22c5926a29c853fcea789887315916bbeb89ca37edb355b4f980c9a12a94f30deeed30211213d2149b006137fcfb23036606f848d638d576a120ca981b5b1a5f9300b3ee2276cf730cf493cd95d64677bbb75fc42db72513a4c1e387b476d056f80aa75f21ee6226d31426322afcda621464d0611d226783262e21bb3bc86b537e986237096df1f82dff337dd5972e32a8ad43e28a78a96a823ef1cd4debe12b6552ea5f1abb4a25eb9379ae96c84fff9f0540abcfc0a0d11aeda02d4f37e4baf74cb0c11073b3ff2cdbb38755f8691ea59e9606696b3ff278acfc098fa8226470d03869217cee0a9ad79a4493b5253e2e4e3a39fc2df38419f230d341f60cb064a0ac290a3d76f140db8418ba512272381446eb73958670f00cf46f1d9e64cba057b53c26f64a8ec70387a13e41430ed3ee4a7db2059cc5fc13c067194bcc0cb49a98552fd72bd9edb657346127da132e5b82ab908f5816c826acb499e22f2412d1a2d70f25929bcb43d5a57391564615c9e70a992b10eafa4db109709649cf48c50dd2198a1f162a73261f112401aa2db79c7dab1533c9935c77290a6ce3b191f2318d198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            147000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_f() {
-        test_ec_pairing(
-            "1c76476f4def4bb94541d57ebba1193381ffa7aa76ada664dd31c16024c43f593034dd2920f673e204fee2811c678745fc819b55d3e9d294e45c9b03a76aef41209dd15ebff5d46c4bd888e51a93cf99a7329636c63514396b4a452003a35bf704bf11ca01483bfa8b34b43561848d28905960114c8ac04049af4b6315a416782bb8324af6cfc93537a2ad1a445cfd0ca2a71acd7ac41fadbf933c2a51be344d120a2a4cf30c1bf9845f20c6fe39e07ea2cce61f0c9bb048165fe5e4de877550111e129f1cf1097710d41c4ac70fcdfa5ba2023c6ff1cbeac322de49d1b6df7c103188585e2364128fe25c70558f1560f4f9350baf3959e603cc91486e110936198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_g() {
-        test_ec_pairing(
-            "",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            45000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_h() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            79000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_i() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_j() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_k() {
-        test_ec_pairing(
-            "105456a333e6d636854f987ea7bb713dfd0ae8371a72aea313ae0c32c0bf10160cf031d41b41557f3e7e3ba0c51bebe5da8e6ecd855ec50fc87efcdeac168bcc0476be093a6d2b4bbf907172049874af11e1b6267606e00804d3ff0037ec57fd3010c68cb50161b7d1d96bb71edfec9880171954e56871abf3d93cc94d745fa114c059d74e5b6c4ec14ae5864ebe23a71781d86c29fb8fb6cce94f70d3de7a2101b33461f39d9e887dbb100f170a2345dde3c07e256d1dfa2b657ba5cd030427000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000021a2c3013d2ea92e13c800cde68ef56a294b883f6ac35d25f587c09b1b3c635f7290158a80cd3d66530f74dc94c94adb88f5cdb481acca997b6e60071f08a115f2f997f3dbd66a7afe07fe7862ce239edba9e05c5afff7f8a1259c9733b2dfbb929d1691530ca701b4a106054688728c9972c8512e9789e9567aae23e302ccd75",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_l() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed275dc4a288d1afb3cbb1ac09187524c7db36395df7be3b99e673b13a075a65ec1d9befcd05a5323e6da4d435f3b617cdb3af83285c2df711ef39c01571827f9d",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            385000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_m() {
-        test_ec_pairing(
-            "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002203e205db4f19b37b60121b83a7333706db86431c6d835849957ed8c3928ad7927dc7234fd11d3e8c36c59277c3e6f149d5cd3cfa9a62aee49f8130962b4b3b9195e8aa5b7827463722b8c153931579d3505566b4edf48d498e185f0509de15204bb53b8977e5f92a0bc372742c4830944a59b4fe6b1c0466e2a6dad122b5d2e030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd31a76dae6d3272396d0cbe61fced2bc532edac647851e3ac53ce1cc9c7e645a83198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            385000,
-        )
-    }
-
-    #[test]
-    fn test_ec_pairing_n() {
-        test_ec_pairing(
-            "105456a333e6d636854f987ea7bb713dfd0ae8371a72aea313ae0c32c0bf10160cf031d41b41557f3e7e3ba0c51bebe5da8e6ecd855ec50fc87efcdeac168bcc0476be093a6d2b4bbf907172049874af11e1b6267606e00804d3ff0037ec57fd3010c68cb50161b7d1d96bb71edfec9880171954e56871abf3d93cc94d745fa114c059d74e5b6c4ec14ae5864ebe23a71781d86c29fb8fb6cce94f70d3de7a2101b33461f39d9e887dbb100f170a2345dde3c07e256d1dfa2b657ba5cd030427000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000021a2c3013d2ea92e13c800cde68ef56a294b883f6ac35d25f587c09b1b3c635f7290158a80cd3d66530f74dc94c94adb88f5cdb481acca997b6e60071f08a115f2f997f3dbd66a7afe07fe7862ce239edba9e05c5afff7f8a1259c9733b2dfbb929d1691530ca701b4a106054688728c9972c8512e9789e9567aae23e302ccd75",
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            113000,
-        )
-    }
-
-    #[test]
-    // Calldata taken from failed transaction https://sepolia.etherscan.io/tx/0x4355d49be46e61a53c71f45a128ebefb52cb38df08ed55833c2c162d26396819
-    fn test_ec_pairing_coordinate_out_of_bounds() {
-        let calldata = Bytes::from(hex::decode("30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd4830644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd49198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa").unwrap());
-        let mut gas_remaining = u64::MAX;
-        assert_eq!(
-            ecpairing(&calldata, &mut gas_remaining, Fork::Cancun),
-            Err(PrecompileError::CoordinateExceedsFieldModulus.into())
-        );
-    }
+    // Re-pad the 192-byte unpadded G2 result to 256 bytes.
+    // Unpadded: x_0(48) || x_1(48) || y_0(48) || y_1(48) = 192 bytes
+    // Padded output: x_0_padded(64) || x_1_padded(64) || y_0_padded(64) || y_1_padded(64) = 256 bytes
+    let mut output = [0u8; 256];
+    output[16..64].copy_from_slice(&result[0..48]);
+    output[80..128].copy_from_slice(&result[48..96]);
+    output[144..192].copy_from_slice(&result[96..144]);
+    output[208..256].copy_from_slice(&result[144..192]);
+    Ok(Bytes::copy_from_slice(&output))
 }

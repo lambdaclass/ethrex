@@ -4,7 +4,7 @@ use crate::{
     eth::block,
     rpc::{RpcApiContext, RpcHandler},
     types::{
-        block_identifier::BlockIdentifier,
+        block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         transaction::{RpcTransaction, SendRawTransactionRequest},
     },
     utils::RpcErr,
@@ -30,7 +30,7 @@ pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contr
 
 pub struct CallRequest {
     transaction: GenericTransaction,
-    block: Option<BlockIdentifier>,
+    block: Option<BlockIdentifierOrHash>,
 }
 
 pub struct GetTransactionByBlockNumberAndIndexRequest {
@@ -90,7 +90,7 @@ impl RpcHandler for CallRequest {
         }
         let block = match params.get(1) {
             // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
+            Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
             None => None,
         };
         Ok(CallRequest {
@@ -99,7 +99,10 @@ impl RpcHandler for CallRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block = self.block.clone().unwrap_or_default();
+        let block = self
+            .block
+            .clone()
+            .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested call on block: {}", block);
         let header = match block.resolve_block_header(&context.storage).await? {
             Some(header) => header,

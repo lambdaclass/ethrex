@@ -34,7 +34,7 @@ Off-chain:
    For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
    This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.
 3. Privileged transactions sent by the L2 bridge don't deduct from the bridge's balance their value.
-   In practice, this means ETH equal to the transactions `value` is minted.
+   In practice, this means ETH equal to the transaction's `value` is minted.
 
 On L2:
 
@@ -108,7 +108,7 @@ Off-chain:
 
 1. On each L2 node, the L1 watcher processes `PrivilegedTxSent` events, each adding a `PrivilegedL2Transaction` to the L2 mempool.
 2. The privileged transaction is an [EIP-2718 typed transaction](https://eips.ethereum.org/EIPS/eip-2718), somewhat similar to an [EIP-1559 transaction](https://eips.ethereum.org/EIPS/eip-1559), but with some changes.
-   For this case, the important differences is that the sender of the transaction is set by our L1 bridge.
+   For this case, the important difference is that the sender of the transaction is set by our L1 bridge.
    This enables our L1 bridge to "forge" transactions from any sender, even arbitrary addresses like the L2 bridge.
 
 On L2:
@@ -198,7 +198,7 @@ sequenceDiagram
     CommonBridge -->> CommonBridgeL2: Notifies deposit
     CommonBridgeL2 ->> L2Eve: Sends 1 Bar token
 
-    Note over L1Eve,L2Eve: Eve does a malicious withdawal of Alice's funds
+    Note over L1Eve,L2Eve: Eve does a malicious withdrawal of Alice's funds
     L2Eve ->> CommonBridgeL2: Withdraws 101 Bar tokens into Foo
     CommonBridgeL2 -->> CommonBridge: Notifies withdrawal
     CommonBridge ->> L1Eve: Sends 101 Foo tokens
@@ -242,12 +242,12 @@ keccak256(
 
 ## Address Aliasing
 
-To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing [like Optimism](https://docs.optimism.io/stack/differences#address-aliasing) (albeit with we a different constant, to prevent confusion).
+To prevent attacks where a L1 impersonates an L2 contract, we implement Address Aliasing [like Optimism](https://docs.optimism.io/stack/differences#address-aliasing) (albeit with a different constant, to prevent confusion).
 
 The attack prevented would've looked like this:
 - An L2 contract gets deployed at address A
 - Someone malicious deploys a contract at the same address (through deterministic deployments, etc)
-- The malicious contract sends a privileged transaction, which can steal A's resourced on the L2
+- The malicious contract sends a privileged transaction, which can steal A's resources on the L2
 
 By modifying the address of L1 contracts by adding a constant, we prevent this attack since both won't have the same address.
 
@@ -279,7 +279,7 @@ sequenceDiagram
     OnChainProposer ->> Sequencer: OK
     Sequencer ->> OnChainProposer: Sends batch with remaining expired privileged transactions, along with other transactions
     OnChainProposer ->> Sequencer: OK
-    Note over Sequencer: Sequencer is now catched up
+    Note over Sequencer: Sequencer is now caught up
     Sequencer ->> OnChainProposer: Sends batch as usual
     OnChainProposer ->> Sequencer: OK
 ```

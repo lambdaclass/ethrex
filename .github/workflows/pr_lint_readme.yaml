@@ -1,6 +1,7 @@
 name: Check CLI Help Consistency
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "cmd/ethrex/**"

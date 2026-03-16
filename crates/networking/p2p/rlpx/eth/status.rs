@@ -1,5 +1,6 @@
 pub use super::eth68::status::StatusMessage68;
 pub use super::eth69::status::StatusMessage69;
+pub use super::eth70::status::StatusMessage70;
 use ethrex_common::types::{BlockHash, ForkId};
 
 pub trait StatusMessage {

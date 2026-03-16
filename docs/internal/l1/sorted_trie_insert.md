@@ -58,7 +58,7 @@ In our example, the current and next value share 0x17, while the parent only sha
 
 In this scenario, we know the leaf we need to compute from the current value
 so we write that. Furthermore, we know that we need a new branch at 0x17,
-so we create it and insert the leaf we just computed and insert into the branch.
+so we create it and insert the leaf we just computed and insert it into the branch.
 The current parent is stored in the "parent stack", and the new branch becomes the 
 current parent.
 

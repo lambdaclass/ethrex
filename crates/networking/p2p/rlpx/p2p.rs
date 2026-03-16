@@ -14,7 +14,11 @@ use ethrex_rlp::{
 use secp256k1::PublicKey;
 use serde::Serialize;
 
-pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 2] = [Capability::eth(68), Capability::eth(69)];
+pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 3] = [
+    Capability::eth(68),
+    Capability::eth(69),
+    Capability::eth(70),
+];
 pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 
 /// The version of the base P2P protocol we support.
@@ -379,65 +383,5 @@ impl RLPxMessage for PongMessage {
         assert_eq!(payload, empty, "Pong payload should be &[]");
         assert_eq!(remaining, empty, "Pong remaining should be &[]");
         Ok(Self {})
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-
-    use crate::rlpx::p2p::Capability;
-
-    #[test]
-    fn test_encode_capability() {
-        let capability = Capability::eth(8);
-        let encoded = capability.encode_to_vec();
-
-        assert_eq!(&encoded, &[197_u8, 131, b'e', b't', b'h', 8]);
-    }
-
-    #[test]
-    fn test_decode_capability() {
-        let encoded_bytes = &[197_u8, 131, b'e', b't', b'h', 8];
-        let decoded = Capability::decode(encoded_bytes).unwrap();
-
-        assert_eq!(decoded, Capability::eth(8));
-    }
-
-    #[test]
-    fn test_protocol() {
-        let capability = Capability::eth(68);
-
-        assert_eq!(capability.protocol(), "eth");
-    }
-
-    #[test]
-    fn test_disconnect_reason_all() {
-        use crate::rlpx::p2p::DisconnectReason;
-
-        let all_reasons = DisconnectReason::all();
-
-        assert_eq!(all_reasons.len(), 14);
-
-        // This exhaustive match ensures we check all variants exist in all()
-        // If a new variant is added to the enum, this match will fail to compile
-        for reason in &all_reasons {
-            match reason {
-                DisconnectReason::DisconnectRequested
-                | DisconnectReason::NetworkError
-                | DisconnectReason::ProtocolError
-                | DisconnectReason::UselessPeer
-                | DisconnectReason::TooManyPeers
-                | DisconnectReason::AlreadyConnected
-                | DisconnectReason::IncompatibleVersion
-                | DisconnectReason::InvalidIdentity
-                | DisconnectReason::ClientQuitting
-                | DisconnectReason::UnexpectedIdentity
-                | DisconnectReason::SelfIdentity
-                | DisconnectReason::PingTimeout
-                | DisconnectReason::SubprotocolError
-                | DisconnectReason::InvalidReason => {}
-            }
-        }
     }
 }

@@ -191,7 +191,7 @@ impl NodeRef {
     ///
     /// This is used when mutating a node in place, in which case the memoized hash
     /// is not valid anymore.
-    pub(crate) fn clear_hash(&mut self) {
+    pub fn clear_hash(&mut self) {
         if let NodeRef::Node(_, hash) = self {
             hash.take();
         }

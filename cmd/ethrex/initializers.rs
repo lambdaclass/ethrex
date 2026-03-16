@@ -1,8 +1,8 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, init_datadir, parse_socket_addr,
-        read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
+        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -14,15 +14,16 @@ use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_process
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
-    discv4::peer_table::PeerTable,
+    DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
+    peer_table::PeerTable,
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError};
+use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -157,7 +158,7 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
 
 /// Opens a pre-existing Store or creates a new one
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
-    if datadir.ends_with("memory") {
+    if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
@@ -176,6 +177,7 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
 #[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
+    datadir: &Path,
     peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -185,7 +187,9 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    init_datadir(&opts.datadir);
+    if !is_memory_datadir(datadir) {
+        init_datadir(datadir);
+    }
 
     let syncmode = if opts.dev {
         &SyncMode::Full
@@ -200,7 +204,7 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        opts.datadir.clone(),
+        datadir.to_path_buf(),
     )
     .await;
 
@@ -250,7 +254,12 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, datadir);
 
-    ethrex_p2p::start_network(context, bootnodes)
+    let discovery_config = DiscoveryConfig {
+        discv4_enabled: opts.discv4_enabled,
+        discv5_enabled: opts.discv5_enabled,
+    };
+
+    ethrex_p2p::start_network(context, bootnodes, discovery_config)
         .await
         .expect("Network starts");
 
@@ -321,6 +330,10 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {
+    if is_memory_datadir(datadir) {
+        return SecretKey::new(&mut OsRng);
+    }
+
     // Get the signer from the default directory, create one if the key file is not present.
     let key_path = datadir.join("node.key");
     match fs::read(key_path.clone()) {
@@ -425,14 +438,14 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf = if opts.dev && cfg!(feature = "dev") {
-        &opts.datadir.join("dev")
-    } else {
-        &opts.datadir
-    };
-    init_datadir(datadir);
-
     let network = get_network(&opts);
+    let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
+
+    migrate_datadir_if_needed(&opts.datadir, &datadir, &network, opts.no_migrate);
+
+    if !is_memory_datadir(&datadir) {
+        init_datadir(&datadir);
+    }
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
@@ -441,7 +454,7 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -465,18 +478,20 @@ pub async fn init_l1(
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
             r#type: BlockchainType::L1,
+            max_blobs_per_block: opts.max_blobs_per_block,
+            precompute_witnesses: opts.precompute_witnesses,
         },
     );
 
     regenerate_head_state(&store, &blockchain).await?;
 
-    let signer = get_signer(datadir);
+    let signer = get_signer(&datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers);
+    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -490,7 +505,7 @@ pub async fn init_l1(
         peer_table.clone(),
         store.clone(),
         blockchain.clone(),
-        get_client_version(),
+        get_client_version_string(),
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,
@@ -503,6 +518,7 @@ pub async fn init_l1(
 
     init_rpc_api(
         &opts,
+        &datadir,
         peer_handler.clone(),
         local_p2p_node,
         local_node_record.clone(),
@@ -525,7 +541,7 @@ pub async fn init_l1(
         init_network(
             &opts,
             &network,
-            datadir,
+            &datadir,
             peer_handler.clone(),
             tracker.clone(),
             blockchain.clone(),
@@ -542,6 +558,128 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+/// Migrates data from a pre-suffix datadir layout to the new network-specific
+/// subdirectory. Migration happens automatically unless `--no-migrate` is set.
+///
+/// Migration is performed when ALL of the following hold:
+/// - `base_datadir != network_datadir` (a suffix was applied)
+/// - The network-specific dir does not already contain a valid DB
+/// - The base dir contains a valid DB with a matching chain ID
+/// - No other network subdirectories exist in the base dir
+/// - `no_migrate` is `false`
+pub fn migrate_datadir_if_needed(
+    base_datadir: &Path,
+    network_datadir: &Path,
+    network: &Network,
+    no_migrate: bool,
+) {
+    // No suffix applied — nothing to migrate.
+    if base_datadir == network_datadir {
+        return;
+    }
+
+    // Network dir already has data — nothing to do.
+    if has_valid_db(network_datadir) {
+        return;
+    }
+
+    // Base dir has no DB — nothing to migrate from.
+    if !has_valid_db(base_datadir) {
+        return;
+    }
+
+    // Check that no network subdirectories already exist (avoids partial migration).
+    for suffix in Network::all_datadir_suffixes() {
+        let subdir = base_datadir.join(suffix);
+        if subdir.exists() && subdir.is_dir() {
+            info!("Found existing network subdirectory {subdir:?}, skipping migration.");
+            return;
+        }
+    }
+
+    // Verify chain IDs match.
+    let Some(db_chain_id) = read_chain_id_from_db(base_datadir) else {
+        return;
+    };
+    let expected_chain_id = match network.get_genesis() {
+        Ok(genesis) => genesis.config.chain_id,
+        Err(_) => return,
+    };
+    if db_chain_id != expected_chain_id {
+        warn!(
+            "Existing database at {base_datadir:?} has chain ID {db_chain_id}, \
+             expected {expected_chain_id} for {network}. Skipping migration."
+        );
+        return;
+    }
+
+    if no_migrate {
+        info!(
+            "Existing database at {base_datadir:?} can be migrated to {network_datadir:?}. \
+             Skipping because --no-migrate is set."
+        );
+        return;
+    }
+
+    // All checks passed — migrate automatically.
+    info!("Migrating existing database from {base_datadir:?} to {network_datadir:?}.");
+    {
+        if let Err(e) = std::fs::create_dir_all(network_datadir) {
+            warn!("Failed to create {network_datadir:?}: {e}");
+            return;
+        }
+        // Collect entries to move.
+        let entries: Vec<_> = match std::fs::read_dir(base_datadir) {
+            Ok(entries) => entries.filter_map(|e| e.ok()).collect(),
+            Err(e) => {
+                warn!("Failed to read {base_datadir:?}: {e}");
+                return;
+            }
+        };
+        let network_dir_name = network_datadir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Build the list of (src, dest) pairs, skipping the network subdir itself.
+        let moves: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.file_name().to_string_lossy() != network_dir_name)
+            .map(|entry| (entry.path(), network_datadir.join(entry.file_name())))
+            .collect();
+
+        // Dry-run: verify no destination already exists.
+        for (src, dest) in &moves {
+            if dest.exists() {
+                warn!(
+                    "Destination {dest:?} already exists, aborting migration. \
+                     Source {src:?} is untouched."
+                );
+                return;
+            }
+        }
+
+        // Perform the actual moves.
+        for (src, dest) in &moves {
+            if let Err(e) = std::fs::rename(src, dest) {
+                // Attempt to rollback already-moved files.
+                warn!("Failed to move {src:?} to {dest:?}: {e}. Rolling back.");
+                for (orig_src, orig_dest) in &moves {
+                    if orig_dest.exists()
+                        && !orig_src.exists()
+                        && let Err(re) = std::fs::rename(orig_dest, orig_src)
+                    {
+                        warn!("Rollback failed for {orig_dest:?} -> {orig_src:?}: {re}");
+                    }
+                }
+                warn!("Migration aborted. Database remains at {base_datadir:?}.");
+                return;
+            }
+        }
+        info!("Database migrated to {network_datadir:?}.");
+    }
 }
 
 /// Regenerates the state up to the head block by re-applying blocks from the
@@ -608,7 +746,7 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block)?;
+        blockchain.add_block_pipeline(block, None)?;
     }
 
     info!("Finished regenerating state");

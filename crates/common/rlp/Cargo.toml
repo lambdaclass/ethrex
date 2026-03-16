@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 tinyvec = "1.6.0"
@@ -14,8 +15,6 @@ lazy_static.workspace = true
 ethereum-types.workspace = true
 snap.workspace = true
 
-[dev-dependencies]
-hex-literal.workspace = true
 [lib]
 path = "./rlp.rs"
 

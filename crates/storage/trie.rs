@@ -1,18 +1,22 @@
 use crate::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
-use crate::api::{StorageBackend, StorageLockedView};
+use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
-/// StorageWriteBatch implementation for the TrieDB trait
-/// Wraps a transaction to allow multiple trie operations on the same transaction
+/// TrieDB implementation that holds a pre-acquired read view for the entire
+/// trie traversal, avoiding per-node-lookup allocation and lock acquisition.
 pub struct BackendTrieDB {
-    /// Reference to the storage backend
+    /// Reference to the storage backend (used only for writes)
     db: Arc<dyn StorageBackend>,
+    /// Pre-acquired read view held for the lifetime of this struct.
+    /// Using Arc allows sharing a single read view across multiple BackendTrieDB
+    /// instances (e.g., state trie + storage trie in a single query).
+    read_view: Arc<dyn StorageReadView>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
     nodes_table: &'static str,
@@ -28,9 +32,20 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
+        let read_view = db.begin_read()?;
+        Self::new_for_accounts_with_view(db, read_view, last_written)
+    }
+
+    /// Create a new BackendTrieDB for the account trie with a shared read view
+    pub fn new_for_accounts_with_view(
+        db: Arc<dyn StorageBackend>,
+        read_view: Arc<dyn StorageReadView>,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
+            read_view,
             last_computed_flatkeyvalue,
             nodes_table: ACCOUNT_TRIE_NODES,
             fkv_table: ACCOUNT_FLATKEYVALUE,
@@ -43,9 +58,20 @@ impl BackendTrieDB {
         db: Arc<dyn StorageBackend>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
+        let read_view = db.begin_read()?;
+        Self::new_for_storages_with_view(db, read_view, last_written)
+    }
+
+    /// Create a new BackendTrieDB for the storage tries with a shared read view
+    pub fn new_for_storages_with_view(
+        db: Arc<dyn StorageBackend>,
+        read_view: Arc<dyn StorageReadView>,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
+            read_view,
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
@@ -59,9 +85,21 @@ impl BackendTrieDB {
         address_prefix: H256,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
+        let read_view = db.begin_read()?;
+        Self::new_for_account_storage_with_view(db, read_view, address_prefix, last_written)
+    }
+
+    /// Create a new BackendTrieDB for a specific storage trie with a shared read view
+    pub fn new_for_account_storage_with_view(
+        db: Arc<dyn StorageBackend>,
+        read_view: Arc<dyn StorageReadView>,
+        address_prefix: H256,
+        last_written: Vec<u8>,
+    ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
         Ok(Self {
             db,
+            read_view,
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
@@ -93,10 +131,8 @@ impl TrieDB for BackendTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
-        let tx = self.db.begin_read().map_err(|e| {
-            TrieError::DbError(anyhow::anyhow!("Failed to begin read transaction: {}", e))
-        })?;
-        tx.get(table, prefixed_key.as_ref())
+        self.read_view
+            .get(table, prefixed_key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
@@ -173,84 +209,5 @@ impl TrieDB for BackendTrieDBLocked {
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
         Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::in_memory::InMemoryBackend;
-    use ethrex_trie::Nibbles;
-
-    #[test]
-    fn test_trie_db_basic_operations() {
-        let backend = Arc::new(InMemoryBackend::open().unwrap());
-
-        // Create TrieDB
-        let trie_db = BackendTrieDB::new_for_accounts(backend, vec![]).unwrap();
-
-        // Test data
-        let node_hash = Nibbles::from_hex(vec![1]);
-        let node_data = vec![1, 2, 3, 4, 5];
-
-        // Test put_batch
-        trie_db
-            .put_batch(vec![(node_hash.clone(), node_data.clone())])
-            .unwrap();
-
-        // Test get
-        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
-        assert_eq!(retrieved_data, node_data);
-
-        // Test get nonexistent
-        let nonexistent_hash = Nibbles::from_hex(vec![2]);
-        assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
-    }
-
-    #[test]
-    fn test_trie_db_with_address_prefix() {
-        let backend = Arc::new(InMemoryBackend::open().unwrap());
-
-        // Create TrieDB with address prefix
-        let address = H256::from([0xaa; 32]);
-        let trie_db = BackendTrieDB::new_for_account_storage(backend, address, vec![]).unwrap();
-
-        // Test data
-        let node_hash = Nibbles::from_hex(vec![1]);
-        let node_data = vec![1, 2, 3, 4, 5];
-
-        // Test put_batch
-        trie_db
-            .put_batch(vec![(node_hash.clone(), node_data.clone())])
-            .unwrap();
-
-        // Test get
-        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
-        assert_eq!(retrieved_data, node_data);
-    }
-
-    #[test]
-    fn test_trie_db_batch_operations() {
-        let backend = Arc::new(InMemoryBackend::open().unwrap());
-
-        // Create TrieDB
-        let trie_db = BackendTrieDB::new_for_accounts(backend, vec![]).unwrap();
-
-        // Test data
-        // NOTE: we don't use the same paths to avoid overwriting in the batch
-        let batch_data = vec![
-            (Nibbles::from_hex(vec![1]), vec![1, 2, 3]),
-            (Nibbles::from_hex(vec![1, 2]), vec![4, 5, 6]),
-            (Nibbles::from_hex(vec![1, 2, 3]), vec![7, 8, 9]),
-        ];
-
-        // Test batch put
-        trie_db.put_batch(batch_data.clone()).unwrap();
-
-        // Test batch get
-        for (node_hash, expected_data) in batch_data {
-            let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
-            assert_eq!(retrieved_data, expected_data);
-        }
     }
 }

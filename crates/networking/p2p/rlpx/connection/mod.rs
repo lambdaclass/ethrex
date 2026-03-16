@@ -1,3 +1,3 @@
 mod codec;
-mod handshake;
+pub mod handshake;
 pub mod server;
