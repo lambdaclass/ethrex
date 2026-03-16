@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { storeApi, bookmarkApi, authApi } from "@/lib/api";
 import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
@@ -16,7 +16,9 @@ export default function ShowroomPage() {
   const [search, setSearch] = useState("");
   const [onlineMap, setOnlineMap] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState<Filter>("all");
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
+  const tagDropdownRef = useRef<HTMLDivElement>(null);
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [stackFilter, setStackFilter] = useState<string>("");
@@ -100,10 +102,30 @@ export default function ShowroomPage() {
     }
   };
 
+  // Close tag dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+        setTagDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const allTags = useMemo(() =>
     Array.from(new Set(appchains.flatMap((c) => c.hashtags || []))).sort(),
     [appchains]
   );
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -120,8 +142,8 @@ export default function ShowroomPage() {
     if (filter === "bookmarked") {
       list = list.filter((c) => bookmarkedIds.has(c.id));
     }
-    if (selectedTag) {
-      list = list.filter((c) => c.hashtags?.includes(selectedTag));
+    if (selectedTags.size > 0) {
+      list = list.filter((c) => c.hashtags?.some((t) => selectedTags.has(t)));
     }
 
     const dir = sortDir === "asc" ? 1 : -1;
@@ -150,7 +172,7 @@ export default function ShowroomPage() {
     });
 
     return list;
-  }, [appchains, filter, selectedTag, bookmarkedIds, sortKey, sortDir]);
+  }, [appchains, filter, selectedTags, bookmarkedIds, sortKey, sortDir]);
 
   const SortHeader = ({ label, sortKeyVal, className }: { label: string; sortKeyVal: SortKey; className?: string }) => (
     <th
@@ -207,8 +229,28 @@ export default function ShowroomPage() {
         </div>
       )}
 
-      {/* Search + filters */}
-      <form onSubmit={handleSearch} className="flex gap-2 mb-4 items-center">
+      {/* Search + filters (single row) */}
+      <form onSubmit={handleSearch} className="flex gap-2 mb-6 items-center flex-wrap">
+        <button
+          type="button"
+          onClick={() => setFilter("all")}
+          className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            filter === "all" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          All
+        </button>
+        {isLoggedIn && (
+          <button
+            type="button"
+            onClick={() => setFilter("bookmarked")}
+            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              filter === "bookmarked" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            Bookmarked
+          </button>
+        )}
         <select
           value={stackFilter}
           onChange={(e) => setStackFilter(e.target.value)}
@@ -229,12 +271,58 @@ export default function ShowroomPage() {
             <option key={id} value={id}>{name}</option>
           ))}
         </select>
+        {/* Hashtag multi-select dropdown */}
+        {allTags.length > 0 && (
+          <div className="relative" ref={tagDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setTagDropdownOpen(!tagDropdownOpen)}
+              className={`px-3 py-2 border rounded-lg text-sm flex items-center gap-1.5 transition-colors ${
+                selectedTags.size > 0
+                  ? "border-purple-400 bg-purple-50 text-purple-700"
+                  : "border-gray-300 text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              Tags{selectedTags.size > 0 && ` (${selectedTags.size})`}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={`transition-transform ${tagDropdownOpen ? "rotate-180" : ""}`}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {tagDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 min-w-[180px] max-h-[240px] overflow-y-auto py-1">
+                {selectedTags.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTags(new Set())}
+                    className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 transition-colors"
+                  >
+                    Clear all
+                  </button>
+                )}
+                {allTags.map((tag) => (
+                  <label
+                    key={tag}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedTags.has(tag)}
+                      onChange={() => toggleTag(tag)}
+                      className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-gray-700">#{tag}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search appchains..."
-          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="flex-1 min-w-[150px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
         <button
           type="submit"
@@ -243,50 +331,6 @@ export default function ShowroomPage() {
           Search
         </button>
       </form>
-
-      {/* Filter tabs + hashtags */}
-      <div className="flex items-center gap-4 mb-6 flex-wrap">
-        <div className="flex gap-1.5 flex-wrap">
-          <button
-            onClick={() => setFilter("all")}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              filter === "all" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            All
-          </button>
-          {isLoggedIn && (
-            <button
-              onClick={() => setFilter("bookmarked")}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                filter === "bookmarked" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              &#9733; Bookmarked
-            </button>
-          )}
-        </div>
-        {allTags.length > 0 && (
-          <>
-            <span className="text-gray-300">|</span>
-            <div className="flex gap-1.5 flex-wrap">
-              {allTags.map((tag) => (
-                <button
-                  key={tag}
-                  onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                    selectedTag === tag
-                      ? "bg-purple-600 text-white"
-                      : "bg-purple-50 text-purple-700 hover:bg-purple-100"
-                  }`}
-                >
-                  #{tag}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
 
       {loading ? (
         <div className="flex justify-center py-16">
