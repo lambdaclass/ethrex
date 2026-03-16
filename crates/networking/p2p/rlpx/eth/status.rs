@@ -33,8 +33,8 @@ pub struct StatusDataPost68 {
     pub genesis: BlockHash,
     pub fork_id: ForkId,
     pub earliest_block: u64,
-    pub lastest_block: u64,
-    pub lastest_block_hash: BlockHash,
+    pub latest_block: u64,
+    pub latest_block_hash: BlockHash,
 }
 
 impl StatusDataPost68 {
@@ -45,21 +45,21 @@ impl StatusDataPost68 {
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
-        let lastest_block = storage.get_latest_block_number().await?;
+        let latest_block = storage.get_latest_block_number().await?;
         let block_header =
             storage
-                .get_block_header(lastest_block)?
+                .get_block_header(latest_block)?
                 .ok_or(PeerConnectionError::NotFound(format!(
-                    "Block {lastest_block}"
+                    "Block {latest_block}"
                 )))?;
 
         let genesis = genesis_header.hash();
-        let lastest_block_hash = block_header.hash();
+        let latest_block_hash = block_header.hash();
         let fork_id = ForkId::new(
             chain_config,
             genesis_header,
             block_header.timestamp,
-            lastest_block,
+            latest_block,
         );
 
         Ok(Self {
@@ -68,8 +68,8 @@ impl StatusDataPost68 {
             genesis,
             fork_id,
             earliest_block: 0,
-            lastest_block,
-            lastest_block_hash,
+            latest_block,
+            latest_block_hash,
         })
     }
 
@@ -81,8 +81,8 @@ impl StatusDataPost68 {
             .encode_field(&self.genesis)
             .encode_field(&self.fork_id)
             .encode_field(&self.earliest_block)
-            .encode_field(&self.lastest_block)
-            .encode_field(&self.lastest_block_hash)
+            .encode_field(&self.latest_block)
+            .encode_field(&self.latest_block_hash)
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
@@ -106,8 +106,8 @@ impl StatusDataPost68 {
         let (genesis, decoder): (BlockHash, _) = decoder.decode_field("genesis")?;
         let (fork_id, decoder): (ForkId, _) = decoder.decode_field("forkId")?;
         let (earliest_block, decoder): (u64, _) = decoder.decode_field("earliestBlock")?;
-        let (lastest_block, decoder): (u64, _) = decoder.decode_field("lastestBlock")?;
-        let (lastest_block_hash, decoder): (BlockHash, _) = decoder.decode_field("latestHash")?;
+        let (latest_block, decoder): (u64, _) = decoder.decode_field("latestBlock")?;
+        let (latest_block_hash, decoder): (BlockHash, _) = decoder.decode_field("latestHash")?;
         let _padding = decoder.finish_unchecked();
 
         Ok(Self {
@@ -116,8 +116,8 @@ impl StatusDataPost68 {
             genesis,
             fork_id,
             earliest_block,
-            lastest_block,
-            lastest_block_hash,
+            latest_block,
+            latest_block_hash,
         })
     }
 }
