@@ -689,7 +689,7 @@ async fn test_simulate_two_blocks_trace_transfers() {
 // -- ethSimulate-simple-send-from-contract: contract address as sender
 // Per spec, sender-is-EOA check should be skipped in simulate mode.
 #[tokio::test]
-#[ignore = "bug: DefaultHook rejects contract sender in simulate mode"]
+
 async fn test_simulate_send_from_contract() {
     let ctx = test_context().await;
     let result = simulate(
@@ -722,7 +722,7 @@ async fn test_simulate_send_from_contract() {
 // -- ethSimulate-contract-calls-itself: contract calling itself
 // Same root cause — sender has code from override, DefaultHook rejects.
 #[tokio::test]
-#[ignore = "bug: DefaultHook rejects contract sender in simulate mode"]
+
 async fn test_simulate_contract_calls_itself() {
     let ctx = test_context().await;
     let result = simulate(

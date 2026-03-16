@@ -202,6 +202,7 @@ impl TestBuilder {
             is_privileged: false,
             fee_token: None,
             disable_balance_check: false,
+            disable_sender_eoa_check: false,
         };
 
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction {

@@ -44,6 +44,9 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip sender-is-EOA validation. Used by eth_simulateV1 which
+    /// allows transactions from contract addresses per spec.
+    pub disable_sender_eoa_check: bool,
 }
 
 /// This struct holds special configuration variables specific to the

@@ -1382,6 +1382,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            disable_sender_eoa_check: false,
         };
 
         Ok(env)
@@ -1446,6 +1447,7 @@ impl LEVM {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+        env.disable_sender_eoa_check = true; // allow contract senders (eth_simulateV1)
 
         adjust_disabled_base_fee(&mut env);
 
@@ -1465,8 +1467,10 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<ExecutionResult, EvmError> {
-        let env = env_from_generic(tx, block_header, db, vm_type)?;
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
         // Do NOT disable block gas limit or adjust base fee.
+        // But DO skip sender-is-EOA check (per eth_simulateV1 spec).
+        env.disable_sender_eoa_check = true;
         let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
 
         vm.execute()
@@ -1943,6 +1947,7 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        disable_sender_eoa_check: false,
     })
 }
 
