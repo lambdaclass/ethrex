@@ -7,30 +7,30 @@ pragma solidity =0.8.31;
 /// from L1. It both sends messages from L1 to L2 and receives messages from L2.
 interface ICommonBridge {
     // Initialization errors
-    error OnChainProposerIsZeroAddress();
+    error OnChainProposerIsZeroAddress(); // 0xe5758136
 
     // Deposit errors
-    error DepositAmountIsZero();
+    error DepositAmountIsZero(); // 0x0ddbd934
 
     // Versioned hash errors
-    error NumberIsZero();
-    error ExceedsPendingTxHashesLength();
-    error ExceedsPendingL2MessagesLength();
+    error NumberIsZero(); // 0xde5d32ac
+    error ExceedsPendingTxHashesLength(); // 0xd7782ce0
+    error ExceedsPendingL2MessagesLength(); // 0x74b0ced0
 
     // Withdrawal errors
-    error WithdrawalLogsAlreadyPublished();
-    error InsufficientDeposits();
-    error WithdrawalBatchNotCommitted();
-    error WithdrawalBatchNotVerified();
-    error WithdrawalAlreadyClaimed();
-    error InvalidWithdrawalProof();
-    error FailedToSendClaimedAmount();
-    error UseClaimWithdrawalForETH();
-    error InsufficientTokenDeposits();
+    error WithdrawalLogsAlreadyPublished(); // 0xa32b28c9
+    error InsufficientDeposits(); // 0xa2725db5
+    error WithdrawalBatchNotCommitted(); // 0xb1912e3f
+    error WithdrawalBatchNotVerified(); // 0xa77a7721
+    error WithdrawalAlreadyClaimed(); // 0x2f29b3db
+    error InvalidWithdrawalProof(); // 0xb86abc9c
+    error FailedToSendClaimedAmount(); // 0xa759d4a4
+    error UseClaimWithdrawalForETH(); // 0x34b67c69
+    error InsufficientTokenDeposits(); // 0xed830794
 
     // Access control errors
-    error CallerNotOnChainProposer();
-    error CallerNotSharedBridgeRouter();
+    error CallerNotOnChainProposer(); // 0x60291889
+    error CallerNotSharedBridgeRouter(); // 0x2842ff8e
 
     /// @notice A privileged transaction to L2 has initiated.
     /// @dev Event emitted when a privileged transaction is initiated.

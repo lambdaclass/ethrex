@@ -30,24 +30,6 @@ pub const INVALID_SP1_PROOF_SELECTOR: &str = "0x7ff849b5";
 pub const INVALID_TDX_PROOF_SELECTOR: &str = "0x62013a95";
 pub const ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR: &str = "0x44602025";
 
-/// 4-byte ABI selectors for CommonBridge custom errors (ICommonBridge).
-pub const ON_CHAIN_PROPOSER_IS_ZERO_ADDRESS_SELECTOR: &str = "0xe5758136";
-pub const DEPOSIT_AMOUNT_IS_ZERO_SELECTOR: &str = "0x0ddbd934";
-pub const NUMBER_IS_ZERO_SELECTOR: &str = "0xde5d32ac";
-pub const EXCEEDS_PENDING_TX_HASHES_LENGTH_SELECTOR: &str = "0xd7782ce0";
-pub const EXCEEDS_PENDING_L2_MESSAGES_LENGTH_SELECTOR: &str = "0x74b0ced0";
-pub const WITHDRAWAL_LOGS_ALREADY_PUBLISHED_SELECTOR: &str = "0xa32b28c9";
-pub const INSUFFICIENT_DEPOSITS_SELECTOR: &str = "0xa2725db5";
-pub const WITHDRAWAL_BATCH_NOT_COMMITTED_SELECTOR: &str = "0xb1912e3f";
-pub const WITHDRAWAL_BATCH_NOT_VERIFIED_SELECTOR: &str = "0xa77a7721";
-pub const WITHDRAWAL_ALREADY_CLAIMED_SELECTOR: &str = "0x2f29b3db";
-pub const INVALID_WITHDRAWAL_PROOF_SELECTOR: &str = "0xb86abc9c";
-pub const FAILED_TO_SEND_CLAIMED_AMOUNT_SELECTOR: &str = "0xa759d4a4";
-pub const USE_CLAIM_WITHDRAWAL_FOR_ETH_SELECTOR: &str = "0x34b67c69";
-pub const INSUFFICIENT_TOKEN_DEPOSITS_SELECTOR: &str = "0xed830794";
-pub const CALLER_NOT_ON_CHAIN_PROPOSER_SELECTOR: &str = "0x60291889";
-pub const CALLER_NOT_SHARED_BRIDGE_ROUTER_SELECTOR: &str = "0x2842ff8e";
-
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
 }
