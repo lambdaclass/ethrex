@@ -2,7 +2,6 @@ use crate::{
     BlockProducerConfig, CommitterConfig, EthConfig, SequencerConfig,
     sequencer::{
         errors::CommitterError,
-        sequencer_state::{SequencerState, SequencerStatus},
         utils::{
             self, batch_checkpoint_name, fetch_blocks_with_respective_fee_configs,
             get_git_commit_hash, system_now_ms,
@@ -22,6 +21,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_common::{
     calldata::Value,
     merkle_tree::compute_merkle_root,
@@ -558,7 +558,7 @@ impl L1Committer {
                 *fee_config_guard = *fee_config;
             }
 
-            one_time_checkpoint_blockchain.add_block_pipeline(block.clone())?;
+            one_time_checkpoint_blockchain.add_block_pipeline(block.clone(), None)?;
         }
 
         Ok(())
@@ -855,7 +855,7 @@ impl L1Committer {
                     *fee_config_guard = fee_config;
                 }
 
-                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone())?
+                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone(), None)?
             };
 
             // Accumulate block data with the rest of the batch.
@@ -973,7 +973,7 @@ impl L1Committer {
             #[allow(clippy::as_conversions)]
             let blob_usage_percentage = blob_size as f64 * 100_f64 / ethrex_common::types::BYTES_PER_BLOB_F64;
             let batch_gas_used = batch_gas_used.try_into()?;
-            let batch_size = (last_added_block_number - first_block_of_batch).try_into()?;
+            let batch_size = (last_added_block_number - first_block_of_batch + 1).try_into()?;
             let tx_count = tx_count.try_into()?;
             METRICS.set_blob_usage_percentage(blob_usage_percentage);
             METRICS.set_batch_gas_used(batch_number, batch_gas_used)?;
@@ -1398,7 +1398,7 @@ impl L1Committer {
             arbitrary_base_blob_gas_price: self.arbitrary_base_blob_gas_price,
             validium: self.validium,
             based: self.based,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             committer_wake_up_ms: self.committer_wake_up_ms,
             last_committed_batch_timestamp: self.last_committed_batch_timestamp,
             last_committed_batch: self.last_committed_batch,
@@ -1409,7 +1409,7 @@ impl L1Committer {
     }
 
     async fn handle_commit_message(&mut self, handle: &GenServerHandle<Self>) -> CastResponse {
-        if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
             let current_last_committed_batch =
                 get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                     .await
@@ -1597,15 +1597,14 @@ async fn estimate_blob_gas(
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
     let blob_gas = fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
-        U256::from(total_blob_gas),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        total_blob_gas.into(),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
 
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
-    // Check if we have an overflow when we take the headroom into account.
     let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;
@@ -1626,21 +1625,28 @@ async fn estimate_blob_gas(
 /// re-applying the blocks from the last known state root up to the head block.
 ///
 /// This function performs that regeneration.
+///
+/// When `target_block_number` is `Some(n)`, this function regenerates state up
+/// to block `n - 1` (exclusive of `n`). The intent is to prepare the state so
+/// that block `n` can be applied by the caller afterwards.
+///
+/// When `target_block_number` is `None`, the function regenerates state up to
+/// the latest block number stored in the database (inclusive).
 pub async fn regenerate_state(
     store: &Store,
     rollup_store: &StoreRollup,
     blockchain: &Arc<Blockchain>,
     target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
-    let target_block_number = if let Some(target_block_number) = target_block_number {
-        target_block_number - 1
-    } else {
-        store.get_latest_block_number().await?
+    let target_block_number = match target_block_number {
+        Some(0) => return Ok(()),
+        Some(n) => n - 1,
+        None => store.get_latest_block_number().await?,
     };
-    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
     if target_block_number == 0 {
         return Ok(());
     }
+    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
     if last_state_number == target_block_number {
         debug!("State is already up to date");
         return Ok(());
@@ -1678,7 +1684,7 @@ pub async fn regenerate_state(
             *fee_config_guard = fee_config;
         }
 
-        if let Err(err) = blockchain.add_block_pipeline(block) {
+        if let Err(err) = blockchain.add_block_pipeline(block, None) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
     }

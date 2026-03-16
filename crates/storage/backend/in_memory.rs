@@ -2,22 +2,25 @@ use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
 };
 use crate::error::StoreError;
-use std::collections::BTreeMap;
+use rustc_hash::FxHashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-type Table = BTreeMap<Vec<u8>, Vec<u8>>;
-type Database = BTreeMap<&'static str, Table>;
+type Table = FxHashMap<Vec<u8>, Vec<u8>>;
+type Database = FxHashMap<&'static str, Table>;
 
 #[derive(Debug)]
 pub struct InMemoryBackend {
-    inner: Arc<RwLock<Database>>,
+    // RCU-style snapshot store: readers clone the inner Arc and then read lock-free.
+    // Writes run under the outer write lock and use Arc::make_mut for copy-on-write.
+    // If read snapshots are still alive, writes may clone the full Database.
+    inner: Arc<RwLock<Arc<Database>>>,
 }
 
 impl InMemoryBackend {
     pub fn open() -> Result<Self, StoreError> {
         Ok(Self {
-            inner: Default::default(),
+            inner: Arc::new(RwLock::new(Arc::new(Database::default()))),
         })
     }
 }
@@ -29,16 +32,20 @@ impl StorageBackend for InMemoryBackend {
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        if let Some(table_ref) = db.get_mut(table) {
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
             table_ref.clear();
         }
         Ok(())
     }
 
-    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError> {
-        Ok(Box::new(InMemoryReadTx {
-            backend: &self.inner,
-        }))
+    fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
+        let snapshot = self
+            .inner
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?
+            .clone();
+        Ok(Arc::new(InMemoryReadTx { snapshot }))
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
@@ -51,8 +58,13 @@ impl StorageBackend for InMemoryBackend {
         &self,
         table_name: &'static str,
     ) -> Result<Box<dyn StorageLockedView>, StoreError> {
+        let snapshot = self
+            .inner
+            .read()
+            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?
+            .clone();
         Ok(Box::new(InMemoryLocked {
-            backend: self.inner.clone(),
+            snapshot,
             table_name,
         }))
     }
@@ -65,7 +77,7 @@ impl StorageBackend for InMemoryBackend {
 }
 
 pub struct InMemoryLocked {
-    backend: Arc<RwLock<Database>>,
+    snapshot: Arc<Database>,
     table_name: &'static str,
 }
 
@@ -83,29 +95,22 @@ impl Iterator for InMemoryPrefixIter {
 
 impl StorageLockedView for InMemoryLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-        Ok(db
+        Ok(self
+            .snapshot
             .get(&self.table_name)
             .and_then(|table_ref| table_ref.get(key))
             .cloned())
     }
 }
 
-pub struct InMemoryReadTx<'a> {
-    backend: &'a RwLock<Database>,
+pub struct InMemoryReadTx {
+    snapshot: Arc<Database>,
 }
 
-impl<'a> StorageReadView for InMemoryReadTx<'a> {
+impl StorageReadView for InMemoryReadTx {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-
-        Ok(db
+        Ok(self
+            .snapshot
             .get(table)
             .and_then(|table_ref| table_ref.get(key))
             .cloned())
@@ -116,17 +121,17 @@ impl<'a> StorageReadView for InMemoryReadTx<'a> {
         table: &str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
-        let db = self
-            .backend
-            .read()
-            .map_err(|_| StoreError::Custom("Failed to acquire read lock".to_string()))?;
-
-        let table_data = db.get(table).cloned().unwrap_or_default();
+        let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
         let prefix_vec = prefix.to_vec();
 
-        let results: Vec<PrefixResult> = table_data
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
             .into_iter()
             .filter(|(key, _)| key.starts_with(&prefix_vec))
+            .collect();
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+        let results: Vec<PrefixResult> = entries
+            .into_iter()
             .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
             .collect();
 
@@ -138,7 +143,7 @@ impl<'a> StorageReadView for InMemoryReadTx<'a> {
 }
 
 pub struct InMemoryWriteTx {
-    backend: Arc<RwLock<Database>>,
+    backend: Arc<RwLock<Arc<Database>>>,
 }
 
 impl StorageWriteBatch for InMemoryWriteTx {
@@ -152,7 +157,9 @@ impl StorageWriteBatch for InMemoryWriteTx {
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        let table_ref = db.entry(table).or_insert_with(Table::new);
+        // Copy-on-write update of the current snapshot.
+        let db_mut = Arc::make_mut(&mut *db);
+        let table_ref = db_mut.entry(table).or_default();
 
         for (key, value) in batch {
             table_ref.insert(key, value);
@@ -167,7 +174,8 @@ impl StorageWriteBatch for InMemoryWriteTx {
             .write()
             .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
 
-        if let Some(table_ref) = db.get_mut(table) {
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
             table_ref.remove(key);
         }
         Ok(())

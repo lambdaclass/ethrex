@@ -1,6 +1,5 @@
 use super::utils::random_duration;
 use crate::sequencer::errors::L1WatcherError;
-use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
@@ -9,6 +8,7 @@ use ethrex_common::utils::keccak;
 use ethrex_l2_common::messages::{
     L2MESSAGE_EVENT_SELECTOR, L2Message, MESSENGER_ADDRESS, get_l2_message_hash,
 };
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use ethrex_l2_sdk::privileged_data::PrivilegedTransactionData;
 use ethrex_l2_sdk::{get_last_fetched_l1_block, get_pending_l1_messages, get_pending_l2_messages};
 use ethrex_rpc::clients::eth::EthClient;
@@ -156,7 +156,7 @@ impl L1Watcher {
     }
 
     async fn watch_l1(&mut self) {
-        let Ok(logs) = self
+        let Ok((new_cursor, logs)) = self
             .get_logs_l1()
             .await
             .inspect_err(|err| error!("L1 Watcher Error: {err}"))
@@ -165,15 +165,20 @@ impl L1Watcher {
         };
 
         // We may not have a privileged transaction nor a withdrawal, that means no events -> no logs.
-        if !logs.is_empty() {
-            let _ = self
-                .process_privileged_transactions(logs)
-                .await
-                .inspect_err(|err| error!("L1 Watcher Error: {}", err));
-        };
+        if !logs.is_empty()
+            && let Err(err) = self.process_privileged_transactions(logs).await
+        {
+            error!("L1 Watcher Error: {err}");
+            // Don't advance cursor — next tick will re-fetch and retry.
+            // Already-processed txs are skipped by privileged_transaction_already_processed.
+            return;
+        }
+
+        // Only advance cursor after all logs were successfully processed.
+        self.last_block_fetched_l1 = new_cursor;
     }
 
-    async fn get_logs_l1(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+    async fn get_logs_l1(&mut self) -> Result<(U256, Vec<RpcLog>), L1WatcherError> {
         // Matches the event PrivilegedTxSent from ICommonBridge.sol
         let topic =
             keccak(b"PrivilegedTxSent(address,address,address,uint256,uint256,uint256,bytes)");
@@ -183,7 +188,7 @@ impl L1Watcher {
                     .await?
                     .into();
         }
-        let (last_block_fetched, logs) = Self::get_privileged_transactions(
+        Self::get_privileged_transactions(
             self.last_block_fetched_l1,
             self.l1_block_delay,
             &self.eth_client,
@@ -191,9 +196,7 @@ impl L1Watcher {
             self.bridge_address,
             self.max_block_step,
         )
-        .await?;
-        self.last_block_fetched_l1 = last_block_fetched;
-        Ok(logs)
+        .await
     }
 
     pub async fn get_privileged_transactions(
@@ -299,15 +302,19 @@ impl L1Watcher {
                 privileged_transaction_data.transaction_id
             );
 
-            let Ok(hash) = self
+            let hash = self
                 .blockchain
                 .add_transaction_to_pool(tx)
                 .await
-                .inspect_err(|e| warn!("Failed to add mint transaction to the mempool: {e:#?}"))
-            else {
-                // TODO: Figure out if we want to continue or not
-                continue;
-            };
+                .map_err(|e| {
+                    L1WatcherError::Custom(format!(
+                        "Failed to add mint transaction to the mempool \
+                        (to: {:x}, value: {}, transactionId: {:#}): {e:#?}",
+                        privileged_transaction_data.to_address,
+                        privileged_transaction_data.value,
+                        privileged_transaction_data.transaction_id
+                    ))
+                })?;
 
             info!("Mint transaction added to mempool {hash:#x}",);
             privileged_txs.push(hash);
@@ -344,6 +351,7 @@ impl L1Watcher {
                 from: tx.from,
                 inner_hash: Default::default(),
                 sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             };
 
             let privileged_tx = Transaction::PrivilegedL2Transaction(mint_transaction);
@@ -407,7 +415,7 @@ impl L1Watcher {
             last_block_fetched: self.last_block_fetched_l1.to_string(),
             check_interval: self.check_interval,
             l1_block_delay: self.l1_block_delay,
-            sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
             bridge_address: self.bridge_address,
         }))
     }
@@ -565,7 +573,7 @@ impl GenServer for L1Watcher {
     ) -> CastResponse {
         match message {
             Self::CastMsg::WatchLogsL1 => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     self.watch_l1().await;
                 }
                 let check_interval = random_duration(self.check_interval);
@@ -574,7 +582,7 @@ impl GenServer for L1Watcher {
             }
             Self::CastMsg::WatchLogsL2 => {
                 info!("Watching L2 logs");
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     self.watch_l2s().await;
                 }
                 let check_interval = random_duration(self.check_interval);

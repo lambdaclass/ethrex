@@ -344,6 +344,9 @@ pub async fn get_all_block_rpc_receipts(
             .unwrap_or_default(),
     );
     let base_fee_per_gas = header.base_fee_per_gas;
+    let blob_base_fee_u64: u64 = blob_base_fee
+        .try_into()
+        .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipt for each tx in the block and add block and tx info
@@ -360,7 +363,7 @@ pub async fn get_all_block_rpc_receipts(
             tx.clone(),
             index,
             gas_used,
-            blob_base_fee,
+            blob_base_fee_u64,
             base_fee_per_gas,
         )?;
         let receipt = RpcReceipt::new(

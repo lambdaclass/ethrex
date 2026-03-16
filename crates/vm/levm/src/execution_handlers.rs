@@ -121,6 +121,13 @@ impl<'a> VM<'a> {
     /// Handles external create transaction.
     pub fn handle_create_transaction(&mut self) -> Result<Option<ContextResult>, VMError> {
         let new_contract_address = self.current_call_frame.to;
+
+        // EIP-7928: Record contract address in BAL before collision check.
+        // Per EELS reference, the address is tracked even when the create collides.
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(new_contract_address);
+        }
+
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
