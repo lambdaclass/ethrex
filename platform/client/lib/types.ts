@@ -116,3 +116,61 @@ export interface DeploymentEvent {
   bridgeAddress?: string;
   proposerAddress?: string;
 }
+
+/** Appchain summary (explore list view). */
+export interface Appchain {
+  id: string;
+  name: string;
+  description: string | null;
+  chain_id: number | null;
+  l2_chain_id: number | null;
+  rpc_url: string | null;
+  status: string;
+  phase: string;
+  bridge_address: string | null;
+  proposer_address: string | null;
+  identity_contract: string | null;
+  l1_chain_id: number | null;
+  network_mode: string | null;
+  stack_type: string | null;
+  rollup_type: string | null;
+  native_token_symbol: string | null;
+  operator_name: string | null;
+  program_name: string;
+  program_slug: string;
+  category: string;
+  owner_name: string;
+  created_at: number;
+  hashtags: string[];
+  avg_rating: number | null;
+  review_count: number;
+  comment_count: number;
+}
+
+/** Appchain full detail (explore detail view). */
+export interface AppchainDetail extends Appchain {
+  user_id: string;
+  explorer_url: string | null;
+  dashboard_url: string | null;
+  bridge_url: string | null;
+  screenshots: string[];
+  social_links: Record<string, string>;
+  l1_contracts: Record<string, string>;
+  native_token_type: string | null;
+  native_token_decimals: number | null;
+  native_token_l1_address: string | null;
+  operator_website: string | null;
+  owner_wallet: string | null;
+  signed_by: string | null;
+  owner_picture: string | null;
+}
+
+/** Derive display name for an appchain. */
+export function getAppchainDisplayName(a: Appchain): string {
+  return a.name || `Chain ${a.l2_chain_id || a.chain_id || a.id}`;
+}
+
+/** Derive effective chain ID for an appchain. */
+export function getAppchainChainId(a: Appchain): number | null {
+  return a.l2_chain_id || a.chain_id;
+}

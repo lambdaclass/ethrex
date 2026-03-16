@@ -57,9 +57,13 @@ export const storeApi = {
     const data = await apiFetch("/api/store/featured");
     return data.programs;
   },
-  appchains: async (params?: { search?: string }) => {
-    const qs = params?.search ? `?search=${encodeURIComponent(params.search)}` : "";
-    const data = await apiFetch(`/api/store/appchains${qs}`);
+  appchains: async (params?: { search?: string; stack_type?: string; l1_chain_id?: string }) => {
+    const qp = new URLSearchParams();
+    if (params?.search) qp.set("search", params.search);
+    if (params?.stack_type) qp.set("stack_type", params.stack_type);
+    if (params?.l1_chain_id) qp.set("l1_chain_id", params.l1_chain_id);
+    const qs = qp.toString();
+    const data = await apiFetch(`/api/store/appchains${qs ? `?${qs}` : ""}`);
     return data.appchains;
   },
   appchain: async (id: string) => {

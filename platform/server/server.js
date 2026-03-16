@@ -96,4 +96,12 @@ app.listen(PORT, () => {
   } catch (err) {
     console.log(`[indexer] Skipped: ${err.message}`);
   }
+
+  // Start metadata repo sync (polls GitHub for tokamak-appchain-data/)
+  try {
+    const { startMetadataSync } = require("./lib/metadata-sync");
+    startMetadataSync();
+  } catch (err) {
+    console.log(`[metadata-sync] Skipped: ${err.message}`);
+  }
 });

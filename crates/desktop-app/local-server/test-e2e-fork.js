@@ -18,7 +18,7 @@ const http = require("http");
 const ANVIL_PORT = 18545;
 const SERVER_PORT = 5002;
 const API = `http://127.0.0.1:${SERVER_PORT}/api`;
-const SEPOLIA_RPC = "https://eth-sepolia.g.alchemy.com/v2/fx6lsTJmHBHSRkrw1ua_y";
+const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || (() => { throw new Error("SEPOLIA_RPC_URL env var required (e.g. https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY)"); })();
 
 // Test deployer key (Anvil default account #0)
 const TEST_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
