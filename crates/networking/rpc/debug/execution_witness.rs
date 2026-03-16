@@ -161,6 +161,11 @@ fn collect_accounts_from_node(
                         );
                     }
                 }
+            } else {
+                debug!(
+                    "Unexpected state trie leaf path length: {} (expected 32)",
+                    path_bytes.len()
+                );
             }
         }
     }
