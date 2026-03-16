@@ -209,9 +209,12 @@ impl L1ProofSender {
 
             // Time-based resubmission: if we sent a proof but verification hasn't
             // advanced after the timeout, reset cursor to resend.
-            // The `sent_at > 0` guard skips this when the verifier has reset the
-            // cursor with timestamp=0 to signal immediate re-send (see
-            // l1_proof_verifier.rs verify_proofs_aggregation error path).
+            // The `sent_at > 0` guard is defense-in-depth: when the verifier
+            // resets the cursor to `last_verified` on proof failure, the primary
+            // mechanism is the cursor position itself (making the `>` check false),
+            // so the normal path at the bottom of this block handles the re-send.
+            // The `sent_at > 0` guard prevents spurious timeout triggers if the
+            // cursor is ever at a non-reset position with a zero timestamp.
             if latest_sent_to_aligned > last_verified_batch
                 && sent_at > 0
                 && now.saturating_sub(sent_at) > self.resubmission_timeout_secs

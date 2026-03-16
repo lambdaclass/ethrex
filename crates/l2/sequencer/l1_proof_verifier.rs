@@ -267,6 +267,12 @@ impl L1ProofVerifier {
             && data.starts_with(ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR)
         {
             warn!("Deleting invalid ALIGNED proof");
+            // Reset aligned cursor first so the sender retries from the right
+            // batch even if proof deletion partially fails below.
+            let last_verified = first_batch_number.saturating_sub(1);
+            self.rollup_store
+                .set_latest_sent_to_aligned(last_verified, 0)
+                .await?;
             for batch_number in first_batch_number..=last_batch_number {
                 for proof_type in &self.needed_proof_types {
                     self.rollup_store
@@ -274,14 +280,6 @@ impl L1ProofVerifier {
                         .await?;
                 }
             }
-            // Reset aligned cursor so the sender re-sends once proofs are re-generated,
-            // instead of waiting for a full resubmission timeout cycle.
-            // Setting timestamp=0 bypasses the `sent_at > 0` guard in the sender's
-            // resubmission check, allowing immediate re-send on the next tick.
-            let last_verified = first_batch_number.saturating_sub(1);
-            self.rollup_store
-                .set_latest_sent_to_aligned(last_verified, 0)
-                .await?;
         }
         let verify_tx_hash = send_verify_tx_result?;
 
