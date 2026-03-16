@@ -41,6 +41,14 @@ pub const SHR: u64 = 3;
 pub const SAR: u64 = 3;
 pub const KECCAK25_STATIC: u64 = 30;
 pub const KECCAK25_DYNAMIC_BASE: u64 = 6;
+
+// EIP-7904 (Amsterdam): Compute gas cost increase
+pub const DIV_AMSTERDAM: u64 = 15;
+pub const SDIV_AMSTERDAM: u64 = 20;
+pub const MOD_AMSTERDAM: u64 = 12;
+pub const MULMOD_AMSTERDAM: u64 = 11;
+pub const KECCAK25_STATIC_AMSTERDAM: u64 = 45;
+
 pub const CALLDATALOAD: u64 = 3;
 pub const CALLDATASIZE: u64 = 2;
 pub const CALLDATACOPY_STATIC: u64 = 3;
@@ -225,6 +233,14 @@ pub const POINT_EVALUATION_COST: u64 = 50000;
 
 pub const BLAKE2F_ROUND_COST: u64 = 1;
 
+// EIP-7904 (Amsterdam): Precompile gas cost increases
+pub const ECADD_COST_AMSTERDAM: u64 = 314;
+pub const POINT_EVALUATION_COST_AMSTERDAM: u64 = 89363;
+pub const BLS12_381_G1ADD_COST_AMSTERDAM: u64 = 643;
+pub const BLS12_381_G2ADD_COST_AMSTERDAM: u64 = 765;
+pub const BLAKE2F_CONSTANT_COST_AMSTERDAM: u64 = 170;
+pub const BLAKE2F_ROUND_COST_AMSTERDAM: u64 = 2;
+
 pub const BLS12_381_MSM_MULTIPLIER: u64 = 1000;
 pub const BLS12_381_G1_K_DISCOUNT: [u64; 128] = [
     1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665,
@@ -343,13 +359,19 @@ pub fn keccak256(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
+    fork: Fork,
 ) -> Result<u64, VMError> {
+    let static_cost = if fork >= Fork::Amsterdam {
+        KECCAK25_STATIC_AMSTERDAM
+    } else {
+        KECCAK25_STATIC
+    };
     copy_behavior(
         new_memory_size,
         current_memory_size,
         size,
         KECCAK25_DYNAMIC_BASE,
-        KECCAK25_STATIC,
+        static_cost,
     )
 }
 

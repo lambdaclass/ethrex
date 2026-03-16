@@ -25,6 +25,7 @@ impl OpcodeHandler for OpKeccak256Handler {
                 calculate_memory_size(offset, len)?,
                 vm.current_call_frame.memory.len(),
                 len,
+                vm.env.config.fork,
             )?)?;
 
         vm.current_call_frame
