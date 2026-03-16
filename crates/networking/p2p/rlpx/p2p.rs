@@ -91,12 +91,12 @@ impl RLPEncode for Capability {
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
-        if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
-            return Err(RLPDecodeError::InvalidLength);
-        }
         let (version, rest) = u8::decode_unfinished(rest)?;
         let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
-        protocol[..protocol_name.len()].copy_from_slice(protocol_name.as_bytes());
+        // Truncate names longer than CAPABILITY_NAME_MAX_LENGTH — they won't
+        // match any supported capability and will be ignored in negotiation.
+        let copy_len = protocol_name.len().min(CAPABILITY_NAME_MAX_LENGTH);
+        protocol[..copy_len].copy_from_slice(&protocol_name.as_bytes()[..copy_len]);
         Ok((Capability { protocol, version }, rest))
     }
 }
