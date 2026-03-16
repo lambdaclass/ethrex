@@ -101,27 +101,27 @@ pub trait Discv5ServerProtocol: Send + Sync {
 
 #[derive(Debug)]
 pub struct DiscoveryServer {
-    local_node: Node,
-    local_node_record: NodeRecord,
+    pub local_node: Node,
+    pub local_node_record: NodeRecord,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    peer_table: PeerTable,
+    pub peer_table: PeerTable,
     initial_lookup_interval: f64,
     /// Outgoing message count, used for nonce generation as per the spec.
     counter: u32,
     /// Pending outgoing messages awaiting WhoAreYou response, keyed by nonce.
-    pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
+    pub pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
-    pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
+    pub pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
     /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
-    whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
+    pub whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
     /// Key: reported IP, Value: set of voter node_ids (each peer votes once per round).
-    ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
+    pub ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
     /// When the current IP voting period started. None if no votes received yet.
-    ip_vote_period_start: Option<Instant>,
+    pub ip_vote_period_start: Option<Instant>,
     /// Whether the first (fast) voting round has completed.
-    first_ip_vote_round_completed: bool,
+    pub first_ip_vote_round_completed: bool,
 }
 
 #[actor(protocol = Discv5ServerProtocol)]
@@ -173,6 +173,30 @@ impl DiscoveryServer {
         peer_table.new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)?;
 
         Ok(discovery_server.start())
+    }
+
+    pub fn new_for_test(
+        local_node: Node,
+        local_node_record: NodeRecord,
+        signer: SecretKey,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
+    ) -> Self {
+        Self {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            peer_table,
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+        }
     }
 
     #[started]
@@ -560,7 +584,7 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_pong(
+    pub async fn handle_pong(
         &mut self,
         pong_message: PongMessage,
         sender_id: H256,
@@ -737,7 +761,7 @@ impl DiscoveryServer {
 
     /// Sends a WhoAreYou challenge packet in response to an unverified message.
     /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#whoareyou-packet-flag--1
-    async fn send_who_are_you(
+    pub async fn send_who_are_you(
         &mut self,
         nonce: [u8; 12],
         src_id: H256,
@@ -810,7 +834,7 @@ impl DiscoveryServer {
     /// ## Spec Recommendation
     /// Encode the current outgoing message count into the first 32 bits of the nonce and fill the remaining 64 bits with random data generated
     /// by a cryptographically secure random number generator.
-    fn next_nonce<R: RngCore>(&mut self, rng: &mut R) -> [u8; 12] {
+    pub fn next_nonce<R: RngCore>(&mut self, rng: &mut R) -> [u8; 12] {
         let counter = self.counter;
         self.counter = self.counter.wrapping_add(1);
 
@@ -822,7 +846,7 @@ impl DiscoveryServer {
 
     /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
-    fn cleanup_stale_entries(&mut self) {
+    pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
         // Clean pending outgoing messages
@@ -870,7 +894,7 @@ impl DiscoveryServer {
     /// Records an IP vote from a PONG recipient_addr.
     /// Uses voting rounds: first round ends after 3 votes, subsequent rounds after 5 minutes.
     /// At round end, the IP with most votes wins (if it has at least 3 votes).
-    fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
+    pub fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
         // Ignore private IPs - we only care about external IP detection
         if Self::is_private_ip(reported_ip) {
             return;
