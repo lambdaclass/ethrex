@@ -1338,15 +1338,19 @@ impl LEVM {
                 // missing entry. Compare with pre-execution state to distinguish.
                 let pre = system_seed
                     .get(addr)
-                    .map(|a| (a.info.balance, a.info.nonce))
+                    .map(|a| (a.info.balance, a.info.nonce, a.info.code_hash))
                     .or_else(|| {
                         store
                             .get_account_state(*addr)
                             .ok()
-                            .map(|a| (a.balance, a.nonce))
+                            .map(|a| (a.balance, a.nonce, a.code_hash))
                     })
                     .unwrap_or_default();
-                let post = (account.info.balance, account.info.nonce);
+                let post = (
+                    account.info.balance,
+                    account.info.nonce,
+                    account.info.code_hash,
+                );
                 if pre != post {
                     return Err(BalValidationError::Mismatch(format!(
                         "account {addr:?} was modified by execution but is absent from BAL"
