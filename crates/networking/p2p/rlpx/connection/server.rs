@@ -17,8 +17,11 @@ use crate::{
         eth::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts68, Receipts69},
-            status::{StatusMessage68, StatusMessage69, StatusMessage71},
+            receipts::{
+                GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
+                SOFT_RESPONSE_LIMIT,
+            },
+            status::{StatusMessage68, StatusMessage69, StatusMessage70, StatusMessage71},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
@@ -39,7 +42,8 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
-use ethrex_common::types::{MempoolTransaction, P2PTransaction};
+use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
@@ -528,6 +532,7 @@ where
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+        Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
         Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
         _ => EthCapVersion::default(),
     };
@@ -678,6 +683,7 @@ where
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
             69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
             71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
@@ -701,6 +707,10 @@ where
             }
             Message::Status69(msg_data) => {
                 trace!(peer=%state.node, "Received Status(69)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status70(msg_data) => {
+                trace!(peer=%state.node, "Received Status(70)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Status71(msg_data) => {
@@ -945,6 +955,11 @@ async fn handle_incoming_message(
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
         }
+        Message::Status70(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth).await?
+            };
+        }
         Message::Status71(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth).await?
@@ -1030,24 +1045,76 @@ async fn handle_incoming_message(
             let response = BlockAccessLists::new(id, block_access_lists);
             send(state, Message::BlockAccessLists(response)).await?;
         }
-        Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            if let Some(eth) = &state.negotiated_eth_capability {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(state.storage.get_receipts_for_block(hash).await?);
-                }
-                let response = match eth.version {
-                    68 => Message::Receipts68(Receipts68::new(id, receipts)),
-                    // eth/71 uses the same receipts format as eth/69
-                    69 | 71 => Message::Receipts69(Receipts69::new(id, receipts)),
-                    ver => {
-                        return Err(PeerConnectionError::InternalError(format!(
-                            "Invalid eth version {ver}"
-                        )));
-                    }
-                };
-                send(state, response).await?;
+        Message::GetReceipts68(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
+            let mut receipts = Vec::new();
+            for hash in block_hashes.iter() {
+                receipts.push(state.storage.get_receipts_for_block(hash).await?);
             }
+            send(state, Message::Receipts68(Receipts68::new(id, receipts))).await?;
+        }
+        Message::GetReceipts69(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
+            let mut receipts = Vec::new();
+            for hash in block_hashes.iter() {
+                receipts.push(state.storage.get_receipts_for_block(hash).await?);
+            }
+            send(state, Message::Receipts69(Receipts69::new(id, receipts))).await?;
+        }
+        // EIP-7975: eth/70 partial receipt requests
+        Message::GetReceipts70(GetReceipts70 {
+            id,
+            first_block_receipt_index,
+            block_hashes,
+        }) if peer_supports_eth => {
+            let block_hashes = &block_hashes[..block_hashes.len().min(256)];
+            let mut all_receipts: Vec<Vec<Receipt>> = Vec::new();
+            let mut total_size: usize = 0;
+            let mut last_block_incomplete = false;
+
+            for (i, hash) in block_hashes.iter().enumerate() {
+                let start_index = if i == 0 { first_block_receipt_index } else { 0 };
+                let block_receipts = state
+                    .storage
+                    .get_receipts_for_block_from_index(hash, start_index)
+                    .await?;
+
+                let mut block_receipt_list = Vec::new();
+                let mut hit_limit = false;
+                for receipt in block_receipts {
+                    let receipt_size = receipt.length();
+                    if total_size + receipt_size > SOFT_RESPONSE_LIMIT
+                        && (!block_receipt_list.is_empty() || !all_receipts.is_empty())
+                    {
+                        hit_limit = true;
+                        // Only mark incomplete when the current block actually
+                        // has a partial receipt list. When the limit is hit
+                        // before any receipt from this block fits, the previous
+                        // block is complete — setting the flag would cause the
+                        // peer to re-request an already-complete block.
+                        if !block_receipt_list.is_empty() {
+                            last_block_incomplete = true;
+                        }
+                        break;
+                    }
+                    total_size += receipt_size;
+                    block_receipt_list.push(receipt);
+                }
+
+                // Don't push an empty list when the limit was hit before any
+                // receipt from this block could be included — an empty trailing
+                // list would mislead the peer into thinking the block has no
+                // transactions.
+                if !block_receipt_list.is_empty() || !hit_limit {
+                    all_receipts.push(block_receipt_list);
+                }
+
+                if hit_limit {
+                    break;
+                }
+            }
+
+            let response =
+                Message::Receipts70(Receipts70::new(id, last_block_incomplete, all_receipts));
+            send(state, response).await?;
         }
         Message::BlockRangeUpdate(update) => {
             trace!(
@@ -1180,6 +1247,7 @@ async fn handle_incoming_message(
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_)
+        | message @ Message::Receipts70(_)
         | message @ Message::BlockAccessLists(_) => {
             if let Some((_, tx)) = message
                 .request_id()

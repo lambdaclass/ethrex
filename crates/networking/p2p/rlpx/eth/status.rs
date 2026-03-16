@@ -1,5 +1,6 @@
 pub use super::eth68::status::StatusMessage68;
 pub use super::eth69::status::StatusMessage69;
+pub use super::eth70::status::StatusMessage70;
 pub use super::eth71::status::StatusMessage71;
 use crate::rlpx::{
     error::PeerConnectionError,
@@ -23,7 +24,7 @@ pub trait StatusMessage {
     fn get_genesis(&self) -> BlockHash;
 }
 
-/// Shared status data for eth/69+ protocols (eth/69, eth/71, ...).
+/// Shared status data for eth/69+ protocols (eth/69, eth/70, eth/71, ...).
 /// The wire format is identical; only the version field differs.
 #[derive(Debug, Clone)]
 pub struct StatusDataPost68 {
