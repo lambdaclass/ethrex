@@ -13,11 +13,9 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError, block_access_list::BlockAccessList, validate_block_body,
+        InvalidBlockHeaderError, block_access_list::BlockAccessList,
     },
 };
-#[cfg(feature = "stateless")]
-use bytes::Bytes;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_guest_program::input::ProgramInput;
@@ -39,14 +37,6 @@ pub fn parse_and_execute(
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
 
-    // Detect zkevm@v0.2.0 "for_amsterdam" fixtures. These define Amsterdam
-    // as Osaka + EIP-7928 only, without EIP-7708/7778/7843. We run them at
-    // Osaka fork to avoid validation mismatches from those extra EIPs.
-    // TODO(zkevm): Remove when zkevm includes EIP-7708/7778/7843 (see ZKEVM_AMSTERDAM_CONFIG).
-    let is_zkevm = path
-        .to_str()
-        .is_some_and(|p| p.contains("for_amsterdam"));
-
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
@@ -59,7 +49,7 @@ pub fn parse_and_execute(
             continue;
         }
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend, is_zkevm));
+        let result = rt.block_on(run_ef_test(&test_key, &test, stateless_backend));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -79,7 +69,6 @@ pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
     stateless_backend: Option<BackendType>,
-    is_zkevm: bool,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
@@ -92,7 +81,7 @@ pub async fn run_ef_test(
         return Err("Decoded genesis header does not match expected header".to_string());
     }
 
-    let store = build_store_for_test(test, is_zkevm).await;
+    let store = build_store_for_test(test).await;
 
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
@@ -107,12 +96,10 @@ pub async fn run_ef_test(
         }
     }
 
-    run(test_key, test, &blockchain, &store, is_zkevm).await?;
+    run(test_key, test, &blockchain, &store).await?;
 
     // For Amsterdam tests, exercise the parallel BAL execution path as a correctness check.
-    // Skip for zkevm fixtures since they run at Osaka fork (no BAL recording).
-    // TODO(zkevm): Remove `!is_zkevm` guard when zkevm includes EIP-7708/7778/7843.
-    if test.network == Fork::Amsterdam && !is_zkevm {
+    if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
 
@@ -143,7 +130,6 @@ async fn run(
     test: &TestUnit,
     blockchain: &Blockchain,
     store: &Store,
-    is_zkevm: bool,
 ) -> Result<(), String> {
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
@@ -174,16 +160,6 @@ async fn run(
             }
             Ok(_) => {
                 if expects_exception {
-                    // For zkevm tests running at Osaka, the pipeline skips some
-                    // Amsterdam-level validations (BAL hash, block body).
-                    // Re-check them here so that blocks with invalid BAL or
-                    // invalid withdrawals root are still properly rejected.
-                    // TODO(zkevm): Remove when zkevm includes EIP-7708/7778/7843.
-                    if is_zkevm
-                        && zkevm_supplementary_validation(&block).is_err()
-                    {
-                        break; // Block correctly rejected by supplementary check
-                    }
                     return Err(format!(
                         "Expected transaction execution to fail in test: {test_key} with error: {:?}",
                         block_fixture.expect_exception.clone()
@@ -200,39 +176,6 @@ async fn run(
     Ok(())
 }
 
-/// Supplementary validation for zkevm tests running at Osaka fork level.
-/// The Osaka pipeline skips BAL hash and block body validation that
-/// Amsterdam would normally perform. This catches invalid blocks that
-/// the pipeline missed.
-/// TODO(zkevm): Remove when zkevm includes EIP-7708/7778/7843.
-fn zkevm_supplementary_validation(block: &CoreBlock) -> Result<(), String> {
-    // Check block body (transactions root, withdrawals root, ommers)
-    validate_block_body(&block.header, &block.body)
-        .map_err(|e| format!("Block body validation failed: {e:?}"))?;
-
-    // Check BAL hash: if the header claims a BAL hash, the block was built
-    // for Amsterdam. Re-execute with BAL recording to validate the hash.
-    // For invalid-BAL tests, the header hash won't match the computed BAL.
-    if block.header.block_access_list_hash.is_some() {
-        // We can't easily re-execute here, but we can check if the header's
-        // BAL hash matches an empty BAL (which it shouldn't for Amsterdam blocks
-        // with transactions). A proper check requires re-execution which is
-        // expensive. Instead, we rely on the fact that the pipeline already
-        // executed the block at Osaka level (producing no BAL), while the header
-        // claims a non-trivial BAL hash — this mismatch means the block is invalid.
-        use ethrex_common::types::block_access_list::BlockAccessList as BAL;
-        let empty_bal = BAL::default();
-        let empty_hash = empty_bal.compute_hash();
-        if let Some(header_hash) = block.header.block_access_list_hash {
-            if header_hash != empty_hash {
-                return Err("BAL hash mismatch (non-empty BAL claimed but not validated)".into());
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Two-pass parallel execution check for Amsterdam tests.
 ///
 /// Pass 1 (sequential): runs every block with `add_block_pipeline_bal` to collect the
@@ -241,7 +184,7 @@ fn zkevm_supplementary_validation(block: &CoreBlock) -> Result<(), String> {
 /// post-state of pass 2 must match the expected post-state.
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
-    let store1 = build_store_for_test(test, false).await;
+    let store1 = build_store_for_test(test).await;
     let blockchain1 = Blockchain::new(store1.clone(), BlockchainOptions::default());
 
     let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
@@ -273,7 +216,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     }
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
-    let store2 = build_store_for_test(test, false).await;
+    let store2 = build_store_for_test(test).await;
     let blockchain2 = Blockchain::new(store2.clone(), BlockchainOptions::default());
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
@@ -437,13 +380,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
 }
 
 /// Creates a new in-memory store and adds the genesis state.
-/// When `is_zkevm` is true and the test targets Amsterdam, the genesis is built
-/// with full Amsterdam config (so the genesis block header matches the fixture),
-/// but the stored chain config is then swapped to Osaka so that EIP-7708/7778/7843
-/// are not activated during execution (zkevm@v0.2.0 Amsterdam only includes EIP-7928).
-/// TODO(zkevm): Remove `is_zkevm` parameter and config swap when zkevm includes
-/// EIP-7708/7778/7843 (see ZKEVM_AMSTERDAM_CONFIG in fork.rs).
-pub async fn build_store_for_test(test: &TestUnit, is_zkevm: bool) -> Store {
+pub async fn build_store_for_test(test: &TestUnit) -> Store {
     let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
@@ -451,23 +388,6 @@ pub async fn build_store_for_test(test: &TestUnit, is_zkevm: bool) -> Store {
         .add_initial_state(genesis)
         .await
         .expect("Failed to add genesis state");
-    if is_zkevm && test.network == Fork::Amsterdam {
-        // Build an Osaka-based config that preserves the test's blob schedule.
-        // Since we're running at Osaka fork level, get_fork_blob_schedule will
-        // look up blob_schedule.osaka. The fixture's Amsterdam blob params need
-        // to be placed in the Osaka slot so the correct schedule is used.
-        let original_config = store.get_chain_config();
-        let mut zkevm_config = *crate::fork::ZKEVM_AMSTERDAM_CONFIG;
-        zkevm_config.blob_schedule = original_config.blob_schedule;
-        // Map Amsterdam blob schedule → Osaka slot for fork-level lookup
-        if let Some(amsterdam_schedule) = original_config.blob_schedule.amsterdam {
-            zkevm_config.blob_schedule.osaka = amsterdam_schedule;
-        }
-        store
-            .set_chain_config(&zkevm_config)
-            .await
-            .expect("Failed to set zkevm chain config");
-    }
     store
 }
 
@@ -601,94 +521,59 @@ async fn re_run_stateless(
 
 /// Run stateless execution using the execution witness provided directly in the
 /// zkevm fixture, instead of generating one from blockchain execution.
+///
+/// Each block in the fixture has its own `executionWitness` containing the state
+/// trie nodes, codes, and ancestor headers needed for that specific block.
+/// Following the spec, we execute each block
+/// independently with its own witness.
 #[cfg(feature = "stateless")]
 async fn run_stateless_from_fixture(
     test: &TestUnit,
     test_key: &str,
     backend_type: BackendType,
 ) -> Result<(), String> {
-    // Only include valid blocks (no expected exception) that have an execution witness.
-    // Test fixtures may contain intentionally invalid blocks (with expectException)
-    // that should fail validation — those are already checked by the normal test path.
-    let valid_blocks: Vec<_> = test
-        .blocks
-        .iter()
-        .filter(|bf| bf.expect_exception.is_none())
-        .collect();
-
-    let blocks: Vec<CoreBlock> = valid_blocks
-        .iter()
-        .filter_map(|bf| bf.block().map(|b| b.clone().into()))
-        .collect();
-
-    if blocks.is_empty() {
-        // All blocks have expected exceptions — nothing to execute statelessly.
-        return Ok(());
-    }
-
-    // Extract executionWitness from the first valid block that has one.
-    let witness_json = valid_blocks
-        .iter()
-        .find_map(|bf| bf.block()?.execution_witness.as_ref())
-        .ok_or("No executionWitness in fixture")?;
-
-    // Parse as RpcExecutionWitness (standard format: state/codes/headers/keys).
-    let mut rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
-        .map_err(|e| format!("Failed to parse executionWitness: {e}"))?;
-
-    // Populate keys from available sources if the witness doesn't include them.
-    // The zkevm fixtures omit `keys` from executionWitness. We gather candidate
-    // addresses from the blockAccessList and pre-state so that the conversion
-    // function can find storage trie roots. Addresses whose trie paths aren't
-    // in the partial witness are silently skipped by the conversion function.
-    if rpc_witness.keys.is_empty() {
-        let mut addresses = std::collections::HashSet::new();
-        for bf in &valid_blocks {
-            if let Some(bal_json) = bf.block().and_then(|b| b.block_access_list_data.as_ref()) {
-                if let Some(entries) = bal_json.as_array() {
-                    for entry in entries {
-                        if let Some(addr_str) = entry.get("address").and_then(|a| a.as_str()) {
-                            if let Ok(addr_bytes) = hex::decode(addr_str.trim_start_matches("0x"))
-                            {
-                                addresses.insert(addr_bytes);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        for addr in test.pre.keys() {
-            addresses.insert(addr.as_bytes().to_vec());
-        }
-        rpc_witness.keys = addresses.into_iter().map(Bytes::from).collect();
-    }
-
     let chain_config = test.network.chain_config();
-    let first_block_number = blocks
-        .first()
-        .map(|b| b.header.number)
-        .unwrap_or(0);
 
-    // Convert RPC witness to internal ExecutionWitness format.
-    let execution_witness = execution_witness_from_rpc_chain_config(
-        rpc_witness,
-        *chain_config,
-        first_block_number,
-    )
-    .map_err(|e| format!("Witness conversion failed: {e}"))?;
+    for block_fixture in test.blocks.iter() {
+        // Skip blocks that expect exceptions — those are already validated by the normal path.
+        if block_fixture.expect_exception.is_some() {
+            continue;
+        }
 
-    let program_input = ProgramInput::new(blocks, execution_witness);
+        let Some(block_data) = block_fixture.block() else {
+            continue;
+        };
 
-    let execute_result = match backend_type {
-        BackendType::Exec => ExecBackend::new().execute(program_input),
-        #[cfg(feature = "sp1")]
-        BackendType::SP1 => Sp1Backend::new().execute(program_input),
-    };
+        let Some(witness_json) = block_data.execution_witness.as_ref() else {
+            continue;
+        };
 
-    if let Err(e) = execute_result {
-        return Err(format!(
-            "Stateless execution from fixture failed for {test_key}: {e}"
-        ));
+        let block: CoreBlock = block_data.clone().into();
+        let block_number = block.header.number;
+
+        let rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
+            .map_err(|e| format!("Failed to parse executionWitness for block {block_number}: {e}"))?;
+
+        let execution_witness = execution_witness_from_rpc_chain_config(
+            rpc_witness,
+            *chain_config,
+            block_number,
+        )
+        .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+
+        let program_input = ProgramInput::new(vec![block], execution_witness);
+
+        let execute_result = match backend_type {
+            BackendType::Exec => ExecBackend::new().execute(program_input),
+            #[cfg(feature = "sp1")]
+            BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        };
+
+        if let Err(e) = execute_result {
+            return Err(format!(
+                "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
+            ));
+        }
     }
 
     Ok(())

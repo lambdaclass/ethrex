@@ -51,7 +51,7 @@ $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
 
 zkevm-vectors: $(ZKEVM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam/amsterdam/eip8025_optional_proofs
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -71,8 +71,8 @@ test-sp1: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
 test-stateless: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
 	cargo test --profile release-with-debug --features stateless
 
-test-stateless-zkevm: $(VECTORS_TARGETS) zkevm-vectors
-	cargo test --profile release-with-debug --features stateless
+test-stateless-zkevm: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
+	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
 
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless 
 	$(MAKE) test-levm
