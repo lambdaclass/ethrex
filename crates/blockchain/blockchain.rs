@@ -344,7 +344,7 @@ impl Blockchain {
             )?;
         }
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
 
         // For Polygon, resolve the BorConfig addresses for this block number
@@ -358,7 +358,28 @@ impl Blockchain {
             });
         }
 
-        let (execution_result, bal) = vm.execute_block(block)?;
+        let (mut execution_result, bal) = vm.execute_block(block)?;
+
+        // For Polygon: execute Bor system calls (commitState) and create state sync receipt.
+        // Must happen BEFORE get_state_transitions() so system call state changes are captured,
+        // and BEFORE validate_receipts_root() since the receipt list is incomplete without it.
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let cumulative_gas = execution_result
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            if let Some(receipt) = execute_polygon_system_calls(
+                block,
+                &parent_header,
+                &chain_config,
+                &mut vm,
+                cumulative_gas,
+            )? {
+                execution_result.receipts.push(receipt);
+            }
+        }
+
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
@@ -1989,6 +2010,12 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
+        // Polygon blocks use the non-pipeline path because Bor system calls
+        // (commitState/commitSpan) need to execute after regular transactions
+        // and before state transitions, which the pipeline doesn't support yet.
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            return self.add_block(block);
+        }
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result
     }
@@ -2862,6 +2889,109 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
         }
     };
     Ok(evm)
+}
+
+/// Execute Polygon Bor system calls (commitState) and create the state sync receipt.
+///
+/// In Bor, after all regular transactions are executed, system calls are run at sprint
+/// boundaries to sync state from Heimdall (L1→L2 bridge). The commitState calls target
+/// the StateReceiver contract (0x1001) and produce logs that are collected into a single
+/// "state sync receipt" (type 0x7F) appended after all regular receipts.
+///
+/// Returns `Some(receipt)` if the block contains a StateSyncTransaction, `None` otherwise.
+fn execute_polygon_system_calls(
+    block: &Block,
+    parent_header: &BlockHeader,
+    chain_config: &ChainConfig,
+    vm: &mut Evm,
+    cumulative_gas_used: u64,
+) -> Result<Option<Receipt>, ChainError> {
+    use ethrex_common::types::{Log, TxType};
+    use ethrex_polygon::system_calls::{
+        MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, encode_commit_state,
+    };
+
+    // Find the StateSyncTransaction in the block body (if any).
+    // In Bor, this is the last transaction and contains the state sync event data.
+    let state_sync_data: Vec<_> = block
+        .body
+        .transactions
+        .iter()
+        .filter_map(|tx| match tx {
+            Transaction::StateSyncTransaction(st) => Some(&st.state_sync_data),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
+    // No state sync data → no receipt needed
+    if state_sync_data.is_empty() {
+        return Ok(None);
+    }
+
+    // Compute sync_time = parent_timestamp + state_sync_confirmation_delay.
+    // This matches Bor's time window for fetching state sync events from Heimdall.
+    let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        .ok_or_else(|| {
+            ChainError::Custom(format!(
+                "No BorConfig for chain_id {}",
+                chain_config.chain_id
+            ))
+        })?;
+    let delay = bor_config.get_state_sync_delay(block.header.number);
+    let sync_time = parent_header.timestamp + delay;
+
+    let mut all_logs: Vec<Log> = Vec::new();
+
+    for data in &state_sync_data {
+        // The `data` field in StateSyncData is the hex-encoded record bytes from Heimdall.
+        // In Bor's Go code, StateSyncData.Data is a `string` type (hex chars).
+        // When RLP-decoded into our Rust `Bytes`, it contains the ASCII hex characters.
+        let hex_str = std::str::from_utf8(&data.data).map_err(|e| {
+            ChainError::Custom(format!(
+                "Invalid UTF-8 in state sync data for event {}: {e}",
+                data.id
+            ))
+        })?;
+        let record_bytes =
+            hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str)).map_err(|e| {
+                ChainError::Custom(format!(
+                    "Invalid hex in state sync data for event {}: {e}",
+                    data.id
+                ))
+            })?;
+
+        let calldata = encode_commit_state(sync_time, &record_bytes);
+
+        match vm.execute_polygon_system_call(
+            &block.header,
+            STATE_RECEIVER_CONTRACT,
+            SYSTEM_ADDRESS,
+            bytes::Bytes::from(calldata),
+            MAX_SYSTEM_CALL_GAS,
+        ) {
+            Ok(report) => {
+                // commitState reverts are non-fatal — collect logs only on success
+                if report.is_success() {
+                    all_logs.extend(report.logs);
+                }
+            }
+            Err(e) => {
+                // Non-fatal: log and continue to next event
+                warn!(
+                    event_id = data.id,
+                    error = %e,
+                    "Polygon commitState system call failed (non-fatal)"
+                );
+            }
+        }
+    }
+
+    // The state sync receipt's cumulative_gas_used equals the last regular receipt's value.
+    // System calls don't contribute to gas accounting in Bor.
+    let receipt = Receipt::new(TxType::StateSync, true, cumulative_gas_used, all_logs);
+
+    Ok(Some(receipt))
 }
 
 /// Performs post-execution checks

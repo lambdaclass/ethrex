@@ -130,6 +130,11 @@ impl LEVM {
                 })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            // Skip StateSyncTransactions — they are consensus-only (Polygon state sync).
+            // System calls are executed separately after all regular transactions.
+            if matches!(tx, Transaction::StateSyncTransaction(_)) {
+                continue;
+            }
             check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
@@ -338,6 +343,10 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            // Skip StateSyncTransactions — they are consensus-only (Polygon state sync).
+            if matches!(tx, Transaction::StateSyncTransaction(_)) {
+                continue;
+            }
             check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
@@ -1794,6 +1803,78 @@ pub fn generic_system_contract_levm(
             .insert(block_header.coinbase, coinbase_account);
     } else {
         // If the coinbase account was not in the cache, we need to remove it
+        db.current_accounts_state.remove(&block_header.coinbase);
+    }
+
+    Ok(report)
+}
+
+/// Execute a Polygon (Bor) system call against a system contract.
+///
+/// Similar to `generic_system_contract_levm` but with Polygon-specific parameters:
+/// - Uses configurable gas limit (Bor uses 50M, not L1's 30M)
+/// - Skips the Prague system contract empty-code check
+/// - Restores system address and coinbase state after execution (keeping target contract changes)
+#[allow(clippy::too_many_arguments)]
+pub fn polygon_system_call_levm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
+    db: &mut GeneralizedDatabase,
+    contract_address: Address,
+    system_address: Address,
+    gas_limit: u64,
+    vm_type: VMType,
+    crypto: &dyn Crypto,
+) -> Result<ExecutionReport, EvmError> {
+    let chain_config = db.store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
+    let coinbase_backup = db
+        .current_accounts_state
+        .get(&block_header.coinbase)
+        .cloned();
+    let env = Environment {
+        origin: system_address,
+        gas_limit: gas_limit + TX_BASE_COST,
+        block_number: block_header.number,
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp,
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas,
+        block_blob_gas_used: block_header.blob_gas_used,
+        block_gas_limit: i64::MAX as u64,
+        config,
+        ..Default::default()
+    };
+
+    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        value: U256::zero(),
+        data: calldata,
+        ..Default::default()
+    });
+
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
+        .and_then(|mut vm| vm.execute())
+        .map_err(EvmError::from);
+
+    let report = result?;
+
+    // Restore system address state (changes are artifacts of the call mechanism)
+    if let Some(system_account) = system_account_backup {
+        db.current_accounts_state
+            .insert(system_address, system_account);
+    } else {
+        db.current_accounts_state.remove(&system_address);
+    }
+
+    // Restore coinbase state (system calls should not affect the coinbase)
+    if let Some(coinbase_account) = coinbase_backup {
+        db.current_accounts_state
+            .insert(block_header.coinbase, coinbase_account);
+    } else {
         db.current_accounts_state.remove(&block_header.coinbase);
     }
 

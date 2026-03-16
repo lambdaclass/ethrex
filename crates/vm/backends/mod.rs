@@ -262,6 +262,28 @@ impl Evm {
         self.db.set_bal_index(index);
     }
 
+    /// Execute a Polygon (Bor) system call against a system contract.
+    /// Returns the execution report including logs for receipt construction.
+    pub fn execute_polygon_system_call(
+        &mut self,
+        block_header: &BlockHeader,
+        contract_address: Address,
+        system_address: Address,
+        calldata: bytes::Bytes,
+        gas_limit: u64,
+    ) -> Result<ethrex_levm::errors::ExecutionReport, EvmError> {
+        levm::polygon_system_call_levm(
+            block_header,
+            calldata,
+            &mut self.db,
+            contract_address,
+            system_address,
+            gas_limit,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
     pub fn simulate_tx_from_generic(
         &mut self,
         tx: &GenericTransaction,
