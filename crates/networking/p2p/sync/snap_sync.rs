@@ -818,7 +818,7 @@ fn compute_storage_roots(
 
     let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
+        Some(noderlp) => Node::decode(&noderlp)?.compute_hash(&ethrex_crypto::NativeCrypto).finalize(&ethrex_crypto::NativeCrypto),
         None => *EMPTY_TRIE_HASH,
     };
     let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
@@ -832,7 +832,7 @@ fn compute_storage_roots(
         METRICS.storage_leaves_inserted.inc();
     }
 
-    let (_, changes) = storage_trie.collect_changes_since_last_hash();
+    let (_, changes) = storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
 
     Ok((account_hash, changes))
 }
@@ -888,7 +888,7 @@ async fn insert_accounts(
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                 }
                 info!("Comitting to disk");
-                let current_state_root = trie.hash()?;
+                let current_state_root = trie.hash(&ethrex_crypto::NativeCrypto)?;
                 Ok(current_state_root)
             })
             .await?;

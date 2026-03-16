@@ -2029,7 +2029,7 @@ mod bal_tests {
             Err(DatabaseError::Custom("not implemented".into()))
         }
         fn get_account_code(&self, _: H256) -> Result<ethrex_common::types::Code, DatabaseError> {
-            Ok(ethrex_common::types::Code::from_bytecode(Bytes::new()))
+            Ok(ethrex_common::types::Code::from_bytecode(Bytes::new(), &ethrex_crypto::NativeCrypto))
         }
         fn get_code_metadata(
             &self,
@@ -2172,7 +2172,7 @@ mod bal_tests {
         let address = addr(6);
         let store = MockStore::new();
         let code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]); // PUSH0 PUSH0 RETURN
-        let expected_hash = ethrex_common::types::Code::from_bytecode(code.clone()).hash;
+        let expected_hash = ethrex_common::types::Code::from_bytecode(code.clone(), &ethrex_crypto::NativeCrypto).hash;
 
         let bal = BlockAccessList::from_accounts(vec![
             AccountChanges::new(address)
