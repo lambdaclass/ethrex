@@ -521,7 +521,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
+source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors#78cad0378b17fc3157b83f514be192bf46edf9a1"
 dependencies = [
  "digest 0.10.7",
  "ff",
@@ -1138,7 +1138,19 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bls12_381",
+ "ethereum-types",
+ "ff",
+ "hex-literal",
  "kzg-rs",
+ "malachite",
+ "p256",
+ "ripemd",
+ "secp256k1 0.30.0",
+ "sha2",
  "thiserror",
  "tiny-keccak",
 ]
@@ -1147,28 +1159,19 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
  "bitvec",
- "bls12_381",
  "bytes",
  "datatest-stable",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "k256",
- "lambdaworks-math",
  "lazy_static",
  "malachite",
- "p256",
- "ripemd",
+ "rayon",
  "rustc-hash",
- "secp256k1 0.30.0",
  "serde",
  "serde_json",
- "sha2",
  "sha3",
  "strum",
  "thiserror",
@@ -1236,6 +1239,7 @@ dependencies = [
  "ethrex-rlp",
  "hex",
  "lazy_static",
+ "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
@@ -1465,10 +1469,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1850,21 +1852,6 @@ dependencies = [
  "sha2",
  "sp1_bls12_381",
  "spin",
-]
-
-[[package]]
-name = "lambdaworks-math"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "018a95aa873eb49896a858dee0d925c33f3978d073c64b08dd4f2c9b35a017c6"
-dependencies = [
- "getrandom 0.2.16",
- "num-bigint 0.4.6",
- "num-traits",
- "rand 0.8.5",
- "rayon",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -3329,6 +3316,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
 dependencies = [
  "pin-project-lite",
+ "tokio-macros",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.107",
 ]
 
 [[package]]

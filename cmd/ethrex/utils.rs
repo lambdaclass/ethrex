@@ -181,6 +181,8 @@ pub fn get_minimal_client_version() -> String {
 }
 
 pub fn display_chain_initialization(genesis: &Genesis) {
+    const BANNER: &str = include_str!("banner.txt");
+    info!("\n{BANNER}");
     let border = "═".repeat(70);
 
     info!("{border}");

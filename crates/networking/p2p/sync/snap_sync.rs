@@ -21,7 +21,6 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
@@ -210,6 +209,8 @@ pub async fn sync_cycle_snap(
             // Too few blocks for a snap sync, switching to full sync
             info!("Sync head is found, switching to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
+            // Disable snap metrics so the progress display stops
+            METRICS.disable().await;
             return super::full::sync_cycle_full(
                 peers,
                 blockchain,
@@ -280,7 +281,11 @@ pub async fn snap_sync(
     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
-    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|_| SyncError::CorruptPath)?;
+    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|e| {
+        SyncError::FileSystem(format!(
+            "Failed to create {code_hashes_snapshot_dir:?}: {e}"
+        ))
+    })?;
 
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
@@ -499,7 +504,8 @@ pub async fn snap_sync(
     for entry in std::fs::read_dir(&code_hashes_dir)
         .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
     {
-        let entry = entry.map_err(|_| SyncError::CorruptPath)?;
+        let entry =
+            entry.map_err(|e| SyncError::FileSystem(format!("Failed to read dir entry: {e}")))?;
         let snapshot_contents = std::fs::read(entry.path())
             .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
         let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
@@ -693,7 +699,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
         store
             .open_locked_state_trie(state_root)
             .expect("couldn't open trie")
-            .validate()
+            .validate_parallel()
     })
     .await
     .expect("We should be able to create threads");
@@ -710,21 +716,40 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = tokio::task::spawn_blocking(move || {
-        store
+        use rayon::prelude::*;
+        let mut iter = store
             .iter_accounts(state_root)
             .expect("couldn't iterate accounts")
-            .par_bridge()
-            .try_for_each(|(hashed_address, account_state)| {
-                let store_clone = store.clone();
-                store_clone
-                    .open_locked_storage_trie(
-                        hashed_address,
-                        state_root,
-                        account_state.storage_root,
-                    )
-                    .expect("couldn't open storage trie")
-                    .validate()
-            })
+            .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH);
+
+        const CHUNK_SIZE: usize = 4096;
+        let mut result: Result<(), ethrex_trie::TrieError> = Ok(());
+
+        loop {
+            let chunk: Vec<_> = iter.by_ref().take(CHUNK_SIZE).collect();
+            if chunk.is_empty() {
+                break;
+            }
+
+            result = chunk
+                .par_iter()
+                .try_for_each(|(hashed_address, account_state)| {
+                    store
+                        .open_locked_storage_trie(
+                            *hashed_address,
+                            state_root,
+                            account_state.storage_root,
+                        )
+                        .expect("couldn't open storage trie")
+                        .validate()
+                });
+
+            if result.is_err() {
+                break;
+            }
+        }
+
+        result
     })
     .await
     .expect("We should be able to create threads");
@@ -737,27 +762,43 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
 
 pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
-    let mut is_valid = true;
-    for (account_hash, account_state) in store
+
+    // Collect unique code hashes — many contracts share bytecode (proxies, ERC20 clones)
+    let mut unique_hashes = HashSet::new();
+    for (_, account_state) in store
         .iter_accounts(state_root)
         .expect("we couldn't iterate over accounts")
     {
-        if account_state.code_hash != *EMPTY_KECCACK_HASH
-            && !store
-                .get_account_code(account_state.code_hash)
-                .is_ok_and(|code| code.is_some())
-        {
-            error!(
-                "Missing code hash {:x} for account {:x}",
-                account_state.code_hash, account_hash
-            );
-            is_valid = false
+        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+            unique_hashes.insert(account_state.code_hash);
         }
     }
-    if !is_valid {
+
+    info!(
+        "Collected {} unique code hashes for validation",
+        unique_hashes.len()
+    );
+
+    // Validate in parallel using existence-only check
+    use rayon::prelude::*;
+    let missing: Vec<_> = unique_hashes
+        .par_iter()
+        .filter(|code_hash| match store.code_exists(**code_hash) {
+            Ok(exists) => !exists,
+            Err(e) => {
+                error!("DB error checking code hash {:x}: {e}", code_hash);
+                true
+            }
+        })
+        .collect();
+
+    if !missing.is_empty() {
+        for hash in &missing {
+            error!("Missing code hash {:x}", hash);
+        }
         std::process::exit(1);
     }
-    is_valid
+    true
 }
 
 // ============================================================================
@@ -867,7 +908,7 @@ async fn insert_storages(
     account_storages_snapshots_dir: &Path,
     _: &Path,
 ) -> Result<(), SyncError> {
-    use rayon::iter::IntoParallelIterator;
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
     for entry in std::fs::read_dir(account_storages_snapshots_dir)
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?

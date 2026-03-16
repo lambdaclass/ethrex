@@ -1,5 +1,6 @@
 use ethrex_common::InvalidBlockError;
 use ethrex_common::types::BlobsBundleError;
+use ethrex_common::types::InvalidBlockBodyError;
 use ethrex_common::types::block_execution_witness::GuestProgramStateError;
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_vm::EvmError;
@@ -7,6 +8,8 @@ use ethrex_vm::EvmError;
 /// Errors that can occur during L2 stateless block execution.
 #[derive(Debug, thiserror::Error)]
 pub enum L2ExecutionError {
+    #[error("Block body and header don't match: {0}")]
+    BlockBodyValidation(InvalidBlockBodyError),
     #[error("Block validation error: {0}")]
     BlockValidation(InvalidBlockError),
     #[error("Gas validation error: {0}")]
@@ -49,6 +52,7 @@ impl From<crate::common::ExecutionError> for L2ExecutionError {
     fn from(err: crate::common::ExecutionError) -> Self {
         use crate::common::ExecutionError;
         match err {
+            ExecutionError::BlockBodyValidation(e) => L2ExecutionError::BlockBodyValidation(e),
             ExecutionError::BlockValidation(e) => L2ExecutionError::BlockValidation(e),
             ExecutionError::GasValidation(e) => L2ExecutionError::GasValidation(e),
             ExecutionError::RequestsRootValidation(e) => {

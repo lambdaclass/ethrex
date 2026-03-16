@@ -13,6 +13,7 @@ const SERVER_URL_DEV: &str = "localhost:3900";
 pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
     let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
         commit_hash: commit_hash.clone(),
+        prover_type: ProverType::TDX,
     })
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;
@@ -41,12 +42,10 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
             }
             _ => Err("No blocks to prove.".to_owned()),
         },
-        ProofData::NoBatchForVersion {
-            commit_hash: server_code_version,
-        } => Err(format!(
-            "Next batch does not match with the current version. Server code: {}, Prover code: {}",
-            server_code_version, commit_hash
-        )),
+        ProofData::VersionMismatch => Err(
+            "Version mismatch: the next batch to prove was built with a different code version"
+                .to_owned(),
+        ),
         _ => Err("Expecting ProofData::Response".to_owned()),
     }
 }

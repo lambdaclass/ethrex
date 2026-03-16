@@ -121,7 +121,7 @@ async fn migrate_libmdbx_to_rocksdb(
 
         let block_hash = block.hash();
         blockchain
-            .add_block_pipeline(block)
+            .add_block_pipeline(block, None)
             .unwrap_or_else(|e| panic!("Cannot add block {block_number} to rocksdb store: {e}"));
         added_blocks.push((block_number, block_hash));
     }
