@@ -76,6 +76,7 @@ bench-results/
 # AI tools. Eventually we might agree on a standard, but lets keep them personal for now
 Claude.md
 GEMINI.md
+.claude/
 
 # RKYV
 *.bin
