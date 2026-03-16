@@ -77,6 +77,32 @@ fn check_gas_limit(
     Ok(())
 }
 
+fn build_parallel_receipts(
+    block_gas_limit: u64,
+    mut results: Vec<(usize, TxType, u64, ExecutionReport)>,
+) -> Result<(Vec<Receipt>, u64), EvmError> {
+    results.sort_unstable_by_key(|(idx, _, _, _)| *idx);
+
+    let mut receipts = Vec::with_capacity(results.len());
+    let mut cumulative_gas_used = 0_u64;
+    let mut block_gas_used = 0_u64;
+
+    for (_, tx_type, tx_gas_limit, report) in results {
+        check_gas_limit(cumulative_gas_used, tx_gas_limit, block_gas_limit)?;
+        cumulative_gas_used += report.gas_spent;
+        block_gas_used += report.gas_used;
+        let receipt = Receipt::new(
+            tx_type,
+            matches!(report.result, TxResult::Success),
+            cumulative_gas_used,
+            report.logs,
+        );
+        receipts.push(receipt);
+    }
+
+    Ok((receipts, block_gas_used))
+}
+
 /// Error type for BAL validation failures, distinguishing state mismatches
 /// from database errors.
 #[derive(Debug, thiserror::Error)]
@@ -705,7 +731,7 @@ impl LEVM {
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded)
         let t_exec = std::time::Instant::now();
-        let results: Result<Vec<(usize, TxType, ExecutionReport)>, EvmError> = (0..n_txs)
+        let results: Result<Vec<(usize, TxType, u64, ExecutionReport)>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
@@ -770,31 +796,13 @@ impl LEVM {
                     ))
                 })?;
 
-                Ok((tx_idx, tx.tx_type(), report))
+                Ok((tx_idx, tx.tx_type(), tx.gas_limit(), report))
             })
             .collect();
 
         let exec_ms = t_exec.elapsed().as_secs_f64() * 1000.0;
-        let mut results = results?;
-
-        // 3. Sort by tx_idx and build receipts
-        results.sort_unstable_by_key(|(idx, _, _)| *idx);
-
-        let mut receipts = Vec::with_capacity(n_txs);
-        let mut cumulative_gas_used = 0_u64;
-        let mut block_gas_used = 0_u64;
-
-        for (_, tx_type, report) in results {
-            cumulative_gas_used += report.gas_spent;
-            block_gas_used += report.gas_used;
-            let receipt = Receipt::new(
-                tx_type,
-                matches!(report.result, TxResult::Success),
-                cumulative_gas_used,
-                report.logs,
-            );
-            receipts.push(receipt);
-        }
+        let results = results?;
+        let (receipts, block_gas_used) = build_parallel_receipts(block.header.gas_limit, results)?;
 
         ::tracing::debug!(
             "[PARALLEL] block {} | {} txs | exec: {:.1}ms",
@@ -1986,6 +1994,7 @@ mod bal_tests {
     use super::*;
     use ethrex_common::H256;
     use ethrex_common::types::AccountState;
+    use ethrex_common::types::TxType;
     use ethrex_common::types::block_access_list::{
         AccountChanges, BalanceChange, NonceChange, SlotChange, StorageChange,
     };
@@ -2187,5 +2196,45 @@ mod bal_tests {
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
         assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+    }
+
+    #[test]
+    fn test_build_parallel_receipts_rejects_tx_that_exceeds_remaining_block_gas() {
+        let results = vec![
+            (
+                1,
+                TxType::Legacy,
+                50,
+                ExecutionReport {
+                    result: TxResult::Success,
+                    gas_used: 10,
+                    gas_spent: 10,
+                    gas_refunded: 0,
+                    output: Bytes::new(),
+                    logs: vec![],
+                },
+            ),
+            (
+                0,
+                TxType::Legacy,
+                70,
+                ExecutionReport {
+                    result: TxResult::Success,
+                    gas_used: 70,
+                    gas_spent: 60,
+                    gas_refunded: 10,
+                    output: Bytes::new(),
+                    logs: vec![],
+                },
+            ),
+        ];
+
+        let err = build_parallel_receipts(100, results).unwrap_err();
+        match err {
+            EvmError::Transaction(message) => {
+                assert!(message.contains("Gas allowance exceeded"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }
