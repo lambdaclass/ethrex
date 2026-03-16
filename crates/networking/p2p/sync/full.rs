@@ -18,12 +18,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::MAX_BLOCK_BODIES_TO_REQUEST;
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
 /// Max hash-based header lookup attempts before falling back to forward sync.
-/// Lower than MAX_HEADER_FETCH_ATTEMPTS to preserve peer connectivity for the fallback.
 const MAX_HASH_LOOKUP_ATTEMPTS: u64 = 10;
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
@@ -360,8 +359,11 @@ async fn add_blocks(
     }
 }
 
+/// Max forward sync attempts — bail quickly so the bridge can re-trigger on the next peer.
+const MAX_FORWARD_SYNC_ATTEMPTS: u64 = 10;
+
 /// Requests block headers forward from `latest + 1` by block number, retrying up to
-/// MAX_HEADER_FETCH_ATTEMPTS times. On success, populates start/end block numbers and headers.
+/// MAX_FORWARD_SYNC_ATTEMPTS times. On success, populates start/end block numbers and headers.
 /// Returns Ok(true) if headers were obtained, Ok(false) if all attempts were exhausted.
 async fn request_forward_headers(
     peers: &mut PeerHandler,
@@ -371,7 +373,7 @@ async fn request_forward_headers(
     end_block_number: &mut u64,
     headers: &mut Vec<BlockHeader>,
 ) -> Result<bool, SyncError> {
-    for attempt in 1..=MAX_HEADER_FETCH_ATTEMPTS {
+    for attempt in 1..=MAX_FORWARD_SYNC_ATTEMPTS {
         let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
         info!(
             forward_start,
