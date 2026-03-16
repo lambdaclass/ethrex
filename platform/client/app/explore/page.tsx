@@ -162,7 +162,7 @@ export default function ShowroomPage() {
         {sortKey === sortKeyVal ? (
           <span className="text-blue-600">{sortDir === "asc" ? "\u2191" : "\u2193"}</span>
         ) : (
-          <span className="text-gray-300">\u2195</span>
+          <span className="text-gray-300">{"\u2195"}</span>
         )}
       </span>
     </th>
