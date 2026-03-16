@@ -21,7 +21,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::ActorRef;
+use spawned_concurrency::tasks::{ActorRef, ActorStart as _};
 use std::{
     io,
     net::SocketAddr,
@@ -170,7 +170,7 @@ pub async fn start_network(
         discv4_handle,
         discv5_handle,
     )
-    .start_actor();
+    .start();
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 

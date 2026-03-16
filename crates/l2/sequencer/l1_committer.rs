@@ -312,7 +312,9 @@ impl L1Committer {
                 }
             }
         }
-        self.do_schedule_commit(self.committer_wake_up_ms, ctx.clone());
+        if self.cancellation_token.is_some() {
+            self.do_schedule_commit(self.committer_wake_up_ms, ctx.clone());
+        }
     }
 
     #[send_handler]

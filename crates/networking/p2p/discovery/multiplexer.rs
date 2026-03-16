@@ -103,11 +103,6 @@ impl DiscoveryMultiplexer {
         }
     }
 
-    /// Start the multiplexer actor.
-    pub fn start_actor(self) -> ActorRef<Self> {
-        self.start()
-    }
-
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
         let local_addr = self.udp_socket.local_addr();
