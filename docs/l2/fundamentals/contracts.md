@@ -43,6 +43,7 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
     - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
     - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)
     - **`getPendingTransactionsVersionedHashWithOffset()`**: Returns a versioned hash of `number` pending privileged transactions, skipping `offset` entries from the front of the queue
+    - **`getPendingTransactionsVersionedHash()`**: Convenience wrapper that calls `getPendingTransactionsVersionedHashWithOffset` with `offset=0`
 
 ### `OnChainOperator`
 The `OnChainProposer` is an upgradeable smart contract that ensures the advancement of the L2. It's used by sequencers to commit batches of L2 blocks and verify their proofs.
