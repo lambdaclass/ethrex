@@ -208,7 +208,10 @@ impl L1ProofSender {
             }
 
             // Time-based resubmission: if we sent a proof but verification hasn't
-            // advanced after the timeout, reset cursor to resend
+            // advanced after the timeout, reset cursor to resend.
+            // The `sent_at > 0` guard skips this when the verifier has reset the
+            // cursor with timestamp=0 to signal immediate re-send (see
+            // l1_proof_verifier.rs verify_proofs_aggregation error path).
             if latest_sent_to_aligned > last_verified_batch
                 && sent_at > 0
                 && now.saturating_sub(sent_at) > self.resubmission_timeout_secs
@@ -219,9 +222,10 @@ impl L1ProofSender {
                     elapsed_secs = now.saturating_sub(sent_at),
                     "Aligned verification timed out, attempting resubmission"
                 );
-                // Reset resubmission clock so we don't spam on every tick
+                // Reset cursor to last_verified so the normal path retries
+                // the stuck batch on the next tick if this attempt fails.
                 self.rollup_store
-                    .set_latest_sent_to_aligned(latest_sent_to_aligned, now)
+                    .set_latest_sent_to_aligned(last_verified_batch, now)
                     .await?;
                 let batch_to_send = last_verified_batch + 1;
                 return self.verify_and_send_proofs_aligned(batch_to_send).await;
