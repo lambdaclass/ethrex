@@ -67,7 +67,12 @@ _blake2b_f:
     vmovdqa ymm3,   [rax + r8]
 
     # Apply block number to local work vector.
-    pxor    xmm3,   [rcx]
+    # Use a temp register to avoid zeroing ymm3's upper 128 bits:
+    # VEX xmm-dest ops zero bits [255:128], so vpxor xmm3,xmm3,[rcx]
+    # would destroy v[14..15].  Instead, load into xmm12 (zeroing
+    # ymm12[255:128]), then full-width ymm XOR preserves ymm3 upper half.
+    vmovdqu xmm12,  [rcx]
+    vpxor   ymm3,   ymm3,   ymm12
 
     # Skip every round if `r == 0`.
     sub     rdi,    0x01

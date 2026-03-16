@@ -37,14 +37,11 @@ jobs:
       - name: Check solc
         run: solc --version
 
-      - name: RISC-V SP1 toolchain install
+      - name: Install SP1
         # if: ${{ always() && github.event_name == 'merge_group' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          . "$HOME/.cargo/env"
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
 
       - name: Set up Docker Buildx
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -55,6 +52,13 @@ jobs:
       - name: Clean .env
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf cmd/.env
+
+      # Remove stale SP1 GPU container from previous runs. The SP1 SDK
+      # spawns a Docker container named "sp1-gpu" for GPU proving which
+      # is not managed by docker compose. If a prior run was cancelled or
+      # timed out, the container may still exist and block the new run.
+      - name: Clean stale sp1-gpu container
+        run: docker rm -f sp1-gpu || true
 
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -158,6 +162,7 @@ jobs:
         run: |
           cd crates/l2
           docker compose down
+          docker rm -f sp1-gpu || true
 
       - name: Ensure admin permissions in _work
         if: always()

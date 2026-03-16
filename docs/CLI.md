@@ -27,12 +27,12 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 
       --datadir <DATABASE_DIRECTORY>
-          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
+          Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.
 
           [env: ETHREX_DATADIR=]
           [default: /home/runner/.local/share/ethrex]
@@ -69,6 +69,11 @@ Node options:
 
           [env: ETHREX_LOG_COLOR=]
           [default: auto]
+
+      --no-migrate
+          Do not migrate an existing database to the network-specific subdirectory.
+
+          [env: ETHREX_NO_MIGRATE=]
 
       --log.dir <LOG_DIR>
           Directory to store log files.
@@ -125,9 +130,9 @@ P2P options:
           [possible values: true, false]
 
       --p2p.discv5 <DISCV5_ENABLED>
-          Enable discv5 discovery (experimental).
+          Enable discv5 discovery.
 
-          [default: false]
+          [default: true]
           [possible values: true, false]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
