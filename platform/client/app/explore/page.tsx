@@ -318,7 +318,7 @@ export default function ShowroomPage() {
                   <th className="w-8 px-4 py-3" />
                   <SortHeader label="Name" sortKeyVal="name" />
                   <SortHeader label="Stack" sortKeyVal="stack" />
-                  <SortHeader label="Chain ID" sortKeyVal="chainid" />
+                  <SortHeader label="L2 Chain ID" sortKeyVal="chainid" />
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                   <SortHeader label="Rating" sortKeyVal="rating" className="text-center" />
                   <SortHeader label="Reviews" sortKeyVal="reviews" className="text-center" />
