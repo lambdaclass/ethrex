@@ -21,6 +21,20 @@ function getPool(): Pool {
   return pool;
 }
 
+export { getPool };
+
+/**
+ * Execute a raw parameterized SQL query (non-tagged-template).
+ * Usage: await sqlRaw("SELECT * FROM foo WHERE id = $1", [id])
+ */
+export async function sqlRaw(
+  query: string,
+  values: unknown[] = []
+): Promise<{ rows: Record<string, unknown>[] }> {
+  const result = await getPool().query(query, values);
+  return { rows: result.rows };
+}
+
 /**
  * Tagged template helper for parameterized SQL queries.
  * Usage: await sql`SELECT * FROM users WHERE id = ${id}`
@@ -154,9 +168,132 @@ export async function ensureSchema() {
   await sql`CREATE INDEX IF NOT EXISTS idx_deployments_user ON deployments(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_deployments_program ON deployments(program_id)`;
 
+  // ── Deployments: extra columns for showroom ──
+  await addColumnIfMissing("deployments", "description", "TEXT");
+  await addColumnIfMissing("deployments", "screenshots", "TEXT");
+  await addColumnIfMissing("deployments", "explorer_url", "TEXT");
+  await addColumnIfMissing("deployments", "dashboard_url", "TEXT");
+  await addColumnIfMissing("deployments", "social_links", "TEXT");
+  await addColumnIfMissing("deployments", "l1_chain_id", "INTEGER");
+  await addColumnIfMissing("deployments", "network_mode", "TEXT");
+  await addColumnIfMissing("deployments", "owner_wallet", "TEXT");
+  await addColumnIfMissing("deployments", "hashtags", "TEXT");
+
+  // ── Explore listings (from metadata repo) ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS explore_listings (
+      id TEXT PRIMARY KEY,
+      l1_chain_id INTEGER NOT NULL,
+      l2_chain_id INTEGER NOT NULL,
+      stack_type TEXT NOT NULL,
+      identity_contract TEXT NOT NULL,
+      name TEXT NOT NULL,
+      rollup_type TEXT,
+      status TEXT DEFAULT 'active',
+      rpc_url TEXT,
+      explorer_url TEXT,
+      bridge_url TEXT,
+      dashboard_url TEXT,
+      native_token_type TEXT DEFAULT 'eth',
+      native_token_symbol TEXT DEFAULT 'ETH',
+      native_token_decimals INTEGER DEFAULT 18,
+      native_token_l1_address TEXT,
+      l1_contracts TEXT,
+      operator_name TEXT,
+      operator_website TEXT,
+      operator_social_links TEXT,
+      description TEXT,
+      screenshots TEXT,
+      hashtags TEXT,
+      signed_by TEXT,
+      signature TEXT,
+      owner_wallet TEXT,
+      repo_file_path TEXT UNIQUE,
+      repo_sha TEXT,
+      synced_at BIGINT,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_listings_identity ON explore_listings(l1_chain_id, stack_type, identity_contract)`;
+
+  // ── Reviews ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id TEXT PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+      content TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_reviews_deployment ON reviews(deployment_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_unique ON reviews(deployment_id, wallet_address)`;
+
+  // ── Comments ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS comments (
+      id TEXT PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      content TEXT NOT NULL,
+      parent_id TEXT REFERENCES comments(id),
+      deleted_at BIGINT,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_comments_deployment ON comments(deployment_id)`;
+
+  // ── Reactions ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS reactions (
+      id TEXT PRIMARY KEY,
+      target_type TEXT NOT NULL CHECK(target_type IN ('review', 'comment')),
+      target_id TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_reactions_target ON reactions(target_type, target_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(target_type, target_id, wallet_address)`;
+
+  // ── Bookmarks ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS bookmarks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      deployment_id TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_unique ON bookmarks(user_id, deployment_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id)`;
+
+  // ── Announcements ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS announcements (
+      id TEXT PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      pinned INTEGER DEFAULT 0,
+      created_at BIGINT NOT NULL
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_announcements_deployment ON announcements(deployment_id)`;
+
   await seedOfficialPrograms();
 
   initialized = true;
+}
+
+async function addColumnIfMissing(table: string, column: string, type: string) {
+  try {
+    await getPool().query(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 async function seedOfficialPrograms() {

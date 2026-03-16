@@ -1,43 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sql, ensureSchema } from "@/lib/db";
+import { ensureSchema } from "@/lib/db";
+import { getListings, getActiveDeployments } from "@/lib/appchain-resolver";
+import { getSocialStatsBatch } from "@/lib/social-queries";
 
 export async function GET(req: NextRequest) {
   try {
     await ensureSchema();
     const { searchParams } = req.nextUrl;
     const search = searchParams.get("search");
-    const limit = Math.max(0, parseInt(searchParams.get("limit") || "50", 10));
+    const stackType = searchParams.get("stack_type");
+    const l1ChainId = searchParams.get("l1_chain_id");
+    const limit = Math.max(1, parseInt(searchParams.get("limit") || "50", 10));
     const offset = Math.max(0, parseInt(searchParams.get("offset") || "0", 10));
 
-    let rows;
-    if (search) {
-      const pattern = `%${search}%`;
-      ({ rows } = await sql`
-        SELECT d.id, d.name, d.chain_id, d.rpc_url, d.status, d.phase,
-               d.bridge_address, d.proposer_address, d.created_at,
-               p.name as program_name, p.program_id as program_slug, p.category,
-               u.name as owner_name
-        FROM deployments d
-        JOIN programs p ON d.program_id = p.id
-        JOIN users u ON d.user_id = u.id
-        WHERE d.status = 'active' AND (d.name ILIKE ${pattern} OR p.name ILIKE ${pattern})
-        ORDER BY d.created_at DESC LIMIT ${limit} OFFSET ${offset}
-      `);
-    } else {
-      ({ rows } = await sql`
-        SELECT d.id, d.name, d.chain_id, d.rpc_url, d.status, d.phase,
-               d.bridge_address, d.proposer_address, d.created_at,
-               p.name as program_name, p.program_id as program_slug, p.category,
-               u.name as owner_name
-        FROM deployments d
-        JOIN programs p ON d.program_id = p.id
-        JOIN users u ON d.user_id = u.id
-        WHERE d.status = 'active'
-        ORDER BY d.created_at DESC LIMIT ${limit} OFFSET ${offset}
-      `);
+    // Fetch from both sources (no offset — pagination applied after merge)
+    const fetchLimit = limit + offset;
+    const listings = await getListings({
+      search, stackType, l1ChainId,
+      limit: fetchLimit, offset: 0,
+    });
+    const deployments = await getActiveDeployments({
+      search, limit: fetchLimit, offset: 0,
+    });
+
+    // Merge: listings first, then deployments (deduplicate by ID)
+    const seenIds = new Set<string>();
+    const merged: Record<string, unknown>[] = [];
+    for (const item of [...listings, ...deployments]) {
+      const id = item.id as string;
+      if (!seenIds.has(id)) {
+        seenIds.add(id);
+        merged.push(item);
+      }
     }
 
-    return NextResponse.json({ appchains: rows });
+    // Apply pagination after merge
+    const paged = merged.slice(offset, offset + limit);
+
+    // Enrich with social stats
+    const ids = paged.map((a) => a.id as string);
+    const stats = await getSocialStatsBatch(ids);
+    const enriched = paged.map((a) => {
+      let hashtags: string[] = [];
+      try { hashtags = a.hashtags ? JSON.parse(a.hashtags as string) : []; } catch { /* ignore */ }
+      const s = stats[a.id as string];
+      return {
+        ...a,
+        hashtags,
+        avg_rating: s?.avg_rating ?? null,
+        review_count: s?.review_count ?? 0,
+        comment_count: s?.comment_count ?? 0,
+      };
+    });
+
+    return NextResponse.json({ appchains: enriched });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

@@ -16,6 +16,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@upstash/redis": "^1.36.3",
     "bcryptjs": "^2.4.3",
+    "ethers": "^6.13.0",
     "next": "^15.1.0",
     "nostr-tools": "^2.23.3",
     "pg": "^8.20.0",
