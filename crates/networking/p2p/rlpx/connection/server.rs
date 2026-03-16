@@ -66,7 +66,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -457,8 +457,8 @@ impl GenServer for PeerConnectionServer {
                         }
                     }
                     _ => {
-                        // We should check why we're failling to handle the cast message
-                        debug!(
+                        // We should check why we're failing to handle the cast message
+                        warn!(
                             peer=%established_state.node,
                             capabilities=?established_state.capabilities,
                             error=%e,
@@ -1000,16 +1000,30 @@ async fn handle_incoming_message(
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
+            let block_headers = msg_data.fetch_headers(&state.storage).await;
+            info!(
+                peer=%state.node,
+                id=msg_data.id,
+                response_count=block_headers.len(),
+                "Serving GetBlockHeaders request"
+            );
             let response = BlockHeaders {
                 id: msg_data.id,
-                block_headers: msg_data.fetch_headers(&state.storage).await,
+                block_headers,
             };
             send(state, Message::BlockHeaders(response)).await?;
         }
         Message::GetBlockBodies(msg_data) if peer_supports_eth => {
+            let block_bodies = msg_data.fetch_blocks(&state.storage).await;
+            info!(
+                peer=%state.node,
+                id=msg_data.id,
+                response_count=block_bodies.len(),
+                "Serving GetBlockBodies request"
+            );
             let response = BlockBodies {
                 id: msg_data.id,
-                block_bodies: msg_data.fetch_blocks(&state.storage).await,
+                block_bodies,
             };
             send(state, Message::BlockBodies(response)).await?;
         }
@@ -1279,7 +1293,14 @@ async fn handle_incoming_message(
             }
         }
         // TODO: Add new message types and handlers as they are implemented
-        message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
+        message => {
+            warn!(
+                peer=%state.node,
+                message=%message,
+                "Unhandled incoming message"
+            );
+            return Err(PeerConnectionError::MessageNotHandled(format!("{message}")));
+        }
     };
     Ok(())
 }
