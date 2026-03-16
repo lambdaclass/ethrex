@@ -1914,6 +1914,7 @@ impl Blockchain {
                 stored,
             );
         }
+
         result
     }
 
@@ -2040,6 +2041,12 @@ impl Blockchain {
                 warmer_duration,
                 instants,
             );
+        }
+
+        // Trigger manual compaction every 1000 blocks when auto-compaction is disabled.
+        // This keeps L0 file count bounded without contending during block execution.
+        if block_number % 1000 == 0 {
+            self.storage.compact();
         }
 
         Ok((produced_bal, result))

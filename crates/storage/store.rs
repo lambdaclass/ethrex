@@ -2680,6 +2680,12 @@ impl Store {
         Ok(())
     }
 
+    /// Triggers manual compaction of all column families.
+    /// Call periodically when auto-compaction is disabled.
+    pub fn compact(&self) {
+        self.backend.compact();
+    }
+
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
         Ok(self.db_path.clone())
     }

@@ -51,6 +51,10 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Triggers a full compaction of all column families.
+    /// No-op for backends that do not support compaction (e.g., in-memory).
+    fn compact(&self) {}
 }
 
 /// Read-only transaction interface.
