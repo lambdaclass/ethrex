@@ -359,11 +359,15 @@ async fn add_blocks(
     }
 }
 
-/// Max forward sync attempts — bail quickly so the bridge can re-trigger on the next peer.
-const MAX_FORWARD_SYNC_ATTEMPTS: u64 = 10;
+/// Max request failures (peer returned bad/empty data) before giving up on forward sync.
+const MAX_FORWARD_SYNC_FAILURES: u64 = 10;
 
-/// Requests block headers forward from `latest + 1` by block number, retrying up to
-/// MAX_FORWARD_SYNC_ATTEMPTS times. On success, populates start/end block numbers and headers.
+/// Max time to wait for peers to become available before giving up.
+const FORWARD_SYNC_PEER_WAIT: Duration = Duration::from_secs(300);
+
+/// Requests block headers forward from `latest + 1` by block number.
+/// Waits indefinitely for peers (up to FORWARD_SYNC_PEER_WAIT), but counts actual
+/// request failures against MAX_FORWARD_SYNC_FAILURES.
 /// Returns Ok(true) if headers were obtained, Ok(false) if all attempts were exhausted.
 async fn request_forward_headers(
     peers: &mut PeerHandler,
@@ -373,11 +377,35 @@ async fn request_forward_headers(
     end_block_number: &mut u64,
     headers: &mut Vec<BlockHeader>,
 ) -> Result<bool, SyncError> {
-    for attempt in 1..=MAX_FORWARD_SYNC_ATTEMPTS {
+    let mut failures = 0u64;
+    let wait_start = tokio::time::Instant::now();
+    let mut logged_no_peers = false;
+
+    loop {
+        // Check if we have any peers at all
+        let peer_count = peers.count_total_peers().await.unwrap_or(0);
+        if peer_count == 0 {
+            // No peers — wait patiently like snap sync does
+            if wait_start.elapsed() > FORWARD_SYNC_PEER_WAIT {
+                warn!(
+                    "Forward sync: no peers available after {:?}, giving up",
+                    FORWARD_SYNC_PEER_WAIT
+                );
+                return Ok(false);
+            }
+            if !logged_no_peers {
+                info!("Forward sync: waiting for peers to connect...");
+                logged_no_peers = true;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        }
+        logged_no_peers = false;
+
         let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
         info!(
             forward_start,
-            attempt, "Forward sync: requesting headers by number"
+            peer_count, failures, "Forward sync: requesting headers by number"
         );
         match peers
             .request_block_headers_from_number(
@@ -402,10 +430,17 @@ async fn request_forward_headers(
                 return Ok(true);
             }
             _ => {
-                warn!(attempt, "Forward sync attempt failed, retrying...");
+                failures += 1;
+                if failures >= MAX_FORWARD_SYNC_FAILURES {
+                    warn!(
+                        failures,
+                        "Forward sync: too many request failures, giving up"
+                    );
+                    return Ok(false);
+                }
+                warn!(failures, "Forward sync: request failed, retrying...");
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
     }
-    Ok(false)
 }
