@@ -4449,6 +4449,7 @@ dependencies = [
 name = "ethrex-test"
 version = "9.0.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "bytes",
  "cita_trie",
