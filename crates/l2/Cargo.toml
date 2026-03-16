@@ -85,8 +85,8 @@ redundant_clone = "warn"
 [features]
 default = ["l2"]
 
-sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk"]
-risc0 = ["ethrex-guest-program/risc0"]
+sp1 = ["ethrex-guest-program/sp1-build-elf", "dep:sp1-sdk"]
+risc0 = ["ethrex-guest-program/risc0-build-elf"]
 
 rocksdb = []
 
