@@ -162,7 +162,7 @@ async fn get_blobs_and_proof(
             .is_osaka_activated(current_block_header.timestamp)
     {
         // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
-        return Err(RpcErr::UnsuportedFork(format!(
+        return Err(RpcErr::UnsupportedFork(format!(
             "getBlobsV{} engine only supported for Osaka",
             version
         )));
@@ -303,7 +303,7 @@ mod tests {
         };
 
         let err = request.handle(context).await.unwrap_err();
-        assert!(matches!(err, RpcErr::UnsuportedFork(_)));
+        assert!(matches!(err, RpcErr::UnsupportedFork(_)));
     }
 
     #[tokio::test]

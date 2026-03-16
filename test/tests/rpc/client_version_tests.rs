@@ -121,20 +121,20 @@ fn test_from_client_version() {
 }
 
 #[test]
-fn test_from_client_version_short_commit() {
+fn test_from_client_version_full_commit() {
     let cv = ClientVersion::new(
         "ethrex".to_string(),
         "0.1.0".to_string(),
         "main".to_string(),
-        "abc".to_string(), // Short commit hash
+        "abc12345def67890abc12345def67890abcdef01".to_string(), // Full 40-char SHA
         "x86_64-apple-darwin".to_string(),
         "1.70.0".to_string(),
     );
 
     let client_version = ClientVersionV1::from_client_version(&cv);
 
-    // Short commit should be kept as-is
-    assert_eq!(client_version.commit, "abc");
+    // Commit should be truncated to first 8 characters (4 bytes)
+    assert_eq!(client_version.commit, "abc12345");
 }
 
 #[test]

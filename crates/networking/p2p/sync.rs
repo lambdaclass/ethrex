@@ -221,8 +221,10 @@ pub enum SyncError {
     NoBlockHeaders,
     #[error("Peer handler error: {0}")]
     PeerHandler(#[from] PeerHandlerError),
-    #[error("Corrupt Path")]
-    CorruptPath,
+    #[error("Parent not found in healing queue. Parent: {0}, path: {1}")]
+    HealingQueueInconsistency(String, String),
+    #[error("Filesystem error: {0}")]
+    FileSystem(String),
     #[error("Sorted Trie Generation Error: {0}")]
     TrieGenerationError(#[from] TrieGenerationError),
     #[error("Failed to get account temp db directory: {0}")]
@@ -255,7 +257,7 @@ impl SyncError {
             | SyncError::DifferentStateRoots(_, _, _)
             | SyncError::NoBlockHeaders
             | SyncError::PeerHandler(_)
-            | SyncError::CorruptPath
+            | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
             | SyncError::StorageTempDBDirNotFound(_)
@@ -264,7 +266,8 @@ impl SyncError {
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
-            | SyncError::Snap(_) => false,
+            | SyncError::Snap(_)
+            | SyncError::FileSystem(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
