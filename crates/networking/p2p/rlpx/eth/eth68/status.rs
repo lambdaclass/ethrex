@@ -17,12 +17,12 @@ use ethrex_storage::Store;
 
 #[derive(Debug, Clone)]
 pub struct StatusMessage68 {
-    pub(crate) eth_version: u8,
-    pub(crate) network_id: u64,
-    pub(crate) total_difficulty: U256,
-    pub(crate) block_hash: BlockHash,
-    pub(crate) genesis: BlockHash,
-    pub(crate) fork_id: ForkId,
+    pub eth_version: u8,
+    pub network_id: u64,
+    pub total_difficulty: U256,
+    pub block_hash: BlockHash,
+    pub genesis: BlockHash,
+    pub fork_id: ForkId,
 }
 
 impl RLPxMessage for StatusMessage68 {
