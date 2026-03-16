@@ -15,6 +15,39 @@ function upsertListing(metadata, repoFilePath, sha) {
   const id = listingId(metadata.l1ChainId, metadata.stackType, metadata.identityContract);
   const now = Date.now();
 
+  const params = {
+    id,
+    l1_chain_id: metadata.l1ChainId,
+    l2_chain_id: metadata.l2ChainId,
+    stack_type: metadata.stackType,
+    identity_contract: metadata.identityContract?.toLowerCase(),
+    name: metadata.name,
+    rollup_type: metadata.rollupType || null,
+    status: metadata.status || "active",
+    rpc_url: metadata.rpcUrl || null,
+    explorer_url: metadata.explorerUrl || null,
+    bridge_url: metadata.bridgeUrl || null,
+    dashboard_url: metadata.dashboardUrl || null,
+    native_token_type: metadata.nativeToken?.type || "eth",
+    native_token_symbol: metadata.nativeToken?.symbol || "ETH",
+    native_token_decimals: metadata.nativeToken?.decimals ?? 18,
+    native_token_l1_address: metadata.nativeToken?.l1Address || null,
+    l1_contracts: metadata.l1Contracts ? JSON.stringify(metadata.l1Contracts) : null,
+    operator_name: metadata.operator?.name || null,
+    operator_website: metadata.operator?.website || null,
+    operator_social_links: metadata.operator?.socialLinks ? JSON.stringify(metadata.operator.socialLinks) : null,
+    description: metadata.description || null,
+    screenshots: metadata.screenshots ? JSON.stringify(metadata.screenshots) : null,
+    hashtags: metadata.hashtags ? JSON.stringify(metadata.hashtags) : null,
+    signed_by: metadata.metadata?.signedBy || null,
+    signature: metadata.metadata?.signature || null,
+    owner_wallet: metadata.metadata?.signedBy || null, // owner_wallet = signer
+    repo_file_path: repoFilePath || null,
+    repo_sha: sha || null,
+    synced_at: now,
+    created_at: now,
+  };
+
   db.prepare(`
     INSERT INTO explore_listings (
       id, l1_chain_id, l2_chain_id, stack_type, identity_contract,
@@ -25,13 +58,13 @@ function upsertListing(metadata, repoFilePath, sha) {
       signed_by, signature, owner_wallet,
       repo_file_path, repo_sha, synced_at, created_at
     ) VALUES (
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?,
-      ?, ?, ?, ?
+      @id, @l1_chain_id, @l2_chain_id, @stack_type, @identity_contract,
+      @name, @rollup_type, @status, @rpc_url, @explorer_url, @bridge_url, @dashboard_url,
+      @native_token_type, @native_token_symbol, @native_token_decimals, @native_token_l1_address,
+      @l1_contracts, @operator_name, @operator_website, @operator_social_links,
+      @description, @screenshots, @hashtags,
+      @signed_by, @signature, @owner_wallet,
+      @repo_file_path, @repo_sha, @synced_at, @created_at
     )
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
@@ -58,30 +91,7 @@ function upsertListing(metadata, repoFilePath, sha) {
       repo_file_path = excluded.repo_file_path,
       repo_sha = excluded.repo_sha,
       synced_at = excluded.synced_at
-  `).run(
-    id, metadata.l1ChainId, metadata.l2ChainId, metadata.stackType,
-    metadata.identityContract?.toLowerCase(),
-    metadata.name, metadata.rollupType || null, metadata.status || "active",
-    metadata.rpcUrl || null, metadata.explorerUrl || null,
-    metadata.bridgeUrl || null, metadata.dashboardUrl || null,
-    metadata.nativeToken?.type || "eth",
-    metadata.nativeToken?.symbol || "ETH",
-    metadata.nativeToken?.decimals ?? 18,
-    metadata.nativeToken?.l1Address || null,
-    metadata.l1Contracts ? JSON.stringify(metadata.l1Contracts) : null,
-    metadata.operator?.name || null,
-    metadata.operator?.website || null,
-    metadata.operator?.socialLinks ? JSON.stringify(metadata.operator.socialLinks) : null,
-    metadata.description || null,
-    metadata.screenshots ? JSON.stringify(metadata.screenshots) : null,
-    metadata.hashtags ? JSON.stringify(metadata.hashtags) : null,
-    metadata.metadata?.signedBy || null,
-    metadata.metadata?.signature || null,
-    metadata.metadata?.signedBy || null, // owner_wallet = signer
-    repoFilePath || null,
-    sha || null,
-    now, now,
-  );
+  `).run(params);
 }
 
 /**

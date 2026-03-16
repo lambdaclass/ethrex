@@ -4,11 +4,17 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-// GET /api/fs/browse?path=/some/dir — list directories
+// GET /api/fs/browse?path=/some/dir — list directories (restricted to home dir)
 router.get("/browse", (req, res) => {
   try {
-    const dirPath = req.query.path || os.homedir();
+    const homeDir = os.homedir();
+    const dirPath = req.query.path || homeDir;
     const resolved = path.resolve(dirPath);
+
+    // Security: restrict browsing to home directory and below
+    if (!resolved.startsWith(homeDir)) {
+      return res.status(403).json({ error: "Access denied: path must be within home directory" });
+    }
 
     if (!fs.existsSync(resolved)) {
       return res.status(404).json({ error: "Directory not found" });

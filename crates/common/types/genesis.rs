@@ -430,12 +430,9 @@ impl ChainConfig {
 
     /// Computes the scale factor: 10^(18 - l1_decimals).
     /// Returns None if using ETH (no scaling needed).
+    /// Returns Err if native_token_l1_decimals > 18.
     /// The scale factor converts L1 token amounts to L2 18-decimal amounts:
     ///   l2_amount = l1_amount * scale_factor
-    ///
-    /// # Panics
-    /// Panics if `native_token_l1_decimals > 18`. Tokens with more than 18
-    /// decimals are not supported as native gas tokens.
     pub fn native_token_scale_factor(&self) -> Option<U256> {
         self.native_token_l1_address.map(|_| {
             let decimals = self.native_token_l1_decimals();
@@ -446,6 +443,19 @@ impl ChainConfig {
             let exponent = 18 - decimals;
             U256::from(10u64).pow(U256::from(exponent))
         })
+    }
+
+    /// Validates the chain config at startup. Returns an error string if invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.native_token_l1_address.is_some() {
+            let decimals = self.native_token_l1_decimals();
+            if decimals > 18 {
+                return Err(format!(
+                    "Native token L1 decimals ({decimals}) exceeds 18. Tokens with more than 18 decimals are not supported."
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn display_config(&self) -> String {

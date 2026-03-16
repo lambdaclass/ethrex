@@ -58,7 +58,11 @@ function exec(conn, command, opts = {}) {
     });
 
     if (opts.timeout) {
-      setTimeout(() => reject(new Error("Remote command timed out")), opts.timeout);
+      const timer = setTimeout(() => {
+        if (stream) stream.close();
+        reject(new Error("Remote command timed out"));
+      }, opts.timeout);
+      stream.on("close", () => clearTimeout(timer));
     }
   });
 }
@@ -81,20 +85,34 @@ function uploadFile(conn, localContent, remotePath) {
 /**
  * Upload compose file and configs, then pull + start services.
  */
+/** Validate shell-safe name (alphanumeric, hyphens, underscores only) */
+function assertSafeName(value, label) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+    throw new Error(`Invalid ${label}: must be alphanumeric/hyphens/underscores only`);
+  }
+}
+
+/** Shell-quote a path value */
+function q(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 async function deployRemote(conn, projectName, composeContent, remoteDir) {
+  assertSafeName(projectName, "projectName");
+
   // Create deployment directory
-  await exec(conn, `mkdir -p ${remoteDir}`);
+  await exec(conn, `mkdir -p ${q(remoteDir)}`);
 
   // Upload compose file
   await uploadFile(conn, composeContent, `${remoteDir}/docker-compose.yaml`);
 
   // Pull images (pre-built, no build needed)
-  await exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} pull`, {
+  await exec(conn, `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} pull`, {
     timeout: 300000, // 5 min to pull images
   });
 
   // Start services
-  await exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} up -d`, {
+  await exec(conn, `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} up -d`, {
     timeout: 60000,
   });
 }
@@ -103,9 +121,10 @@ async function deployRemote(conn, projectName, composeContent, remoteDir) {
  * Extract .env from deployer volume on remote.
  */
 async function extractEnvRemote(conn, projectName) {
+  assertSafeName(projectName, "projectName");
   const { stdout } = await exec(
     conn,
-    `docker run --rm -v ${projectName}_env:/env alpine cat /env/.env`,
+    `docker run --rm -v ${q(projectName + '_env')}:/env alpine cat /env/.env`,
     { ignoreError: true, timeout: 30000 }
   );
 
@@ -119,7 +138,7 @@ async function extractEnvRemote(conn, projectName) {
 
 /** Stop services on remote */
 async function stopRemote(conn, projectName, remoteDir) {
-  await exec(conn, `cd ${remoteDir} && docker compose -p ${projectName} stop`, {
+  await exec(conn, `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} stop`, {
     ignoreError: true,
     timeout: 60000,
   });
@@ -128,9 +147,9 @@ async function stopRemote(conn, projectName, remoteDir) {
 /** Start stopped services on remote */
 async function startRemote(conn, projectName, remoteDir) {
   // Use .keys.env if it exists (testnet deployments)
-  const { stdout } = await exec(conn, `test -f "${remoteDir}/.keys.env" && echo yes || echo no`, { ignoreError: true });
-  const envFileFlag = stdout.trim() === "yes" ? `--env-file "${remoteDir}/.keys.env"` : "";
-  await exec(conn, `cd "${remoteDir}" && docker compose ${envFileFlag} -p ${projectName} up -d`, {
+  const { stdout } = await exec(conn, `test -f ${q(remoteDir + '/.keys.env')} && echo yes || echo no`, { ignoreError: true });
+  const envFileFlag = stdout.trim() === "yes" ? `--env-file ${q(remoteDir + '/.keys.env')}` : "";
+  await exec(conn, `cd ${q(remoteDir)} && docker compose ${envFileFlag} -p ${q(projectName)} up -d`, {
     timeout: 60000,
   });
 }
@@ -139,10 +158,10 @@ async function startRemote(conn, projectName, remoteDir) {
 async function destroyRemote(conn, projectName, remoteDir) {
   await exec(
     conn,
-    `cd ${remoteDir} && docker compose -p ${projectName} down --volumes --remove-orphans`,
+    `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} down --volumes --remove-orphans`,
     { ignoreError: true, timeout: 60000 }
   );
-  await exec(conn, `rm -rf ${remoteDir}`, { ignoreError: true });
+  await exec(conn, `rm -rf ${q(remoteDir)}`, { ignoreError: true });
 }
 
 /** Get container status on remote */
@@ -150,7 +169,7 @@ async function getStatusRemote(conn, projectName, remoteDir) {
   try {
     const { stdout } = await exec(
       conn,
-      `cd ${remoteDir} && docker compose -p ${projectName} ps --format json`,
+      `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} ps --format json`,
       { ignoreError: true, timeout: 15000 }
     );
     return stdout
@@ -171,7 +190,7 @@ async function getLogsRemote(conn, projectName, remoteDir, service, tail = 100) 
   const svc = service ? ` ${service}` : "";
   const { stdout } = await exec(
     conn,
-    `cd ${remoteDir} && docker compose -p ${projectName} logs --tail ${tail}${svc}`,
+    `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} logs --tail ${tail}${svc}`,
     { ignoreError: true, timeout: 15000 }
   );
   return stdout;
@@ -182,7 +201,7 @@ function streamLogsRemote(conn, projectName, remoteDir, service) {
   return new Promise((resolve, reject) => {
     const svc = service ? ` ${service}` : "";
     conn.exec(
-      `cd ${remoteDir} && docker compose -p ${projectName} logs -f --tail 50${svc}`,
+      `cd ${q(remoteDir)} && docker compose -p ${q(projectName)} logs -f --tail 50${svc}`,
       (err, stream) => {
         if (err) return reject(err);
         resolve(stream);
@@ -254,8 +273,9 @@ async function testConnection(host) {
  * @param {boolean} [opts.skipL1Explorer] - Skip L1 Blockscout (external L1)
  */
 async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPorts, opts = {}) {
+  assertSafeName(projectName, "projectName");
   const toolsDir = `${remoteDir}/tools`;
-  await exec(conn, `mkdir -p ${toolsDir}`);
+  await exec(conn, `mkdir -p ${q(toolsDir)}`);
 
   // Write the deployed .env file for tools (contract addresses etc.)
   const envContent = Object.entries(envVars || {})
@@ -325,11 +345,11 @@ async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPort
     ? "frontend-l2 backend-l2 db db-init redis-db function-selectors-l2 bridge-ui proxy-l2-only"
     : "";
 
-  await exec(conn, `cd ${toolsDir} && docker compose ${envFileFlag} -f docker-compose-tools.yaml -p ${projectName} ${profile} build`, {
+  await exec(conn, `cd ${q(toolsDir)} && docker compose ${envFileFlag} -f docker-compose-tools.yaml -p ${q(projectName)} ${profile} build`, {
     timeout: 300000,
   });
 
-  await exec(conn, `cd ${toolsDir} && docker compose ${envFileFlag} -f docker-compose-tools.yaml -p ${projectName} ${profile} up -d ${services}`, {
+  await exec(conn, `cd ${q(toolsDir)} && docker compose ${envFileFlag} -f docker-compose-tools.yaml -p ${q(projectName)} ${profile} up -d ${services}`, {
     timeout: 120000,
   });
 }
@@ -337,7 +357,7 @@ async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPort
 /** Stop tools on remote */
 async function stopToolsRemote(conn, projectName, remoteDir) {
   const toolsDir = `${remoteDir}/tools`;
-  await exec(conn, `cd ${toolsDir} && docker compose -f docker-compose-tools.yaml -p ${projectName} stop`, {
+  await exec(conn, `cd ${q(toolsDir)} && docker compose -f docker-compose-tools.yaml -p ${q(projectName)} stop`, {
     ignoreError: true, timeout: 60000,
   });
 }

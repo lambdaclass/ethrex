@@ -10,9 +10,21 @@ const keychainRoutes = require("./routes/keychain");
 const app = express();
 const PORT = process.env.LOCAL_SERVER_PORT || 5002;
 
-// Middleware
+// Middleware — restrict CORS to Tauri dev/prod origins (localhost-only server)
+const ALLOWED_ORIGINS = [
+  "tauri://localhost",        // Tauri production (macOS/Linux)
+  "https://tauri.localhost",  // Tauri production (Windows)
+  "http://localhost:1420",    // Tauri dev (Vite)
+  "http://127.0.0.1:1420",
+  "http://localhost:5002",    // Self (web UI)
+  "http://127.0.0.1:5002",
+];
 app.use(cors({
-  origin: true,  // Allow all origins (localhost-only server)
+  origin: (origin, cb) => {
+    // Allow requests with no origin (same-origin, curl, Tauri webview)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error("CORS not allowed"));
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -85,16 +97,18 @@ app.post("/api/open-url", (req, res) => {
     return;
   }
 
-  // Only allow http/https URLs on localhost or known domains
-  if (!url.startsWith("http://127.0.0.1") && !url.startsWith("http://localhost") && !url.startsWith("https://")) {
-    return res.status(400).json({ error: "Invalid URL" });
+  // Validate URL: only http/https on localhost or known domains
+  let parsed;
+  try { parsed = new URL(url); } catch { return res.status(400).json({ error: "Invalid URL" }); }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return res.status(400).json({ error: "Invalid URL protocol" });
   }
-  const escaped = url.replace(/"/g, '\\"');
-  const platform = process.platform;
-  const cmd = platform === "win32" ? `start "" "${escaped}"`
-    : platform === "darwin" ? `open "${escaped}"`
-    : `xdg-open "${escaped}"`;
-  exec(cmd, (err) => {
+
+  const { execFile } = require("child_process");
+  const opener = process.platform === "win32" ? "cmd"
+    : process.platform === "darwin" ? "open" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  execFile(opener, args, (err) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ ok: true });
   });
