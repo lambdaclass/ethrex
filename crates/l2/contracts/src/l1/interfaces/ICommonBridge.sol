@@ -96,14 +96,8 @@ interface ICommonBridge {
     /// @param l2Recipient the address on L2 that will receive the deposit.
     function deposit(address l2Recipient) external payable;
 
-    /// @notice Method to retrieve the versioned hash of the first `number`
-    /// pending privileged transactions.
-    /// @param number of pending privileged transaction to retrieve the versioned hash.
-    function getPendingTransactionsVersionedHash(
-        uint16 number
-    ) external view returns (bytes32);
-
-    /// @notice Same as getPendingTransactionsVersionedHash but skips `offset` entries.
+    /// @notice Retrieve the versioned hash of `number` pending privileged
+    /// transactions, skipping `offset` entries from the front of the queue.
     /// @dev Used by OnChainProposer to verify batches when previous committed
     /// batches haven't been verified yet.
     /// @param offset number of entries to skip from the front of the pending queue.
@@ -113,16 +107,8 @@ interface ICommonBridge {
         uint16 number
     ) external view returns (bytes32);
 
-    /// @notice Method to retrieve the versioned hash of the first `number`
-    /// pending L2 messages.
-    /// @param chainId the chain id of the L2 messages to retrieve.
-    /// @param number of pending L2 messages to retrieve the versioned hash.
-    function getPendingL2MessagesVersionedHash(
-        uint256 chainId,
-        uint16 number
-    ) external view returns (bytes32);
-
-    /// @notice Same as getPendingL2MessagesVersionedHash but skips `offset` entries.
+    /// @notice Retrieve the versioned hash of `number` pending L2 messages,
+    /// skipping `offset` entries from the front of the queue.
     /// @dev Used by OnChainProposer to verify batches when previous committed
     /// batches haven't been verified yet.
     /// @param chainId the chain id of the L2 messages to retrieve.
