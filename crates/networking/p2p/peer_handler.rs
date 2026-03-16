@@ -465,12 +465,12 @@ impl PeerHandler {
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-            None => Ok(None),
+            None => {
+                debug!("request_block_headers_from_number: no peers available");
+                Ok(None)
+            }
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
-                    id: _,
-                    block_headers,
-                })) = PeerHandler::make_request(
+                match PeerHandler::make_request(
                     &mut self.peer_table,
                     peer_id,
                     &mut connection,
@@ -479,15 +479,47 @@ impl PeerHandler {
                 )
                 .await
                 {
-                    if !block_headers.is_empty()
-                        && are_block_headers_chained(&block_headers, &order)
-                    {
-                        return Ok(Some(block_headers));
-                    } else {
-                        return Ok(None);
+                    Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                        id: _,
+                        block_headers,
+                    })) => {
+                        if block_headers.is_empty() {
+                            debug!(
+                                start,
+                                %peer_id,
+                                "request_block_headers_from_number: peer returned empty response"
+                            );
+                            return Ok(None);
+                        }
+                        if !are_block_headers_chained(&block_headers, &order) {
+                            warn!(
+                                start,
+                                count = block_headers.len(),
+                                %peer_id,
+                                "request_block_headers_from_number: headers not properly chained"
+                            );
+                            return Ok(None);
+                        }
+                        Ok(Some(block_headers))
+                    }
+                    Ok(_other) => {
+                        debug!(
+                            start,
+                            %peer_id,
+                            "request_block_headers_from_number: unexpected message type from peer"
+                        );
+                        Ok(None)
+                    }
+                    Err(e) => {
+                        debug!(
+                            start,
+                            %peer_id,
+                            error = %e,
+                            "request_block_headers_from_number: request failed"
+                        );
+                        Ok(None)
                     }
                 }
-                Ok(None)
             }
         }
     }

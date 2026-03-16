@@ -47,7 +47,7 @@ pub async fn sync_cycle_full(
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
-    let mut start_block_number;
+    let mut start_block_number = 0;
     let mut end_block_number = 0;
     let mut headers = vec![];
     let mut single_batch = true;
@@ -74,34 +74,52 @@ pub async fn sync_cycle_full(
                     latest,
                     "Hash-based header lookup failed, falling back to forward sync from latest block"
                 );
-                match peers
-                    .request_block_headers_from_number(
-                        latest + 1,
-                        MAX_BLOCK_BODIES_TO_REQUEST as u64,
-                        BlockRequestOrder::OldToNew,
-                    )
-                    .await?
-                {
-                    Some(forward_headers) if !forward_headers.is_empty() => {
-                        let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
-                        let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
-                        info!(
-                            "Forward sync: received {} headers from block {} to {}",
-                            forward_headers.len(),
-                            first.number,
-                            last.number,
-                        );
-                        start_block_number = first.number;
-                        end_block_number = last.number;
-                        headers = forward_headers;
-                        single_batch = true;
-                        break;
+                let mut forward_attempts = 0;
+                let forward_ok = loop {
+                    forward_attempts += 1;
+                    if forward_attempts > MAX_HEADER_FETCH_ATTEMPTS {
+                        break false;
                     }
-                    _ => {
-                        warn!("Forward sync fallback also failed, aborting");
-                        return Ok(());
+                    let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
+                    info!(
+                        forward_start,
+                        forward_attempts, "Forward sync: requesting headers by number"
+                    );
+                    match peers
+                        .request_block_headers_from_number(
+                            forward_start,
+                            MAX_BLOCK_BODIES_TO_REQUEST as u64,
+                            BlockRequestOrder::OldToNew,
+                        )
+                        .await?
+                    {
+                        Some(forward_headers) if !forward_headers.is_empty() => {
+                            let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
+                            let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
+                            info!(
+                                "Forward sync: received {} headers from block {} to {}",
+                                forward_headers.len(),
+                                first.number,
+                                last.number,
+                            );
+                            start_block_number = first.number;
+                            end_block_number = last.number;
+                            headers = forward_headers;
+                            single_batch = true;
+                            break true;
+                        }
+                        _ => {
+                            warn!(forward_attempts, "Forward sync attempt failed, retrying...");
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            continue;
+                        }
                     }
+                };
+                if forward_ok {
+                    break;
                 }
+                warn!("Forward sync fallback exhausted all attempts, aborting");
+                return Ok(());
             }
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;
