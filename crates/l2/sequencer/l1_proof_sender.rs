@@ -191,7 +191,7 @@ impl L1ProofSender {
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if self.aligned_mode {
-            let (mut latest_sent_to_aligned, sent_at) =
+            let (mut latest_sent_to_aligned, mut sent_at) =
                 self.rollup_store.get_latest_sent_to_aligned().await?;
 
             let now = std::time::SystemTime::now()
@@ -205,6 +205,7 @@ impl L1ProofSender {
                     .set_latest_sent_to_aligned(last_verified_batch, now)
                     .await?;
                 latest_sent_to_aligned = last_verified_batch;
+                sent_at = now;
             }
 
             // Time-based resubmission: if we sent a proof but verification hasn't
@@ -231,11 +232,17 @@ impl L1ProofSender {
                     .set_latest_sent_to_aligned(last_verified_batch, now)
                     .await?;
                 let batch_to_send = last_verified_batch + 1;
-                return self.verify_and_send_proofs_aligned(batch_to_send).await;
+                return self
+                    .verify_and_send_proofs_aligned(batch_to_send, now)
+                    .await;
             }
 
             let batch_to_send = latest_sent_to_aligned + 1;
-            return self.verify_and_send_proofs_aligned(batch_to_send).await;
+            // Use the existing sent_at so the timeout measures from when the
+            // first unverified batch was sent, not the latest one. If sent_at
+            // is 0 (verifier reset or initial state), start a fresh baseline.
+            let ts = if sent_at > 0 { sent_at } else { now };
+            return self.verify_and_send_proofs_aligned(batch_to_send, ts).await;
         }
 
         let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
@@ -295,6 +302,7 @@ impl L1ProofSender {
     async fn verify_and_send_proofs_aligned(
         &self,
         batch_to_send: u64,
+        sent_at: u64,
     ) -> Result<(), ProofSenderError> {
         let last_committed_batch =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
@@ -323,12 +331,10 @@ impl L1ProofSender {
                 .await?;
             // Only advance the aligned cursor, NOT the main cursor.
             // Main cursor is advanced by the verifier after on-chain verification.
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
-                .as_secs();
+            // Preserve the caller's sent_at so the resubmission timeout measures
+            // from when the first unverified batch was sent, not the latest one.
             self.rollup_store
-                .set_latest_sent_to_aligned(batch_to_send, now)
+                .set_latest_sent_to_aligned(batch_to_send, sent_at)
                 .await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
