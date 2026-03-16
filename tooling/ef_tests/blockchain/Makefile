@@ -45,7 +45,7 @@ $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
 amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/amsterdam
+	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
 
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)

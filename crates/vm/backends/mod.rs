@@ -15,6 +15,7 @@ use ethrex_crypto::Crypto;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
+use ethrex_levm::errors::ExecutionReport;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -132,10 +133,9 @@ impl Evm {
         &mut self,
         tx: &Transaction,
         block_header: &BlockHeader,
-        remaining_gas: &mut u64,
         cumulative_gas_spent: &mut u64,
         sender: Address,
-    ) -> Result<(Receipt, u64), EvmError> {
+    ) -> Result<(Receipt, ExecutionReport), EvmError> {
         let execution_report = LEVM::execute_tx(
             tx,
             sender,
@@ -144,9 +144,6 @@ impl Evm {
             self.vm_type,
             self.crypto.as_ref(),
         )?;
-
-        // Use gas_used (pre-refund for EIP-7778/Amsterdam+) for block gas accounting
-        *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
 
         // Track cumulative post-refund gas for receipt
         *cumulative_gas_spent += execution_report.gas_spent;
@@ -158,8 +155,7 @@ impl Evm {
             execution_report.logs.clone(),
         );
 
-        // Return gas_spent (post-refund) for block value calculation
-        Ok((receipt, execution_report.gas_spent))
+        Ok((receipt, execution_report))
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
