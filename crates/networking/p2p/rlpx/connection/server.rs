@@ -35,7 +35,7 @@ use crate::{
     tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
     types::Node,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, error::ChainError};
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction};
@@ -1197,6 +1197,17 @@ async fn handle_incoming_message(
                                     .await?;
                                 debug!(block_number, %announced_td, "Updated canonical head (Polygon)");
                             }
+                        }
+                        Err(ChainError::ParentNotFound) => {
+                            // Block is stored as pending by execute_block.
+                            // Signal the sync bridge to trigger a full sync
+                            // that fills the gap from our head to this block.
+                            warn!(
+                                peer=%state.node,
+                                block_number,
+                                "Polygon block parent not found, triggering gap-fill sync"
+                            );
+                            state.blockchain.set_polygon_sync_head(block_hash);
                         }
                         Err(e) => {
                             warn!(
