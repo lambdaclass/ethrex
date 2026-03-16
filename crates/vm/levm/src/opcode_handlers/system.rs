@@ -876,8 +876,19 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
-            && !is_delegation_7702
+        // Resolve precompile address via movePrecompileToAddress overrides.
+        let resolved_precompile_addr = self
+            .db
+            .precompile_overrides
+            .get(&code_address)
+            .copied()
+            .unwrap_or(code_address);
+
+        if precompiles::is_precompile(
+            &resolved_precompile_addr,
+            self.env.config.fork,
+            self.vm_type,
+        ) && !is_delegation_7702
         {
             // Record precompile address touch for BAL per EIP-7928
             if let Some(recorder) = self.db.bal_recorder.as_mut() {
@@ -886,7 +897,7 @@ impl<'a> VM<'a> {
 
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
-                code_address,
+                resolved_precompile_addr,
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,

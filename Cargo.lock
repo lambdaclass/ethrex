@@ -4336,6 +4336,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
+ "ethrex-levm",
  "ethrex-metrics",
  "ethrex-p2p",
  "ethrex-rlp",

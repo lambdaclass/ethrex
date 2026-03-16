@@ -1456,6 +1456,24 @@ impl LEVM {
             .map_err(VMError::into)
     }
 
+    /// Like [simulate_tx_from_generic] but keeps real baseFee and block gas limit.
+    /// Used by eth_simulateV1 in validation mode.
+    pub fn simulate_tx_from_generic_validated(
+        tx: &GenericTransaction,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<ExecutionResult, EvmError> {
+        let env = env_from_generic(tx, block_header, db, vm_type)?;
+        // Do NOT disable block gas limit or adjust base fee.
+        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
+
+        vm.execute()
+            .map(|value| value.into())
+            .map_err(VMError::into)
+    }
+
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {

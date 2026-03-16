@@ -574,17 +574,27 @@ impl<'a> VM<'a> {
             });
         }
 
+        // Resolve precompile address via movePrecompileToAddress overrides.
+        let resolved_to = self
+            .db
+            .precompile_overrides
+            .get(&self.current_call_frame.to)
+            .copied()
+            .unwrap_or(self.current_call_frame.to);
+        let resolved_code = self
+            .db
+            .precompile_overrides
+            .get(&self.current_call_frame.code_address)
+            .copied()
+            .unwrap_or(self.current_call_frame.code_address);
+
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
-        if precompiles::is_precompile(
-            &self.current_call_frame.to,
-            self.env.config.fork,
-            self.vm_type,
-        ) {
+        if precompiles::is_precompile(&resolved_to, self.env.config.fork, self.vm_type) {
             let call_frame = &mut self.current_call_frame;
 
             let mut gas_remaining = call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(
-                call_frame.code_address,
+                resolved_code,
                 &call_frame.calldata,
                 call_frame.gas_limit,
                 &mut gas_remaining,

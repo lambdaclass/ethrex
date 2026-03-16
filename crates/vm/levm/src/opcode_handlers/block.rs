@@ -49,7 +49,13 @@ impl OpcodeHandler for OpBlockHashHandler {
         {
             #[expect(unsafe_code, reason = "safe")]
             vm.current_call_frame.stack.push(unsafe {
-                let mut bytes = vm.db.store.get_block_hash(block_number)?.0;
+                // Check simulated block hash overrides first (eth_simulateV1).
+                let hash = if let Some(h) = vm.db.block_hash_overrides.get(&block_number) {
+                    *h
+                } else {
+                    vm.db.store.get_block_hash(block_number)?
+                };
+                let mut bytes = hash.0;
                 bytes.reverse();
                 U256(mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes))
             })?;

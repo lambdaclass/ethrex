@@ -48,6 +48,8 @@ pub enum RpcErr {
     Revert { data: String },
     #[error("execution halted: reason={reason}, gas_used={gas_used}")]
     Halt { reason: String, gas_used: u64 },
+    #[error("Simulate error ({code}): {message}")]
+    Simulate { code: i32, message: String },
     #[error("Authentication error: {0:?}")]
     AuthenticationError(AuthenticationError),
     #[error("Invalid forkchoice state: {0}")]
@@ -124,6 +126,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: 3,
                 data: None,
                 message: format!("execution halted: reason={reason}, gas_used={gas_used}"),
+            },
+            RpcErr::Simulate { code, message } => RpcErrorMetadata {
+                code,
+                data: None,
+                message,
             },
             RpcErr::AuthenticationError(auth_error) => match auth_error {
                 AuthenticationError::InvalidIssuedAtClaim => RpcErrorMetadata {
