@@ -447,6 +447,51 @@ impl PeerHandler {
         }
     }
 
+    /// Requests block headers starting from a block number.
+    /// Returns headers in the specified order (OldToNew = forward, NewToOld = backward).
+    /// Returns `None` if no peers are available, the peer returns empty, or the response is invalid.
+    pub async fn request_block_headers_from_number(
+        &mut self,
+        start: u64,
+        limit: u64,
+        order: BlockRequestOrder,
+    ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(start),
+            limit,
+            skip: 0,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
+        });
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection)) => {
+                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                    id: _,
+                    block_headers,
+                })) = PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await
+                {
+                    if !block_headers.is_empty()
+                        && are_block_headers_chained(&block_headers, &order)
+                    {
+                        return Ok(Some(block_headers));
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
+
     /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
     ///
     /// If it fails, returns an error message.

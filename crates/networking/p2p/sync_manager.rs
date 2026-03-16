@@ -129,8 +129,8 @@ impl SyncManager {
         }
     }
 
-    /// Returns true is the syncer is active
-    fn is_active(&self) -> bool {
+    /// Returns true if the syncer is active (a sync cycle is in progress).
+    pub fn is_active(&self) -> bool {
         self.syncer.try_lock().is_err()
     }
 

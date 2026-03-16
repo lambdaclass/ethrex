@@ -229,17 +229,30 @@ pub async fn init_rpc_api(
     // trigger. The loop runs for the lifetime of the node: after the initial
     // snap sync completes it triggers full sync to fill the gap from the pivot
     // to the chain tip, and continues to handle future peer head updates.
+    //
+    // The bridge keeps `pending_head` locally so that if sync fails (e.g. stale
+    // hash), it can re-trigger without waiting for a new peer status exchange.
     let chain_id = store.get_chain_config().chain_id;
     let is_polygon = chain_id == 137 || chain_id == 80002;
     if is_polygon {
         let syncer_clone = syncer.clone();
         let blockchain_clone = blockchain.clone();
         tracker.spawn(async move {
+            let mut pending_head: Option<ethrex_common::H256> = None;
             loop {
-                if let Some(head) = blockchain_clone.take_polygon_sync_head() {
-                    tracing::info!(?head, "Polygon sync bridge: triggering sync to peer head");
-                    syncer_clone.sync_to_head(head);
+                // Check for a new head from P2P (status exchange or NewBlock gap)
+                if let Some(new_head) = blockchain_clone.take_polygon_sync_head() {
+                    pending_head = Some(new_head);
                 }
+
+                // If we have a target and the syncer is idle, trigger sync
+                if let Some(head) = pending_head {
+                    if !syncer_clone.is_active() {
+                        tracing::info!(?head, "Polygon sync bridge: triggering sync to peer head");
+                        syncer_clone.sync_to_head(head);
+                    }
+                }
+
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         });

@@ -1325,7 +1325,26 @@ impl Blockchain {
                 ELASTICITY_MULTIPLIER,
             )?;
         }
-        let (execution_result, bal) = vm.execute_block(block)?;
+        let (mut execution_result, bal) = vm.execute_block(block)?;
+
+        // For Polygon: execute Bor system calls and create state sync receipt.
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let cumulative_gas = execution_result
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            if let Some(receipt) = execute_polygon_system_calls(
+                block,
+                parent_header,
+                chain_config,
+                vm,
+                cumulative_gas,
+            )? {
+                execution_result.receipts.push(receipt);
+            }
+        }
+
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -2929,6 +2948,12 @@ fn execute_polygon_system_calls(
         return Ok(None);
     }
 
+    debug!(
+        block_number = block.header.number,
+        event_count = state_sync_data.len(),
+        "Executing Polygon state sync system calls"
+    );
+
     // Compute sync_time = parent_timestamp + state_sync_confirmation_delay.
     // This matches Bor's time window for fetching state sync events from Heimdall.
     let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
@@ -2940,6 +2965,11 @@ fn execute_polygon_system_calls(
         })?;
     let delay = bor_config.get_state_sync_delay(block.header.number);
     let sync_time = parent_header.timestamp + delay;
+
+    // TODO: At span boundaries, commitSpan should also be executed before commitState.
+    // commitSpan logs are included in the state sync receipt alongside commitState logs.
+    // This requires Heimdall access to fetch span data, which is not yet available here.
+    // Span boundaries occur every ~6400 blocks.
 
     let mut all_logs: Vec<Log> = Vec::new();
 
@@ -2986,6 +3016,13 @@ fn execute_polygon_system_calls(
             }
         }
     }
+
+    debug!(
+        block_number = block.header.number,
+        log_count = all_logs.len(),
+        cumulative_gas_used,
+        "Created state sync receipt"
+    );
 
     // The state sync receipt's cumulative_gas_used equals the last regular receipt's value.
     // System calls don't contribute to gas accounting in Bor.

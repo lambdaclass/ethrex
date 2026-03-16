@@ -61,8 +61,47 @@ pub async fn sync_cycle_full(
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Sync failed to find target block header, aborting");
-                return Ok(());
+                // Hash-based lookup failed — the sync target hash may be stale
+                // (common on Polygon where blocks arrive every 2s and the hash from
+                // peer Status is minutes old by the time full sync starts).
+                // Fallback: request headers forward from our latest canonical block.
+                let latest = store.get_latest_block_number().await.unwrap_or(0);
+                if latest == 0 {
+                    warn!("Sync failed to find target block header and no local blocks, aborting");
+                    return Ok(());
+                }
+                warn!(
+                    latest,
+                    "Hash-based header lookup failed, falling back to forward sync from latest block"
+                );
+                match peers
+                    .request_block_headers_from_number(
+                        latest + 1,
+                        MAX_BLOCK_BODIES_TO_REQUEST as u64,
+                        BlockRequestOrder::OldToNew,
+                    )
+                    .await?
+                {
+                    Some(forward_headers) if !forward_headers.is_empty() => {
+                        let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
+                        let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
+                        info!(
+                            "Forward sync: received {} headers from block {} to {}",
+                            forward_headers.len(),
+                            first.number,
+                            last.number,
+                        );
+                        start_block_number = first.number;
+                        end_block_number = last.number;
+                        headers = forward_headers;
+                        single_batch = true;
+                        break;
+                    }
+                    _ => {
+                        warn!("Forward sync fallback also failed, aborting");
+                        return Ok(());
+                    }
+                }
             }
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;
