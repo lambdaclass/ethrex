@@ -236,8 +236,18 @@ impl PeerHandler {
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut logged_no_free_peers_count = 0;
+        let mut last_progress = SystemTime::now();
+        const MAX_STALL_SECS: u64 = 60;
 
         loop {
+            // Stall detection: break if no progress for MAX_STALL_SECS
+            if last_progress.elapsed().unwrap_or_default() > Duration::from_secs(MAX_STALL_SECS) {
+                warn!(
+                    "Header download stalled for {MAX_STALL_SECS}s with {downloaded_count}/{block_count} headers, aborting round"
+                );
+                break;
+            }
+
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
@@ -253,6 +263,7 @@ impl PeerHandler {
                     continue; // Retry with the next peer
                 }
 
+                last_progress = SystemTime::now();
                 downloaded_count += headers.len() as u64;
 
                 METRICS.downloaded_headers.inc_by(headers.len() as u64);
