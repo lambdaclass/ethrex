@@ -186,9 +186,19 @@ export default function ShowroomPage() {
       <span className="inline-flex items-center gap-1">
         {label}
         {sortKey === sortKeyVal ? (
-          <span className="text-blue-600">{sortDir === "asc" ? "\u2191" : "\u2193"}</span>
+          sortDir === "asc" ? (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-600">
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-blue-600">
+              <path d="M12 5v14M19 12l-7 7-7-7" />
+            </svg>
+          )
         ) : (
-          <span className="text-gray-300">{"\u2195"}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-300">
+            <path d="M7 15l5 5 5-5M7 9l5-5 5 5" />
+          </svg>
         )}
       </span>
     </th>
