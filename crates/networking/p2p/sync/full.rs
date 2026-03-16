@@ -19,6 +19,10 @@ use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEM
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
+/// Max hash-based header lookup attempts before falling back to forward sync.
+/// Lower than MAX_HEADER_FETCH_ATTEMPTS to preserve peer connectivity for the fallback.
+const MAX_HASH_LOOKUP_ATTEMPTS: u64 = 10;
+
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
 /// # Returns
@@ -60,7 +64,7 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
-            if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            if attempts > MAX_HASH_LOOKUP_ATTEMPTS {
                 // Hash-based lookup failed — the sync target hash may be stale
                 // (common on Polygon where blocks arrive every 2s and the hash from
                 // peer Status is minutes old by the time full sync starts).

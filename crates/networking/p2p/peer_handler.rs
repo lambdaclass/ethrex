@@ -466,7 +466,7 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => {
-                debug!("request_block_headers_from_number: no peers available");
+                warn!("request_block_headers_from_number: no peers available");
                 Ok(None)
             }
             Some((peer_id, mut connection)) => {
@@ -484,7 +484,7 @@ impl PeerHandler {
                         block_headers,
                     })) => {
                         if block_headers.is_empty() {
-                            debug!(
+                            warn!(
                                 start,
                                 %peer_id,
                                 "request_block_headers_from_number: peer returned empty response"
@@ -503,7 +503,7 @@ impl PeerHandler {
                         Ok(Some(block_headers))
                     }
                     Ok(_other) => {
-                        debug!(
+                        warn!(
                             start,
                             %peer_id,
                             "request_block_headers_from_number: unexpected message type from peer"
@@ -511,7 +511,7 @@ impl PeerHandler {
                         Ok(None)
                     }
                     Err(e) => {
-                        debug!(
+                        warn!(
                             start,
                             %peer_id,
                             error = %e,
