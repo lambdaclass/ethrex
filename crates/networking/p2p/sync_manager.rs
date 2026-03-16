@@ -57,10 +57,13 @@ impl SyncManager {
         // For post-merge networks (terminal_total_difficulty_passed), any stored
         // block > 0 means the node has previously synced. For pre-merge networks,
         // use merge_netsplit_block as threshold to avoid false positives in hive tests.
+        // For Polygon (PoA), neither field is set — use chain_id to detect Polygon
+        // and treat any stored block > 0 as synced.
         if snap_enabled.load(Ordering::Relaxed) {
             let latest_block = store.get_latest_block_number().await.unwrap_or(0);
             let chain_config = store.get_chain_config();
-            let is_synced = if chain_config.terminal_total_difficulty_passed {
+            let is_polygon = chain_config.chain_id == 137 || chain_config.chain_id == 80002;
+            let is_synced = if is_polygon || chain_config.terminal_total_difficulty_passed {
                 latest_block > 0
             } else if let Some(merge_block) = chain_config.merge_netsplit_block {
                 latest_block > merge_block
