@@ -178,8 +178,8 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<ethrex_common::EcdsaError> for RpcErr {
-    fn from(err: ethrex_common::EcdsaError) -> Self {
+impl From<ethrex_crypto::CryptoError> for RpcErr {
+    fn from(err: ethrex_crypto::CryptoError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
