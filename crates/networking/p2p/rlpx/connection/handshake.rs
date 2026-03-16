@@ -15,7 +15,7 @@ use crate::{
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ethrex_common::{H128, H256, H512, Signature};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -78,7 +78,7 @@ pub(crate) async fn perform(
             // Local node is initator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
+                global_keccak([remote_state.nonce.0, local_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             trace!(peer=%node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
@@ -98,7 +98,7 @@ pub(crate) async fn perform(
             // Remote node is initiator
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
-                keccak_hash([local_state.nonce.0, remote_state.nonce.0].concat());
+                global_keccak([local_state.nonce.0, remote_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             let node = Node::new(
                 peer_addr.ip(),

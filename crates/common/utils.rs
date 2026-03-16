@@ -1,6 +1,6 @@
 use crate::H256;
 use ethereum_types::U256;
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak_hash;
 use hex::FromHexError;
 
 pub const ZERO_U256: U256 = U256([0, 0, 0, 0]);
@@ -65,7 +65,7 @@ pub fn decode_hex(hex: &str) -> Result<Vec<u8>, FromHexError> {
 }
 
 pub fn keccak(data: impl AsRef<[u8]>) -> H256 {
-    H256(keccak_hash(data))
+    global_keccak_hash(data)
 }
 
 // Allocation-free operations on arrays.

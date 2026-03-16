@@ -3,7 +3,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
@@ -99,7 +99,7 @@ impl StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))?;
         let cached = loaded.map(|state| AccountStateCacheEntry {
             state,
-            hashed_address: H256::from(keccak_hash(address.to_fixed_bytes())),
+            hashed_address: H256::from(global_keccak(address.to_fixed_bytes())),
         });
         self.account_state_cache
             .write()

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -760,7 +760,7 @@ impl Genesis {
     pub fn compute_state_root(&self) -> H256 {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
-                keccak_hash(addr).to_vec(),
+                global_keccak(addr).to_vec(),
                 AccountState::from(account).encode_to_vec(),
             )
         });

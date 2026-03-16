@@ -16,7 +16,7 @@ use ethrex_common::{
     H128, H256,
     utils::{keccak, truncate_array},
 };
-use ethrex_crypto::keccak::{Keccak256, keccak_hash};
+use ethrex_crypto::{global_keccak, keccak::Keccak256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode as _};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
@@ -53,7 +53,7 @@ impl RLPxCodec {
             )?;
 
         // shared-secret = keccak256(ephemeral-key || keccak256(nonce || initiator-nonce))
-        let shared_secret = keccak_hash([ephemeral_key_secret, hashed_nonces].concat());
+        let shared_secret = global_keccak([ephemeral_key_secret, hashed_nonces].concat());
         // aes-secret = keccak256(ephemeral-key || shared-secret)
         let aes_key = keccak([ephemeral_key_secret, shared_secret].concat());
         // mac-secret = keccak256(ephemeral-key || aes-secret)

@@ -31,7 +31,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -3131,7 +3131,7 @@ impl Iterator for AncestorIterator {
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
-    keccak_hash(address.to_fixed_bytes()).to_vec()
+    global_keccak(address.to_fixed_bytes()).to_vec()
 }
 
 fn hash_address_fixed(address: &Address) -> H256 {
@@ -3139,11 +3139,11 @@ fn hash_address_fixed(address: &Address) -> H256 {
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
-    keccak_hash(key.to_fixed_bytes()).to_vec()
+    global_keccak(key.to_fixed_bytes()).to_vec()
 }
 
 pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
-    keccak_hash(key.to_fixed_bytes())
+    global_keccak(key.to_fixed_bytes())
 }
 
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {

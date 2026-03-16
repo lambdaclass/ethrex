@@ -10,7 +10,7 @@ use crate::{
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
@@ -525,11 +525,11 @@ impl GuestProgramState {
 }
 
 fn hash_address(address: &Address) -> Vec<u8> {
-    keccak_hash(address.to_fixed_bytes()).to_vec()
+    global_keccak(address.to_fixed_bytes()).to_vec()
 }
 
 pub fn hash_key(key: &H256) -> Vec<u8> {
-    keccak_hash(key.to_fixed_bytes()).to_vec()
+    global_keccak(key.to_fixed_bytes()).to_vec()
 }
 
 /// Initializes hash of header or validates the hash is correct in case it's already set

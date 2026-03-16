@@ -4,7 +4,7 @@
 /// patched by each zkVM toolchain (k256, substrate-bn) to use their
 /// respective circuit accelerators transparently via Cargo patches.
 use ethereum_types::Address;
-use ethrex_crypto::{CryptoError, keccak::keccak_hash};
+use ethrex_crypto::{CryptoError, global_keccak};
 
 // ── k256 ECDSA ───────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ pub(crate) fn k256_ecrecover(
     let uncompressed = vk.to_encoded_point(false);
     let uncompressed_bytes = uncompressed.as_bytes();
     #[allow(clippy::indexing_slicing)]
-    Ok(keccak_hash(&uncompressed_bytes[1..65]))
+    Ok(global_keccak(&uncompressed_bytes[1..65]))
 }
 
 /// Transaction sender recovery using k256 (pure Rust, RISC-V compatible).
@@ -67,7 +67,7 @@ pub(crate) fn k256_recover_signer(sig: &[u8; 65], msg: &[u8; 32]) -> Result<Addr
     let uncompressed = vk.to_encoded_point(false);
     let uncompressed_bytes = uncompressed.as_bytes();
     #[allow(clippy::indexing_slicing)]
-    let hash = keccak_hash(&uncompressed_bytes[1..65]);
+    let hash = global_keccak(&uncompressed_bytes[1..65]);
 
     #[allow(clippy::indexing_slicing)]
     Ok(Address::from_slice(&hash[12..]))

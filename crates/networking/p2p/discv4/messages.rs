@@ -4,7 +4,7 @@ use crate::{
 };
 use bytes::BufMut;
 use ethrex_common::{H256, H512, H520, utils::keccak};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -70,7 +70,7 @@ impl Packet {
             return Err(PacketDecodeErr::HashMismatch);
         }
 
-        let digest: [u8; 32] = keccak_hash(encoded_msg);
+        let digest: [u8; 32] = global_keccak(encoded_msg);
 
         let rid = RecoveryId::try_from(Into::<i32>::into(signature_bytes[64]))
             .map_err(|_| PacketDecodeErr::InvalidSignature)?;
@@ -152,7 +152,7 @@ impl Message {
 
         self.encode_with_type(&mut data);
 
-        let digest: [u8; 32] = keccak_hash(&data[signature_size..]);
+        let digest: [u8; 32] = global_keccak(&data[signature_size..]);
 
         let (recovery_id, signature) = secp256k1::SECP256K1
             .sign_ecdsa_recoverable(&secp256k1::Message::from_digest(digest), node_signer)
@@ -161,7 +161,7 @@ impl Message {
         data[..signature_size - 1].copy_from_slice(&signature);
         data[signature_size - 1] = Into::<i32>::into(recovery_id) as u8;
 
-        let hash = keccak_hash(&data[..]);
+        let hash = global_keccak(&data[..]);
         buf.put_slice(&hash);
         buf.put_slice(&data[..]);
     }
@@ -1047,7 +1047,7 @@ mod tests {
         buf[32] ^= 0xFF;
 
         // re hash the data as we have updated the message
-        let hash = keccak_hash(&buf[32..]);
+        let hash = global_keccak(&buf[32..]);
         let mut updated_buf = Vec::new();
         updated_buf.put_slice(&hash);
         updated_buf.put_slice(&buf[32..]);
@@ -1086,7 +1086,7 @@ mod tests {
         buf[32 + 64] = 4;
 
         // re hash the data as we have updated the message
-        let hash = keccak_hash(&buf[32..]);
+        let hash = global_keccak(&buf[32..]);
         let mut updated_buf = Vec::new();
         updated_buf.put_slice(&hash);
         updated_buf.put_slice(&buf[32..]);

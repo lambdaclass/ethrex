@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, init_global_crypto};
 use ethrex_vm::Evm;
 
 use crate::common::{BatchExecutionResult, ExecutionError, execute_blocks};
@@ -16,6 +16,10 @@ pub fn execution_program(
     input: ProgramInput,
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
+    // Install the zkVM crypto provider so all global_keccak calls
+    // route through the accelerated implementation.
+    init_global_crypto(crypto.clone());
+
     let ProgramInput {
         blocks,
         execution_witness,

@@ -1,5 +1,5 @@
 use crate::{H160, H256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::constants::RLP_NULL;
 use std::{str::FromStr, sync::LazyLock};
 
@@ -42,7 +42,7 @@ pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
     )
 });
 
-pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(keccak_hash([RLP_NULL])));
+pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(global_keccak(&[RLP_NULL])));
 
 // Request related
 pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {

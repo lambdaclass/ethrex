@@ -1,5 +1,5 @@
 use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
 
 use crate::rkyv_utils::H256Wrapper;
@@ -42,7 +42,7 @@ impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
     pub fn from_encoded(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
-            let hash = keccak_hash(encoded);
+            let hash = global_keccak(encoded);
             NodeHash::Hashed(H256::from_slice(&hash))
         } else {
             NodeHash::from_slice(encoded)
@@ -67,7 +67,7 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => H256(keccak_hash(self.as_ref())),
+            NodeHash::Inline(_) => H256(global_keccak(self.as_ref())),
             NodeHash::Hashed(x) => x,
         }
     }

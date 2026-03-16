@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::RLPEncode,
@@ -67,10 +67,10 @@ impl Receipt {
 pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
     let mut bloom = Bloom::zero();
     for log in logs {
-        let address_hash = keccak_hash(log.address);
+        let address_hash = global_keccak(log.address);
         bloom.accrue(BloomInput::Hash(&address_hash));
         for topic in log.topics.iter() {
-            let topic_hash = keccak_hash(*topic);
+            let topic_hash = global_keccak(*topic);
             bloom.accrue(BloomInput::Hash(&topic_hash));
         }
     }

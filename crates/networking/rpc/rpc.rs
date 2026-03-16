@@ -916,7 +916,7 @@ mod tests {
         H160,
         types::{BlockHeader, ChainConfig, Genesis},
     };
-    use ethrex_crypto::keccak::keccak_hash;
+    use ethrex_crypto::global_keccak;
     use ethrex_storage::{EngineType, Store};
     use std::io::BufReader;
     use std::str::FromStr;
@@ -959,7 +959,7 @@ mod tests {
             "result": {
                 "enode": "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@127.0.0.1:30303",
                 "enr": enr_url,
-                "id": hex::encode(keccak_hash(local_p2p_node.public_key)),
+                "id": hex::encode(global_keccak(local_p2p_node.public_key)),
                 "ip": "127.0.0.1",
                 "listenAddr": "127.0.0.1:30303",
                 "name": "ethrex/v0.1.0-test-abcd1234/x86_64-unknown-linux/rustc-v1.70.0",

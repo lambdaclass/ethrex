@@ -3582,7 +3582,7 @@ mod tests {
         // 4. Verify that the valid low-s signature recovers the correct address
         // Calculate the expected address from the public key
         let uncompressed_pub = signing_key.verifying_key().to_encoded_point(false);
-        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed_pub.as_bytes()[1..]);
+        let pub_hash = ethrex_crypto::global_keccak(&uncompressed_pub.as_bytes()[1..]);
         let expected_address = Address::from_slice(&pub_hash[12..]);
 
         let recovered = crypto

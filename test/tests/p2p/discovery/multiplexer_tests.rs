@@ -1,4 +1,4 @@
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_p2p::discovery::is_discv4_packet;
 
 #[test]
@@ -10,7 +10,7 @@ fn test_is_discv4_packet_valid() {
         *byte = i as u8;
     }
     // Compute hash and put at the beginning
-    let hash = keccak_hash(&packet[32..]);
+    let hash = global_keccak(&packet[32..]);
     packet[0..32].copy_from_slice(&hash);
 
     assert!(is_discv4_packet(&packet));
@@ -23,7 +23,7 @@ fn test_is_discv4_packet_corrupted_hash() {
     for (i, byte) in packet[32..].iter_mut().enumerate() {
         *byte = i as u8;
     }
-    let hash = keccak_hash(&packet[32..]);
+    let hash = global_keccak(&packet[32..]);
     packet[0..32].copy_from_slice(&hash);
 
     // Corrupt the hash
@@ -44,7 +44,7 @@ fn test_is_discv4_packet_exactly_minimum_size() {
     for (i, byte) in packet[32..].iter_mut().enumerate() {
         *byte = i as u8;
     }
-    let hash = keccak_hash(&packet[32..]);
+    let hash = global_keccak(&packet[32..]);
     packet[0..32].copy_from_slice(&hash);
 
     assert!(is_discv4_packet(&packet));

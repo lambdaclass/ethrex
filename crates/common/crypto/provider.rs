@@ -77,7 +77,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                 .recover(&message)
                 .map_err(|_| CryptoError::RecoveryFailed)?;
 
-            let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+            let hash = crate::global::global_keccak(&public_key.serialize_uncompressed()[1..]);
             Ok(hash)
         }
         #[cfg(not(feature = "secp256k1"))]
@@ -114,7 +114,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                 .recover_ecdsa(&message, &recoverable_sig)
                 .map_err(|_| CryptoError::RecoveryFailed)?;
 
-            let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+            let hash = crate::global::global_keccak(&public_key.serialize_uncompressed()[1..]);
             Ok(Address::from_slice(&hash[12..]))
         }
         #[cfg(not(feature = "secp256k1"))]
@@ -128,7 +128,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
     /// Keccak-256 hash. Used by the KECCAK256 opcode (0x20) and address derivation.
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
-        crate::keccak::keccak_hash(input)
+        crate::global::global_keccak(input)
     }
 
     /// SHA-256 hash. Used by SHA2-256 precompile (0x02) and KZG point evaluation.

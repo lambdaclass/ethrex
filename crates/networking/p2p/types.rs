@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::global_keccak;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -410,7 +410,7 @@ impl NodeRecord {
             .encode_field(&self.seq)
             .encode_key_value_list::<Bytes>(&self.pairs)
             .finish();
-        keccak_hash(&rlp)
+        global_keccak(&rlp)
     }
 
     /// Verifies the ENR signature using the embedded public key.

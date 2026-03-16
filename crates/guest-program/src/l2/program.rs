@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, init_global_crypto};
 use ethrex_l2_common::messages::get_balance_diffs;
 use ethrex_vm::{Evm, GuestProgramStateWrapper};
 
@@ -19,6 +19,10 @@ pub fn execution_program(
     input: ProgramInput,
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, L2ExecutionError> {
+    // Install the zkVM crypto provider so all global_keccak calls
+    // route through the accelerated implementation.
+    init_global_crypto(crypto.clone());
+
     let ProgramInput {
         blocks,
         execution_witness,
