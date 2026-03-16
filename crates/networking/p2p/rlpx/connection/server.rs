@@ -1029,7 +1029,8 @@ async fn handle_incoming_message(
             if peer_supports_eth =>
         {
             use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
-            let mut block_access_lists = Vec::with_capacity(block_hashes.len());
+            let mut block_access_lists =
+                Vec::with_capacity(block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT));
             for hash in &block_hashes {
                 match state.storage.get_block_access_list(*hash) {
                     Ok(bal) => block_access_lists.push(bal),

@@ -243,7 +243,11 @@ impl Message {
                 GetReceipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
                 }
-                GetReceipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                // eth/71 (EIP-8159) builds on eth/69, not eth/70 — it uses the
+                // same receipt format as eth/69.
+                GetReceipts69::CODE
+                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
+                {
                     Ok(Message::GetReceipts69(GetReceipts69::decode(data)?))
                 }
                 GetReceipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
