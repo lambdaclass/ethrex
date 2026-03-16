@@ -31,6 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
+use tracing::warn;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
@@ -1082,6 +1083,9 @@ impl PeerTableServer {
     }
 
     fn get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+        let total_peers = self.peers.len();
+        let mut no_cap = 0;
+        let mut no_conn = 0;
         let peers: Vec<(H256, PeerConnection)> = self
             .peers
             .iter()
@@ -1090,14 +1094,28 @@ impl PeerTableServer {
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
+                    no_cap += 1;
                     return None;
                 }
-                peer_data
-                    .connection
-                    .clone()
-                    .map(|connection| (*node_id, connection))
+                match peer_data.connection.clone() {
+                    Some(connection) => Some((*node_id, connection)),
+                    None => {
+                        no_conn += 1;
+                        None
+                    }
+                }
             })
             .collect();
+        if peers.is_empty() && total_peers > 0 {
+            warn!(
+                total_peers,
+                no_capability = no_cap,
+                no_connection = no_conn,
+                matched = peers.len(),
+                ?capabilities,
+                "get_random_peer: no usable peers"
+            );
+        }
         peers.choose(&mut rand::rngs::OsRng).cloned()
     }
 
