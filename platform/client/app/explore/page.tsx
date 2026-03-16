@@ -19,6 +19,8 @@ export default function ShowroomPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [stackFilter, setStackFilter] = useState<string>("");
   const [l1Filter, setL1Filter] = useState<string>("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const loadAppchains = useCallback(async (searchTerm?: string) => {
     setLoading(true);
@@ -140,31 +142,46 @@ export default function ShowroomPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Explore Appchains</h1>
+        <button
+          onClick={async () => {
+            setSyncing(true);
+            setSyncMsg(null);
+            try {
+              const res = await fetch("/api/cron/metadata-sync");
+              const data = await res.json();
+              if (data.ok) {
+                setSyncMsg(`Synced: ${data.synced}, Deleted: ${data.deleted}, Errors: ${data.errors} (${data.elapsed_ms}ms)`);
+                loadAppchains(search || undefined);
+              } else if (data.cooldown) {
+                setSyncMsg(`Sync available in ${data.remain_sec}s (5-min cooldown)`);
+              } else {
+                setSyncMsg(`Error: ${data.error}`);
+              }
+            } catch (err) {
+              setSyncMsg(`Failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+            } finally {
+              setSyncing(false);
+            }
+          }}
+          disabled={syncing}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+        >
+          {syncing ? "Syncing..." : "Sync Metadata"}
+        </button>
       </div>
 
-      {/* Search bar (full width, same as Store) */}
-      <form onSubmit={handleSearch} className="flex gap-4 mb-6">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search appchains..."
-          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        />
-        <button
-          type="submit"
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          Search
-        </button>
-      </form>
+      {syncMsg && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm ${syncMsg.startsWith("Synced") ? "bg-green-50 text-green-800" : "bg-yellow-50 text-yellow-800"}`}>
+          {syncMsg}
+        </div>
+      )}
 
-      {/* Stack type & L1 network filters */}
-      <div className="flex gap-3 mb-4">
+      {/* Search + filters (single row) */}
+      <form onSubmit={handleSearch} className="flex gap-2 mb-4 items-center">
         <select
           value={stackFilter}
           onChange={(e) => setStackFilter(e.target.value)}
-          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All Stacks</option>
           {Object.entries(STACK_LABELS).map(([key, label]) => (
@@ -174,14 +191,27 @@ export default function ShowroomPage() {
         <select
           value={l1Filter}
           onChange={(e) => setL1Filter(e.target.value)}
-          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All L1 Networks</option>
           {Object.entries(L1_NAMES).map(([id, name]) => (
             <option key={id} value={id}>{name}</option>
           ))}
         </select>
-      </div>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search appchains..."
+          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+        <button
+          type="submit"
+          className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+        >
+          Search
+        </button>
+      </form>
 
       {/* Sort filters + hashtags */}
       <div className="flex items-center gap-4 mb-6 flex-wrap">
@@ -253,9 +283,13 @@ export default function ShowroomPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((chain) => {
             const online = onlineMap[chain.id];
-            const l1Name = chain.l1_chain_id ? (L1_NAMES[chain.l1_chain_id] || `Chain ${chain.l1_chain_id}`) : null;
+            const l1Id = chain.l1_chain_id ? Number(chain.l1_chain_id) : null;
+            const l1Name = l1Id ? (L1_NAMES[l1Id] || `Chain ${l1Id}`) : null;
             const stackLabel = chain.stack_type ? STACK_LABELS[chain.stack_type] || chain.stack_type : null;
-            const displayName = chain.operator_name || chain.owner_name;
+            const rawName = chain.operator_name || chain.owner_name || "";
+            const displayName = rawName.startsWith("0x") && rawName.length > 12
+              ? `${rawName.slice(0, 6)}...${rawName.slice(-4)}`
+              : rawName;
             const chainId = getAppchainChainId(chain);
             const isBookmarked = bookmarkedIds.has(chain.id);
             return (
@@ -264,8 +298,8 @@ export default function ShowroomPage() {
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <h3 className="font-semibold text-lg">{chain.name}</h3>
-                      <p className="text-sm text-gray-500">
-                        by {displayName}
+                      <p className="text-sm text-gray-500 truncate">
+                        {displayName ? `by ${displayName}` : ""}
                         {l1Name && <span className="ml-1.5 text-xs text-purple-600">{l1Name}</span>}
                       </p>
                     </div>
@@ -345,7 +379,7 @@ export default function ShowroomPage() {
                     )}
                     {chain.native_token_symbol && chain.native_token_symbol !== "ETH" && (
                       <div className="flex items-center gap-2 text-sm">
-                        <span className="text-gray-500">Token:</span>
+                        <span className="text-gray-500">Native Token:</span>
                         <span className="font-mono">{chain.native_token_symbol}</span>
                       </div>
                     )}
@@ -378,7 +412,7 @@ export default function ShowroomPage() {
 
                   <div className="flex items-center justify-between pt-3 border-t mt-auto">
                     <span className="text-xs text-gray-400">
-                      {new Date(chain.created_at).toLocaleDateString()}
+                      {new Date(Number(chain.created_at)).toLocaleDateString()}
                     </span>
                     <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{chain.category}</span>
                   </div>

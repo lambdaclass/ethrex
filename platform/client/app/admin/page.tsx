@@ -54,6 +54,27 @@ export default function AdminPage() {
     );
   }
 
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  const handleMetadataSync = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/cron/metadata-sync");
+      const data = await res.json();
+      if (data.ok) {
+        setSyncResult(`Synced: ${data.synced}, Deleted: ${data.deleted}, Errors: ${data.errors} (${data.elapsed_ms}ms)`);
+      } else {
+        setSyncResult(`Error: ${data.error}`);
+      }
+    } catch (err) {
+      setSyncResult(`Failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleApprove = async (id: string) => {
     try {
       const updated = await adminApi.approve(id);
@@ -79,13 +100,28 @@ export default function AdminPage() {
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-        <Link
-          href="/admin/users"
-          className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
-        >
-          Manage Users
-        </Link>
+        <div className="flex gap-2">
+          <button
+            onClick={handleMetadataSync}
+            disabled={syncing}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {syncing ? "Syncing..." : "Sync Metadata"}
+          </button>
+          <Link
+            href="/admin/users"
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+          >
+            Manage Users
+          </Link>
+        </div>
       </div>
+
+      {syncResult && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm ${syncResult.startsWith("Synced") ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}>
+          {syncResult}
+        </div>
+      )}
 
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">

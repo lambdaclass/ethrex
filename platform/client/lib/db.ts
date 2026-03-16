@@ -184,7 +184,7 @@ export async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS explore_listings (
       id TEXT PRIMARY KEY,
       l1_chain_id INTEGER NOT NULL,
-      l2_chain_id INTEGER NOT NULL,
+      l2_chain_id BIGINT NOT NULL,
       stack_type TEXT NOT NULL,
       identity_contract TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -215,6 +215,8 @@ export async function ensureSchema() {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_listings_identity ON explore_listings(l1_chain_id, stack_type, identity_contract)`;
+  // Migrate l2_chain_id from INTEGER to BIGINT if needed
+  try { await getPool().query(`ALTER TABLE explore_listings ALTER COLUMN l2_chain_id TYPE BIGINT`); } catch { }
 
   // ── Reviews ──
   await sql`
@@ -282,6 +284,14 @@ export async function ensureSchema() {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_announcements_deployment ON announcements(deployment_id)`;
+
+  // ── Platform metadata (key-value store for sync timestamps etc.) ──
+  await sql`
+    CREATE TABLE IF NOT EXISTS platform_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `;
 
   await seedOfficialPrograms();
 

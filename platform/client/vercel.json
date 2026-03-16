@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/metadata-sync",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
