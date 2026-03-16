@@ -69,6 +69,10 @@ pub const MAX_PROOF_BLOCKS: u64 = 128;
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
+/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
+/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
+const BATCH_COMMIT_THRESHOLD: usize = 4;
+
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
@@ -238,6 +242,10 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Whether this batch comes from full sync (batch execution mode).
+    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
+    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
+    pub batch_mode: bool,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1054,8 +1062,18 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
+        self.get_receipts_for_block_from_index(block_hash, 0).await
+    }
+
+    /// Retrieves receipts for a block starting from the given index.
+    /// Used by eth/70 partial receipt requests (EIP-7975).
+    pub async fn get_receipts_for_block_from_index(
+        &self,
+        block_hash: &BlockHash,
+        start_index: u64,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
-        let mut index = 0u64;
+        let mut index = start_index;
 
         let txn = self.backend.begin_read()?;
         loop {
@@ -1363,6 +1381,8 @@ impl Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
+        let is_batch = update_batch.batch_mode;
+
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -1378,6 +1398,7 @@ impl Store {
             storage_updates,
             result_sender: notify_tx,
             child_state_root: last_state_root,
+            is_batch,
         };
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
@@ -2034,7 +2055,11 @@ impl Store {
 
     /// Build the composite key for an execution proof.
     /// Layout: `block_number (8 BE) || new_payload_request_root (32) || proof_type (8 BE)` = 48 bytes.
-    fn make_proof_key(block_number: u64, new_payload_request_root: &H256, proof_type: u64) -> Vec<u8> {
+    fn make_proof_key(
+        block_number: u64,
+        new_payload_request_root: &H256,
+        proof_type: u64,
+    ) -> Vec<u8> {
         let mut key = Vec::with_capacity(48);
         key.extend_from_slice(&block_number.to_be_bytes());
         key.extend_from_slice(new_payload_request_root.as_bytes());
@@ -2102,7 +2127,9 @@ impl Store {
         block_number: u64,
         new_payload_request_root: &H256,
     ) -> Result<usize, StoreError> {
-        Ok(self.get_execution_proofs(block_number, new_payload_request_root)?.len())
+        Ok(self
+            .get_execution_proofs(block_number, new_payload_request_root)?
+            .len())
     }
 
     fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
@@ -2275,6 +2302,49 @@ impl Store {
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
+
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    /// Gets storage value when the account hash and storage root are already known.
+    ///
+    /// This skips the state-trie account lookup and account RLP decode done by
+    /// [`Self::get_storage_at_root`], and directly opens the account storage trie.
+    pub fn get_storage_at_root_with_known_storage_root(
+        &self,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        // When FKV is active the real storage root is in the flatkeyvalue store,
+        // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
+        // so open_storage_trie_shared falls through to the FKV path.
+        let storage_root =
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+                *EMPTY_TRIE_HASH
+            } else {
+                storage_root
+            };
         let storage_trie = self.open_storage_trie_shared(
             account_hash,
             state_root,
@@ -2892,6 +2962,7 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    is_batch: bool,
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
@@ -2908,6 +2979,7 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
+        is_batch,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -2935,7 +3007,12 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let Some(root) = trie.get_commitable(parent_state_root) else {
+    let commitable = if is_batch {
+        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
+    } else {
+        trie.get_commitable(parent_state_root)
+    };
+    let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
@@ -3305,4 +3382,44 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
 fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
+}
+
+/// Checks whether a valid database exists at the given path by looking for
+/// a metadata.json file with a matching schema version.
+pub fn has_valid_db(path: &Path) -> bool {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    if !metadata_path.is_file() {
+        return false;
+    }
+    let Ok(contents) = std::fs::read_to_string(&metadata_path) else {
+        return false;
+    };
+    let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
+        return false;
+    };
+    metadata.schema_version == STORE_SCHEMA_VERSION
+}
+
+/// Reads the chain ID from an existing database without performing a full
+/// store initialization. Returns `None` if the database doesn't exist or
+/// the chain config can't be read. Always returns `None` when compiled
+/// without the `rocksdb` feature.
+pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
+    if !has_valid_db(path) {
+        return None;
+    }
+    #[cfg(feature = "rocksdb")]
+    {
+        let backend = RocksDBBackend::open(path).ok()?;
+        let read = backend.begin_read().ok()?;
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        let bytes = read.get(CHAIN_DATA, &key).ok()??;
+        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
+        Some(config.chain_id)
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        let _ = path;
+        None
+    }
 }

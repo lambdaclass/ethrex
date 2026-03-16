@@ -3,12 +3,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
 /// Input for the L1 stateless validation program.
 #[derive(
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    rkyv::Archive,
+    Default, serde::Serialize, serde::Deserialize, rkyv::Deserialize, rkyv::Serialize, rkyv::Archive,
 )]
 pub struct ProgramInput {
     /// Blocks to execute.
@@ -40,8 +35,7 @@ pub fn encode_eip8025(
 
     let ssz_bytes = new_payload_request.to_ssz();
     let ssz_len = ssz_bytes.len() as u32;
-    let rkyv_bytes =
-        rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness).expect("rkyv encode");
+    let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness).expect("rkyv encode");
 
     let mut out = Vec::with_capacity(4 + ssz_bytes.len() + rkyv_bytes.len());
     out.extend_from_slice(&ssz_len.to_le_bytes());
@@ -80,9 +74,8 @@ pub fn decode_eip8025(
     let new_payload_request =
         ethrex_common::types::eip8025_ssz::NewPayloadRequest::from_ssz_bytes(ssz_bytes)
             .map_err(ProgramInputDecodeError::Ssz)?;
-    let execution_witness =
-        rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(rkyv_bytes)
-            .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;
+    let execution_witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(rkyv_bytes)
+        .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;
 
     Ok((new_payload_request, execution_witness))
 }

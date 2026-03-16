@@ -4,8 +4,8 @@
 //! header validation for Execution Layer Triggerable Proofs.
 
 use bytes::Bytes;
-use ethrex_common::types::Block;
 use ethrex_common::H256;
+use ethrex_common::types::Block;
 use ethrex_storage::Store;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
@@ -16,8 +16,8 @@ use crate::Blockchain;
 use super::config::ProofEngineConfig;
 use super::coordinator::{CoordCastMsg, L1ProofCoordinator};
 use super::types::{
-    ExecutionProofV1, ProofGenId, ProofStatusV1, ProofValidationStatus,
-    MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS,
+    ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS, ProofGenId, ProofStatusV1,
+    ProofValidationStatus,
 };
 
 /// Error type for ProofEngine operations.
@@ -51,18 +51,15 @@ pub struct ProofEngine {
     /// Engine configuration (callback URL, coordinator address).
     config: ProofEngineConfig,
     /// Handle to the L1 ProofCoordinator GenServer (if started).
-    coordinator: Option<TokioMutex<spawned_concurrency::tasks::GenServerHandle<L1ProofCoordinator>>>,
+    coordinator:
+        Option<TokioMutex<spawned_concurrency::tasks::GenServerHandle<L1ProofCoordinator>>>,
     /// HTTP client for callback delivery.
     http_client: reqwest::Client,
 }
 
 impl ProofEngine {
     /// Create a new ProofEngine.
-    pub fn new(
-        blockchain: Arc<Blockchain>,
-        store: Store,
-        config: ProofEngineConfig,
-    ) -> Self {
+    pub fn new(blockchain: Arc<Blockchain>, store: Store, config: ProofEngineConfig) -> Self {
         Self {
             blockchain,
             store,

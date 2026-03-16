@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
+use ethrex_crypto::Crypto;
+
 use crate::common::{ExecutionError, execute_blocks};
 #[cfg(not(feature = "eip-8025"))]
 use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
-#[cfg(not(feature = "eip-8025"))]
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
-#[cfg(not(feature = "eip-8025"))]
 use ethrex_vm::Evm;
 
 #[cfg(not(feature = "eip-8025"))]
@@ -16,7 +18,10 @@ use crate::common::BatchExecutionResult;
 /// This validates and executes a batch of L1 blocks, verifying state transitions
 /// without access to the full blockchain state.
 #[cfg(not(feature = "eip-8025"))]
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, ExecutionError> {
+pub fn execution_program(
+    input: ProgramInput,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
@@ -35,7 +40,7 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
         ELASTICITY_MULTIPLIER,
         |db, _| {
             // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone()))
+            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
         },
     )?;
 
@@ -59,9 +64,8 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Execution
 pub fn execution_program(
     new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
+    crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
-    use ethrex_common::types::ELASTICITY_MULTIPLIER;
-    use ethrex_vm::Evm;
     use ssz_merkle::HashTreeRoot;
 
     // Compute the hash_tree_root before consuming the payload.
@@ -74,7 +78,8 @@ pub fn execution_program(
     // Validate block_hash: the SSZ payload carries block_hash which must match
     // the hash of the reconstructed block header.
     let computed_hash = block.hash();
-    let expected_hash = ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
+    let expected_hash =
+        ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
     if computed_hash != expected_hash {
         return Err(ExecutionError::Internal(format!(
             "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
@@ -89,7 +94,7 @@ pub fn execution_program(
         &[block],
         execution_witness,
         ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone())),
+        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
     )?;
 
     Ok(ProgramOutput {
@@ -104,13 +109,13 @@ fn new_payload_request_to_block(
     req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
 ) -> Result<ethrex_common::types::Block, String> {
     use bytes::Bytes;
-    use ethrex_common::types::{
-        Block, BlockBody, BlockHeader, Transaction, Withdrawal,
-        compute_transactions_root, compute_withdrawals_root,
-    };
-    use ethrex_common::{Address, Bloom, H256};
     use ethrex_common::constants::DEFAULT_OMMERS_HASH;
     use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
+    use ethrex_common::types::{
+        Block, BlockBody, BlockHeader, Transaction, Withdrawal, compute_transactions_root,
+        compute_withdrawals_root,
+    };
+    use ethrex_common::{Address, Bloom, H256};
 
     let payload = &req.execution_payload;
 

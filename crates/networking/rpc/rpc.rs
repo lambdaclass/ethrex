@@ -4,6 +4,10 @@ use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
+#[cfg(feature = "eip-8025")]
+use crate::engine::proof::{
+    RequestProofsV1, VerifyExecutionProofV1, VerifyNewPayloadRequestHeaderV1,
+};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -17,10 +21,6 @@ use crate::engine::{
         GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
         NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
-};
-#[cfg(feature = "eip-8025")]
-use crate::engine::proof::{
-    RequestProofsV1, VerifyExecutionProofV1, VerifyNewPayloadRequestHeaderV1,
 };
 use crate::eth::client::Config;
 use crate::eth::{
@@ -235,7 +235,10 @@ impl std::fmt::Debug for RpcApiContext {
             .field("peer_handler", &self.peer_handler.as_ref().map(|_| ".."))
             .field("gas_ceil", &self.gas_ceil);
         #[cfg(feature = "eip-8025")]
-        s.field("proof_engine", &self.proof_engine.as_ref().map(|_| "ProofEngine"));
+        s.field(
+            "proof_engine",
+            &self.proof_engine.as_ref().map(|_| "ProofEngine"),
+        );
         s.finish()
     }
 }

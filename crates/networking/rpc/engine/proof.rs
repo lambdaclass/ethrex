@@ -8,12 +8,12 @@
 use bytes::Bytes;
 use ethrex_blockchain::proof_engine::engine::ProofEngineError;
 use ethrex_blockchain::proof_engine::types::{
-    ExecutionProofV1, NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1,
-    ProofAttributesV1, MAX_PROOF_SIZE,
+    ExecutionProofV1, MAX_PROOF_SIZE, NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1,
+    ProofAttributesV1,
 };
+use ethrex_common::H256;
 use ethrex_common::types::eip8025_ssz;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-use ethrex_common::H256;
 use serde_json::Value;
 use ssz_merkle::HashTreeRoot;
 use ssz_types::SszList;
@@ -96,12 +96,13 @@ impl RpcHandler for RequestProofsV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let proof_engine = context
-            .proof_engine
-            .as_ref()
-            .ok_or(RpcErr::ProofGenerationUnavailable(
-                "Proof engine not configured".to_owned(),
-            ))?;
+        let proof_engine =
+            context
+                .proof_engine
+                .as_ref()
+                .ok_or(RpcErr::ProofGenerationUnavailable(
+                    "Proof engine not configured".to_owned(),
+                ))?;
 
         info!(
             "engine_requestProofsV1: block_number={}, proof_types={:?}",
@@ -170,9 +171,7 @@ impl RpcHandler for VerifyExecutionProofV1 {
 
         // Validate proof size: non-empty and within MAX_PROOF_SIZE.
         if proof.proof_data.is_empty() {
-            return Err(RpcErr::InvalidProofFormat(
-                "proof_data is empty".to_owned(),
-            ));
+            return Err(RpcErr::InvalidProofFormat("proof_data is empty".to_owned()));
         }
         if proof.proof_data.len() > MAX_PROOF_SIZE {
             return Err(RpcErr::InvalidProofFormat(format!(
@@ -186,12 +185,13 @@ impl RpcHandler for VerifyExecutionProofV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let proof_engine = context
-            .proof_engine
-            .as_ref()
-            .ok_or(RpcErr::ProofGenerationUnavailable(
-                "Proof engine not configured".to_owned(),
-            ))?;
+        let proof_engine =
+            context
+                .proof_engine
+                .as_ref()
+                .ok_or(RpcErr::ProofGenerationUnavailable(
+                    "Proof engine not configured".to_owned(),
+                ))?;
 
         info!(
             "engine_verifyExecutionProofV1: proof_type={}",
@@ -229,21 +229,20 @@ impl RpcHandler for VerifyNewPayloadRequestHeaderV1 {
             .first()
             .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))?;
 
-        let header: EngineNewPayloadRequestHeaderV1 =
-            serde_json::from_value(value.clone()).map_err(|e| {
-                RpcErr::InvalidHeaderFormat(format!("Failed to parse header: {e}"))
-            })?;
+        let header: EngineNewPayloadRequestHeaderV1 = serde_json::from_value(value.clone())
+            .map_err(|e| RpcErr::InvalidHeaderFormat(format!("Failed to parse header: {e}")))?;
 
         Ok(Self { header })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let proof_engine = context
-            .proof_engine
-            .as_ref()
-            .ok_or(RpcErr::ProofGenerationUnavailable(
-                "Proof engine not configured".to_owned(),
-            ))?;
+        let proof_engine =
+            context
+                .proof_engine
+                .as_ref()
+                .ok_or(RpcErr::ProofGenerationUnavailable(
+                    "Proof engine not configured".to_owned(),
+                ))?;
 
         let block_number = self.header.execution_payload_header.block_number;
         info!(
@@ -252,11 +251,10 @@ impl RpcHandler for VerifyNewPayloadRequestHeaderV1 {
         );
 
         // Convert JSON header to SSZ NewPayloadRequestHeader and compute root.
-        let ssz_root = json_header_to_ssz_root(&self.header)
-            .map_err(|e| RpcErr::InvalidHeaderFormat(e))?;
+        let ssz_root =
+            json_header_to_ssz_root(&self.header).map_err(|e| RpcErr::InvalidHeaderFormat(e))?;
 
-        let status =
-            proof_engine.verify_header(block_number, &H256::from_slice(&ssz_root))?;
+        let status = proof_engine.verify_header(block_number, &H256::from_slice(&ssz_root))?;
         serde_json::to_value(status).map_err(|e| RpcErr::Internal(e.to_string()))
     }
 }
@@ -320,7 +318,9 @@ fn compute_new_payload_request_root(
             gas_limit: 0,
             gas_used: 0,
             timestamp: 0,
-            extra_data: vec![].try_into().map_err(|_| "extra_data too large".to_string())?,
+            extra_data: vec![]
+                .try_into()
+                .map_err(|_| "extra_data too large".to_string())?,
             base_fee_per_gas: [0u8; 32],
             block_hash: [0u8; 32],
             transactions_root: [0u8; 32],
@@ -341,9 +341,7 @@ fn compute_new_payload_request_root(
 
 /// Convert a JSON `NewPayloadRequestHeaderV1` to SSZ and compute its
 /// `hash_tree_root`.
-fn json_header_to_ssz_root(
-    header: &EngineNewPayloadRequestHeaderV1,
-) -> Result<[u8; 32], String> {
+fn json_header_to_ssz_root(header: &EngineNewPayloadRequestHeaderV1) -> Result<[u8; 32], String> {
     let ep = &header.execution_payload_header;
 
     // Build SSZ LogsBloom from raw bytes.

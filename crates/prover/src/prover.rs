@@ -140,10 +140,8 @@ where
     }
 
     async fn request_new_input(&self, endpoint: &Url) -> Result<InputRequest, String> {
-        let request: ProofData<I> = ProofData::batch_request(
-            self.config.commit_hash.clone(),
-            self.backend.prover_type(),
-        );
+        let request: ProofData<I> =
+            ProofData::batch_request(self.config.commit_hash.clone(), self.backend.prover_type());
         let response: ProofData<I> = connect_to_prover_server_wr(endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;

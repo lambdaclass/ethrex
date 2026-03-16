@@ -8,8 +8,8 @@
 //! - Receives completed proofs, stores them, and delivers via callback
 
 use bytes::Bytes;
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::H256;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
@@ -25,9 +25,7 @@ use tracing::{debug, error, info, warn};
 use crate::Blockchain;
 
 use super::config::ProofEngineConfig;
-use super::types::{
-    ExecutionProofV1, GeneratedProof, ProofGenId, PublicInputV1, MAX_PROOF_SIZE,
-};
+use super::types::{ExecutionProofV1, GeneratedProof, MAX_PROOF_SIZE, ProofGenId, PublicInputV1};
 
 /// Error type for L1 proof coordinator operations.
 #[derive(Debug, thiserror::Error)]
@@ -100,10 +98,7 @@ impl L1ProofCoordinator {
 
     /// Accept loop — runs forever accepting TCP connections from provers.
     async fn handle_listens(&self, listener: Arc<TcpListener>) {
-        let addr = self
-            .config
-            .coordinator_addr
-            .clone();
+        let addr = self.config.coordinator_addr.clone();
         let port = self.config.coordinator_port;
         info!("L1 ProofCoordinator TCP server listening on {addr}:{port}");
 
@@ -125,17 +120,15 @@ impl L1ProofCoordinator {
     }
 
     /// Handle a proof request from a prover: return the next pending input.
-    async fn handle_request(
-        &self,
-        stream: &mut TcpStream,
-    ) -> Result<(), L1CoordinatorError> {
+    async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), L1CoordinatorError> {
         info!("Proof request received from prover");
 
         // Find the oldest pending input.
         let input = {
-            let pending = self.pending.lock().map_err(|_| {
-                L1CoordinatorError::Internal("Pending lock poisoned".to_string())
-            })?;
+            let pending = self
+                .pending
+                .lock()
+                .map_err(|_| L1CoordinatorError::Internal("Pending lock poisoned".to_string()))?;
             // Get the entry with the lowest block number.
             pending
                 .iter()
