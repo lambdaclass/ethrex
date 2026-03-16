@@ -45,6 +45,8 @@ jobs:
               - "fixtures/contracts/**"
               - "crates/blockchain/dev/**"
               - "crates/vm/levm/**"
+              - "crates/common/types/block_execution_witness.rs"
+              - "crates/networking/rpc/debug/execution_witness.rs"
               - ".github/workflows/pr-main_l2.yaml"
               - "cmd/ethrex/l2/**"
             non_docs:
