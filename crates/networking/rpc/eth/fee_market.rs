@@ -153,7 +153,7 @@ impl RpcHandler for FeeHistoryRequest {
                         blob_schedule,
                         fork,
                         context.gas_ceil,
-                    );
+                    )?;
             }
             if !self.reward_percentiles.is_empty() {
                 reward.push(calculate_percentiles_for_block(
@@ -164,7 +164,7 @@ impl RpcHandler for FeeHistoryRequest {
         }
 
         let u64_to_hex_str = |x: u64| format!("0x{x:x}");
-        let u256_to_hex_str = |x: U256| format!("0x{x:x}");
+        let u256_to_hex_str = |x: U256| format!("{x:#x}");
         let response = FeeHistoryResponse {
             oldest_block: u64_to_hex_str(oldest_block),
             base_fee_per_gas: base_fee_per_gas.into_iter().map(u64_to_hex_str).collect(),
@@ -189,7 +189,7 @@ fn project_next_block_base_fee_values(
     schedule: ForkBlobSchedule,
     fork: Fork,
     gas_ceil: u64,
-) -> (u64, U256) {
+) -> Result<(u64, U256), RpcErr> {
     // NOTE: Given that this client supports the Paris fork and later versions, we are sure that the next block
     // will have the London update active, so the base fee calculation makes sense
     // Geth performs a validation for this case:
@@ -206,7 +206,7 @@ fn project_next_block_base_fee_values(
     let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);
     let base_fee_per_blob =
         calculate_base_fee_per_blob_gas(next_excess_blob_gas, schedule.base_fee_update_fraction);
-    (base_fee_per_gas, base_fee_per_blob)
+    Ok((base_fee_per_gas, base_fee_per_blob))
 }
 
 async fn get_range(
