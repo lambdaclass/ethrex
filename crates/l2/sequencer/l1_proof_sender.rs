@@ -573,7 +573,7 @@ impl L1ProofSender {
     }
 
     /// Updates `latest_sent_batch_proof` in the store and removes the
-    /// checkpoint directory for the given batch.
+    /// checkpoint directory for the previous batch.
     async fn finalize_batch_proof(&self, batch_number: u64) -> Result<(), ProofSenderError> {
         self.rollup_store
             .set_latest_sent_batch_proof(batch_number)
