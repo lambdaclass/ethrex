@@ -10,7 +10,7 @@ use ethrex_blockchain::{
     error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
-    validate_block,
+    validate_block_pre_execution,
 };
 use ethrex_common::H256;
 use ethrex_common::{Address, U256};
@@ -30,10 +30,8 @@ use spawned_concurrency::tasks::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    BlockProducerConfig, SequencerConfig,
-    sequencer::sequencer_state::{SequencerState, SequencerStatus},
-};
+use crate::{BlockProducerConfig, SequencerConfig};
+use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 use std::str::FromStr;
 
 use super::errors::BlockProducerError;
@@ -210,7 +208,7 @@ impl BlockProducer {
         // Blockchain stores block
         let block = payload_build_result.payload;
         let chain_config = self.store.get_chain_config();
-        validate_block(
+        validate_block_pre_execution(
             &block,
             &head_header,
             &chain_config,
@@ -335,7 +333,7 @@ impl GenServer for BlockProducer {
     ) -> CastResponse {
         match message {
             InMessage::Produce => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status().await {
+                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
                     let _ = self
                         .produce_block()
                         .await
@@ -363,7 +361,7 @@ impl GenServer for BlockProducer {
     ) -> CallResponse<Self> {
         match message {
             CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
-                sequencer_state: format!("{:?}", self.sequencer_state.status().await),
+                sequencer_state: format!("{:?}", self.sequencer_state.status()),
                 block_time_ms: self.block_time_ms,
                 coinbase_address: self.coinbase_address,
                 elasticity_multiplier: self.elasticity_multiplier,
