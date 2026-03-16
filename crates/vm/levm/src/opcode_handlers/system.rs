@@ -614,16 +614,6 @@ impl OpcodeHandler for OpSelfDestructHandler {
             }
 
             vm.substate.add_selfdestruct(to);
-
-            // EIP-7708: Emit appropriate log for ETH movement
-            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
-                let log = if to != beneficiary {
-                    create_eth_transfer_log(to, beneficiary, balance)
-                } else {
-                    create_burn_log(to, balance)
-                };
-                vm.substate.add_log(log);
-            }
         }
 
         vm.tracer.enter(
