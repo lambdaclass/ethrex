@@ -18,6 +18,16 @@ pub const TX_ACCESS_LIST_ADDRESS_GAS: u64 = 2400;
 // Gas cost for each storage key specified on access lists
 pub const TX_ACCESS_LIST_STORAGE_KEY_GAS: u64 = 1900;
 
+// EIP-7981 (Amsterdam): access list floor token multiplier.
+// Matches TOTAL_COST_FLOOR_PER_TOKEN at Amsterdam (EIP-7976: 16).
+pub const TX_ACCESS_LIST_FLOOR_PER_TOKEN: u64 = 16;
+
+// EIP-7981: byte lengths for access list entries used to compute floor tokens.
+pub const TX_ACCESS_LIST_ADDRESS_BYTES: u64 = 20;
+pub const TX_ACCESS_LIST_STORAGE_KEY_BYTES: u64 = 32;
+// Per EIP-7623: every byte of access list data counts as STANDARD_TOKEN_COST (4) floor tokens.
+pub const TX_ACCESS_LIST_STANDARD_TOKEN_COST: u64 = 4;
+
 // Gas cost for each non zero byte on transaction data
 pub const TX_DATA_NON_ZERO_GAS: u64 = 68;
 

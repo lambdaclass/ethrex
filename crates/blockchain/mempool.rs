@@ -7,8 +7,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
-        TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
+        TX_ACCESS_LIST_ADDRESS_BYTES, TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_FLOOR_PER_TOKEN,
+        TX_ACCESS_LIST_STANDARD_TOKEN_COST, TX_ACCESS_LIST_STORAGE_KEY_BYTES,
+        TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS,
+        TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
         TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
@@ -564,6 +566,34 @@ pub fn transaction_intrinsic_gas(
     gas = gas
         .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_GAS)
         .ok_or(MempoolError::TxGasOverflowError)?;
+
+    // EIP-7981 (Amsterdam): add TOTAL_COST_FLOOR_PER_TOKEN * floor_tokens_in_access_list,
+    // where floor_tokens_in_access_list = access_list_bytes * 4 (flat, not zero/nonzero weighted).
+    if config.is_amsterdam_activated(header.timestamp) {
+        let mut access_list_bytes: u64 = 0;
+        for (_, keys) in tx.access_list() {
+            access_list_bytes = access_list_bytes
+                .checked_add(TX_ACCESS_LIST_ADDRESS_BYTES)
+                .ok_or(MempoolError::TxGasOverflowError)?;
+            access_list_bytes = access_list_bytes
+                .checked_add(
+                    (keys.len() as u64)
+                        .checked_mul(TX_ACCESS_LIST_STORAGE_KEY_BYTES)
+                        .ok_or(MempoolError::TxGasOverflowError)?,
+                )
+                .ok_or(MempoolError::TxGasOverflowError)?;
+        }
+        let access_list_tokens = access_list_bytes
+            .checked_mul(TX_ACCESS_LIST_STANDARD_TOKEN_COST)
+            .ok_or(MempoolError::TxGasOverflowError)?;
+        gas = gas
+            .checked_add(
+                access_list_tokens
+                    .checked_mul(TX_ACCESS_LIST_FLOOR_PER_TOKEN)
+                    .ok_or(MempoolError::TxGasOverflowError)?,
+            )
+            .ok_or(MempoolError::TxGasOverflowError)?;
+    }
 
     Ok(gas)
 }
