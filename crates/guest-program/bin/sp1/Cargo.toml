@@ -14,7 +14,7 @@ codegen-units = 1
 sp1-zkvm = { version = "=5.0.8" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-ethrex-guest-program = { path = "../../", features = ["sp1-cycles"] }
+ethrex-guest-program = { path = "../../", features = ["sp1-cycles", "sp1"] }
 
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "sp1",
