@@ -1855,7 +1855,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
+source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors#78cad0378b17fc3157b83f514be192bf46edf9a1"
 dependencies = [
  "digest 0.10.7",
  "ff 0.13.1",
@@ -3959,9 +3959,21 @@ dependencies = [
 name = "ethrex-crypto"
 version = "9.0.0"
 dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
  "c-kzg",
+ "ethereum-types 0.15.1",
+ "ff 0.13.1",
+ "hex-literal 0.4.1",
  "kzg-rs",
+ "malachite 0.6.1",
  "openvm-kzg",
+ "p256",
+ "ripemd",
+ "secp256k1",
+ "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
 ]
@@ -3990,19 +4002,23 @@ name = "ethrex-guest-program"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
+ "k256",
  "risc0-build",
  "rkyv",
  "serde",
  "serde_with",
  "sp1-build",
  "sp1-sdk",
+ "substrate-bn",
  "thiserror 2.0.18",
+ "ziskos",
 ]
 
 [[package]]
@@ -4097,6 +4113,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-p2p",
  "ethrex-rlp",
@@ -4121,11 +4138,7 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
  "bitvec",
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct)",
  "bytes",
  "colored",
  "datatest-stable",
@@ -4134,24 +4147,17 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
- "k256",
- "lambdaworks-math 0.13.0",
  "lazy_static",
  "malachite 0.6.1",
- "p256",
- "ripemd",
+ "rayon",
  "rustc-hash 2.1.1",
- "secp256k1",
  "serde",
  "serde_json",
- "sha2",
  "sha3",
  "spinoff",
  "strum 0.27.2",
- "substrate-bn",
  "thiserror 2.0.18",
  "walkdir",
- "ziskos",
 ]
 
 [[package]]
@@ -4160,7 +4166,7 @@ version = "9.0.0"
 dependencies = [
  "axum 0.8.8",
  "ethrex-common",
- "prometheus 0.13.4",
+ "prometheus",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4229,7 +4235,7 @@ dependencies = [
  "hmac",
  "indexmap 2.13.0",
  "lazy_static",
- "prometheus 0.14.0",
+ "prometheus",
  "rand 0.8.5",
  "rayon",
  "rocksdb",
@@ -4443,6 +4449,7 @@ dependencies = [
 name = "ethrex-test"
 version = "9.0.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "bytes",
  "cita_trie",
@@ -4462,10 +4469,12 @@ dependencies = [
  "ethrex-storage",
  "ethrex-storage-rollup",
  "ethrex-trie",
+ "ethrex-vm",
  "hasher",
  "hex",
  "hex-literal 0.4.1",
  "lazy_static",
+ "once_cell",
  "proptest",
  "rand 0.8.5",
  "reqwest",
@@ -6349,7 +6358,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.5",
- "rayon",
  "serde",
  "serde_json",
 ]
@@ -10053,42 +10061,24 @@ dependencies = [
 
 [[package]]
 name = "procfs"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "731e0d9356b0c25f16f33b5be79b1c57b562f141ebfcdb0ad8ac2c13a24293b4"
+checksum = "cc5b72d8145275d844d4b5f6d4e1eef00c8cd889edb6035c21675d1bb1f45c9f"
 dependencies = [
  "bitflags 2.10.0",
  "hex",
- "lazy_static",
  "procfs-core",
  "rustix 0.38.44",
 ]
 
 [[package]]
 name = "procfs-core"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d3554923a69f4ce04c4a754260c338f505ce22642d3830e049a399fc2059a29"
+checksum = "239df02d8349b06fc07398a3a1697b06418223b1c7725085e801e7c0fc6a12ec"
 dependencies = [
  "bitflags 2.10.0",
  "hex",
-]
-
-[[package]]
-name = "prometheus"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d33c28a30771f7f96db69893f78b857f7450d7e0237e9c8fc6427a81bae7ed1"
-dependencies = [
- "cfg-if 1.0.4",
- "fnv",
- "lazy_static",
- "libc",
- "memchr",
- "parking_lot",
- "procfs",
- "protobuf 2.28.0",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -10100,9 +10090,11 @@ dependencies = [
  "cfg-if 1.0.4",
  "fnv",
  "lazy_static",
+ "libc",
  "memchr",
  "parking_lot",
- "protobuf 3.7.2",
+ "procfs",
+ "protobuf",
  "thiserror 2.0.18",
 ]
 
@@ -10229,12 +10221,6 @@ checksum = "52c2c1bf36ddb1a1c396b3601a3cec27c2462e45f07c386894ec3ccf5332bd16"
 dependencies = [
  "prost 0.13.5",
 ]
-
-[[package]]
-name = "protobuf"
-version = "2.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
 
 [[package]]
 name = "protobuf"
@@ -11299,6 +11285,7 @@ dependencies = [
  "env_logger",
  "ethrex-blockchain",
  "ethrex-common",
+ "ethrex-crypto",
  "ethrex-levm",
  "ethrex-storage",
  "ethrex-vm",
