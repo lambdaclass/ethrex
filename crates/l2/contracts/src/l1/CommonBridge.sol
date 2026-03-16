@@ -369,6 +369,21 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
+    function getPendingTransactionsVersionedHash(
+        uint16 number
+    ) public view returns (bytes32) {
+        return getPendingTransactionsVersionedHashWithOffset(0, number);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) public view returns (bytes32) {
+        return getPendingL2MessagesVersionedHashWithOffset(chainId, 0, number);
+    }
+
+    /// @inheritdoc ICommonBridge
     function removePendingTransactionHashes(
         uint16 number
     ) public onlyOnChainProposer {

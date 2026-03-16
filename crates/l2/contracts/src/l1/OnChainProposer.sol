@@ -685,9 +685,7 @@ contract OnChainProposer is
                         .processedPrivilegedTransactionsRollingHash
                 )
             );
-            if (privTxCount > 0) {
-                committedPrivilegedTxCount -= privTxCount;
-            }
+            committedPrivilegedTxCount -= privTxCount;
 
             ICommonBridge.L2MessageRollingHash[]
                 memory batchL2InRollingHashes = batchCommitments[i]

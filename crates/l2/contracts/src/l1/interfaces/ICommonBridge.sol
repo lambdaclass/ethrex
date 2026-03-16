@@ -120,6 +120,19 @@ interface ICommonBridge {
         uint16 number
     ) external view returns (bytes32);
 
+    /// @notice Convenience wrapper: equivalent to
+    /// `getPendingTransactionsVersionedHashWithOffset(0, number)`.
+    function getPendingTransactionsVersionedHash(
+        uint16 number
+    ) external view returns (bytes32);
+
+    /// @notice Convenience wrapper: equivalent to
+    /// `getPendingL2MessagesVersionedHashWithOffset(chainId, 0, number)`.
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) external view returns (bytes32);
+
     /// @notice Remove pending transaction hashes from the queue.
     /// @dev This method is used by the L2 OnChainOperator to remove the pending
     /// privileged transactions from the queue after the transaction is included.
