@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { storeApi, bookmarkApi, authApi } from "@/lib/api";
 import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
-import { type Appchain, getAppchainDisplayName, getAppchainChainId } from "@/lib/types";
+import { type Appchain, getAppchainChainId } from "@/lib/types";
 
-type Filter = "all" | "bookmarked" | "top-rated" | "newest" | "most-reviewed";
+type Filter = "all" | "bookmarked";
+type SortKey = "name" | "stack" | "chainid" | "rating" | "reviews" | "comments" | "created";
+type SortDir = "asc" | "desc";
 
 export default function ShowroomPage() {
   const [appchains, setAppchains] = useState<Appchain[]>([]);
@@ -21,6 +23,8 @@ export default function ShowroomPage() {
   const [l1Filter, setL1Filter] = useState<string>("");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("created");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const loadAppchains = useCallback(async (searchTerm?: string) => {
     setLoading(true);
@@ -38,7 +42,6 @@ export default function ShowroomPage() {
     }
   }, [stackFilter, l1Filter]);
 
-  // Check login status and load bookmarks
   useEffect(() => {
     (async () => {
       try {
@@ -56,7 +59,6 @@ export default function ShowroomPage() {
     loadAppchains(search || undefined);
   }, [loadAppchains, search]);
 
-  // Check live status for each appchain (fire and forget, no blocking)
   useEffect(() => {
     if (appchains.length === 0) return;
     const checkAll = async () => {
@@ -82,7 +84,7 @@ export default function ShowroomPage() {
   };
 
   const handleBookmark = async (e: React.MouseEvent, chainId: string) => {
-    e.preventDefault(); // Prevent Link navigation
+    e.preventDefault();
     e.stopPropagation();
     if (!isLoggedIn) return;
     try {
@@ -98,47 +100,76 @@ export default function ShowroomPage() {
     }
   };
 
-  // Collect all unique hashtags from appchains
   const allTags = useMemo(() =>
     Array.from(new Set(appchains.flatMap((c) => c.hashtags || []))).sort(),
     [appchains]
   );
 
-  // Apply filter + hashtag
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(key === "name" ? "asc" : "desc");
+    }
+  };
+
   const filtered = useMemo(() => {
     let list = [...appchains];
 
+    if (filter === "bookmarked") {
+      list = list.filter((c) => bookmarkedIds.has(c.id));
+    }
     if (selectedTag) {
       list = list.filter((c) => c.hashtags?.includes(selectedTag));
     }
 
-    switch (filter) {
-      case "bookmarked":
-        list = list.filter((c) => bookmarkedIds.has(c.id));
-        break;
-      case "top-rated":
-        list = list.slice().sort((a, b) => (b.avg_rating ?? 0) - (a.avg_rating ?? 0));
-        break;
-      case "newest":
-        list = list.slice().sort((a, b) => b.created_at - a.created_at);
-        break;
-      case "most-reviewed":
-        list = list.slice().sort((a, b) => b.review_count - a.review_count);
-        break;
-    }
-    return list;
-  }, [appchains, filter, selectedTag, bookmarkedIds]);
+    const dir = sortDir === "asc" ? 1 : -1;
+    list.sort((a, b) => {
+      switch (sortKey) {
+        case "name":
+          return dir * a.name.localeCompare(b.name);
+        case "stack": {
+          const sa = a.stack_type ? (STACK_LABELS[a.stack_type] || a.stack_type) : a.program_name || "";
+          const sb = b.stack_type ? (STACK_LABELS[b.stack_type] || b.stack_type) : b.program_name || "";
+          return dir * sa.localeCompare(sb);
+        }
+        case "chainid":
+          return dir * ((getAppchainChainId(a) ?? 0) - (getAppchainChainId(b) ?? 0));
+        case "rating":
+          return dir * ((a.avg_rating ?? 0) - (b.avg_rating ?? 0));
+        case "reviews":
+          return dir * (a.review_count - b.review_count);
+        case "comments":
+          return dir * (a.comment_count - b.comment_count);
+        case "created":
+          return dir * (a.created_at - b.created_at);
+        default:
+          return 0;
+      }
+    });
 
-  const filters: { key: Filter; label: string; loginRequired?: boolean }[] = [
-    { key: "all", label: "All" },
-    { key: "bookmarked", label: "Bookmarked", loginRequired: true },
-    { key: "top-rated", label: "Top Rated" },
-    { key: "newest", label: "Newest" },
-    { key: "most-reviewed", label: "Most Reviewed" },
-  ];
+    return list;
+  }, [appchains, filter, selectedTag, bookmarkedIds, sortKey, sortDir]);
+
+  const SortHeader = ({ label, sortKeyVal, className }: { label: string; sortKeyVal: SortKey; className?: string }) => (
+    <th
+      className={`px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 transition-colors ${className || ""}`}
+      onClick={() => toggleSort(sortKeyVal)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortKey === sortKeyVal ? (
+          <span className="text-blue-600">{sortDir === "asc" ? "\u2191" : "\u2193"}</span>
+        ) : (
+          <span className="text-gray-300">\u2195</span>
+        )}
+      </span>
+    </th>
+  );
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">Explore Appchains</h1>
@@ -176,7 +207,7 @@ export default function ShowroomPage() {
         </div>
       )}
 
-      {/* Search + filters (single row) */}
+      {/* Search + filters */}
       <form onSubmit={handleSearch} className="flex gap-2 mb-4 items-center">
         <select
           value={stackFilter}
@@ -213,28 +244,27 @@ export default function ShowroomPage() {
         </button>
       </form>
 
-      {/* Sort filters + hashtags */}
+      {/* Filter tabs + hashtags */}
       <div className="flex items-center gap-4 mb-6 flex-wrap">
         <div className="flex gap-1.5 flex-wrap">
-          {filters.map((f) => {
-            if (f.loginRequired && !isLoggedIn) return null;
-            return (
-              <button
-                key={f.key}
-                onClick={() => setFilter(f.key)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  filter === f.key
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                {f.key === "bookmarked" && (
-                  <span className="mr-1">&#9733;</span>
-                )}
-                {f.label}
-              </button>
-            );
-          })}
+          <button
+            onClick={() => setFilter("all")}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+              filter === "all" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            All
+          </button>
+          {isLoggedIn && (
+            <button
+              onClick={() => setFilter("bookmarked")}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                filter === "bookmarked" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              &#9733; Bookmarked
+            </button>
+          )}
         </div>
         {allTags.length > 0 && (
           <>
@@ -280,146 +310,161 @@ export default function ShowroomPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((chain) => {
-            const online = onlineMap[chain.id];
-            const l1Id = chain.l1_chain_id ? Number(chain.l1_chain_id) : null;
-            const l1Name = l1Id ? (L1_NAMES[l1Id] || `Chain ${l1Id}`) : null;
-            const stackLabel = chain.stack_type ? STACK_LABELS[chain.stack_type] || chain.stack_type : null;
-            const rawName = chain.operator_name || chain.owner_name || "";
-            const displayName = rawName.startsWith("0x") && rawName.length > 12
-              ? `${rawName.slice(0, 6)}...${rawName.slice(-4)}`
-              : rawName;
-            const chainId = getAppchainChainId(chain);
-            const isBookmarked = bookmarkedIds.has(chain.id);
-            return (
-              <Link href={`/explore/${chain.id}`} key={chain.id}>
-                <div className="bg-white rounded-xl border p-6 hover:shadow-md transition-shadow cursor-pointer h-full flex flex-col">
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h3 className="font-semibold text-lg">{chain.name}</h3>
-                      <p className="text-sm text-gray-500 truncate">
-                        {displayName ? `by ${displayName}` : ""}
-                        {l1Name && <span className="ml-1.5 text-xs text-purple-600">{l1Name}</span>}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {isLoggedIn && (
-                        <button
-                          onClick={(e) => handleBookmark(e, chain.id)}
-                          className="p-1 rounded hover:bg-gray-100 transition-colors"
-                          title={isBookmarked ? "Remove bookmark" : "Bookmark"}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24"
-                            fill={isBookmarked ? "#2563eb" : "none"}
-                            stroke={isBookmarked ? "#2563eb" : "#9ca3af"}
-                            strokeWidth="2"
+        <div className="bg-white rounded-xl border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="w-8 px-4 py-3" />
+                  <SortHeader label="Name" sortKeyVal="name" />
+                  <SortHeader label="Stack" sortKeyVal="stack" />
+                  <SortHeader label="Chain ID" sortKeyVal="chainid" />
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                  <SortHeader label="Rating" sortKeyVal="rating" className="text-center" />
+                  <SortHeader label="Reviews" sortKeyVal="reviews" className="text-center" />
+                  <SortHeader label="Comments" sortKeyVal="comments" className="text-center" />
+                  <SortHeader label="Created" sortKeyVal="created" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filtered.map((chain) => {
+                  const online = onlineMap[chain.id];
+                  const l1Id = chain.l1_chain_id ? Number(chain.l1_chain_id) : null;
+                  const l1Name = l1Id ? (L1_NAMES[l1Id] || `Chain ${l1Id}`) : null;
+                  const stackLabel = chain.stack_type ? STACK_LABELS[chain.stack_type] || chain.stack_type : chain.program_name || null;
+                  const rawName = chain.operator_name || chain.owner_name || "";
+                  const displayName = rawName.startsWith("0x") && rawName.length > 12
+                    ? `${rawName.slice(0, 6)}...${rawName.slice(-4)}`
+                    : rawName;
+                  const chainId = getAppchainChainId(chain);
+                  const isBookmarked = bookmarkedIds.has(chain.id);
+
+                  return (
+                    <tr
+                      key={chain.id}
+                      className="hover:bg-gray-50 transition-colors cursor-pointer group"
+                      onClick={() => window.location.href = `/explore/${chain.id}`}
+                    >
+                      {/* Bookmark */}
+                      <td className="px-4 py-3">
+                        {isLoggedIn && (
+                          <button
+                            onClick={(e) => handleBookmark(e, chain.id)}
+                            className="p-1 rounded hover:bg-gray-100 transition-colors"
+                            title={isBookmarked ? "Remove bookmark" : "Bookmark"}
                           >
-                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                          </svg>
-                        </button>
-                      )}
-                      {chain.network_mode && (
-                        <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs font-medium">
-                          {chain.network_mode}
-                        </span>
-                      )}
-                      {online === true ? (
-                        <span className="flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                          Online
-                        </span>
-                      ) : online === false ? (
-                        <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium">
-                          Offline
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
-                          Active
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                            <svg width="14" height="14" viewBox="0 0 24 24"
+                              fill={isBookmarked ? "#2563eb" : "none"}
+                              stroke={isBookmarked ? "#2563eb" : "#d1d5db"}
+                              strokeWidth="2"
+                            >
+                              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                            </svg>
+                          </button>
+                        )}
+                      </td>
 
-                  {chain.description && (
-                    <p className="text-sm text-gray-600 mb-3 line-clamp-2">{chain.description}</p>
-                  )}
+                      {/* Name + operator + L1 + tags */}
+                      <td className="px-4 py-3 min-w-[200px]">
+                        <Link href={`/explore/${chain.id}`} className="block">
+                          <div className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors">
+                            {chain.name}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {displayName && <span>by {displayName}</span>}
+                            {l1Name && <span className="ml-1.5 text-purple-600">{l1Name}</span>}
+                          </div>
+                          {chain.hashtags?.length > 0 && (
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              {chain.hashtags.slice(0, 3).map((tag) => (
+                                <span key={tag} className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[10px]">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </Link>
+                      </td>
 
-                  {chain.hashtags?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-3">
-                      {chain.hashtags.slice(0, 4).map((tag) => (
-                        <span key={tag} className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded text-xs">
-                          #{tag}
+                      {/* Stack */}
+                      <td className="px-4 py-3">
+                        {stackLabel && (
+                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs whitespace-nowrap">
+                            {stackLabel}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Chain ID */}
+                      <td className="px-4 py-3">
+                        {chainId && <span className="font-mono text-sm text-gray-700">{chainId}</span>}
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          {online === true ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                              Online
+                            </span>
+                          ) : online === false ? (
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs font-medium">
+                              Offline
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                              Active
+                            </span>
+                          )}
+                          {chain.network_mode && (
+                            <span className="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-[10px] font-medium">
+                              {chain.network_mode}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Rating */}
+                      <td className="px-4 py-3 text-center">
+                        {chain.avg_rating !== null ? (
+                          <span className="inline-flex items-center gap-1 text-sm">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="2">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                            </svg>
+                            <span className="font-medium">{chain.avg_rating.toFixed(1)}</span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-300 text-sm">-</span>
+                        )}
+                      </td>
+
+                      {/* Reviews */}
+                      <td className="px-4 py-3 text-center">
+                        <span className={`text-sm ${chain.review_count > 0 ? "text-gray-700" : "text-gray-300"}`}>
+                          {chain.review_count}
                         </span>
-                      ))}
-                    </div>
-                  )}
+                      </td>
 
-                  <div className="space-y-2 mb-4">
-                    {stackLabel ? (
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-gray-500">Stack:</span>
-                        <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs">
-                          {stackLabel}
+                      {/* Comments */}
+                      <td className="px-4 py-3 text-center">
+                        <span className={`text-sm ${chain.comment_count > 0 ? "text-gray-700" : "text-gray-300"}`}>
+                          {chain.comment_count}
                         </span>
-                      </div>
-                    ) : chain.program_name ? (
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-gray-500">Program:</span>
-                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
-                          {chain.program_name}
+                      </td>
+
+                      {/* Created */}
+                      <td className="px-4 py-3">
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                          {new Date(Number(chain.created_at)).toLocaleDateString()}
                         </span>
-                      </div>
-                    ) : null}
-                    {chainId && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-gray-500">Chain ID:</span>
-                        <span className="font-mono">{chainId}</span>
-                      </div>
-                    )}
-                    {chain.native_token_symbol && chain.native_token_symbol !== "ETH" && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-gray-500">Native Token:</span>
-                        <span className="font-mono">{chain.native_token_symbol}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Social stats — always show for consistent card height */}
-                  <div className="flex items-center gap-3 text-sm text-gray-500 mb-3">
-                    {chain.avg_rating !== null ? (
-                      <span className="flex items-center gap-1">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="2">
-                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                        </svg>
-                        {chain.avg_rating.toFixed(1)}
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" strokeWidth="2">
-                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                        </svg>
-                        <span className="text-gray-400">No reviews yet</span>
-                      </span>
-                    )}
-                    {chain.review_count > 0 && (
-                      <span>{chain.review_count} review{chain.review_count !== 1 ? "s" : ""}</span>
-                    )}
-                    {chain.comment_count > 0 && (
-                      <span>{chain.comment_count} comment{chain.comment_count !== 1 ? "s" : ""}</span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-3 border-t mt-auto">
-                    <span className="text-xs text-gray-400">
-                      {new Date(Number(chain.created_at)).toLocaleDateString()}
-                    </span>
-                    <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{chain.category}</span>
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
