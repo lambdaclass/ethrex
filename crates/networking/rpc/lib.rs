@@ -63,7 +63,7 @@ mod admin;
 mod authentication;
 pub mod debug;
 pub mod engine;
-mod eth;
+pub mod eth;
 mod mempool;
 mod net;
 pub mod rpc;
