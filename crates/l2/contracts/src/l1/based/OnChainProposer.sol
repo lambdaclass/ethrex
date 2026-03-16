@@ -102,6 +102,10 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
 
+    /// @notice Total privileged transactions in committed-but-not-yet-verified batches.
+    /// @dev Invariant: equals the sum of priv tx counts for batches in range (lastVerifiedBatch, lastCommittedBatch].
+    uint256 public committedPrivilegedTxCount;
+
     modifier onlyLeaderSequencer() {
         if (
             msg.sender !=
@@ -235,14 +239,19 @@ contract OnChainProposer is
         if (lastBlockHash == bytes32(0)) revert LastBlockHashIsZero();
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
+            uint16 privTxCount = uint16(
+                bytes2(processedPrivilegedTransactionsRollingHash)
+            );
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
-                .getPendingTransactionsVersionedHash(
-                    uint16(bytes2(processedPrivilegedTransactionsRollingHash))
+                .getPendingTransactionsVersionedHashWithOffset(
+                    committedPrivilegedTxCount,
+                    privTxCount
                 );
             if (
                 claimedProcessedTransactions !=
                 processedPrivilegedTransactionsRollingHash
             ) revert InvalidPrivilegedTransactionLogs();
+            committedPrivilegedTxCount += privTxCount;
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
@@ -309,6 +318,7 @@ contract OnChainProposer is
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
                 privileged_transaction_count
             );
+            committedPrivilegedTxCount -= privileged_transaction_count;
         }
 
         if (
@@ -437,6 +447,7 @@ contract OnChainProposer is
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
                     privileged_transaction_count
                 );
+                committedPrivilegedTxCount -= privileged_transaction_count;
             }
 
             // Reconstruct public inputs from commitments

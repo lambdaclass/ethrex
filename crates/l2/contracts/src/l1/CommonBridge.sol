@@ -311,18 +311,19 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingTransactionsVersionedHash(
+    function getPendingTransactionsVersionedHashWithOffset(
+        uint256 offset,
         uint16 number
     ) public view returns (bytes32) {
         if (number == 0) revert NumberIsZero();
-        if (uint256(number) > pendingTxHashesLength())
+        if (uint256(number) + offset > pendingTxHashesLength())
             revert ExceedsPendingTxHashesLength();
 
         bytes memory hashes;
         for (uint i = 0; i < number; i++) {
             hashes = bytes.concat(
                 hashes,
-                pendingTxHashes[i + pendingPrivilegedTxIndex]
+                pendingTxHashes[i + pendingPrivilegedTxIndex + offset]
             );
         }
 
@@ -332,12 +333,13 @@ contract CommonBridge is
     }
 
     /// @inheritdoc ICommonBridge
-    function getPendingL2MessagesVersionedHash(
+    function getPendingL2MessagesVersionedHashWithOffset(
         uint256 chainId,
+        uint256 offset,
         uint16 number
     ) public view returns (bytes32) {
         if (number == 0) revert NumberIsZero();
-        if (uint256(number) > pendingL2MessagesLength(chainId))
+        if (uint256(number) + offset > pendingL2MessagesLength(chainId))
             revert ExceedsPendingL2MessagesLength();
 
         bytes memory hashes;
@@ -349,13 +351,28 @@ contract CommonBridge is
         for (uint i = 0; i < number; i++) {
             hashes = bytes.concat(
                 hashes,
-                pendingMessagesHashes[i + pendingMessageIndex]
+                pendingMessagesHashes[i + pendingMessageIndex + offset]
             );
         }
 
         return
             bytes32(bytes2(number)) |
             bytes32(uint256(uint240(uint256(keccak256(hashes)))));
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingTransactionsVersionedHash(
+        uint16 number
+    ) public view returns (bytes32) {
+        return getPendingTransactionsVersionedHashWithOffset(0, number);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function getPendingL2MessagesVersionedHash(
+        uint256 chainId,
+        uint16 number
+    ) public view returns (bytes32) {
+        return getPendingL2MessagesVersionedHashWithOffset(chainId, 0, number);
     }
 
     /// @inheritdoc ICommonBridge
