@@ -1,446 +1,455 @@
+//! # Environment operations
+//!
+//! Includes the following opcodes:
+//!   - `ADDRESS`
+//!   - `BALANCE`
+//!   - `ORIGIN`
+//!   - `GASPRICE`
+//!   - `CALLER`
+//!   - `CALLVALUE`
+//!   - `CALLDATALOAD`
+//!   - `CALLDATASIZE`
+//!   - `CALLDATACOPY`
+//!   - `CODESIZE`
+//!   - `CODECOPY`
+//!   - `EXTCODESIZE`
+//!   - `EXTCODECOPY`
+//!   - `EXTCODEHASH`
+//!   - `RETURNDATASIZE`
+//!   - `RETURNDATACOPY`
+
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost::{self},
     memory::calculate_memory_size,
+    opcode_handlers::OpcodeHandler,
     utils::{size_offset_to_usize, u256_to_usize, word_to_address},
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use ethrex_common::U256;
+use std::mem;
 
-// Environmental Information (16)
-// Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
+/// Implementation for the `ADDRESS` opcode.
+pub struct OpAddressHandler;
+impl OpcodeHandler for OpAddressHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::ADDRESS)?;
 
-impl<'a> VM<'a> {
-    // ADDRESS operation
-    pub fn op_address(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ADDRESS)?;
-
-        let addr = current_call_frame.to; // The recipient of the current call.
-
-        current_call_frame
-            .stack
-            .push(u256_from_big_endian_const(addr.to_fixed_bytes()))?;
+        #[expect(unsafe_code, reason = "safe")]
+        vm.current_call_frame.stack.push(U256(unsafe {
+            let mut bytes: [u8; 32] = [0; 32];
+            bytes[12..].copy_from_slice(&vm.current_call_frame.to.0);
+            bytes.reverse();
+            mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+        }))?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // BALANCE operation
-    pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = !self.substate.add_accessed_address(address);
-
-        // Gas check MUST pass before state access per EIP-7928:
-        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
+/// Implementation for the `BALANCE` opcode.
+pub struct OpBalanceHandler;
+impl OpcodeHandler for OpBalanceHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let address = word_to_address(vm.current_call_frame.stack.pop1()?);
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::balance(
+                vm.substate.add_accessed_address(address),
+            )?)?;
 
         // State access AFTER gas check passes
-        let account_balance = self.db.get_account(address)?.info.balance;
+        let account_balance = vm.db.get_account(address)?.info.balance;
 
         // Record address touch for BAL (after gas check passes)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
         }
 
-        self.current_call_frame.stack.push(account_balance)?;
+        vm.current_call_frame.stack.push(account_balance)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // ORIGIN operation
-    pub fn op_origin(&mut self) -> Result<OpcodeResult, VMError> {
-        let origin = self.env.origin;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::ORIGIN)?;
+/// Implementation for the `ORIGIN` opcode.
+pub struct OpOriginHandler;
+impl OpcodeHandler for OpOriginHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::ORIGIN)?;
 
-        current_call_frame
+        #[expect(unsafe_code, reason = "safe")]
+        vm.current_call_frame.stack.push(U256(unsafe {
+            let mut bytes: [u8; 32] = [0; 32];
+            bytes[12..].copy_from_slice(&vm.env.origin.0);
+            bytes.reverse();
+            mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+        }))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `GASPRICE` opcode.
+pub struct OpGasPriceHandler;
+impl OpcodeHandler for OpGasPriceHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::GASPRICE)?;
+
+        vm.current_call_frame.stack.push(vm.env.gas_price)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `CALLER` opcode.
+pub struct OpCallerHandler;
+impl OpcodeHandler for OpCallerHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::CALLER)?;
+
+        #[expect(unsafe_code, reason = "safe")]
+        vm.current_call_frame.stack.push(U256(unsafe {
+            let mut bytes: [u8; 32] = [0; 32];
+            bytes[12..].copy_from_slice(&vm.current_call_frame.msg_sender.0);
+            bytes.reverse();
+            mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+        }))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `CALLVALUE` opcode.
+pub struct OpCallValueHandler;
+impl OpcodeHandler for OpCallValueHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::CALLVALUE)?;
+
+        vm.current_call_frame
             .stack
-            .push(u256_from_big_endian_const(origin.to_fixed_bytes()))?;
+            .push(vm.current_call_frame.msg_value)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // CALLER operation
-    pub fn op_caller(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLER)?;
+/// Implementation for the `CALLDATALOAD` opcode.
+pub struct OpCallDataLoadHandler;
+impl OpcodeHandler for OpCallDataLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let caller = u256_from_big_endian_const(current_call_frame.msg_sender.to_fixed_bytes());
-        current_call_frame.stack.push(caller)?;
+        let value_bytes = usize::try_from(vm.current_call_frame.stack.pop1()?)
+            .ok()
+            .and_then(|offset| vm.current_call_frame.calldata.get(offset..));
+        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
+        vm.current_call_frame.stack.push(match value_bytes {
+            Some(data) if data.len() >= 32 => U256::from_big_endian(&data[..32]),
+            Some(data) => {
+                let mut bytes = [0; 32];
+                bytes[..data.len()].copy_from_slice(data);
+                U256::from_big_endian(&bytes)
+            }
+            None => U256::zero(),
+        })?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // CALLVALUE operation
-    pub fn op_callvalue(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLVALUE)?;
+/// Implementation for the `CALLDATASIZE` opcode.
+pub struct OpCallDataSizeHandler;
+impl OpcodeHandler for OpCallDataSizeHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
-        let callvalue = current_call_frame.msg_value;
-
-        current_call_frame.stack.push(callvalue)?;
+        vm.current_call_frame
+            .stack
+            .push(U256::from(vm.current_call_frame.calldata.len()))?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // CALLDATALOAD operation
-    #[inline]
-    pub fn op_calldataload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATALOAD)?;
+/// Implementation for the `CALLDATACOPY` opcode.
+pub struct OpCallDataCopyHandler;
+impl OpcodeHandler for OpCallDataCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
+        let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
+        let src_offset = u256_to_usize(src_offset).unwrap_or(usize::MAX);
 
-        let calldata_size: U256 = current_call_frame.calldata.len().into();
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::calldatacopy(
+                calculate_memory_size(dst_offset, len)?,
+                vm.current_call_frame.memory.len(),
+                len,
+            )?)?;
 
-        let offset = current_call_frame.stack.pop1()?;
+        if len > 0 {
+            let data = vm
+                .current_call_frame
+                .calldata
+                .get(src_offset..)
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
-        // If the offset is larger than the actual calldata, then you
-        // have no data to return.
-        if offset > calldata_size {
-            current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
-        };
-        let offset: usize = offset
-            .try_into()
-            .map_err(|_| InternalError::TypeConversion)?;
-
-        // All bytes after the end of the calldata are set to 0.
-        let mut data = [0u8; 32];
-        let size = 32;
-
-        if offset < current_call_frame.calldata.len() {
-            let diff = current_call_frame.calldata.len().wrapping_sub(offset);
-            let final_size = size.min(diff);
-            let end = offset.wrapping_add(final_size);
-
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                data.get_unchecked_mut(..final_size)
-                    .copy_from_slice(current_call_frame.calldata.get_unchecked(offset..end));
+            vm.current_call_frame.memory.store_data(dst_offset, data)?;
+            if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
+                vm.current_call_frame
+                    .memory
+                    .store_zeros(dst_offset + data.len(), len - data.len())?;
             }
         }
 
-        let result = u256_from_big_endian_const(data);
-
-        current_call_frame.stack.push(result)?;
-
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // CALLDATASIZE operation
-    pub fn op_calldatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CALLDATASIZE)?;
+/// Implementation for the `CODESIZE` opcode.
+pub struct OpCodeSizeHandler;
+impl OpcodeHandler for OpCodeSizeHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::CODESIZE)?;
 
-        current_call_frame
+        vm.current_call_frame
             .stack
-            .push(U256::from(current_call_frame.calldata.len()))?;
+            .push(vm.current_call_frame.bytecode.bytecode.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // CALLDATACOPY operation
-    #[expect(clippy::arithmetic_side_effects, reason = "bound checked")]
-    pub fn op_calldatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, calldata_offset, size] = *current_call_frame.stack.pop()?;
-        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
-        let calldata_offset = u256_to_usize(calldata_offset).unwrap_or(usize::MAX);
+/// Implementation for the `CODECOPY` opcode.
+pub struct OpCodeCopyHandler;
+impl OpcodeHandler for OpCodeCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
+        let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
+        let src_offset = u256_to_usize(src_offset).unwrap_or(usize::MAX);
 
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::codecopy(
+                calculate_memory_size(dst_offset, len)?,
+                vm.current_call_frame.memory.len(),
+                len,
+            )?)?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::calldatacopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
+        if len > 0 {
+            let data = vm
+                .current_call_frame
+                .bytecode
+                .bytecode
+                .get(src_offset..)
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
-        if size == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
-
-        let calldata_len = current_call_frame.calldata.len();
-
-        // offset is out of bounds, so fill zeroes
-        if calldata_offset >= calldata_len {
-            current_call_frame
-                .memory
-                .store_data_zero_padded(dest_offset, &[], size)?;
-            return Ok(OpcodeResult::Continue);
-        }
-
-        // We already verified calldata_len >= calldata_offset.
-        let available_data = calldata_len - calldata_offset;
-        let copy_size = size.min(available_data);
-        #[expect(clippy::indexing_slicing, reason = "bounds checked")]
-        let src_slice = &current_call_frame.calldata[calldata_offset..calldata_offset + copy_size];
-        current_call_frame
-            .memory
-            .store_data_zero_padded(dest_offset, src_slice, size)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // CODESIZE operation
-    pub fn op_codesize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::CODESIZE)?;
-
-        current_call_frame
-            .stack
-            .push(U256::from(current_call_frame.bytecode.bytecode.len()))?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // CODECOPY operation
-    pub fn op_codecopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-
-        let [dest_offset, code_offset, size] = *current_call_frame.stack.pop()?;
-        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
-        let code_offset = u256_to_usize(code_offset).unwrap_or(usize::MAX);
-
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::codecopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
-
-        if size == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
-
-        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(code_offset_end) = code_offset.checked_add(size)
-            && code_offset_end <= current_call_frame.bytecode.bytecode.len()
-        {
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            let slice = unsafe {
-                current_call_frame
-                    .bytecode
-                    .bytecode
-                    .get_unchecked(code_offset..code_offset_end)
-            };
-            current_call_frame.memory.store_data(dest_offset, slice)?;
-
-            return Ok(OpcodeResult::Continue);
-        }
-
-        let code_len = current_call_frame.bytecode.bytecode.len();
-
-        #[expect(clippy::arithmetic_side_effects)]
-        let slice = if code_offset < code_len {
-            let available_data = code_len - code_offset;
-            let copy_size = size.min(available_data);
-            let end = code_offset + copy_size;
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                current_call_frame
-                    .bytecode
-                    .bytecode
-                    .get_unchecked(code_offset..end)
+            vm.current_call_frame.memory.store_data(dst_offset, data)?;
+            if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
+                vm.current_call_frame
+                    .memory
+                    .store_zeros(dst_offset + data.len(), len - data.len())?;
             }
-        } else {
-            &[]
-        };
-
-        current_call_frame
-            .memory
-            .store_data_zero_padded(dest_offset, slice, size)?;
+        }
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // GASPRICE operation
-    pub fn op_gasprice(&mut self) -> Result<OpcodeResult, VMError> {
-        let gas_price = self.env.gas_price;
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GASPRICE)?;
-
-        current_call_frame.stack.push(gas_price)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // EXTCODESIZE operation
-    pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = !self.substate.add_accessed_address(address);
-
-        // Gas check MUST pass before state access per EIP-7928:
-        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
+/// Implementation for the `EXTCODESIZE` opcode.
+pub struct OpExtCodeSizeHandler;
+impl OpcodeHandler for OpExtCodeSizeHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let address = word_to_address(vm.current_call_frame.stack.pop1()?);
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::extcodesize(
+                vm.substate.add_accessed_address(address),
+            )?)?;
 
         // State access AFTER gas check passes (using optimized code length lookup)
-        let account_code_length = self.db.get_code_length(address)?.into();
+        let account_code_length = vm.db.get_code_length(address)?.into();
 
         // Record address touch for BAL (after gas check passes)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
         }
 
-        self.current_call_frame.stack.push(account_code_length)?;
+        vm.current_call_frame.stack.push(account_code_length)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // EXTCODECOPY operation
-    pub fn op_extcodecopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let call_frame = &mut self.current_call_frame;
-        let [address, dest_offset, offset, size] = *call_frame.stack.pop()?;
-
+/// Implementation for the `EXTCODECOPY` opcode.
+pub struct OpExtCodeCopyHandler;
+impl OpcodeHandler for OpExtCodeCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [address, dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
         let address = word_to_address(address);
-        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
-        let offset = u256_to_usize(offset).unwrap_or(usize::MAX);
+        let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
+        let src_offset = u256_to_usize(src_offset).unwrap_or(usize::MAX);
 
-        let current_memory_size = call_frame.memory.len();
-        let address_was_cold = !self.substate.add_accessed_address(address);
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
-
-        // Gas check MUST pass before recording address in BAL per EIP-7928:
-        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
-        self.current_call_frame
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodecopy(
-                size,
-                new_memory_size,
-                current_memory_size,
-                address_was_cold,
+                len,
+                calculate_memory_size(dst_offset, len)?,
+                vm.current_call_frame.memory.len(),
+                vm.substate.add_accessed_address(address),
             )?)?;
 
         // Record address touch for BAL (after gas check passes)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
         }
 
-        if size == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
+        if len > 0 {
+            let data = vm
+                .db
+                .get_account_code(address)?
+                .bytecode
+                .get(src_offset..)
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
 
-        // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
-        // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let bytecode = self.db.get_account_code(address)?;
-
-        // Happiest fast path, copy without an intermediate buffer because there is no need to pad 0s and also size doesn't overflow.
-        if let Some(offset_end) = offset.checked_add(size)
-            && offset_end <= bytecode.bytecode.len()
-        {
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            let slice = unsafe { bytecode.bytecode.get_unchecked(offset..offset_end) };
-            self.current_call_frame
-                .memory
-                .store_data(dest_offset, slice)?;
-
-            return Ok(OpcodeResult::Continue);
-        }
-
-        let code_len = bytecode.bytecode.len();
-
-        #[expect(clippy::arithmetic_side_effects)]
-        let slice = if offset < code_len {
-            let available_data = code_len - offset;
-            let copy_size = size.min(available_data);
-            let end = offset + copy_size;
-            #[expect(unsafe_code, reason = "bounds checked beforehand")]
-            unsafe {
-                bytecode.bytecode.get_unchecked(offset..end)
+            vm.current_call_frame.memory.store_data(dst_offset, data)?;
+            if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
+                vm.current_call_frame
+                    .memory
+                    .store_zeros(dst_offset + data.len(), len - data.len())?;
             }
-        } else {
-            &[]
-        };
-
-        self.current_call_frame
-            .memory
-            .store_data_zero_padded(dest_offset, slice, size)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // RETURNDATASIZE operation
-    pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
-
-        current_call_frame
-            .stack
-            .push(U256::from(current_call_frame.sub_return_data.len()))?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // RETURNDATACOPY operation
-    pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, returndata_offset, size] = *current_call_frame.stack.pop()?;
-
-        let (size, dest_offset) = size_offset_to_usize(size, dest_offset)?;
-        let returndata_offset =
-            u256_to_usize(returndata_offset).map_err(|_| ExceptionalHalt::OutOfBounds)?;
-
-        let new_memory_size = calculate_memory_size(dest_offset, size)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::returndatacopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
-
-        if size == 0 && returndata_offset == 0 {
-            return Ok(OpcodeResult::Continue);
         }
 
-        let sub_return_data_len = current_call_frame.sub_return_data.len();
-
-        let copy_limit = returndata_offset
-            .checked_add(size)
-            .ok_or(ExceptionalHalt::VeryLargeNumber)?;
-
-        if copy_limit > sub_return_data_len {
-            return Err(ExceptionalHalt::OutOfBounds.into());
-        }
-
-        #[expect(unsafe_code, reason = "bounds checked beforehand")]
-        let slice = unsafe {
-            current_call_frame
-                .sub_return_data
-                .get_unchecked(returndata_offset..copy_limit)
-        };
-        current_call_frame.memory.store_data(dest_offset, slice)?;
-
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // EXTCODEHASH operation
-    pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
-        let address = word_to_address(self.current_call_frame.stack.pop1()?);
-        let address_was_cold = !self.substate.add_accessed_address(address);
+/// Implementation for the `EXTCODEHASH` opcode.
+pub struct OpExtCodeHashHandler;
+impl OpcodeHandler for OpExtCodeHashHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let address = word_to_address(vm.current_call_frame.stack.pop1()?);
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::extcodehash(
+                vm.substate.add_accessed_address(address),
+            )?)?;
 
-        // Gas check MUST pass before state access per EIP-7928:
-        // "If pre-state validation fails, the target is never accessed and must not appear in the BAL."
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
-
-        // State access AFTER gas check passes
-        let account = self.db.get_account(address)?;
+        let account = vm.db.get_account(address)?;
         let account_is_empty = account.is_empty();
         let account_code_hash = account.info.code_hash.0;
 
         // Record address touch for BAL (after gas check passes)
-        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
         }
 
-        // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
-            self.current_call_frame.stack.push_zero()?;
-            return Ok(OpcodeResult::Continue);
+            vm.current_call_frame.stack.push_zero()?;
+        } else {
+            #[expect(unsafe_code, reason = "safe")]
+            vm.current_call_frame.stack.push(U256(unsafe {
+                let mut bytes = account_code_hash;
+                bytes.reverse();
+                mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+            }))?;
         }
 
-        let hash = u256_from_big_endian_const(account_code_hash);
-        self.current_call_frame.stack.push(hash)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `RETURNDATASIZE` opcode.
+pub struct OpReturnDataSizeHandler;
+impl OpcodeHandler for OpReturnDataSizeHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
+
+        vm.current_call_frame
+            .stack
+            .push(vm.current_call_frame.sub_return_data.len().into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `RETURNDATACOPY` opcode.
+pub struct OpReturnDataCopyHandler;
+impl OpcodeHandler for OpReturnDataCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
+        let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
+        let src_offset = u256_to_usize(src_offset)?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::returndatacopy(
+                calculate_memory_size(dst_offset, len)?,
+                vm.current_call_frame.memory.len(),
+                len,
+            )?)?;
+
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "src_offset and len are validated by memory expansion"
+        )]
+        if src_offset + len > vm.current_call_frame.sub_return_data.len() {
+            return Err(ExceptionalHalt::OutOfBounds.into());
+        }
+
+        if len > 0 {
+            let data = vm
+                .current_call_frame
+                .sub_return_data
+                .get(src_offset..)
+                .unwrap_or_default();
+            let data = data.get(..len).unwrap_or(data);
+
+            vm.current_call_frame.memory.store_data(dst_offset, data)?;
+            if data.len() < len {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "data.len() < len guard ensures no underflow"
+                )]
+                vm.current_call_frame
+                    .memory
+                    .store_zeros(dst_offset + data.len(), len - data.len())?;
+            }
+        }
 
         Ok(OpcodeResult::Continue)
     }
