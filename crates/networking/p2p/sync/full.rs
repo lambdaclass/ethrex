@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
-use ethrex_common::{H256, types::Block};
+use ethrex_common::{
+    H256,
+    types::{Block, BlockHeader},
+};
 use ethrex_storage::Store;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -56,119 +59,119 @@ pub async fn sync_cycle_full(
     let mut headers = vec![];
     let mut single_batch = true;
 
-    let mut attempts = 0;
+    // For Polygon (fast block times), the sync_head hash from peer Status is always stale.
+    // Skip hash-based lookup entirely and go straight to forward sync by block number.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_polygon = chain_id == 137 || chain_id == 80002;
 
-    // Request and store all block headers from the advertised sync head
-    loop {
-        let Some(mut block_headers) = peers
-            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
-            .await?
-        else {
-            if attempts > MAX_HASH_LOOKUP_ATTEMPTS {
-                // Hash-based lookup failed — the sync target hash may be stale
-                // (common on Polygon where blocks arrive every 2s and the hash from
-                // peer Status is minutes old by the time full sync starts).
-                // Fallback: request headers forward from our latest canonical block.
-                let latest = store.get_latest_block_number().await.unwrap_or(0);
-                if latest == 0 {
-                    warn!("Sync failed to find target block header and no local blocks, aborting");
-                    return Ok(());
-                }
-                warn!(
-                    latest,
-                    "Hash-based header lookup failed, falling back to forward sync from latest block"
-                );
-                let mut forward_attempts = 0;
-                let forward_ok = loop {
-                    forward_attempts += 1;
-                    if forward_attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                        break false;
-                    }
-                    let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
-                    info!(
-                        forward_start,
-                        forward_attempts, "Forward sync: requesting headers by number"
-                    );
-                    match peers
-                        .request_block_headers_from_number(
-                            forward_start,
-                            MAX_BLOCK_BODIES_TO_REQUEST as u64,
-                            BlockRequestOrder::OldToNew,
-                        )
-                        .await?
-                    {
-                        Some(forward_headers) if !forward_headers.is_empty() => {
-                            let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
-                            let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
-                            info!(
-                                "Forward sync: received {} headers from block {} to {}",
-                                forward_headers.len(),
-                                first.number,
-                                last.number,
-                            );
-                            start_block_number = first.number;
-                            end_block_number = last.number;
-                            headers = forward_headers;
-                            single_batch = true;
-                            break true;
-                        }
-                        _ => {
-                            warn!(forward_attempts, "Forward sync attempt failed, retrying...");
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                            continue;
-                        }
-                    }
-                };
-                if forward_ok {
-                    break;
-                }
-                warn!("Forward sync fallback exhausted all attempts, aborting");
-                return Ok(());
-            }
-            attempts += 1;
-            tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;
-            continue;
-        };
-        debug!("Sync Log 9: Received {} block headers", block_headers.len());
-
-        let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
-        let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
-
-        info!(
-            "Received {} block headers| First Number: {} Last Number: {}",
-            block_headers.len(),
-            first_header.number,
-            last_header.number,
-        );
-        end_block_number = end_block_number.max(first_header.number);
-        start_block_number = last_header.number;
-
-        sync_head = last_header.parent_hash;
-        if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
-            // Incoming chain merged with current chain
-            // Filter out already canonical blocks from batch
-            let mut first_canon_block = block_headers.len();
-            for (index, header) in block_headers.iter().enumerate() {
-                if store.is_canonical_sync(header.hash())? {
-                    first_canon_block = index;
-                    break;
-                }
-            }
-            block_headers.drain(first_canon_block..block_headers.len());
-            if let Some(last_header) = block_headers.last() {
-                start_block_number = last_header.number;
-            }
-            // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
-            if single_batch {
-                headers = block_headers.into_iter().rev().collect();
-            } else {
-                store.add_fullsync_batch(block_headers).await?;
-            }
-            break;
+    if is_polygon {
+        let latest = store.get_latest_block_number().await.unwrap_or(0);
+        if latest == 0 {
+            warn!("Polygon forward sync: no local blocks, aborting");
+            return Ok(());
         }
-        store.add_fullsync_batch(block_headers).await?;
-        single_batch = false;
-    }
+        info!(
+            latest,
+            "Polygon: skipping hash lookup, starting forward sync from latest block"
+        );
+        if !request_forward_headers(
+            peers,
+            &store,
+            latest,
+            &mut start_block_number,
+            &mut end_block_number,
+            &mut headers,
+        )
+        .await?
+        {
+            warn!("Polygon forward sync exhausted all attempts, aborting");
+            return Ok(());
+        }
+        single_batch = true;
+    } else {
+        let mut attempts = 0;
+
+        // Request and store all block headers from the advertised sync head
+        loop {
+            let Some(mut block_headers) = peers
+                .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+                .await?
+            else {
+                if attempts > MAX_HASH_LOOKUP_ATTEMPTS {
+                    // Hash-based lookup failed — the sync target hash may be stale
+                    let latest = store.get_latest_block_number().await.unwrap_or(0);
+                    if latest == 0 {
+                        warn!(
+                            "Sync failed to find target block header and no local blocks, aborting"
+                        );
+                        return Ok(());
+                    }
+                    warn!(
+                        latest,
+                        "Hash-based header lookup failed, falling back to forward sync from latest block"
+                    );
+                    if !request_forward_headers(
+                        peers,
+                        &store,
+                        latest,
+                        &mut start_block_number,
+                        &mut end_block_number,
+                        &mut headers,
+                    )
+                    .await?
+                    {
+                        warn!("Forward sync fallback exhausted all attempts, aborting");
+                        return Ok(());
+                    }
+                    single_batch = true;
+                    break;
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64))
+                    .await;
+                continue;
+            };
+            debug!("Sync Log 9: Received {} block headers", block_headers.len());
+
+            let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
+            let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
+
+            info!(
+                "Received {} block headers| First Number: {} Last Number: {}",
+                block_headers.len(),
+                first_header.number,
+                last_header.number,
+            );
+            end_block_number = end_block_number.max(first_header.number);
+            start_block_number = last_header.number;
+
+            sync_head = last_header.parent_hash;
+            if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
+                // Incoming chain merged with current chain
+                // Filter out already canonical blocks from batch
+                let mut first_canon_block = block_headers.len();
+                for (index, header) in block_headers.iter().enumerate() {
+                    if store.is_canonical_sync(header.hash())? {
+                        first_canon_block = index;
+                        break;
+                    }
+                }
+                block_headers.drain(first_canon_block..block_headers.len());
+                if let Some(last_header) = block_headers.last() {
+                    start_block_number = last_header.number;
+                }
+                // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
+                if single_batch {
+                    headers = block_headers.into_iter().rev().collect();
+                } else {
+                    store.add_fullsync_batch(block_headers).await?;
+                }
+                break;
+            }
+            store.add_fullsync_batch(block_headers).await?;
+            single_batch = false;
+        }
+    } // end else (non-Polygon hash-based path)
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
 
@@ -185,7 +188,7 @@ pub async fn sync_cycle_full(
                 .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
                 .collect::<Result<Vec<_>, SyncError>>()?;
         }
-        let mut blocks = Vec::new();
+        let mut blocks: Vec<Block> = Vec::new();
         // Request block bodies
         // Download block bodies
         while !headers.is_empty() {
@@ -355,4 +358,52 @@ async fn add_blocks(
     } else {
         blockchain.add_blocks_in_batch(blocks, cancel_token).await
     }
+}
+
+/// Requests block headers forward from `latest + 1` by block number, retrying up to
+/// MAX_HEADER_FETCH_ATTEMPTS times. On success, populates start/end block numbers and headers.
+/// Returns Ok(true) if headers were obtained, Ok(false) if all attempts were exhausted.
+async fn request_forward_headers(
+    peers: &mut PeerHandler,
+    store: &Store,
+    latest: u64,
+    start_block_number: &mut u64,
+    end_block_number: &mut u64,
+    headers: &mut Vec<BlockHeader>,
+) -> Result<bool, SyncError> {
+    for attempt in 1..=MAX_HEADER_FETCH_ATTEMPTS {
+        let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
+        info!(
+            forward_start,
+            attempt, "Forward sync: requesting headers by number"
+        );
+        match peers
+            .request_block_headers_from_number(
+                forward_start,
+                MAX_BLOCK_BODIES_TO_REQUEST as u64,
+                BlockRequestOrder::OldToNew,
+            )
+            .await?
+        {
+            Some(forward_headers) if !forward_headers.is_empty() => {
+                let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
+                let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
+                info!(
+                    "Forward sync: received {} headers from block {} to {}",
+                    forward_headers.len(),
+                    first.number,
+                    last.number,
+                );
+                *start_block_number = first.number;
+                *end_block_number = last.number;
+                *headers = forward_headers;
+                return Ok(true);
+            }
+            _ => {
+                warn!(attempt, "Forward sync attempt failed, retrying...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
+    Ok(false)
 }
