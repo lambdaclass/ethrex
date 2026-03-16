@@ -197,6 +197,8 @@ pub const P256_VERIFY_COST: u64 = 6900;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+// EIP-7976 (Amsterdam): Increase calldata floor cost
+pub const TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM: u64 = 16;
 
 pub const SHA2_256_STATIC_COST: u64 = 60;
 pub const SHA2_256_DYNAMIC_BASE: u64 = 12;

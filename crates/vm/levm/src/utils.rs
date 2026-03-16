@@ -9,6 +9,7 @@ use crate::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST,
         STATE_GAS_AUTH_TOTAL, STATE_GAS_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN,
+        TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM,
         WARM_ADDRESS_ACCESS_COST,
     },
     vm::{Substate, VM},
@@ -546,9 +547,15 @@ impl<'a> VM<'a> {
         // see it in https://eips.ethereum.org/EIPS/eip-7623
         let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST;
 
-        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        // min_gas_used = TX_BASE_COST + floor_per_token * tokens_in_calldata
+        let floor_per_token = if self.env.config.fork >= Fork::Amsterdam {
+            TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM
+        } else {
+            TOTAL_COST_FLOOR_PER_TOKEN
+        };
+
         let mut min_gas_used: u64 = tokens_in_calldata
-            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+            .checked_mul(floor_per_token)
             .ok_or(InternalError::Overflow)?;
 
         min_gas_used = min_gas_used
