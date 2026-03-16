@@ -513,6 +513,13 @@ contract OnChainProposer is
                 ] -= l2_messages_count;
             }
 
+            if (
+                ICommonBridge(BRIDGE).hasExpiredPrivilegedTransactions() &&
+                batchCommitments[batchNumber].nonPrivilegedTransactions != 0
+            ) {
+                revert ExpiredPrivilegedTransactionDeadline();
+            }
+
             // Reconstruct public inputs from commitments
             bytes memory publicInputs = _getPublicInputsFromCommitment(
                 batchNumber

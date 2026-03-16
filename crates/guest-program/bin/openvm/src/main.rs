@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
 #[cfg(not(feature = "l2"))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
 
+use ethrex_guest_program::crypto::openvm::OpenVmCrypto;
 use openvm_keccak256::keccak256;
 use rkyv::rancor::Error;
 
@@ -14,8 +17,10 @@ pub fn main() {
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
     openvm::io::println("finish reading input");
 
+    let crypto = Arc::new(OpenVmCrypto);
+
     openvm::io::println("start execution");
-    let output = execution_program(input).unwrap();
+    let output = execution_program(input, crypto).unwrap();
     openvm::io::println("finish execution");
 
     openvm::io::println("start hashing output");

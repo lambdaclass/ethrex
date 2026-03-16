@@ -151,7 +151,12 @@ module.exports = async ({ github, context }) => {
     // Gets all issue numbers that would be closed if the PR is merged.
     function extractLinkedIssueNumbers(prBody) {
         const body = prBody || "";
-        const withoutComments = body.replace(/<!--[\s\S]*?-->/g, "");
+        let withoutComments = body;
+        let previous;
+        do {
+            previous = withoutComments;
+            withoutComments = withoutComments.replace(/<!--[\s\S]*?-->/g, "");
+        } while (withoutComments !== previous);
         const matches = [...withoutComments.matchAll(/(?:close[sd]?|fixe[sd]?|resolve[sd]?)\s+#(\d+)/gi)];
         return matches.map(match => parseInt(match[1], 10));
     }
