@@ -274,6 +274,12 @@ impl L1ProofVerifier {
                         .await?;
                 }
             }
+            // Reset aligned cursor so the sender re-sends once proofs are re-generated,
+            // instead of waiting for a full resubmission timeout cycle.
+            let last_verified = first_batch_number.saturating_sub(1);
+            self.rollup_store
+                .set_latest_sent_to_aligned(last_verified, 0)
+                .await?;
         }
         let verify_tx_hash = send_verify_tx_result?;
 
