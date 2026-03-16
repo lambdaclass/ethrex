@@ -1057,8 +1057,18 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
+        self.get_receipts_for_block_from_index(block_hash, 0).await
+    }
+
+    /// Retrieves receipts for a block starting from the given index.
+    /// Used by eth/70 partial receipt requests (EIP-7975).
+    pub async fn get_receipts_for_block_from_index(
+        &self,
+        block_hash: &BlockHash,
+        start_index: u64,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
-        let mut index = 0u64;
+        let mut index = start_index;
 
         let txn = self.backend.begin_read()?;
         loop {
@@ -2162,6 +2172,49 @@ impl Store {
             .transpose()
     }
 
+    /// Gets storage value when the account hash and storage root are already known.
+    ///
+    /// This skips the state-trie account lookup and account RLP decode done by
+    /// [`Self::get_storage_at_root`], and directly opens the account storage trie.
+    pub fn get_storage_at_root_with_known_storage_root(
+        &self,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        // When FKV is active the real storage root is in the flatkeyvalue store,
+        // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
+        // so open_storage_trie_shared falls through to the FKV path.
+        let storage_root =
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+                *EMPTY_TRIE_HASH
+            } else {
+                storage_root
+            };
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
+
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
     }
@@ -3183,4 +3236,44 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
 fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     let is_empty = std::fs::read_dir(path)?.next().is_none();
     Ok(is_empty)
+}
+
+/// Checks whether a valid database exists at the given path by looking for
+/// a metadata.json file with a matching schema version.
+pub fn has_valid_db(path: &Path) -> bool {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    if !metadata_path.is_file() {
+        return false;
+    }
+    let Ok(contents) = std::fs::read_to_string(&metadata_path) else {
+        return false;
+    };
+    let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
+        return false;
+    };
+    metadata.schema_version == STORE_SCHEMA_VERSION
+}
+
+/// Reads the chain ID from an existing database without performing a full
+/// store initialization. Returns `None` if the database doesn't exist or
+/// the chain config can't be read. Always returns `None` when compiled
+/// without the `rocksdb` feature.
+pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
+    if !has_valid_db(path) {
+        return None;
+    }
+    #[cfg(feature = "rocksdb")]
+    {
+        let backend = RocksDBBackend::open(path).ok()?;
+        let read = backend.begin_read().ok()?;
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        let bytes = read.get(CHAIN_DATA, &key).ok()??;
+        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
+        Some(config.chain_id)
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        let _ = path;
+        None
+    }
 }
