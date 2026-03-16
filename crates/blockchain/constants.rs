@@ -18,6 +18,9 @@ pub const TX_ACCESS_LIST_ADDRESS_GAS: u64 = 2400;
 // Gas cost for each storage key specified on access lists
 pub const TX_ACCESS_LIST_STORAGE_KEY_GAS: u64 = 1900;
 
+// EIP-7981 (Amsterdam): Access list data cost per token
+pub const TX_ACCESS_LIST_DATA_COST_PER_TOKEN: u64 = 10;
+
 // Gas cost for each non zero byte on transaction data
 pub const TX_DATA_NON_ZERO_GAS: u64 = 68;
 

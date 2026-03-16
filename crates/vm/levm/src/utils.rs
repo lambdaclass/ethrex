@@ -6,10 +6,10 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST,
-        STATE_GAS_AUTH_TOTAL, STATE_GAS_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN,
-        WARM_ADDRESS_ACCESS_COST,
+        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_DATA_COST_PER_TOKEN,
+        ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST,
+        CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST, STATE_GAS_AUTH_TOTAL,
+        STATE_GAS_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     vm::{Substate, VM},
 };
@@ -498,6 +498,16 @@ impl<'a> VM<'a> {
 
         regular_gas = regular_gas.checked_add(access_lists_cost).ok_or(OutOfGas)?;
 
+        // EIP-7981 (Amsterdam): Add access list data cost
+        if fork >= Fork::Amsterdam {
+            let access_list_tokens =
+                gas_cost::tokens_in_access_list_data(self.tx.access_list());
+            let data_cost = access_list_tokens
+                .checked_mul(ACCESS_LIST_DATA_COST_PER_TOKEN)
+                .ok_or(InternalError::Overflow)?;
+            regular_gas = regular_gas.checked_add(data_cost).ok_or(OutOfGas)?;
+        }
+
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
@@ -546,8 +556,19 @@ impl<'a> VM<'a> {
         // see it in https://eips.ethereum.org/EIPS/eip-7623
         let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST;
 
-        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-        let mut min_gas_used: u64 = tokens_in_calldata
+        // EIP-7981 (Amsterdam): Include access list tokens in the floor calculation
+        let total_tokens = if self.env.config.fork >= Fork::Amsterdam {
+            let access_list_tokens =
+                gas_cost::tokens_in_access_list_data(self.tx.access_list());
+            tokens_in_calldata
+                .checked_add(access_list_tokens)
+                .ok_or(InternalError::Overflow)?
+        } else {
+            tokens_in_calldata
+        };
+
+        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * total_tokens
+        let mut min_gas_used: u64 = total_tokens
             .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
             .ok_or(InternalError::Overflow)?;
 
