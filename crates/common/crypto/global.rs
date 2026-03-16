@@ -20,16 +20,14 @@ static GLOBAL_CRYPTO: OnceLock<Arc<dyn Crypto>> = OnceLock::new();
 
 /// Install a [`Crypto`] provider for the global keccak functions.
 ///
-/// Must be called **once**, before any code calls [`global_keccak`].
+/// Should be called before any code calls [`global_keccak`].
 /// Typically called at the top of a zkVM guest program's `main`.
 ///
-/// # Panics
-///
-/// Panics if called more than once (the provider is already set).
+/// If the provider has already been set (e.g. by a previous test in the
+/// same process), subsequent calls are silently ignored -- the first
+/// provider wins.
 pub fn init_global_crypto(crypto: Arc<dyn Crypto>) {
-    GLOBAL_CRYPTO
-        .set(crypto)
-        .expect("init_global_crypto called more than once");
+    let _ = GLOBAL_CRYPTO.set(crypto);
 }
 
 /// Keccak-256 returning raw bytes.
