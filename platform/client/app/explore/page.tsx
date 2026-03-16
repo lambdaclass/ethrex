@@ -7,7 +7,7 @@ import { L1_NAMES, STACK_LABELS } from "@/lib/constants";
 import { type Appchain, getAppchainChainId } from "@/lib/types";
 
 type Filter = "all" | "bookmarked";
-type SortKey = "name" | "stack" | "chainid" | "rating" | "reviews" | "comments" | "created";
+type SortKey = "name" | "stack" | "chainid" | "status" | "rating" | "reviews" | "comments" | "created";
 type SortDir = "asc" | "desc";
 
 export default function ShowroomPage() {
@@ -158,6 +158,10 @@ export default function ShowroomPage() {
         }
         case "chainid":
           return dir * ((getAppchainChainId(a) ?? 0) - (getAppchainChainId(b) ?? 0));
+        case "status": {
+          const statusOrder = (id: string) => onlineMap[id] === true ? 2 : onlineMap[id] === false ? 0 : 1;
+          return dir * (statusOrder(a.id) - statusOrder(b.id));
+        }
         case "rating":
           return dir * ((a.avg_rating ?? 0) - (b.avg_rating ?? 0));
         case "reviews":
@@ -172,7 +176,7 @@ export default function ShowroomPage() {
     });
 
     return list;
-  }, [appchains, filter, selectedTags, bookmarkedIds, sortKey, sortDir]);
+  }, [appchains, filter, selectedTags, bookmarkedIds, sortKey, sortDir, onlineMap]);
 
   const SortHeader = ({ label, sortKeyVal, className }: { label: string; sortKeyVal: SortKey; className?: string }) => (
     <th
@@ -363,7 +367,7 @@ export default function ShowroomPage() {
                   <SortHeader label="Name" sortKeyVal="name" />
                   <SortHeader label="Stack" sortKeyVal="stack" />
                   <SortHeader label="L2 Chain ID" sortKeyVal="chainid" />
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                  <SortHeader label="Status" sortKeyVal="status" />
                   <SortHeader label="Rating" sortKeyVal="rating" className="text-center" />
                   <SortHeader label="Reviews" sortKeyVal="reviews" className="text-center" />
                   <SortHeader label="Comments" sortKeyVal="comments" className="text-center" />
