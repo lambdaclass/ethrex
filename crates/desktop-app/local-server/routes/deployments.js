@@ -821,7 +821,8 @@ router.post("/:id/provision", async (req, res) => {
     if (stackType === 'thanos') {
       // Thanos (Optimism) provisioning — remote not yet supported
       if (hostId) {
-        return; // already sent response; log error
+        console.warn(`[provision] Thanos remote deployment not yet supported for ${deployment.id}`);
+        return;
       }
       if (deployMode === 'testnet') {
         provisionFn = () => provisionThanosTestnet(deployment);

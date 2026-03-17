@@ -315,6 +315,7 @@ const PULL_IMAGES = {
 // op-geth has its own tag; all other stack components share ThanosStackImageTag
 const THANOS_OP_GETH_TAG = "nightly-f8c04dcb";
 const THANOS_STACK_TAG = "nightly-c9d8d16a";
+// Hardhat account #0 — well-known devnet key, NEVER use on mainnet/testnet
 const THANOS_DEVNET_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const THANOS_IMAGES = {
   "l1-geth": "ethereum/client-go:v1.13.15",
