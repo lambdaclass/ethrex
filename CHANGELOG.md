@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-03-12
+
+- Store decoded `Arc<Node>` in TrieLayerCache to eliminate RLP decoding on cache hits, and split cache into separate account/storage/leaf maps
+
 ### 2026-03-05
 
 - Switch hot EVM and mempool HashMaps to FxHashMap for faster hashing [#6303](https://github.com/lambdaclass/ethrex/pull/6303)

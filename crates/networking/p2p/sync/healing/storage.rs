@@ -21,7 +21,7 @@ use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieCommitEntry};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
@@ -222,9 +222,17 @@ pub async fn heal_storage_trie(
                     let mut account_nodes = vec![];
                     for (path, node) in nodes {
                         for i in 0..path.len() {
-                            account_nodes.push((path.slice(0, i), vec![]));
+                            account_nodes.push(TrieCommitEntry::LeafValue {
+                                path: path.slice(0, i),
+                                value: vec![],
+                            });
                         }
-                        account_nodes.push((path, node.encode_to_vec()));
+                        let encoded = node.encode_to_vec();
+                        account_nodes.push(TrieCommitEntry::Node {
+                            path,
+                            node: std::sync::Arc::new(node),
+                            encoded,
+                        });
                     }
                     encoded_to_write.push((hashed_account, account_nodes));
                 }

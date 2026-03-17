@@ -13,6 +13,12 @@ pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 pub trait TrieDB: Send + Sync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
+
+    /// Try to get a decoded node directly from a cache.
+    /// Default returns None — callers fall back to get() + Node::decode().
+    fn get_node(&self, _key: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        Ok(None)
+    }
     // TODO: replace putbatch with this function.
     fn put_batch_no_alloc(&self, key_values: &[(Nibbles, Node)]) -> Result<(), TrieError> {
         self.put_batch(
@@ -77,7 +83,10 @@ impl InMemoryTrieDB {
 
         let hashed_nodes = hashed_nodes
             .into_iter()
-            .map(|(k, v)| (k.into_vec(), v))
+            .map(|entry| {
+                let (k, v) = entry.into_rlp_pair();
+                (k.into_vec(), v)
+            })
             .collect();
 
         let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));

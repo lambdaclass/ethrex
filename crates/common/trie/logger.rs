@@ -33,6 +33,15 @@ impl TrieLogger {
 }
 
 impl TrieDB for TrieLogger {
+    fn get_node(&self, key: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        if let Some(node) = self.inner_db.get_node(key)? {
+            let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
+            lock.insert(node.compute_hash(), (*node).clone());
+            return Ok(Some(node));
+        }
+        Ok(None)
+    }
+
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let result = self.inner_db.get(key)?;
         if let Some(result) = result.as_ref()

@@ -86,7 +86,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieCommitEntry, TrieError};
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -265,22 +265,22 @@ enum MerklizationRequest {
 struct CollectedStateMsg {
     index: u8,
     subroot: Box<BranchNode>,
-    state_nodes: Vec<TrieNode>,
-    storage_nodes: Vec<(H256, Vec<TrieNode>)>,
+    state_nodes: Vec<TrieCommitEntry>,
+    storage_nodes: Vec<(H256, Vec<TrieCommitEntry>)>,
 }
 
 struct CollectedStorageMsg {
     index: u8,
     prefix: H256,
     subroot: Box<BranchNode>,
-    nodes: Vec<TrieNode>,
+    nodes: Vec<TrieCommitEntry>,
 }
 
 #[derive(Default)]
 struct PreMerkelizedAccountState {
     info: Option<AccountInfo>,
     storage_root: Option<Box<BranchNode>>,
-    nodes: Vec<TrieNode>,
+    nodes: Vec<TrieCommitEntry>,
 }
 
 /// Work item for BAL state trie shard workers.
@@ -693,7 +693,7 @@ impl Blockchain {
             state.nodes.extend(nodes);
         }
 
-        let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
+        let mut storage_updates: Vec<(H256, Vec<TrieCommitEntry>)> = Default::default();
 
         for (hashed_account, state) in account_state {
             let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
@@ -733,7 +733,10 @@ impl Blockchain {
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
                 hash.finalize()
             } else {
-                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                state_updates.push(TrieCommitEntry::LeafValue {
+                    path: Nibbles::default(),
+                    value: vec![RLP_NULL],
+                });
                 *EMPTY_TRIE_HASH
             };
 
@@ -850,7 +853,7 @@ impl Blockchain {
 
         // Compute storage roots in parallel
         let mut storage_roots: Vec<Option<H256>> = vec![None; accounts.len()];
-        let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Vec::new();
+        let mut storage_updates: Vec<(H256, Vec<TrieCommitEntry>)> = Vec::new();
 
         std::thread::scope(|s| -> Result<(), StoreError> {
             let accounts_ref = &accounts;
@@ -866,8 +869,8 @@ impl Blockchain {
                             .name(format!("bal_storage_worker_{worker_id}"))
                             .spawn_scoped(
                                 s,
-                                move || -> Result<Vec<(usize, H256, Vec<TrieNode>)>, StoreError> {
-                                    let mut results: Vec<(usize, H256, Vec<TrieNode>)> = Vec::new();
+                                move || -> Result<Vec<(usize, H256, Vec<TrieCommitEntry>)>, StoreError> {
+                                    let mut results: Vec<(usize, H256, Vec<TrieCommitEntry>)> = Vec::new();
                                     // Open one state trie per worker for storage root lookups
                                     let state_trie =
                                         self.storage.open_state_trie(parent_state_root)?;
@@ -884,7 +887,10 @@ impl Blockchain {
                                             results.push((
                                                 idx,
                                                 *EMPTY_TRIE_HASH,
-                                                vec![(Nibbles::default(), vec![RLP_NULL])],
+                                                vec![TrieCommitEntry::LeafValue {
+                                                    path: Nibbles::default(),
+                                                    value: vec![RLP_NULL],
+                                                }],
                                             ));
                                             continue;
                                         }
@@ -972,7 +978,7 @@ impl Blockchain {
                         .name(format!("bal_state_shard_{index}"))
                         .spawn_scoped(
                             s,
-                            move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
+                            move || -> Result<(Box<BranchNode>, Vec<TrieCommitEntry>), StoreError> {
                                 let mut state_trie =
                                     self.storage.open_state_trie(parent_state_root)?;
 
@@ -1041,7 +1047,10 @@ impl Blockchain {
                 let hash = root.commit(Nibbles::default(), &mut state_updates);
                 hash.finalize()
             } else {
-                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                state_updates.push(TrieCommitEntry::LeafValue {
+                    path: Nibbles::default(),
+                    value: vec![RLP_NULL],
+                });
                 *EMPTY_TRIE_HASH
             };
 
@@ -1191,7 +1200,10 @@ impl Blockchain {
                             let hash = root.commit(Nibbles::default(), &mut state.nodes);
                             storage_root = Some(hash.finalize());
                         } else {
-                            state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
+                            state.nodes.push(TrieCommitEntry::LeafValue {
+                                path: Nibbles::default(),
+                                value: vec![RLP_NULL],
+                            });
                             storage_root = Some(*EMPTY_TRIE_HASH);
                         }
                     }
@@ -2785,7 +2797,10 @@ fn branchify(node: Node) -> Box<BranchNode> {
     }
 }
 
-fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
+fn collect_trie(
+    index: u8,
+    mut trie: Trie,
+) -> Result<(Box<BranchNode>, Vec<TrieCommitEntry>), TrieError> {
     let root = branchify(
         trie.root_node()?
             .map(Arc::unwrap_or_clone)
@@ -2793,7 +2808,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
     );
     trie.root = Node::Branch(root).into();
     let (_, mut nodes) = trie.collect_changes_since_last_hash();
-    nodes.retain(|(nib, _)| nib.as_ref().first() == Some(&index));
+    nodes.retain(|entry| entry.path().as_ref().first() == Some(&index));
 
     let Some(Node::Branch(root)) = trie.root_node()?.map(Arc::unwrap_or_clone) else {
         return Err(TrieError::InvalidInput);
