@@ -31,9 +31,9 @@ const LOG_FEE_TRANSFER_TOPIC: H256 = H256([
 /// Hook for Polygon PoS execution.
 ///
 /// Reuses DefaultHook's `prepare_execution` (same sender deduction, validation, etc.)
-/// but skips `pay_coinbase()` in `finalize_execution` because Polygon uses deferred
-/// fee distribution: fees are accumulated across all transactions and applied after
-/// all transactions have been executed.
+/// but replaces `pay_coinbase()` with Polygon-specific fee distribution:
+/// - Tips (priority fees) go to BorConfig coinbase in real-time per tx
+/// - Base fees go to burnt contract in real-time per tx
 ///
 /// Also uses Polygon-specific gas computation: Bor does NOT implement EIP-7623
 /// (calldata floor gas), so the gas_spent is simply gas_used minus refund,
@@ -45,13 +45,16 @@ pub struct PolygonHook {
     sender_balance_before: U256,
     /// Coinbase balance captured BEFORE any fees are paid.
     coinbase_balance_before: U256,
+    /// Address to receive base fee revenue (from BorConfig.burnt_contract).
+    burnt_contract: Option<Address>,
 }
 
-impl Default for PolygonHook {
-    fn default() -> Self {
+impl PolygonHook {
+    pub fn new(burnt_contract: Option<Address>) -> Self {
         Self {
             sender_balance_before: U256::zero(),
             coinbase_balance_before: U256::zero(),
+            burnt_contract,
         }
     }
 }
@@ -89,29 +92,33 @@ impl Hook for PolygonHook {
 
         refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
 
-        // SKIP pay_coinbase() — fees are deferred on Polygon.
-
-        // Emit LogFeeTransfer log (Bor adds this after every transaction).
-        // amount = gas_spent * effective_tip, where effective_tip = gas_price - base_fee
+        // Pay tip to coinbase in real-time (matching Bor's state_transition.go).
+        // Base fee distribution is deferred — handled in execute_block after all txs.
         let effective_tip = vm
             .env
             .gas_price
             .checked_sub(vm.env.base_fee_per_gas)
             .unwrap_or(U256::zero());
-        let amount = U256::from(gas_spent)
+        let tip_amount = U256::from(gas_spent)
             .checked_mul(effective_tip)
             .ok_or(InternalError::Overflow)?;
 
-        if !amount.is_zero() {
+        if !tip_amount.is_zero() {
+            vm.increase_account_balance(vm.env.coinbase, tip_amount)?;
+        }
+
+        // Emit LogFeeTransfer log (Bor adds this after every transaction).
+        // amount = gas_spent * effective_tip
+        if !tip_amount.is_zero() {
             // Bor computes synthetic output values: output1 = input1 - amount, output2 = input2 + amount
             // These do NOT reflect actual state — they model the tip movement from pre-tx balances.
-            let output1 = self.sender_balance_before.saturating_sub(amount);
-            let output2 = self.coinbase_balance_before.saturating_add(amount);
+            let output1 = self.sender_balance_before.saturating_sub(tip_amount);
+            let output2 = self.coinbase_balance_before.saturating_add(tip_amount);
 
             let fee_log = build_fee_transfer_log(
                 vm.env.origin,
                 vm.env.coinbase,
-                amount,
+                tip_amount,
                 self.sender_balance_before,
                 self.coinbase_balance_before,
                 output1,
