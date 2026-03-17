@@ -16,11 +16,11 @@ The approach:
 │  Kurtosis devnet + spamoor → diverse blocks               │
 │  ethrex export → chain.rlp                                │
 ├─ BOOTSTRAP (once per chain.rlp) ─────────────────────────┤
-│  import-bench chain.rlp --export-bal bals/                │
-│    sequential execution, records BALs to disk             │
+│  import-bench chain.rlp --export-bal bals.rlp             │
+│    sequential execution, records BALs to single file      │
 ├─ BENCHMARK (repeatable, deterministic) ──────────────────┤
-│  import-bench chain.rlp --with-bal bals/   (parallel)     │
-│  import-bench chain.rlp                    (sequential)   │
+│  import-bench chain.rlp --with-bal bals.rlp  (parallel)   │
+│  import-bench chain.rlp                      (sequential) │
 │  Compare Ggas/s and phase breakdown between both runs     │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -103,7 +103,7 @@ kurtosis files download lambdanet genesis_file ~/bal-bench-genesis.json
 
 ## Phase 2: Bootstrap — generate BALs
 
-This pass executes the chain sequentially and writes each block's BAL to disk.
+This pass executes the chain sequentially and writes all BALs to a single file.
 
 ### 2.1 Prepare the state database
 
@@ -115,22 +115,19 @@ mkdir -p ~/.local/share/ethrex_bal_bench
 
 ### 2.2 Run the bootstrap pass
 
-> **NOTE**: This requires a code change — `import-bench` needs an `--export-bal`
-> flag. See [Code Changes Required](#code-changes-required) below.
-
 ```bash
 cargo run --release -- \
   --network ~/bal-bench-genesis.json \
   --datadir ~/.local/share/ethrex_bal_bench \
-  import-bench chain.rlp --export-bal bals/
+  import-bench chain.rlp --export-bal bals.rlp
 ```
 
 This will:
 1. Execute each block sequentially (the normal `add_block_pipeline(block, None)` path)
 2. Record the BAL produced during execution
-3. Write each BAL as RLP to `bals/block_<number>.rlp`
+3. Write all BALs as concatenated RLP to `bals.rlp` (same format as chain.rlp)
 
-The BALs are now your fixture for the parallel path.
+The BALs file is now your fixture for the parallel path.
 
 ### 2.3 Verify BAL integrity
 
@@ -153,10 +150,11 @@ cp -r ~/.local/share/ethrex_bal_bench/ethrex ~/.local/share/temp
 cargo run --release -- \
   --network ~/bal-bench-genesis.json \
   --datadir ~/.local/share/temp \
-  import-bench chain.rlp --with-bal bals/
+  import-bench chain.rlp --with-bal bals.rlp
 ```
 
-This calls `add_block_pipeline(block, Some(&bal))` which activates:
+This loads all BALs into memory upfront (no per-block I/O overhead), then calls
+`add_block_pipeline(block, Some(&bal))` which activates:
 - `validate_header_bal_indices()`
 - `build_validation_index()`
 - `warm_block_from_bal()` (prefetch accounts, storage, codes)
@@ -193,7 +191,7 @@ for i in 1 2 3; do
   cargo run --release -- \
     --network ~/bal-bench-genesis.json \
     --datadir ~/.local/share/temp \
-    import-bench chain.rlp --with-bal bals/ \
+    import-bench chain.rlp --with-bal bals.rlp \
     2>&1 | tee bench_results/parallel-${i}.log
 done
 
@@ -231,36 +229,28 @@ python3 tooling/import_benchmark/parse_bench.py \
 | Parallel speedup | Ggas/s(parallel) / Ggas/s(sequential) | The headline number |
 | Store time (ms) | Pipeline phase | DB write overhead |
 
-## Code Changes Required
+## CLI Flags
 
-The existing `import-bench` command needs two new flags:
+### `--export-bal <FILE>`
 
-### `--export-bal <DIR>`
-
-During sequential execution, save each block's BAL:
+During sequential execution, save all BALs to a single concatenated RLP file:
 
 ```
-import-bench path --export-bal bals/
+import-bench chain.rlp --export-bal bals.rlp
 ```
 
-Implementation sketch (in `import_blocks_bench`):
-1. Call `blockchain.add_block_pipeline_bal(block, None)` instead of `add_block_pipeline`
-2. If `export_bal_dir` is set and a BAL was produced:
-   - `bal.encode_to_rlp(&mut buf)`
-   - Write to `<dir>/block_<number>.rlp`
+BALs are collected in memory during execution and written in one shot at the end.
 
-### `--with-bal <DIR>`
+### `--with-bal <FILE>`
 
-Load pre-computed BALs and pass them to the parallel path:
+Load pre-computed BALs and use the parallel execution path:
 
 ```
-import-bench path --with-bal bals/
+import-bench chain.rlp --with-bal bals.rlp
 ```
 
-Implementation sketch (in `import_blocks_bench`):
-1. Before each block, load `<dir>/block_<number>.rlp`
-2. Decode: `BlockAccessList::decode_from_rlp(&bytes)`
-3. Call `blockchain.add_block_pipeline(block, Some(&bal))`
+All BALs are loaded into memory upfront before block execution begins,
+avoiding per-block I/O overhead during the benchmark.
 
 ### Both flags are mutually exclusive
 
@@ -298,15 +288,12 @@ spamoor_params:
 
 ## Fixture Management
 
-Once generated, the chain.rlp + bals/ directory is a self-contained fixture:
+Once generated, the fixtures are self-contained:
 
 ```
 ~/.local/share/ethrex_bal_bench/
-├── chain.rlp              # RLP-encoded blocks
-├── bals/                  # Per-block BAL files
-│   ├── block_1.rlp
-│   ├── block_2.rlp
-│   └── ...
+├── chain.rlp              # RLP-encoded blocks (concatenated)
+├── bals.rlp               # RLP-encoded BALs (concatenated, 1:1 with blocks)
 ├── ethrex/                # RocksDB state at genesis (base for each run)
 └── genesis.json           # Network genesis
 ```
@@ -332,8 +319,8 @@ not reusing the same datadir.
 
 ### 500ms sleep in import-bench
 The current code has a `tokio::time::sleep(Duration::from_millis(500))` between
-blocks (line 922 in cli.rs) to wait for background DB writes. For benchmarking,
-this adds ~500ms overhead per block. Consider:
+blocks to wait for background DB writes. For benchmarking, this adds ~500ms
+overhead per block. Consider:
 - Reducing it for faster iteration
 - Excluding it from timing measurements
 - Or removing it and handling the DB flush synchronously
