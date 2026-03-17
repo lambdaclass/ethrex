@@ -1772,10 +1772,17 @@ impl Store {
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
-            state_trie.insert(
-                hashed_address.as_bytes().to_vec(),
-                account_state.encode_to_vec(),
-            )?;
+            let encoded_account = account_state.encode_to_vec();
+            tracing::warn!(
+                address = ?update.address,
+                nonce = account_state.nonce,
+                balance = ?account_state.balance,
+                storage_root = ?account_state.storage_root,
+                code_hash = ?account_state.code_hash,
+                rlp_hex = %hex::encode(&encoded_account),
+                "Account state inserted into trie"
+            );
+            state_trie.insert(hashed_address.as_bytes().to_vec(), encoded_account)?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
 
