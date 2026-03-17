@@ -446,16 +446,36 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let (bind_addr, external_addr) = resolve_p2p_endpoints(
+    let (rlpx_bind_addr, rlpx_external_addr) = resolve_p2p_endpoints(
         opts.p2p_addr.as_deref(),
         opts.nat_extip.as_deref(),
         local_ip().ok(),
         local_ipv6().ok(),
     );
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    // Determine discovery bind address.
+    // --discovery.addr sets the UDP bind addr independently of RLPx.
+    // Defaults to rlpx_bind_addr so the two channels co-locate by default.
+    let discovery_bind_addr: IpAddr = opts
+        .discovery_addr
+        .as_deref()
+        .map(|a| a.parse().expect("Failed to parse --discovery.addr address"))
+        .unwrap_or(rlpx_bind_addr);
+
+    // Discovery external address: use the explicit discovery bind addr when it
+    // is a specific (non-wildcard) IP; otherwise fall back to rlpx_external_addr.
+    let discovery_external_addr = if !discovery_bind_addr.is_unspecified() {
+        discovery_bind_addr
+    } else {
+        rlpx_external_addr
+    };
+
+    let node = Node::new(rlpx_external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
-        bind_addr,
+        discovery_bind_addr,
+        discovery_external_addr,
+        rlpx_bind_addr,
+        rlpx_external_addr,
         tcp_port,
         udp_port,
     };
