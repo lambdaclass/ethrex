@@ -92,7 +92,7 @@ router.get("/ai-deploy/check-cli", async (req, res) => {
   if (!cloud || !["gcp", "aws", "vultr"].includes(cloud)) {
     return res.status(400).json({ error: "cloud must be gcp, aws, or vultr" });
   }
-  const { execSync } = require("child_process");
+  const { execSync, execFileSync } = require("child_process");
   const result = { cloud, cli: { installed: false, name: "" }, auth: { authenticated: false, account: "" } };
 
   // Add known SDK paths to PATH for detection
@@ -158,12 +158,173 @@ router.get("/ai-deploy/check-cli", async (req, res) => {
         result.auth.authenticated = true;
         result.auth.account = parsed.Arn || parsed.Account || "";
       } catch {}
+      // List SSH key pairs
+      try {
+        const awsRegion = (req.query.region || "ap-northeast-2").replace(/[^a-z0-9-]/g, "");
+        const kpJson = execFileSync("aws", ["ec2", "describe-key-pairs", "--query", "KeyPairs[*].[KeyName,KeyPairId]", "--output", "json", "--region", awsRegion], { timeout: 5000, stdio: "pipe" }).toString();
+        result.keyPairs = JSON.parse(kpJson).map(([name, id]) => ({ name, id }));
+      } catch {
+        result.keyPairs = [];
+      }
     }
   } catch (e) {
     // Unexpected error — return what we have
   }
 
   res.json(result);
+});
+
+// Input sanitizer for shell-safe values
+const SAFE_NAME_RE = /^[a-zA-Z0-9_-]+$/;  // No dots or slashes — prevents path traversal
+const SAFE_REGION_RE = /^[a-z]{2}-[a-z]+-\d+$/;
+
+// POST /api/deployments/ai-deploy/monitor — check EC2 + container status via AWS CLI + SSH
+router.post("/ai-deploy/monitor", async (req, res) => {
+  let { vmName, region, keyPairName, deploymentId } = req.body;
+  const { execFileSync } = require("child_process");
+
+  // If deploymentId provided, load config from DB
+  if (deploymentId && !vmName) {
+    try {
+      const dep = db.prepare("SELECT config FROM deployments WHERE id = ?").get(deploymentId);
+      if (dep?.config) {
+        const cfg = JSON.parse(dep.config);
+        vmName = cfg.vmName || vmName;
+        region = cfg.region || region;
+        keyPairName = cfg.keyPairName || keyPairName;
+      }
+    } catch {}
+  }
+
+  if (!vmName) return res.status(400).json({ error: "vmName required" });
+  // Validate inputs to prevent injection
+  if (!SAFE_NAME_RE.test(vmName)) return res.status(400).json({ error: "Invalid vmName" });
+  const awsRegion = SAFE_REGION_RE.test(region) ? region : "ap-northeast-2";
+  if (keyPairName && !SAFE_NAME_RE.test(keyPairName)) return res.status(400).json({ error: "Invalid keyPairName" });
+
+  const result = { vmName, ec2: null, containers: null, services: {} };
+  const jmesQuery = "Reservations[].Instances[] | sort_by(@, &LaunchTime) | [-1].{State:State.Name,IP:PublicIpAddress,Id:InstanceId,Type:InstanceType,LaunchTime:LaunchTime,Name:Tags[?Key=='Name'].Value|[0]}";
+
+  try {
+    // 1. Get EC2 instance info — search exact name first, then wildcard
+    let ec2Json = execFileSync("aws", [
+      "ec2", "describe-instances",
+      "--filters", `Name=tag:Name,Values=${vmName}`, "Name=instance-state-name,Values=pending,running,stopping,stopped",
+      "--query", jmesQuery, "--output", "json", "--region", awsRegion,
+    ], { timeout: 10000, stdio: "pipe" }).toString().trim();
+    let parsed = JSON.parse(ec2Json);
+    // Fallback: search all tokamak-l2-* instances
+    if (!parsed) {
+      ec2Json = execFileSync("aws", [
+        "ec2", "describe-instances",
+        "--filters", "Name=tag:Name,Values=tokamak-l2-*", "Name=instance-state-name,Values=pending,running,stopping,stopped",
+        "--query", jmesQuery, "--output", "json", "--region", awsRegion,
+      ], { timeout: 10000, stdio: "pipe" }).toString().trim();
+      parsed = JSON.parse(ec2Json);
+    }
+    result.ec2 = parsed || { State: "not_found" };
+    if (result.ec2.Name) result.vmName = result.ec2.Name;
+  } catch (e) {
+    result.ec2 = { State: "not_found", error: (e.message || "").slice(0, 200) };
+    return res.json(result);
+  }
+
+  if (result.ec2.State !== "running" || !result.ec2.IP) {
+    return res.json(result);
+  }
+
+  const ip = result.ec2.IP;
+  // Validate IP is a public address (prevent SSRF to internal services)
+  const ipParts = ip.split(".").map(Number);
+  const isPrivate = (ipParts[0] === 10) ||
+    (ipParts[0] === 172 && ipParts[1] >= 16 && ipParts[1] <= 31) ||
+    (ipParts[0] === 192 && ipParts[1] === 168) ||
+    (ipParts[0] === 127);
+  if (isPrivate) {
+    result.services = {};
+    return res.json(result);
+  }
+  const os = require("os");
+  const path = require("path");
+  const keyPath = keyPairName ? path.join(os.homedir(), ".ssh", `${keyPairName}.pem`) : "";
+
+  // 2. Check containers via SSH (execFileSync — no shell)
+  if (keyPath) {
+    try {
+      const containers = execFileSync("ssh", [
+        "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
+        "-i", keyPath, `ubuntu@${ip}`,
+        "docker ps --format '{{.Names}}|{{.Status}}|{{.Ports}}' 2>/dev/null",
+      ], { timeout: 15000, stdio: "pipe" }).toString().trim();
+      result.containers = containers.split("\n").filter(Boolean).map(line => {
+        const [name, status, ports] = line.split("|");
+        return { name, status, ports };
+      });
+    } catch {
+      result.containers = null;
+    }
+  }
+
+  // 3. Check HTTP endpoints (parallel)
+  const endpoints = [
+    { name: "L2 RPC", port: 1729, type: "rpc" },
+    { name: "L1 RPC", port: 8545, type: "rpc" },
+    { name: "L2 Explorer", port: 8082, type: "http" },
+    { name: "Dashboard", port: 3000, type: "http" },
+  ];
+  const checks = endpoints.map(async (ep) => {
+    try {
+      const signal = AbortSignal.timeout(3000);
+      if (ep.type === "rpc") {
+        const r = await fetch(`http://${ip}:${ep.port}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "eth_blockNumber", params: [], id: 1 }),
+          signal,
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (!data.result) throw new Error("Missing result in RPC response");
+        result.services[ep.name] = { ok: true, block: parseInt(data.result, 16) };
+      } else {
+        const r = await fetch(`http://${ip}:${ep.port}/`, { signal });
+        result.services[ep.name] = { ok: r.ok, status: r.status };
+      }
+    } catch {
+      result.services[ep.name] = { ok: false };
+    }
+  });
+  await Promise.allSettled(checks);
+
+  res.json(result);
+});
+
+// POST /api/deployments/ai-deploy/create-key-pair — create AWS SSH key pair
+router.post("/ai-deploy/create-key-pair", (req, res) => {
+  const { keyName, region } = req.body;
+  if (!keyName || !SAFE_NAME_RE.test(keyName)) return res.status(400).json({ error: "Invalid keyName (alphanumeric, dash, underscore only)" });
+  const awsRegion = SAFE_REGION_RE.test(region) ? region : "ap-northeast-2";
+  const { execFileSync } = require("child_process");
+  try {
+    const result = execFileSync("aws", [
+      "ec2", "create-key-pair", "--key-name", keyName,
+      "--query", "KeyMaterial", "--output", "text", "--region", awsRegion,
+    ], { timeout: 10000, stdio: "pipe" }).toString();
+    // Save the private key to ~/.ssh/
+    const fs = require("fs");
+    const path = require("path");
+    const sshDir = path.join(require("os").homedir(), ".ssh");
+    if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { mode: 0o700 });
+    const pemPath = path.join(sshDir, `${keyName}.pem`);
+    fs.writeFileSync(pemPath, result, { mode: 0o400 });
+    res.json({ ok: true, keyName, pemPath });
+  } catch (e) {
+    const msg = (e.message || "") + (e.stderr ? e.stderr.toString() : "");
+    if (msg.includes("InvalidKeyPair.Duplicate")) {
+      res.status(409).json({ error: `Key pair "${keyName}" already exists` });
+    } else {
+      res.status(500).json({ error: msg.slice(0, 300) });
+    }
+  }
 });
 
 // GET /api/deployments/next-chain-id — get unique L1 and L2 chain IDs
@@ -1126,7 +1287,7 @@ router.post("/:id/ai-prompt", async (req, res) => {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
-    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig } = req.body;
+    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig, storageGB, keyPairName } = req.body;
     if (!cloud) {
       return res.status(400).json({ error: "cloud is required" });
     }
@@ -1155,8 +1316,27 @@ router.post("/:id/ai-prompt", async (req, res) => {
       l1Mode: l1Mode || "local",
       l1RpcUrl, l1ChainId, l1Network,
       includeProver, walletConfig,
+      storageGB: storageGB || 30,
+      keyPairName: keyPairName || "",
       ports,
     });
+
+    // Save cloud config to deployment for persistent monitoring
+    const vmName = `tokamak-l2-${deployment.id.slice(0, 8)}`;
+    const cloudConfig = {
+      mode: "ai-deploy",
+      cloud,
+      region: region || defaults.region,
+      vmType: vmType || defaults.vmType,
+      vmName,
+      storageGB: storageGB || 30,
+      keyPairName: keyPairName || "",
+      l1Mode: l1Mode || "local",
+      l1RpcUrl, l1ChainId, l1Network,
+      includeProver,
+    };
+    db.prepare("UPDATE deployments SET config = ?, phase = 'ai-deploy' WHERE id = ?")
+      .run(JSON.stringify(cloudConfig), deployment.id);
 
     // Store as pending for Messenger to pick up
     pendingAIPrompt = {

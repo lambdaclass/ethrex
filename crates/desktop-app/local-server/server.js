@@ -16,6 +16,8 @@ const ALLOWED_ORIGINS = [
   "https://tauri.localhost",  // Tauri production (Windows)
   "http://localhost:1420",    // Tauri dev (Vite)
   "http://127.0.0.1:1420",
+  "http://localhost:5173",    // Vite dev (default port)
+  "http://127.0.0.1:5173",
   "http://localhost:5002",    // Self (web UI)
   "http://127.0.0.1:5002",
 ];

@@ -2896,6 +2896,9 @@ function onAIDeployTargetChange() {
   if (gcpLabel) gcpLabel.style.display = target === 'gcp' ? '' : 'none';
   const vultrLabel = document.getElementById('vultr-apikey-label');
   if (vultrLabel) vultrLabel.style.display = target === 'vultr' ? '' : 'none';
+  const vmOptions = document.getElementById('cloud-vm-options');
+  if (vmOptions) vmOptions.style.display = target === 'aws' ? '' : 'none';
+  if (target === 'aws') onCloudOptionChange();
   const statusEl = document.getElementById('cloud-cli-status');
   if (statusEl && !isCloud) statusEl.style.display = 'none';
 
@@ -2944,7 +2947,8 @@ async function checkCloudCLI() {
   statusEl.innerHTML = '<div style="padding:10px 14px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);border-radius:8px;font-size:12px;color:var(--text-muted,#888)">Checking CLI...</div>';
 
   try {
-    const res = await fetch(`${API}/deployments/ai-deploy/check-cli?cloud=${cloud}`);
+    const awsRegion = document.getElementById('aws-region')?.value || 'ap-northeast-2';
+    const res = await fetch(`${API}/deployments/ai-deploy/check-cli?cloud=${cloud}&region=${awsRegion}`);
     if (!res.ok) throw new Error('Check failed');
     const r = await res.json();
 
@@ -2976,6 +2980,19 @@ async function checkCloudCLI() {
         lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#ef4444">&#10007;</span> <span>Not authenticated</span></div>`);
         lines.push(`<div style="display:flex;align-items:center;gap:8px;margin-left:20px;font-size:11px;color:var(--text-muted,#888)">Run: <code style="background:var(--bg-surface,#161622);padding:2px 6px;border-radius:4px">${authCmd}</code> <button onclick="checkCloudCLI()" style="padding:2px 10px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg-surface,#1a1a2e);color:var(--text-muted,#ccc);cursor:pointer">Re-check</button></div>`);
       }
+    }
+
+    // AWS SSH Key Pairs
+    if (cloud === 'aws' && r.cli.installed && r.auth.authenticated) {
+      if (r.keyPairs && r.keyPairs.length > 0) {
+        const opts = r.keyPairs.map(kp => `<option value="${escapeHtml(kp.name)}">${escapeHtml(kp.name)}</option>`).join('');
+        lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#22c55e">&#10003;</span> <span>SSH Key Pairs (${r.keyPairs.length}개)</span></div>`);
+        lines.push(`<div style="display:flex;align-items:center;gap:8px;margin-left:20px;font-size:11px;margin-bottom:4px"><select id="aws-key-pair-select" style="padding:3px 8px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg-surface,#161622);color:#e2e8f0">${opts}</select> <span style="color:#888">또는</span> <button onclick="showCreateKeyPairUI()" style="padding:2px 10px;font-size:11px;border:1px solid #3b82f6;border-radius:4px;background:transparent;color:#60a5fa;cursor:pointer">+ 새로 만들기</button></div>`);
+      } else {
+        lines.push(`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#f59e0b">&#9888;</span> <span>SSH Key Pair 없음</span></div>`);
+        lines.push(`<div style="display:flex;align-items:center;gap:8px;margin-left:20px;font-size:11px;margin-bottom:4px"><button onclick="showCreateKeyPairUI()" style="padding:3px 12px;font-size:11px;border:1px solid #3b82f6;border-radius:4px;background:#3b82f6;color:white;cursor:pointer">+ Key Pair 만들기</button></div>`);
+      }
+      lines.push(`<div id="aws-create-keypair-ui" style="display:none;margin-left:20px;margin-top:4px"></div>`);
     }
 
     // Auto-fill GCP project ID if detected
@@ -3015,6 +3032,156 @@ async function saveVultrApiKey() {
     if (statusEl) statusEl.innerHTML = '<span style="color:#22c55e">&#10003; API Key 저장됨</span>';
     input.value = '';
     checkCloudCLI();
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+const AWS_INSTANCE_PRICING = {
+  't3.medium': { hr: 0.052, vcpu: 2, ram: 4, note: 'L2만 (Prover 불가)' },
+  't3.large': { hr: 0.104, vcpu: 2, ram: 8, note: 'L1+L2 가능, Prover 제한적' },
+  't3.xlarge': { hr: 0.208, vcpu: 4, ram: 16, note: 'L1+L2+Prover 가능' },
+  't3.2xlarge': { hr: 0.416, vcpu: 8, ram: 32, note: 'Prover 여유' },
+};
+
+function calcAWSCost(instanceType, storageGB) {
+  const info = AWS_INSTANCE_PRICING[instanceType] || AWS_INSTANCE_PRICING['t3.xlarge'];
+  const instanceMo = info.hr * 24 * 30;
+  const storageMo = storageGB * 0.096;
+  const ipMo = 3.60;
+  return { info, instanceMo, storageMo, ipMo, monthCost: instanceMo + storageMo + ipMo, dayCost: (info.hr * 24) + (storageMo / 30) + (ipMo / 30) };
+}
+
+function onCloudOptionChange() {
+  const el = document.getElementById('aws-cost-estimate');
+  if (!el) return;
+  const instanceType = document.getElementById('aws-instance-type')?.value || 't3.xlarge';
+  const storageGB = parseInt(document.getElementById('aws-storage-gb')?.value) || 30;
+  const includeProver = document.getElementById('ai-include-prover')?.checked;
+  const { info, instanceMo, storageMo, ipMo, dayCost, monthCost } = calcAWSCost(instanceType, storageGB);
+
+  // Prover compatibility check
+  let proverWarning = '';
+  if (includeProver && info.ram < 16) {
+    proverWarning = `<div style="color:#f59e0b;margin-top:4px">⚠️ SP1 Prover에는 최소 16GB RAM이 필요합니다. ${instanceType}은 ${info.ram}GB입니다.</div>`;
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <span><b>월 예상 비용</b> (Seoul, 24/7 기준)</span>
+      <span style="color:#22c55e;font-weight:700;font-size:15px">~$${monthCost.toFixed(0)}/월</span>
+    </div>
+    <div style="font-size:12px;color:#a0aec0;margin-top:6px;display:flex;gap:14px">
+      <span>인스턴스 ~$${instanceMo.toFixed(0)}</span>
+      <span>스토리지 ${storageGB}GB ~$${storageMo.toFixed(1)}</span>
+      <span>Public IP ~$${ipMo.toFixed(1)}</span>
+    </div>
+    <div style="font-size:12px;color:#60a5fa;margin-top:5px">
+      💡 테스트용: ~$${dayCost.toFixed(1)}/일 — terminate하면 즉시 과금 중지
+    </div>
+    <div style="font-size:12px;color:#a0aec0;margin-top:3px">${info.note}</div>
+    ${proverWarning ? proverWarning.replace('margin-top:4px', 'margin-top:6px;font-size:13px;font-weight:500') : ''}`;
+  updateSpecRecommendation();
+}
+
+async function checkDeploymentStatus() {
+  const statusEl = document.getElementById('ai-monitor-status');
+  if (statusEl) statusEl.innerHTML = '<span style="color:#888">AWS CLI로 확인 중...</span>';
+
+  // Get vmName and keyPair from deployment context
+  const vmName = aiChatRawPrompt.match(/Value=([^\s}'"]+)/)?.[1] || '';
+  const keyPairName = document.getElementById('aws-key-pair-select')?.value || aiChatRawPrompt.match(/--key-name\s+(\S+)/)?.[1] || '';
+  const region = document.getElementById('aws-region')?.value || 'ap-northeast-2';
+
+  if (!vmName) { if (statusEl) statusEl.innerHTML = '<span style="color:#f59e0b">배포 프롬프트에서 VM 이름을 찾을 수 없습니다</span>'; return; }
+
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/monitor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName, region, keyPairName }),
+    });
+    const data = await res.json();
+
+    const lines = [];
+    // EC2 status
+    if (data.ec2?.State === 'not_found') {
+      lines.push('🔴 EC2 인스턴스 미발견 — 아직 생성되지 않았습니다');
+    } else if (data.ec2) {
+      const stateIcon = data.ec2.State === 'running' ? '🟢' : data.ec2.State === 'stopped' ? '🟡' : '🔴';
+      lines.push(`${stateIcon} EC2: ${data.ec2.State} (${data.ec2.Type}, ${data.ec2.IP || 'no IP'})`);
+      if (data.ec2.Id) lines.push(`   Instance ID: ${data.ec2.Id}`);
+    }
+
+    // Containers
+    if (data.containers && data.containers.length > 0) {
+      lines.push('\n📦 컨테이너:');
+      data.containers.forEach(c => {
+        const icon = c.status.startsWith('Up') ? '✅' : c.status.includes('Exited (0)') ? '☑️' : '❌';
+        lines.push(`   ${icon} ${c.name} — ${c.status}`);
+      });
+    } else if (data.ec2?.State === 'running' && data.containers === null) {
+      lines.push('\n📦 컨테이너: SSH 연결 불가 (아직 Docker 설치 전이거나 SSH 키 확인 필요)');
+    }
+
+    // Services
+    if (Object.keys(data.services).length > 0) {
+      lines.push('\n🌐 서비스:');
+      for (const [name, svc] of Object.entries(data.services)) {
+        if (svc.ok) {
+          lines.push(`   ✅ ${name}${svc.block !== undefined ? ` (block #${svc.block})` : ''}`);
+        } else {
+          lines.push(`   ❌ ${name} — 응답 없음`);
+        }
+      }
+    }
+
+    const actualVmName = data.vmName || vmName;
+    const statusMsg = `🖥️ 배포 상태 모니터링\nVM: ${actualVmName} (${region})\n\n${lines.join('\n')}`;
+    aiChatMessages.push({ role: 'assistant', content: statusMsg });
+    renderChatMessages();
+
+    // Summary in status bar
+    const state = data.ec2?.State || 'not_found';
+    const ec2Status = state === 'running' ? '🟢 Running' : state === 'not_found' ? '⚪ 아직 생성 안 됨' : state === 'stopped' ? '🟡 Stopped' : `🔴 ${state}`;
+    const ip = data.ec2?.IP || '';
+    if (statusEl) statusEl.innerHTML = `${ec2Status}${ip ? ' · ' + ip : ''}`;
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function showCreateKeyPairUI() {
+  const container = document.getElementById('aws-create-keypair-ui');
+  if (!container) return;
+  container.style.display = 'block';
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px">
+      <input id="aws-new-keypair-name" type="text" placeholder="tokamak-key" value="tokamak-key"
+        style="padding:3px 8px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg-surface,#161622);color:#e2e8f0;width:140px">
+      <button onclick="createAWSKeyPair()" style="padding:3px 12px;font-size:11px;border:1px solid #22c55e;border-radius:4px;background:#22c55e;color:white;cursor:pointer">생성</button>
+      <button onclick="document.getElementById('aws-create-keypair-ui').style.display='none'" style="padding:3px 8px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:transparent;color:#888;cursor:pointer">취소</button>
+      <span id="aws-keypair-status" style="font-size:11px"></span>
+    </div>`;
+}
+
+async function createAWSKeyPair() {
+  const nameEl = document.getElementById('aws-new-keypair-name');
+  const statusEl = document.getElementById('aws-keypair-status');
+  const keyName = nameEl?.value?.trim();
+  if (!keyName) { if (statusEl) statusEl.innerHTML = '<span style="color:#ef4444">이름을 입력하세요</span>'; return; }
+  if (statusEl) statusEl.innerHTML = '<span style="color:#888">생성 중...</span>';
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/create-key-pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyName, region: document.getElementById('aws-region')?.value || 'ap-northeast-2' }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+    if (statusEl) statusEl.innerHTML = `<span style="color:#22c55e">&#10003; 생성됨 (${data.pemPath})</span>`;
+    // Refresh CLI check to update key pair list
+    setTimeout(() => checkCloudCLI(), 500);
   } catch (e) {
     if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444">${escapeHtml(e.message)}</span>`;
   }
@@ -3065,6 +3232,17 @@ const VM_SPECS = {
 
 function onProverToggle() {
   updateSpecRecommendation();
+  // Auto-select appropriate instance type
+  const includeProver = document.getElementById('ai-include-prover')?.checked;
+  const instanceSelect = document.getElementById('aws-instance-type');
+  if (instanceSelect) {
+    if (includeProver && (instanceSelect.value === 't3.medium' || instanceSelect.value === 't3.large')) {
+      instanceSelect.value = 't3.xlarge';
+    } else if (!includeProver && instanceSelect.value === 't3.xlarge') {
+      instanceSelect.value = 't3.large';
+    }
+  }
+  onCloudOptionChange();
 }
 
 // ---------------------------------------------------------------------------
@@ -3197,18 +3375,39 @@ function updateSpecRecommendation() {
     return;
   }
 
-  const specs = VM_SPECS[cloud];
-  if (!specs) { el.innerHTML = ''; return; }
-
-  const s = includeProver ? specs.withProver : specs.withoutProver;
   const cloudLabel = cloud === 'gcp' ? 'GCP' : cloud === 'vultr' ? 'Vultr' : 'AWS';
 
-  el.innerHTML = `
-    <div style="margin-bottom:4px"><b>📦 배포 구성:</b> ${components.join(' + ')}</div>
-    <div style="margin-bottom:4px"><b>💻 권장 사양 (${cloudLabel}):</b> ${s.type} — ${s.cpu} vCPU, ${s.ram} RAM, ${s.disk}</div>
-    <div><b>💰 예상 비용:</b> ${s.price}</div>
-    ${includeProver ? '<div style="margin-top:4px;color:#f59e0b;font-size:10px">⚠ SP1 Prover는 증명 생성 시 메모리를 많이 사용합니다. 16GB 이상 권장.</div>' : ''}
-  `;
+  // Read user-selected values (AWS)
+  const instanceType = document.getElementById('aws-instance-type')?.value || '';
+  const storageGB = parseInt(document.getElementById('aws-storage-gb')?.value) || 30;
+  if (cloud === 'aws' && AWS_INSTANCE_PRICING[instanceType]) {
+    const { info: pricing, instanceMo, storageMo, ipMo, monthCost: totalMo } = calcAWSCost(instanceType, storageGB);
+
+    let proverNote = '';
+    if (includeProver && pricing.ram < 16) {
+      proverNote = `<div style="margin-top:4px;color:#f59e0b">⚠ SP1 Prover에는 최소 16GB RAM 필요 — ${instanceType}은 ${pricing.ram}GB입니다. t3.xlarge 이상을 권장합니다.</div>`;
+    } else if (includeProver) {
+      proverNote = `<div style="margin-top:4px;color:#a0aec0">✓ SP1 Prover 실행 가능 (${pricing.ram}GB RAM)</div>`;
+    }
+
+    el.innerHTML = `
+      <div style="margin-bottom:4px"><b>📦 배포 구성:</b> ${components.join(' + ')}</div>
+      <div style="margin-bottom:4px"><b>💻 선택 사양 (${cloudLabel}):</b> ${instanceType} — ${pricing.vcpu} vCPU, ${pricing.ram}GB RAM, ${storageGB}GB gp3</div>
+      <div><b>💰 예상 비용:</b> ~$${totalMo.toFixed(0)}/월 (인스턴스 $${instanceMo.toFixed(0)} + 스토리지 $${storageMo.toFixed(0)} + Public IP $${ipMo.toFixed(0)})</div>
+    <div style="font-size:11px;color:#888;margin-top:2px">* Public IP: EC2에 자동 할당 ($0.005/hr, AWS 필수 과금)</div>
+      ${proverNote}
+    `;
+  } else {
+    const specs = VM_SPECS[cloud];
+    if (!specs) { el.innerHTML = ''; return; }
+    const s = includeProver ? specs.withProver : specs.withoutProver;
+    el.innerHTML = `
+      <div style="margin-bottom:4px"><b>📦 배포 구성:</b> ${components.join(' + ')}</div>
+      <div style="margin-bottom:4px"><b>💻 권장 사양 (${cloudLabel}):</b> ${s.type} — ${s.cpu} vCPU, ${s.ram} RAM, ${s.disk}</div>
+      <div><b>💰 예상 비용:</b> ${s.price}</div>
+      ${includeProver ? '<div style="margin-top:4px;color:#f59e0b">⚠ SP1 Prover는 증명 생성 시 메모리를 많이 사용합니다. 16GB 이상 권장.</div>' : ''}
+    `;
+  }
 }
 
 async function generateAndShowAIPrompt(deploymentId) {
@@ -3265,12 +3464,21 @@ async function generateAndShowAIPrompt(deploymentId) {
     } catch {}
   }
 
+  // Collect VM options (AWS-specific)
+  let awsRegion = '', awsInstanceType = '', awsStorageGB = 30, awsKeyPair = '';
+  if (cloud === 'aws') {
+    awsRegion = document.getElementById('aws-region')?.value || 'ap-northeast-2';
+    awsInstanceType = document.getElementById('aws-instance-type')?.value || 't3.xlarge';
+    awsStorageGB = parseInt(document.getElementById('aws-storage-gb')?.value) || 30;
+    awsKeyPair = document.getElementById('aws-key-pair-select')?.value || '';
+  }
+
   const promptCloud = cloud === 'local-docker' ? 'local' : cloud;
   try {
     const res = await fetch(`${API}/deployments/${deploymentId}/ai-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cloud: promptCloud, l1Mode: l1Mode === 'local' ? 'local' : 'testnet', l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig }),
+      body: JSON.stringify({ cloud: promptCloud, l1Mode: l1Mode === 'local' ? 'local' : 'testnet', l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig, region: awsRegion, vmType: awsInstanceType, storageGB: awsStorageGB, keyPairName: awsKeyPair }),
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to generate prompt'); }
     const { prompt } = await res.json();
@@ -3293,6 +3501,29 @@ let aiChatSending = false;
 let aiChatLocalDeploy = false; // true when local-docker target
 let aiChatDeployStarted = false; // true after deploy button clicked
 let aiChatDeployEventSource = null;
+let aiChatRawPrompt = ''; // raw generated prompt for copy
+let aiChatUserMessage = ''; // user config summary for copy
+
+function copyAIPrompt() {
+  if (!aiChatRawPrompt) return;
+  const fullPrompt = aiChatUserMessage
+    ? `${aiChatUserMessage}\n\n---\n\n${aiChatRawPrompt}`
+    : aiChatRawPrompt;
+  navigator.clipboard.writeText(fullPrompt).then(() => {
+    const btn = document.getElementById('ai-copy-prompt-btn');
+    if (btn) { btn.textContent = '✅ 복사됨!'; setTimeout(() => { btn.textContent = '📋 프롬프트 복사'; }, 2000); }
+  }).catch(() => {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = fullPrompt;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('ai-copy-prompt-btn');
+    if (btn) { btn.textContent = '✅ 복사됨!'; setTimeout(() => { btn.textContent = '📋 프롬프트 복사'; }, 2000); }
+  });
+}
 
 function aiChatGoBack() {
   // Reset deploy-card and go back to step 2
@@ -3304,6 +3535,7 @@ function aiChatGoBack() {
 }
 
 function showAIPromptResult(prompt, cloudCtx = {}) {
+  aiChatRawPrompt = prompt; // save for copy button
   // Switch to step 3
   document.querySelectorAll('.launch-step').forEach(s => s.style.display = 'none');
   const step3 = document.getElementById('launch-step3');
@@ -3354,12 +3586,16 @@ function showAIPromptResult(prompt, cloudCtx = {}) {
     <div id="ai-chat-container" style="display:flex;flex-direction:column;height:calc(100vh - 160px);min-height:500px">
       <div id="ai-chat-config-summary" style="padding:8px 14px;background:var(--bg-surface,#161622);border-bottom:1px solid var(--border,#333);font-size:11px;line-height:1.8;color:#a0aec0;flex-shrink:0;display:flex;align-items:center;gap:10px">
         <button onclick="aiChatGoBack()" style="padding:4px 10px;font-size:11px;border:1px solid var(--border,#444);border-radius:4px;background:transparent;color:#a0aec0;cursor:pointer;flex-shrink:0">← Back</button>
-        <span>${summaryItems}</span>
+        <span style="flex:1">${summaryItems}</span>
       </div>
       <div id="ai-chat-messages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px">
       </div>
+      <div id="ai-monitor-bar" style="border-top:1px solid var(--border,#333);padding:6px 12px;display:flex;gap:8px;align-items:center;font-size:11px;color:#a0aec0;flex-shrink:0">
+        <button onclick="checkDeploymentStatus()" style="padding:4px 12px;font-size:11px;border:1px solid #22c55e;border-radius:4px;background:#22c55e;color:white;cursor:pointer;white-space:nowrap">🖥️ 배포 상태 확인</button>
+        <span id="ai-monitor-status" style="flex:1;font-size:11px"></span>
+      </div>
       <div style="border-top:1px solid var(--border,#333);padding:10px 12px;display:flex;gap:8px;align-items:flex-end">
-        <textarea id="ai-chat-input" placeholder="메시지를 입력하세요..." rows="2"
+        <textarea id="ai-chat-input" placeholder="질문을 입력하세요..." rows="2"
           style="flex:1;resize:none;padding:8px 12px;border:1px solid var(--border,#444);border-radius:8px;background:var(--bg-surface,#161622);color:#e0e0e0;caret-color:#e0e0e0;font-size:13px;line-height:1.5;font-family:inherit"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChatMessage()}"></textarea>
         <button onclick="sendAIChatMessage()" class="btn-primary" id="ai-chat-send-btn" style="padding:8px 16px;font-size:13px;white-space:nowrap">Send</button>
@@ -3536,24 +3772,49 @@ ${prompt}`;
   components.push('L2 노드');
   if (includeProver) components.push('SP1 Prover');
   components.push('Tools (Explorer, Dashboard, Bridge)');
+  // Collect AWS-specific settings from UI
+  const awsRegion = document.getElementById('aws-region')?.value || 'ap-northeast-2';
+  const awsInstanceType = document.getElementById('aws-instance-type')?.value || recSpec.type || 't3.xlarge';
+  const awsStorageGB = document.getElementById('aws-storage-gb')?.value || '30';
+  const awsKeyPair = document.getElementById('aws-key-pair-select')?.value || '';
+  const awsAccount = cliInfo.auth?.account || '';
+
   const configLines = [
     `앱: ${cloudCtx.programName || 'evm-l2'}`,
     `L2 이름: ${cloudCtx.l2Name || 'My L2'} (Chain ID: ${cloudCtx.l2ChainId || 'auto'})`,
     `배포 대상: ${cloud === 'local-docker' ? 'Local (Docker)' : cloud === 'gcp' ? 'GCP' : cloud === 'vultr' ? 'Vultr' : 'AWS'}${project ? ', 프로젝트: ' + project : ''}`,
+    cloud === 'aws' ? `리전: ${awsRegion}` : '',
+    cloud === 'aws' ? `인스턴스: ${awsInstanceType}` : '',
+    cloud === 'aws' ? `스토리지: ${awsStorageGB}GB gp3` : '',
+    awsKeyPair ? `SSH Key Pair: ${awsKeyPair} (~/.ssh/${awsKeyPair}.pem)` : '',
+    awsAccount ? `AWS 계정: ${awsAccount}` : '',
     `L1: ${includesL1 ? (cloud === 'local-docker' ? '로컬 Docker L1 노드' : 'VM 내 로컬 L1 노드 포함') : cloudCtx.l1Network} (Chain ID: ${cloudCtx.l1ChainId || ''})`,
     cloudCtx.l1RpcUrl ? `L1 RPC: ${cloudCtx.l1RpcUrl}` : '',
     `배포 구성: ${components.join(' + ')}`,
-    recSpec.type ? `권장 사양: ${recSpec.type} (${recSpec.cpu || '?'} vCPU, ${recSpec.ram || '?'}) — ${recSpec.price || '?'}` : '',
   ].filter(Boolean).join('\n');
 
-  aiChatMessages.push({ role: 'user', content: `다음 구성으로 배포해줘. 먼저 배포 계획을 알려줘.\n\n${configLines}` });
+  const userMsg = `다음 구성으로 배포해줘. 먼저 배포 계획을 알려줘.\n\n${configLines}`;
+  aiChatUserMessage = userMsg;
+
+  // Show guide message first, then user config
+  const tokenEstimate = Math.ceil(prompt.length / 3.5);
+  const guideMsg = `📋 배포 프롬프트 생성 완료 (~${tokenEstimate.toLocaleString()} tokens)
+
+📌 배포 실행 방법:
+1. 아래 파란 메시지의 📋 아이콘 클릭 → 전체 프롬프트 복사
+2. Claude.ai(MAX) 또는 Claude Code에 붙여넣기
+3. AI가 AWS EC2 생성부터 배포 완료까지 실행합니다
+
+💬 아래 질문을 클릭하거나 직접 입력하세요:`;
+
+  aiChatMessages.push({ role: 'assistant', content: guideMsg });
+  aiChatMessages.push({ role: 'user', content: userMsg });
   renderChatMessages();
-  doAIChatRequest();
 
   // Update step indicator
   const indicator = document.getElementById('step-indicator');
   if (indicator) {
-    const stepLabels = ['Select App', 'Configure', 'AI Deploy'];
+    const stepLabels = ['Select App', 'Configure', 'AI Deploy Guide'];
     indicator.innerHTML = [1, 2, 3].map((n, i) =>
       (i > 0 ? '<div class="step-line done"></div>' : '') +
       '<div class="step-item"><div class="step-circle' + (n === 3 ? ' active' : ' done') + '">' + (n < 3 ? '\u2713' : n) + '</div>' +
@@ -3576,26 +3837,55 @@ function renderChatMessages() {
         : 'align-self:flex-start;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);color:#e2e8f0;border-bottom-left-radius:4px'
     }`;
     bubble.textContent = msg.content;
-    if (!isUser) {
-      const copyBtn = document.createElement('button');
-      copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-      copyBtn.title = '복사';
-      copyBtn.style.cssText = 'position:absolute;top:6px;right:6px;background:none;border:1px solid #555;border-radius:4px;padding:3px 4px;cursor:pointer;color:#888;opacity:0;transition:opacity 0.15s;display:flex;align-items:center';
-      copyBtn.onmouseenter = () => copyBtn.style.opacity = '1';
-      copyBtn.onmouseleave = () => copyBtn.style.opacity = '0.6';
-      copyBtn.onclick = () => {
-        navigator.clipboard.writeText(msg.content).then(() => {
-          copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-          setTimeout(() => {
-            copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-          }, 1500);
-        });
-      };
-      bubble.onmouseenter = () => copyBtn.style.opacity = '0.6';
-      bubble.onmouseleave = () => copyBtn.style.opacity = '0';
-      bubble.appendChild(copyBtn);
-    }
+    // Copy button for all messages (user + assistant)
+    const copyBtn = document.createElement('button');
+    const copyColor = isUser ? '#fff' : '#888';
+    const copyBorder = isUser ? 'rgba(255,255,255,0.4)' : '#555';
+    const copyIconSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${copyColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    copyBtn.innerHTML = copyIconSvg;
+    copyBtn.title = '복사';
+    copyBtn.style.cssText = `position:absolute;top:6px;right:6px;background:${isUser ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)'};border:1px solid ${copyBorder};border-radius:5px;padding:4px 5px;cursor:pointer;color:${copyColor};opacity:0.7;transition:opacity 0.15s;display:flex;align-items:center`;
+    copyBtn.onmouseenter = () => { copyBtn.style.opacity = '1'; copyBtn.style.background = isUser ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)'; };
+    copyBtn.onmouseleave = () => { copyBtn.style.opacity = '0.7'; copyBtn.style.background = isUser ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)'; };
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      // For user messages: copy combined prompt (user msg + technical prompt)
+      const textToCopy = isUser && aiChatRawPrompt ? `${msg.content}\n\n---\n\n${aiChatRawPrompt}` : msg.content;
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        copyBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => { copyBtn.innerHTML = copyIconSvg; }, 1500);
+      });
+    };
+    bubble.appendChild(copyBtn);
     container.appendChild(bubble);
+
+    // Add suggested questions after the first guide message
+    if (!isUser && msg.content.includes('배포 프롬프트 생성 완료') && !container.querySelector('.suggested-questions')) {
+      const suggestionsDiv = document.createElement('div');
+      suggestionsDiv.className = 'suggested-questions';
+      suggestionsDiv.style.cssText = 'align-self:flex-start;display:flex;flex-wrap:wrap;gap:6px;margin-top:-4px';
+      const questions = [
+        '배포 계획 요약',
+        '컨테이너 상태 확인 명령어',
+        'L2 RPC 응답 확인 방법',
+        '로그 확인 방법 (Deployer/L2/Prover)',
+        '배포 실패 시 재시작 방법',
+        '비용 절약 팁 (중지/terminate)',
+      ];
+      questions.forEach(q => {
+        const btn = document.createElement('button');
+        btn.textContent = q;
+        btn.style.cssText = 'padding:5px 12px;font-size:11px;border:1px solid #3b82f6;border-radius:16px;background:transparent;color:#60a5fa;cursor:pointer;transition:all 0.15s;white-space:nowrap';
+        btn.onmouseenter = () => { btn.style.background = '#3b82f6'; btn.style.color = '#fff'; };
+        btn.onmouseleave = () => { btn.style.background = 'transparent'; btn.style.color = '#60a5fa'; };
+        btn.onclick = () => {
+          const input = document.getElementById('ai-chat-input');
+          if (input) { input.value = q; sendAIChatMessage(); }
+        };
+        suggestionsDiv.appendChild(btn);
+      });
+      container.appendChild(suggestionsDiv);
+    }
   });
 
   // Scroll to bottom

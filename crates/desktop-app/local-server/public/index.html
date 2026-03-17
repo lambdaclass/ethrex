@@ -100,8 +100,8 @@
             <label style="margin-bottom:8px">Environment</label>
             <div class="mode-cards" style="margin-bottom:12px">
               <button type="button" class="mode-card active" data-mode="ai-deploy" onclick="setLaunchMode('ai-deploy')" style="padding:8px">
-                <div class="mode-title">AI Deploy</div>
-                <div class="mode-desc">Generate prompt for AI-assisted cloud deploy</div>
+                <div class="mode-title">AI Deploy Guide</div>
+                <div class="mode-desc">Generate deploy prompt for Claude AI</div>
               </button>
               <button type="button" class="mode-card" data-mode="local" onclick="setLaunchMode('local')" style="padding:8px">
                 <div class="mode-title">Local (Docker)</div>
@@ -330,6 +330,33 @@
                     <option value="vultr">Vultr</option>
                   </select>
                 </label>
+                <div id="cloud-vm-options" style="display:none;margin-bottom:8px">
+                  <div style="display:flex;gap:10px;margin-bottom:6px">
+                    <label style="flex:1;margin:0">Region
+                      <select id="aws-region" onchange="onCloudOptionChange()">
+                        <option value="ap-northeast-2">Seoul (ap-northeast-2)</option>
+                        <option value="ap-northeast-1">Tokyo (ap-northeast-1)</option>
+                        <option value="us-east-1">N. Virginia (us-east-1)</option>
+                        <option value="us-west-2">Oregon (us-west-2)</option>
+                        <option value="eu-west-1">Ireland (eu-west-1)</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div style="display:flex;gap:10px;margin-bottom:6px">
+                    <label style="flex:1;margin:0">Instance Type
+                      <select id="aws-instance-type" onchange="onCloudOptionChange()">
+                        <option value="t3.medium">t3.medium (2 vCPU, 4GB) ~$38/월 — Prover ✗</option>
+                        <option value="t3.large">t3.large (2 vCPU, 8GB) ~$76/월 — Prover △</option>
+                        <option value="t3.xlarge" selected>t3.xlarge (4 vCPU, 16GB) ~$152/월 — Prover ✓</option>
+                        <option value="t3.2xlarge">t3.2xlarge (8 vCPU, 32GB) ~$300/월 — Prover ✓✓</option>
+                      </select>
+                    </label>
+                    <label style="width:120px;margin:0">Storage (GB)
+                      <input type="number" id="aws-storage-gb" value="30" min="8" max="500" onchange="onCloudOptionChange()">
+                    </label>
+                  </div>
+                  <div id="aws-cost-estimate" style="padding:10px 14px;border-radius:8px;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);font-size:13px;line-height:1.8;color:#e2e8f0"></div>
+                </div>
                 <div id="cloud-cli-status" style="display:none"></div>
                 <label id="gcp-project-label" style="margin-bottom:8px;display:none">GCP Project ID *
                   <input type="text" id="gcp-project-id" placeholder="e.g. tokamak-appchain">
