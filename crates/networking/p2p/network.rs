@@ -24,7 +24,7 @@ use secp256k1::SecretKey;
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
@@ -119,72 +119,89 @@ pub async fn start_network(
     bootnodes: Vec<Node>,
     config: DiscoveryConfig,
 ) -> Result<(), NetworkError> {
-    let udp_socket = Arc::new(
-        UdpSocket::bind(context.network_config.bind_udp_addr())
-            .await
-            .map_err(NetworkError::UdpSocketError)?,
-    );
-
-    // Build a discovery-specific local node using the discovery external address.
-    // This ensures discv4/discv5 Ping `from` endpoints advertise the correct
-    // address when discovery runs on a different interface than RLPx.
-    let discovery_local_node = Node::new(
-        context.network_config.discovery_external_addr,
-        context.network_config.udp_port,
-        context.network_config.tcp_port,
-        context.local_node.public_key,
-    );
-
-    // Start protocol servers first to get their handles
-    let discv4_handle = if config.discv4_enabled {
-        Some(
-            Discv4Server::spawn(
-                context.storage.clone(),
-                discovery_local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv4 server: {e}");
-            })?,
+    // Pair each UDP bind address with its corresponding discovery external
+    // address. For a dual-stack node this produces two entries — one for IPv4
+    // (e.g. 0.0.0.0 / 1.2.3.4) and one for IPv6 (e.g. :: / 2001:db8::1).
+    // Each pair gets its own socket, discv4/discv5 server instances, and
+    // multiplexer so that responses always go back on the same-family socket.
+    let udp_pairs: Vec<(SocketAddr, IpAddr)> = context
+        .network_config
+        .bind_udp_addrs()
+        .into_iter()
+        .zip(
+            context
+                .network_config
+                .discovery_external_addrs
+                .iter()
+                .copied(),
         )
-    } else {
-        None
-    };
+        .collect();
 
-    let discv5_handle = if config.discv5_enabled {
-        Some(
-            Discv5Server::spawn(
-                context.storage.clone(),
-                discovery_local_node,
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
+    for (bind_addr, external_addr) in udp_pairs {
+        let udp_socket = Arc::new(
+            UdpSocket::bind(bind_addr)
+                .await
+                .map_err(NetworkError::UdpSocketError)?,
+        );
+
+        // Build a discovery-specific local node using the external address for
+        // this socket's family so Ping `from` endpoints advertise correctly.
+        let discovery_local_node = Node::new(
+            external_addr,
+            context.network_config.udp_port,
+            context.network_config.tcp_port,
+            context.local_node.public_key,
+        );
+
+        let discv4_handle = if config.discv4_enabled {
+            Some(
+                Discv4Server::spawn(
+                    context.storage.clone(),
+                    discovery_local_node.clone(),
+                    context.signer,
+                    udp_socket.clone(),
+                    context.table.clone(),
+                    bootnodes.clone(),
+                    context.initial_lookup_interval,
+                )
+                .await
+                .inspect_err(|e| {
+                    error!("Failed to start discv4 server: {e}");
+                })?,
             )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv5 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
-    // Start multiplexer GenServer with handles to protocol servers
-    DiscoveryMultiplexer::new(
-        udp_socket,
-        context.local_node.node_id(),
-        config,
-        discv4_handle,
-        discv5_handle,
-    )
-    .start();
+        let discv5_handle = if config.discv5_enabled {
+            Some(
+                Discv5Server::spawn(
+                    context.storage.clone(),
+                    discovery_local_node,
+                    context.signer,
+                    udp_socket.clone(),
+                    context.table.clone(),
+                    bootnodes.clone(),
+                    context.initial_lookup_interval,
+                )
+                .await
+                .inspect_err(|e| {
+                    error!("Failed to start discv5 server: {e}");
+                })?,
+            )
+        } else {
+            None
+        };
+
+        DiscoveryMultiplexer::new(
+            udp_socket,
+            context.local_node.node_id(),
+            config.clone(),
+            discv4_handle,
+            discv5_handle,
+        )
+        .start();
+    }
 
     // Spawn one TCP listener per RLPx bind address. A dual-stack node will
     // have two entries here (e.g. 0.0.0.0:30303 and [::]:30303).

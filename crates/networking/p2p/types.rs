@@ -26,15 +26,19 @@ use crate::utils::node_id;
 /// separating the UDP discovery channel from the TCP RLPx channel.
 ///
 /// This supports two independent axes of configuration:
-/// - NAT traversal: bind to `0.0.0.0` but announce a public IP (`--nat.extip`).
-/// - Split transports: run UDP discovery on a different address than TCP RLPx
-///   (`--discovery.addr`), enabling e.g. IPv4 discv4 with IPv6 RLPx.
+/// - NAT traversal: bind to `0.0.0.0`/`::` but announce a public IP (`--nat.extip`).
+/// - Split transports: run UDP discovery on different addresses than TCP RLPx
+///   (`--discovery.addr`), enabling e.g. IPv4-only discv4 with dual-stack RLPx.
+/// - Dual-stack: supply one entry per IP family in the `*_addrs` Vecs (e.g.
+///   `[0.0.0.0, ::]`) to bind both an IPv4 and an IPv6 socket simultaneously.
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
-    /// Address to bind the UDP discovery socket to.
-    pub discovery_bind_addr: IpAddr,
-    /// IP address announced to peers via discv4 Ping/Pong and ENR.
-    pub discovery_external_addr: IpAddr,
+    /// Addresses to bind UDP discovery sockets to. One entry per IP family for
+    /// dual-stack (e.g. `[0.0.0.0, ::]`); single entry for single-stack.
+    pub discovery_bind_addrs: Vec<IpAddr>,
+    /// IP addresses announced to peers via discv4 Ping/Pong and ENR.
+    /// Mirrors `discovery_bind_addrs` but holds the externally-reachable IPs.
+    pub discovery_external_addrs: Vec<IpAddr>,
     /// Addresses to bind TCP RLPx listeners to. One entry per IP family for
     /// dual-stack (e.g. `[0.0.0.0, ::]`); single entry for single-stack.
     pub rlpx_bind_addrs: Vec<IpAddr>,
@@ -47,17 +51,20 @@ pub struct NetworkConfig {
 }
 
 impl NetworkConfig {
+    /// Returns one socket address per UDP discovery bind address.
+    pub fn bind_udp_addrs(&self) -> Vec<SocketAddr> {
+        self.discovery_bind_addrs
+            .iter()
+            .map(|ip| SocketAddr::new(*ip, self.udp_port))
+            .collect()
+    }
+
     /// Returns one socket address per RLPx bind address to listen on.
     pub fn bind_tcp_addrs(&self) -> Vec<SocketAddr> {
         self.rlpx_bind_addrs
             .iter()
             .map(|ip| SocketAddr::new(*ip, self.tcp_port))
             .collect()
-    }
-
-    /// Returns the socket address to bind the UDP discovery socket to.
-    pub fn bind_udp_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.discovery_bind_addr, self.udp_port)
     }
 
     /// Returns the primary external RLPx address (first entry). Used for
@@ -73,8 +80,8 @@ impl NetworkConfig {
     /// Useful for tests or when no NAT/split-transport mapping is needed.
     pub fn from_node(node: &Node) -> Self {
         Self {
-            discovery_bind_addr: node.ip,
-            discovery_external_addr: node.ip,
+            discovery_bind_addrs: vec![node.ip],
+            discovery_external_addrs: vec![node.ip],
             rlpx_bind_addrs: vec![node.ip],
             rlpx_external_addrs: vec![node.ip],
             tcp_port: node.tcp_port,
