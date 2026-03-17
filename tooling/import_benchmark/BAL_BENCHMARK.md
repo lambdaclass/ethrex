@@ -36,22 +36,28 @@ The approach:
 
 ### 1.1 Start the devnet
 
-Use the ethrex-only benchmark config (`fixtures/networks/bal-bench.yaml`).
-This runs a single ethrex node as the supernode — it builds all blocks and
-produces BALs, with no cross-client noise:
+Two benchmark configs are available, both run a single ethrex supernode with
+no cross-client noise:
+
+**Mainnet-like** (`bal-bench.yaml`) — reportable numbers:
 
 ```bash
 make localnet KURTOSIS_CONFIG_FILE=./fixtures/networks/bal-bench.yaml
 ```
 
-This starts:
-- ethrex (supernode) + lighthouse
-- spamoor with three scenarios:
-  - `eoatx` (throughput: 15) — simple transfers, balance changes only
-  - `evm-fuzz` (throughput: 8) — random EVM opcodes, storage-heavy
-  - `deploytx` (throughput: 1) — contract creation, code changes
+- 60M gas limit (current mainnet)
+- Mainnet-like tx mix: ~70% transfers, ~15% ERC20, ~10% DEX swaps, ~5% deploys
 
-> For multi-client devnets (e.g. with geth), use `bal-devnet-3.yaml` instead.
+**Stress test** (`bal-bench-stress.yaml`) — find bottlenecks:
+
+```bash
+make localnet KURTOSIS_CONFIG_FILE=./fixtures/networks/bal-bench-stress.yaml
+```
+
+- 100M gas limit (push blocks to the limit)
+- Storage spam, gas burners, high contention scenarios
+
+Both configs set `--mempool.maxsize=50000` to avoid tx drops under load.
 
 ### 1.2 Let it run
 
@@ -259,32 +265,25 @@ avoiding per-block I/O overhead during the benchmark.
 
 ## Spamoor Scenario Tuning
 
-The `bal-bench.yaml` config runs three spamoor scenarios. You can adjust these
-to stress different aspects of the parallel pipeline:
+## Spamoor Scenario Reference
 
 | Scenario | BAL Impact | Parallel Impact |
 |----------|-----------|-----------------|
 | `eoatx` | Small BAL (balance-only) | Minimal contention, easy to parallelize |
-| `evm-fuzz` | Large BAL (random storage) | Stresses storage prefetch, validation |
+| `gasburnertx` | Compute-heavy, moderate BAL | Stresses execution, good parallelism |
+| `storagespam` | Large BAL (many storage slots) | Stresses prefetch, validation |
+| `erc20tx` | Shared contract storage | Contention test — txs touch same contract |
 | `deploytx` | Code change entries | Tests code change recording/validation |
-| `erctx` | Token transfers (SLOAD+SSTORE) | Shared contract = contention test |
-| `uniswaptx` | DEX swaps (heavy storage) | Realistic DeFi, high contention |
+| `uniswap-swaps` | DEX swaps (heavy storage) | Realistic DeFi, high contention |
 
-To add more scenarios, edit the spamoor config in the yaml:
+Key config parameters per scenario:
+- `throughput` — txs per slot (6s). Higher = more txs in mempool per block
+- `max_pending` — cap on unconfirmed txs. Prevents mempool overflow
+- `max_wallets` — child wallets. More wallets = more unique senders = better parallelism
+- `gas_units` — (gasburnertx) gas burned per tx
 
-```yaml
-spamoor_params:
-  spammers:
-  - scenario: eoatx
-    config: {throughput: 15}
-  - scenario: evm-fuzz
-    config: {throughput: 8}
-  - scenario: deploytx
-    config: {throughput: 1}
-  # Add for contention testing:
-  - scenario: erctx
-    config: {throughput: 10}
-```
+To avoid empty blocks, ensure total throughput doesn't overwhelm the mempool.
+Both configs set `--mempool.maxsize=50000` and keep `max_pending` bounded per scenario.
 
 ## Fixture Management
 

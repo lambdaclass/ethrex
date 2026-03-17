@@ -17,8 +17,8 @@ network_params:
   genesis_delay: 30
   fulu_fork_epoch: 0
   gloas_fork_epoch: 2
-  # Mainnet gas limit as of March 2026
-  gas_limit: 60000000
+  # Elevated gas limit to stress-fill blocks
+  gas_limit: 100000000
 snooper_enabled: false
 additional_services: [dora, spamoor]
 dora_params:
@@ -26,27 +26,38 @@ dora_params:
 spamoor_params:
   image: ethpandaops/spamoor:latest
   spammers:
-  # ~70% simple transfers (dominant on mainnet)
+  # --- Balance-only workload (small BAL, easy to parallelize) ---
   - scenario: eoatx
     config:
-      throughput: 30
+      throughput: 20
       max_pending: 500
       max_wallets: 200
-  # ~15% ERC20 token transfers
+  # --- Heavy compute (large gas per tx) ---
+  - scenario: gasburnertx
+    config:
+      throughput: 5
+      max_pending: 200
+      gas_units: 500000
+  # --- Storage spam (many SSTORE/SLOAD per tx, wide BAL) ---
+  - scenario: storagespam
+    config:
+      throughput: 5
+      max_pending: 200
+  # --- ERC20 token transfers (shared contract = contention between txs) ---
   - scenario: erc20tx
     config:
-      throughput: 6
-      max_pending: 200
+      throughput: 10
+      max_pending: 300
       max_wallets: 100
-  # ~10% DEX swaps
-  - scenario: uniswap-swaps
-    config:
-      throughput: 4
-      max_pending: 150
-  # ~5% contract deploys
+  # --- Contract creation (code changes in BAL) ---
   - scenario: deploytx
     config:
       throughput: 2
+      max_pending: 100
+  # --- Uniswap swaps (realistic DeFi, heavy storage + contention) ---
+  - scenario: uniswap-swaps
+    config:
+      throughput: 3
       max_pending: 100
 port_publisher:
   additional_services:
