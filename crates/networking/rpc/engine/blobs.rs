@@ -1,7 +1,7 @@
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{Blob, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
+    types::{Blob, Proof},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,33 +68,24 @@ impl RpcHandler for BlobsV1Request {
             return Err(RpcErr::TooLargeRequest);
         }
 
-        let mut res: Vec<Option<BlobAndProofV1>> = vec![None; self.blob_versioned_hashes.len()];
+        let blob_tuples = context
+            .blockchain
+            .mempool
+            .get_blobs_data_by_versioned_hashes(&self.blob_versioned_hashes)?;
 
-        for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
-            // Go over all blobs bundles from the blobs bundle pool.
-            let blobs_in_bundle = blobs_bundle.blobs;
-            let commitments_in_bundle = blobs_bundle.commitments;
-            let proofs_in_bundle = blobs_bundle.proofs;
+        debug_assert_eq!(self.blob_versioned_hashes.len(), blob_tuples.len());
 
-            // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
-            for (commitment, (blob, proof)) in commitments_in_bundle
-                .iter()
-                .zip(blobs_in_bundle.iter().zip(proofs_in_bundle.iter()))
-            {
-                let current_versioned_hash = kzg_commitment_to_versioned_hash(commitment);
-                if let Some(index) = self
-                    .blob_versioned_hashes
-                    .iter()
-                    .position(|&hash| hash == current_versioned_hash)
-                {
-                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
-                    res[index] = Some(BlobAndProofV1 {
-                        blob: *blob,
-                        proof: *proof,
-                    });
-                }
-            }
-        }
+        let res: Vec<Option<BlobAndProofV1>> = blob_tuples
+            .into_iter()
+            .map(|b| {
+                b.map(|(blob, _, proofs)| BlobAndProofV1 {
+                    blob: *blob,
+                    // If blob bundle version is 0 then the proofs vec will have only one proof.
+                    // Look at `get_blob_tuple_by_index` for reference.
+                    proof: proofs[0],
+                })
+            })
+            .collect();
 
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -194,7 +185,10 @@ mod tests {
     use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         Address, H256,
-        types::{BYTES_PER_BLOB, BlobsBundle, CELLS_PER_EXT_BLOB, ChainConfig, Commitment, Proof},
+        types::{
+            BYTES_PER_BLOB, BlobsBundle, CELLS_PER_EXT_BLOB, ChainConfig, Commitment, Proof,
+            kzg_commitment_to_versioned_hash,
+        },
     };
     use ethrex_storage::{EngineType, Store};
 
