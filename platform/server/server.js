@@ -17,10 +17,7 @@ const PORT = process.env.PORT || 5001;
 app.use(cors({
   origin: process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(",")
-    : [
-        "http://localhost:3000", "http://localhost:3001",
-        "tauri://localhost", "https://tauri.localhost",  // Tauri desktop app
-      ],
+    : ["http://localhost:3000", "http://localhost:3001"],
   credentials: true,
 }));
 app.use(express.json({ limit: "50mb" }));
