@@ -3148,7 +3148,7 @@ pub fn validate_state_root(
     if new_state_root == block_header.state_root {
         Ok(())
     } else {
-        tracing::warn!(
+        warn!(
             block_number = block_header.number,
             expected = ?block_header.state_root,
             computed = ?new_state_root,
