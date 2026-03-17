@@ -120,6 +120,10 @@ COPY --from=builder /ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-
 COPY --from=builder /ethrex/crates/guest-program/bin/sp1-zk-dex/out/riscv32im-succinct-zkvm-vk-* \
     /ethrex/crates/guest-program/bin/sp1-zk-dex/out/
 
+# Copy VK files to workdir so deployer can find them via env vars
+COPY --from=builder /ethrex/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 \
+    /usr/local/bin/riscv32im-succinct-zkvm-vk-bn254
+
 EXPOSE 8545
 EXPOSE 8551
 EXPOSE 30303/tcp

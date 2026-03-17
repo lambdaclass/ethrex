@@ -2010,12 +2010,12 @@ async function deleteDeploy(id, event) {
 
 function renderPhaseBadge(phase, hasError) {
   const labels = {
-    configured: 'Not deployed', checking_docker: 'Checking Docker', building: 'Building',
+    configured: 'Not deployed', 'ai-deploy': 'Deploying (AI)', checking_docker: 'Checking Docker', building: 'Building',
     pulling: 'Pulling Images', l1_starting: 'Starting L1', deploying_contracts: 'Deploying',
     verifying_contracts: 'Verifying', l2_starting: 'Starting L2', starting_prover: 'Starting Prover', starting_tools: 'Starting Tools',
     running: 'Running', stopped: 'Stopped', error: 'Error',
   };
-  const animating = ['checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools'];
+  const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools'];
   const label = labels[phase] || phase;
   if (hasError && phase !== 'error') {
     return `<span class="phase-badge phase-error" title="Error during: ${label}">${label} - Error</span>`;
@@ -2052,6 +2052,13 @@ async function showDeploymentDetail(id) {
     const res = await fetch(`${API}/deployments/${id}`);
     const data = await res.json();
     detailDeployment = data.deployment || data;
+
+    // AI Deploy phase — show chat UI directly instead of dashboard
+    if (detailDeployment.phase === 'ai-deploy') {
+      renderAIDeployOverview(detailDeployment);
+      return;
+    }
+
     renderDetail();
     startDetailPolling();
   } catch {
@@ -2094,9 +2101,129 @@ function renderDetailTab() {
   if (detailTab === 'config') renderConfigTab();
 }
 
+// ---------------------------------------------------------------------------
+// AI Deploy Overview — shown in My L2 detail when phase === 'ai-deploy'
+// ---------------------------------------------------------------------------
+function renderAIDeployOverview(d) {
+  const config = typeof d.config === 'string' ? JSON.parse(d.config || '{}') : (d.config || {});
+  const savedPrompt = config.prompt || '';
+  if (!savedPrompt) return; // No prompt saved — can't restore
+
+  // Switch to launch view directly (skip loadPrograms/resetLaunchForm — not needed)
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const launchView = document.getElementById('view-launch');
+  if (launchView) launchView.classList.add('active');
+  document.querySelectorAll('.launch-step').forEach(s => s.style.display = 'none');
+  const step3 = document.getElementById('launch-step3');
+  if (step3) step3.style.display = 'block';
+
+  // Store deployment ID for completion/cancel
+  window._aiDeployDetailId = d.id;
+
+  // Call showAIPromptResult with saved prompt and full context from config
+  showAIPromptResult(savedPrompt, {
+    cloud: config.cloud || 'aws',
+    l1Mode: config.l1Mode || 'local',
+    l1Network: config.l1Network || '',
+    l1RpcUrl: config.l1RpcUrl || '',
+    l1ChainId: config.l1ChainId || '',
+    l2Name: d.name,
+    l2ChainId: d.chain_id,
+    programName: config.programName || d.program_slug || 'zk-dex',
+    includeProver: config.includeProver !== false,
+    cliInfo: { auth: { account: config.awsAccount || '' } },
+    // Pass AWS-specific fields so configLines matches the original
+    _awsRegion: config.region || '',
+    _awsInstanceType: config.vmType || '',
+    _awsStorageGB: config.storageGB || '',
+    _awsKeyPair: config.keyPairName || '',
+  });
+}
+
+async function monitorAIDeployment(deploymentId) {
+  const statusEl = document.getElementById('ai-deploy-monitor-status');
+  const resultEl = document.getElementById('ai-deploy-monitor-result');
+  if (statusEl) statusEl.textContent = 'AWS CLI로 확인 중...';
+  try {
+    const res = await fetch(`${API}/deployments/ai-deploy/monitor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deploymentId }),
+    });
+    const data = await res.json();
+    const lines = [];
+    const state = data.ec2?.State || 'not_found';
+    if (state === 'not_found') {
+      lines.push('⚪ EC2 인스턴스 미발견 — 아직 생성되지 않았습니다');
+    } else {
+      const icon = state === 'running' ? '🟢' : state === 'stopped' ? '🟡' : '🔴';
+      lines.push(`${icon} EC2: ${state} (${data.ec2.Type || ''}, ${data.ec2.IP || 'no IP'})`);
+      if (data.ec2.Id) lines.push(`Instance ID: ${data.ec2.Id}`);
+    }
+    if (data.containers && data.containers.length > 0) {
+      lines.push('');
+      lines.push('📦 컨테이너:');
+      data.containers.forEach(c => {
+        const icon = c.status?.startsWith('Up') ? '✅' : c.status?.includes('Exited (0)') ? '☑️' : '❌';
+        lines.push(`  ${icon} ${c.name} — ${c.status}`);
+      });
+    } else if (state === 'running' && !data.containers) {
+      lines.push('');
+      lines.push('📦 컨테이너: SSH 연결 불가');
+    }
+    if (data.services && Object.keys(data.services).length > 0) {
+      lines.push('');
+      lines.push('🌐 서비스:');
+      for (const [name, svc] of Object.entries(data.services)) {
+        lines.push(svc.ok ? `  ✅ ${name}${svc.block !== undefined ? ` (block #${svc.block})` : ''}` : `  ❌ ${name}`);
+      }
+    }
+    // Show in chat messages if available
+    const statusMsg = `🖥️ 배포 상태 (${data.vmName || 'unknown'})\n\n${lines.join('\n')}`;
+    aiChatMessages.push({ role: 'assistant', content: statusMsg });
+    if (document.getElementById('ai-chat-messages')) renderChatMessages();
+    // Also show in status bar
+    const ec2Status = state === 'running' ? '🟢 Running' : state === 'not_found' ? '⚪ 미발견' : `🟡 ${state}`;
+    if (statusEl) statusEl.textContent = `${ec2Status}${data.ec2?.IP ? ' · ' + data.ec2.IP : ''}`;
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `❌ ${e.message}`;
+  }
+}
+
+async function confirmAIDeployComplete(deploymentId) {
+  if (!confirm('배포가 완료되었나요? 완료 확인 후 상태가 "running"으로 변경됩니다.')) return;
+  try {
+    const res = await fetch(`${API}/deployments/${deploymentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase: 'running', status: 'running' }),
+    });
+    if (!res.ok) throw new Error('Failed to update');
+    showDeploymentDetail(deploymentId);
+  } catch (e) {
+    alert(`오류: ${e.message}`);
+  }
+}
+
+async function cancelAIDeployment(deploymentId) {
+  if (!confirm('이 배포를 취소하시겠습니까?')) return;
+  try {
+    const res = await fetch(`${API}/deployments/${deploymentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phase: 'configured', status: 'configured' }),
+    });
+    if (!res.ok) throw new Error('Failed to update');
+    showView('deployments');
+  } catch (e) {
+    alert(`오류: ${e.message}`);
+  }
+}
+
 function renderOverviewTab() {
   const d = detailDeployment;
   if (!d) return;
+
   const isProvisioned = !!d.docker_project;
   const isDeploying = ['checking_docker','building','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools'].includes(d.phase);
   // Reconcile: use live container state instead of stale DB phase
@@ -3478,7 +3605,7 @@ async function generateAndShowAIPrompt(deploymentId) {
     const res = await fetch(`${API}/deployments/${deploymentId}/ai-prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cloud: promptCloud, l1Mode: l1Mode === 'local' ? 'local' : 'testnet', l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig, region: awsRegion, vmType: awsInstanceType, storageGB: awsStorageGB, keyPairName: awsKeyPair }),
+      body: JSON.stringify({ cloud: promptCloud, l1Mode: l1Mode === 'local' ? 'local' : 'testnet', l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig, region: awsRegion, vmType: awsInstanceType, storageGB: awsStorageGB, keyPairName: awsKeyPair, awsAccount: cliInfo?.auth?.account || '', programName: (document.querySelector('.program-card.selected .program-name')?.textContent || selectedProgram?.name || selectedProgram?.id || 'evm-l2') }),
     });
     if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to generate prompt'); }
     const { prompt } = await res.json();
@@ -3526,6 +3653,17 @@ function copyAIPrompt() {
 }
 
 function aiChatGoBack() {
+  // If came from My L2 detail, go back there
+  if (window._aiDeployDetailId) {
+    const id = window._aiDeployDetailId;
+    window._aiDeployDetailId = null;
+    // Switch to detail view directly (skip loadDeployments which reconciles all)
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const detailView = document.getElementById('view-detail');
+    if (detailView) detailView.classList.add('active');
+    showDeploymentDetail(id);
+    return;
+  }
   // Reset deploy-card and go back to step 2
   const deployCard = document.querySelector('.deploy-card');
   if (deployCard) { deployCard.style.maxWidth = ''; deployCard.style.width = ''; deployCard.innerHTML = ''; }
@@ -3772,11 +3910,11 @@ ${prompt}`;
   components.push('L2 노드');
   if (includeProver) components.push('SP1 Prover');
   components.push('Tools (Explorer, Dashboard, Bridge)');
-  // Collect AWS-specific settings from UI
-  const awsRegion = document.getElementById('aws-region')?.value || 'ap-northeast-2';
-  const awsInstanceType = document.getElementById('aws-instance-type')?.value || recSpec.type || 't3.xlarge';
-  const awsStorageGB = document.getElementById('aws-storage-gb')?.value || '30';
-  const awsKeyPair = document.getElementById('aws-key-pair-select')?.value || '';
+  // Collect AWS-specific settings (from UI or restored context)
+  const awsRegion = document.getElementById('aws-region')?.value || cloudCtx._awsRegion || 'ap-northeast-2';
+  const awsInstanceType = document.getElementById('aws-instance-type')?.value || cloudCtx._awsInstanceType || recSpec.type || 't3.xlarge';
+  const awsStorageGB = document.getElementById('aws-storage-gb')?.value || cloudCtx._awsStorageGB || '30';
+  const awsKeyPair = document.getElementById('aws-key-pair-select')?.value || cloudCtx._awsKeyPair || '';
   const awsAccount = cliInfo.auth?.account || '';
 
   const configLines = [
@@ -3802,8 +3940,11 @@ ${prompt}`;
 
 📌 배포 실행 방법:
 1. 아래 파란 메시지의 📋 아이콘 클릭 → 전체 프롬프트 복사
-2. Claude.ai(MAX) 또는 Claude Code에 붙여넣기
-3. AI가 AWS EC2 생성부터 배포 완료까지 실행합니다
+2. **Claude Code**에 붙여넣기 → AI가 로컬 터미널에서 직접 실행
+3. AWS EC2 생성 → Docker 설치 → 배포 완료까지 자동 진행
+
+⚠️ **반드시 본인 로컬 PC의 Claude Code(터미널)에서 실행하세요.**
+보안을 위해 SSH가 현재 PC의 IP로만 허용됩니다. Claude.ai(웹)에서 실행하면 외부 서버 IP로 SSH가 열려 보안 위험이 있습니다.
 
 💬 아래 질문을 클릭하거나 직접 입력하세요:`;
 

@@ -404,10 +404,11 @@ services:
     image: "${l1Image}"
     ports:
       - ${bindAddress}:${l1Port}:8545
-${l1ExtraVolumes}
+${l1ExtraVolumes ? l1ExtraVolumes + "\n      - " + dataDir + "/genesis/l1.json:/genesis/l1.json:ro" : `    volumes:
+      - ${dataDir}/genesis/l1.json:/genesis/l1.json:ro`}
     environment:
       - ETHREX_LOG_LEVEL
-    command: --network ${l1GenesisCmd} --http.addr 0.0.0.0 --http.port 8545 --dev
+    command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev
 
   tokamak-app-deployer:
     container_name: ${projectName}-deployer
@@ -415,11 +416,14 @@ ${l1ExtraVolumes}
     restart: "no"
     volumes:
       - env:/env/
+      - ${dataDir}/genesis/l1.json:${workdir}/fixtures/genesis/l1.json:ro
+      - ${dataDir}/genesis/${profile.genesisFile}:${workdir}/fixtures/genesis/${profile.genesisFile}:ro
+      - ${dataDir}/genesis/private_keys_l1.txt:${workdir}/fixtures/keys/private_keys_l1.txt:ro
 ${deployerExtraVolumes}    environment:
       - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
-      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      - ETHREX_DEPLOYER_L1_PRIVATE_KEY=\${ETHREX_DEPLOYER_L1_PRIVATE_KEY}
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
-      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${deployerL1GenesisPath}
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
       - ETHREX_DEPLOYER_DEPLOY_RICH=true
       - ETHREX_L2_RISC0=false
@@ -428,10 +432,10 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_DEPLOYER_ALIGNED=false
       - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
-      - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
-      - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
-      - ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
-      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+      - ETHREX_ON_CHAIN_PROPOSER_OWNER=\${ETHREX_ON_CHAIN_PROPOSER_OWNER}
+      - ETHREX_BRIDGE_OWNER=\${ETHREX_BRIDGE_OWNER}
+      - ETHREX_BRIDGE_OWNER_PK=\${ETHREX_BRIDGE_OWNER_PK}
+      - ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=\${ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER}
       - ETHREX_DEPLOYER_DEPLOY_BASED_CONTRACTS=false
       - ETHREX_L2_VALIDIUM=false
       - COMPILE_CONTRACTS=true
@@ -475,8 +479,8 @@ ${l2ExtraVolumes}    entrypoint:
       --authrpc.port 8552
       --proof-coordinator.addr 0.0.0.0
       --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d
-      --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
-      --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+      --committer.l1-private-key \${ETHREX_COMMITTER_L1_PRIVATE_KEY}
+      --proof-coordinator.l1-private-key \${ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY}
       --no-monitor
     depends_on:
       tokamak-app-deployer:
