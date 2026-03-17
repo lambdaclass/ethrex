@@ -2141,6 +2141,56 @@ impl Blockchain {
             }
         }
 
+        // Diagnostic: verify trie contains each updated account BEFORE applying updates
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            if let Ok(Some(trie)) = self.storage.state_trie(block.header.parent_hash) {
+                let trie_root = trie.hash_no_commit();
+                let parent_root = self
+                    .storage
+                    .get_block_header_by_hash(block.header.parent_hash)
+                    .ok()
+                    .flatten()
+                    .map(|h| h.state_root);
+                warn!(
+                    trie_hash_no_commit = ?trie_root,
+                    header_state_root = ?parent_root,
+                    trie_matches_header = parent_root.map(|r| r == trie_root),
+                    "Polygon: trie integrity check"
+                );
+                for update in &updates {
+                    let hashed = keccak(update.address.to_fixed_bytes());
+                    match trie.get(hashed.as_bytes()) {
+                        Ok(Some(encoded)) => {
+                            if let Ok(state) = ethrex_common::types::AccountState::decode(&encoded)
+                            {
+                                warn!(
+                                    address = ?update.address,
+                                    trie_nonce = state.nonce,
+                                    trie_balance = ?state.balance,
+                                    trie_code_hash = ?state.code_hash,
+                                    trie_storage_root = ?state.storage_root,
+                                    "Polygon: pre-update trie account state"
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            warn!(
+                                address = ?update.address,
+                                "Polygon: account NOT FOUND in parent trie — will use default"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                address = ?update.address,
+                                error = %e,
+                                "Polygon: trie lookup ERROR"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
