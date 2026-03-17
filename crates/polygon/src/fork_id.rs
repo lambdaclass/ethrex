@@ -13,24 +13,14 @@ use crate::bor_config::BorConfig;
 /// Returns sorted, deduplicated, non-zero fork block numbers.
 pub fn gather_polygon_forks(bor_config: &BorConfig) -> Vec<u64> {
     let mut forks: Vec<u64> = [
-        // EVM-level forks (stored as block numbers in Bor)
+        // ONLY EVM-level forks (direct fields on Bor's params.ChainConfig struct).
+        // Bor's gatherForks() uses reflection on ChainConfig and does NOT descend
+        // into the nested *BorConfig struct, so Bor-specific forks (Jaipur, Delhi,
+        // Indore, Ahmedabad, etc.) are excluded from the fork ID computation.
         bor_config.london_block,
         bor_config.shanghai_block,
         bor_config.cancun_block,
         bor_config.prague_block,
-        // Polygon-specific forks
-        bor_config.jaipur_block,
-        bor_config.delhi_block,
-        bor_config.indore_block,
-        bor_config.ahmedabad_block,
-        bor_config.bhilai_block,
-        bor_config.rio_block,
-        bor_config.madhugiri_block,
-        bor_config.madhugiri_pro_block,
-        bor_config.dandeli_block,
-        bor_config.lisovo_block,
-        // NOTE: LisovoProBlock and GiuglianoBlock are intentionally excluded.
-        // Bor's GatherForks() does not include them in fork ID computation.
     ]
     .into_iter()
     .flatten()
@@ -203,22 +193,16 @@ mod tests {
         let config = mainnet_bor_config();
         let forks = gather_polygon_forks(&config);
 
-        // Should be sorted and deduplicated
-        // London=23850000 coincides with Jaipur, Prague=73440256 with Bhilai (both deduped)
+        // Only EVM-level forks (direct ChainConfig fields in Bor).
+        // Bor-specific forks (Jaipur, Delhi, etc.) are on the nested BorConfig
+        // struct and excluded by Bor's reflection-based gatherForks().
         assert_eq!(
             forks,
             vec![
-                23_850_000, // London + Jaipur (deduplicated)
-                38_189_056, // Delhi
-                44_934_656, // Indore
+                23_850_000, // London
                 50_523_000, // Shanghai
                 54_876_000, // Cancun
-                62_278_656, // Ahmedabad
-                73_440_256, // Prague + Bhilai (deduplicated)
-                77_414_656, // Rio
-                80_084_800, // Madhugiri + MadhugiriPro (deduplicated)
-                81_424_000, // Dandeli
-                83_756_500, // Lisovo (LisovoPro coincides, but excluded from fork ID)
+                73_440_256, // Prague
             ]
         );
     }
@@ -250,7 +234,7 @@ mod tests {
                 .unwrap();
 
         let fork_id = polygon_fork_id(genesis_hash, &config, 0);
-        // Before any Polygon fork, fork_next should be Jaipur block
+        // Before any fork, fork_next should be London block
         assert_eq!(fork_id.fork_next, 23_850_000);
         // fork_hash is just CRC32 of genesis hash (no forks XORed in yet)
         let mut hasher = Hasher::new();
@@ -260,16 +244,16 @@ mod tests {
     }
 
     #[test]
-    fn polygon_fork_id_after_jaipur() {
+    fn polygon_fork_id_after_london() {
         let config = mainnet_bor_config();
         let genesis_hash =
             H256::from_str("0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b")
                 .unwrap();
 
         let fork_id = polygon_fork_id(genesis_hash, &config, 23_850_000);
-        // After Jaipur, fork_next should be Delhi
-        assert_eq!(fork_id.fork_next, 38_189_056);
-        // fork_hash includes Jaipur
+        // After London, fork_next should be Shanghai
+        assert_eq!(fork_id.fork_next, 50_523_000);
+        // fork_hash includes London
         let mut hasher = Hasher::new();
         hasher.update(genesis_hash.as_bytes());
         hasher.update(&23_850_000u64.to_be_bytes());
@@ -296,16 +280,16 @@ mod tests {
             H256::from_str("0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b")
                 .unwrap();
 
-        // Fork ID should be identical at blocks right before and at a fork boundary
-        let before_delhi = polygon_fork_id(genesis_hash, &config, 38_189_055);
-        let at_delhi = polygon_fork_id(genesis_hash, &config, 38_189_056);
+        // Fork ID should change at a fork boundary
+        let before_shanghai = polygon_fork_id(genesis_hash, &config, 50_522_999);
+        let at_shanghai = polygon_fork_id(genesis_hash, &config, 50_523_000);
 
-        // Before Delhi, we're in the Jaipur era - fork_next = Delhi
-        assert_eq!(before_delhi.fork_next, 38_189_056);
-        // At Delhi, we're in the Delhi era - fork_next = Indore
-        assert_eq!(at_delhi.fork_next, 44_934_656);
+        // Before Shanghai, we're in the London era - fork_next = Shanghai
+        assert_eq!(before_shanghai.fork_next, 50_523_000);
+        // At Shanghai, fork_next = Cancun
+        assert_eq!(at_shanghai.fork_next, 54_876_000);
         // Hash changes at boundary
-        assert_ne!(before_delhi.fork_hash, at_delhi.fork_hash);
+        assert_ne!(before_shanghai.fork_hash, at_shanghai.fork_hash);
     }
 
     #[test]
