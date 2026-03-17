@@ -90,8 +90,15 @@ impl RLPEncode for Capability {
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
-        let (version, rest) = u8::decode_unfinished(rest)?;
+        // Properly parse the RLP list header so `rest` aligns with the
+        // list boundary — this handles multi-byte headers and capabilities
+        // with extra trailing fields we don't care about.
+        let (is_list, payload, rest) = decode_rlp_item(rlp)?;
+        if !is_list {
+            return Err(RLPDecodeError::MalformedData);
+        }
+        let (protocol_name, payload_rest) = String::decode_unfinished(payload)?;
+        let (version, _) = u8::decode_unfinished(payload_rest)?;
         let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
         // Truncate names longer than CAPABILITY_NAME_MAX_LENGTH — they won't
         // match any supported capability and will be ignored in negotiation.
