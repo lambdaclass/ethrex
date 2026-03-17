@@ -819,7 +819,10 @@ router.post("/:id/provision", async (req, res) => {
 
     let provisionFn;
     if (stackType === 'thanos') {
-      // Thanos (OP Stack) provisioning
+      // Thanos (Optimism) provisioning — remote not yet supported
+      if (hostId) {
+        return; // already sent response; log error
+      }
       if (deployMode === 'testnet') {
         provisionFn = () => provisionThanosTestnet(deployment);
       } else {

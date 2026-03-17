@@ -628,7 +628,7 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
                 {stackType === 'thanos' ? 'Fault Proof' : 'SP1'}
               </div>
               <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">
-                {stackType === 'thanos' ? t('myl2.wizard.thanosNoProver', lang) : 'Succinct SP1 프로버가 사용됩니다'}
+                {stackType === 'thanos' ? t('myl2.wizard.thanosNoProver', lang) : t('myl2.wizard.sp1ProverDesc', lang)}
               </p>
             </div>
           </>

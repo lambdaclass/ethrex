@@ -25,7 +25,6 @@ const {
   generateRemoteTestnetComposeFile,
   generateThanosComposeFile,
   generateThanosTestnetComposeFile,
-  generateThanosRemoteComposeFile,
   generateProgramsToml,
   writeComposeFile,
   writeCustomGenesis,

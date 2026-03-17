@@ -142,6 +142,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'myl2.wizard.stackThanos': 'Thanos (Optimism)',
     'myl2.wizard.stackThanosDesc': 'OP Stack 기반 Optimistic Rollup. Fault proof 사용.',
     'myl2.wizard.thanosNoProver': 'Thanos는 Fault Proof를 사용하므로 별도 프루버 설정이 필요 없습니다.',
+    'myl2.wizard.sp1ProverDesc': 'Succinct SP1 프로버가 사용됩니다',
     // Chat
     'chat.title': 'Appchain Pilot',
     'chat.notConnected': '연결 안됨 - 설정에서 구성하세요',
@@ -401,6 +402,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'myl2.wizard.stackThanos': 'Thanos (Optimism)',
     'myl2.wizard.stackThanosDesc': 'OP Stack-based Optimistic Rollup with fault proofs.',
     'myl2.wizard.thanosNoProver': 'Thanos uses Fault Proofs — no separate prover setup needed.',
+    'myl2.wizard.sp1ProverDesc': 'Succinct SP1 prover will be used',
     // Chat
     'chat.title': 'Appchain Pilot',
     'chat.notConnected': 'Not connected - Configure in Settings',

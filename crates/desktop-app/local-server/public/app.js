@@ -248,27 +248,9 @@ async function loadPrograms() {
 
 function renderPrograms() {
   const grid = document.getElementById('programs-grid');
-  const search = (document.getElementById('program-search')?.value || '').toLowerCase();
-  const catFilter = document.getElementById('category-filter')?.value || '';
-
-  // Populate category filter
-  const catSelect = document.getElementById('category-filter');
-  if (catSelect && catSelect.options.length <= 1) {
-    const cats = [...new Set(programs.map(p => p.category).filter(Boolean))];
-    cats.forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c; opt.textContent = c;
-      catSelect.appendChild(opt);
-    });
-  }
 
   const filtered = programs.filter(p => {
-    const matchStack = !p.stack || p.stack === selectedStackType;
-    const matchSearch = p.name.toLowerCase().includes(search) ||
-      (p.description || '').toLowerCase().includes(search) ||
-      (p.program_id || '').toLowerCase().includes(search);
-    const matchCat = !catFilter || p.category === catFilter;
-    return matchStack && matchSearch && matchCat;
+    return !p.stack || p.stack === selectedStackType;
   });
 
   if (filtered.length === 0) {
@@ -297,7 +279,7 @@ function renderPrograms() {
   `).join('');
 }
 
-function filterPrograms() { renderPrograms(); }
+
 
 async function selectProgram(id) {
   selectedProgram = programs.find(p => p.id === id);
@@ -2071,7 +2053,7 @@ function renderPhaseBadge(phase, hasError) {
     starting_tools: 'Starting Tools',
     running: 'Running', stopped: 'Stopped', error: 'Error',
   };
-  const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools'];
+  const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_op_node','starting_batcher','starting_proposer','starting_tools'];
   const label = labels[phase] || phase;
   if (hasError && phase !== 'error') {
     return `<span class="phase-badge phase-error" title="Error during: ${label}">${label} - Error</span>`;
