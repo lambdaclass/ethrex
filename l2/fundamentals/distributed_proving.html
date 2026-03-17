@@ -293,7 +293,7 @@
 <p>For example, if batches 5, 6, 7 are fully proven but batch 8 is missing a proof, only batches 5–7 are sent. Batch 8 waits for its proof.</p>
 <h3 id="fallback-to-single-batch-sending"><a class="header" href="#fallback-to-single-batch-sending">Fallback to single-batch sending</a></h3>
 <p>On <strong>any</strong> multi-batch error (gas limit exceeded, calldata too large, invalid proof, etc.), the proof sender falls back to sending each batch individually. Since on-chain verification is sequential (<code>batchNumber == lastVerifiedBatch + 1</code>), the fallback stops at the first failing batch — remaining batches are retried on the next tick.</p>
-<p>During single-batch fallback, if the error indicates an invalid proof (e.g. "Invalid SP1 proof"), that proof is deleted from the store so a prover can re-prove it.</p>
+<p>During single-batch fallback, if the revert indicates an invalid proof, that proof is deleted from the store so a prover can re-prove it.</p>
 <h2 id="configuration-reference"><a class="header" href="#configuration-reference">Configuration reference</a></h2>
 <h3 id="proof-coordinator-sequencer-side"><a class="header" href="#proof-coordinator-sequencer-side">Proof coordinator (sequencer side)</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Flag</th><th>Env Variable</th><th>Default</th><th>Description</th></tr></thead><tbody>
