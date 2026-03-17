@@ -610,6 +610,7 @@ ${deployerExtraEnv}    depends_on:
       - ETHREX_LOG_LEVEL
     volumes:
       - env:/env/
+      - ${dataDir}/genesis/${profile.genesisFile}:${l2Genesis}:ro
 ${l2ExtraVolumes}    entrypoint:
       - /bin/bash
       - -c
