@@ -46,7 +46,18 @@ function exec(conn, command, opts = {}) {
       if (err) return reject(err);
       let stdout = "";
       let stderr = "";
+      let settled = false;
+
+      if (opts.timeout) {
+        const timer = setTimeout(() => {
+          if (!settled) { settled = true; try { stream.close(); } catch {} reject(new Error("Remote command timed out")); }
+        }, opts.timeout);
+        stream.on("close", () => clearTimeout(timer));
+      }
+
       stream.on("close", (code) => {
+        if (settled) return;
+        settled = true;
         if (code !== 0 && !opts.ignoreError) {
           reject(new Error(`Remote command failed (code ${code}): ${stderr}`));
         } else {
@@ -56,14 +67,6 @@ function exec(conn, command, opts = {}) {
       stream.on("data", (data) => (stdout += data));
       stream.stderr.on("data", (data) => (stderr += data));
     });
-
-    if (opts.timeout) {
-      const timer = setTimeout(() => {
-        if (stream) stream.close();
-        reject(new Error("Remote command timed out"));
-      }, opts.timeout);
-      stream.on("close", () => clearTimeout(timer));
-    }
   });
 }
 
