@@ -15,6 +15,13 @@ guest-program/
 │   │   ├── mod.rs
 │   │   ├── execution.rs
 │   │   └── error.rs
+│   ├── crypto/         # zkVM-specific Crypto implementations
+│   │   ├── mod.rs
+│   │   ├── shared.rs   # Shared k256/substrate-bn helpers
+│   │   ├── sp1.rs
+│   │   ├── risc0.rs
+│   │   ├── zisk.rs
+│   │   └── openvm.rs
 │   ├── l1/             # L1 (mainnet) program
 │   │   ├── mod.rs
 │   │   ├── input.rs
@@ -77,42 +84,52 @@ make l2-sp1 REPRODUCIBLE=1
 
 ```bash
 # Build SP1 guest (requires sp1up toolchain or Docker)
-cargo check -r -p ethrex-guest-program --features sp1
+cargo check -r -p ethrex-guest-program --features sp1-build-elf
 
 # Build RISC0 guest (requires rzup toolchain or Docker)
-cargo check -r -p ethrex-guest-program --features risc0
+cargo check -r -p ethrex-guest-program --features risc0-build-elf
 
 # Build ZisK guest (requires cargo-zisk toolchain or Docker)
-cargo check -r -p ethrex-guest-program --features zisk
+cargo check -r -p ethrex-guest-program --features zisk-build-elf
 
 # Build OpenVM guest (requires cargo-openvm toolchain or Docker)
-cargo check -r -p ethrex-guest-program --features openvm
+cargo check -r -p ethrex-guest-program --features openvm-build-elf
 
 # Reproducible build using Docker
-PROVER_REPRODUCIBLE_BUILD=true cargo check -r -p ethrex-guest-program --features sp1
+PROVER_REPRODUCIBLE_BUILD=true cargo check -r -p ethrex-guest-program --features sp1-build-elf
 
 # Build with L2 support
-cargo check -r -p ethrex-guest-program --features sp1,l2
+cargo check -r -p ethrex-guest-program --features sp1-build-elf,l2
 ```
 
 ### Check Without Building ELFs
 
 ```bash
+# Default (no zkVM)
 cargo check -p ethrex-guest-program
+
+# With a zkVM crypto module (no ELF build)
+cargo check -p ethrex-guest-program --features sp1
 ```
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| `risc0` | Builds RISC Zero guest (mutually exclusive with other zkVM features) |
-| `sp1` | Builds SP1 guest (mutually exclusive with other zkVM features) |
-| `zisk` | Builds ZisK guest (mutually exclusive with other zkVM features) |
-| `openvm` | Builds OpenVM guest (mutually exclusive with other zkVM features) |
+| `sp1` | Base SP1 feature: enables SP1 crypto module and feature propagation |
+| `risc0` | Base RISC Zero feature: enables RISC0 crypto module and feature propagation |
+| `zisk` | Base ZisK feature: enables ZisK crypto module and feature propagation |
+| `openvm` | Base OpenVM feature: enables OpenVM crypto module and feature propagation |
+| `sp1-build-elf` | SP1 base + build tooling. Triggers `build.rs` to compile the SP1 guest ELF |
+| `risc0-build-elf` | RISC Zero base + build tooling. Triggers `build.rs` to compile the RISC0 guest ELF |
+| `zisk-build-elf` | ZisK base + build tooling. Triggers `build.rs` to compile the ZisK guest ELF |
+| `openvm-build-elf` | OpenVM base + build tooling. Triggers `build.rs` to compile the OpenVM guest ELF |
 | `l2` | Enables L2 (rollup) program mode. Used for L2 provers. Can be combined with one zkVM feature |
 | `sp1-cycles` | Reports cycle counts (SP1 only) |
 | `c-kzg` | Enables KZG precompile support |
 | `ci` | Skip rom-setup for CI builds |
+
+Guest binaries use base features (`sp1`, `risc0`, etc.) to get their `Crypto` implementation without triggering the build script. The prover host uses `-build-elf` features which include the base feature plus build tooling.
 
 ## zkVM Guest Implementations
 
@@ -163,15 +180,33 @@ This section describes how to add support for a new zkVM backend to ethrex.
 
 Each zkVM integration requires:
 
-1. A guest binary crate in `bin/<zkvm>/`
-2. A build function in `build.rs`
-3. Feature flags in `Cargo.toml`
-4. ELF constants in `src/lib.rs`
-5. Makefile targets
+1. A `Crypto` implementation in `src/crypto/<zkvm>.rs`
+2. A guest binary crate in `bin/<zkvm>/`
+3. A build function in `build.rs`
+4. Feature flags in `Cargo.toml`
+5. ELF constants in `src/lib.rs`
+6. Makefile targets
 
 ### Step-by-Step Guide
 
-#### 1. Create the Guest Binary Crate
+#### 1. Implement the `Crypto` Trait
+
+Create `src/crypto/<zkvm>.rs` with your zkVM's cryptographic implementations. The `Crypto` trait (from `ethrex-crypto`) defines all EVM cryptographic operations with default native implementations. Override the methods that your zkVM provides accelerated versions for:
+
+```rust
+use ethrex_crypto::Crypto;
+
+pub struct MyZkvmCrypto;
+
+impl Crypto for MyZkvmCrypto {
+    // Override methods where your zkVM has optimized implementations.
+    // Methods you don't override will use the default native implementations.
+}
+```
+
+Most zkVMs provide accelerated `k256` (secp256k1 ECDSA) and `substrate-bn` (BN254) through `[patch.crates-io]` in the guest binary's `Cargo.toml`. See `src/crypto/shared.rs` for helper functions that use these libraries. Register your module in `src/crypto/mod.rs` with a `#[cfg(feature = "<zkvm>")]` gate.
+
+#### 2. Create the Guest Binary Crate
 
 Create a new directory `bin/<zkvm>/` with the following structure:
 
@@ -204,8 +239,8 @@ codegen-units = 1
 # Required for input deserialization
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-# The main guest program library
-ethrex-guest-program = { path = "../../" }
+# The main guest program library — use the BASE feature, not -build-elf
+ethrex-guest-program = { path = "../../", default-features = false, features = ["<zkvm>"] }
 
 # VM with zkVM-specific features (if needed)
 ethrex-vm = { path = "../../../vm", default-features = false, features = ["<zkvm>"] }
@@ -224,11 +259,16 @@ l2 = ["ethrex-guest-program/l2"]
 ```rust
 #![no_main]
 
+use std::sync::Arc;
+
 // Import L1 or L2 program based on feature flag
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
 #[cfg(not(feature = "l2"))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
+
+// Import your Crypto implementation
+use ethrex_guest_program::crypto::<zkvm>::MyZkvmCrypto;
 
 use rkyv::rancor::Error;
 
@@ -242,8 +282,9 @@ pub fn main() {
     // 2. Deserialize input
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
 
-    // 3. Execute the program (this is the same for all zkVMs)
-    let output = execution_program(input).unwrap();
+    // 3. Execute the program with your crypto provider
+    let crypto = Arc::new(MyZkvmCrypto);
+    let output = execution_program(input, crypto).unwrap();
 
     // 4. Commit output using your zkVM's commit mechanism
     //    Some zkVMs commit raw bytes, others require hashing first
@@ -260,12 +301,12 @@ The pattern for output commitment varies by zkVM:
 | ZisK | Hash with SHA256, then `ziskos::set_output(idx, u32)` for each chunk |
 | OpenVM | Hash with Keccak256, then `openvm::io::reveal_bytes32(hash)` |
 
-#### 2. Add Build Function in `build.rs`
+#### 3. Add Build Function in `build.rs`
 
-Add a new build function for your zkVM:
+Add a new build function for your zkVM. Gate it on `<zkvm>-build-elf`, not the base feature:
 
 ```rust
-#[cfg(all(not(clippy), feature = "<zkvm>"))]
+#[cfg(all(not(clippy), feature = "<zkvm>-build-elf"))]
 fn build_<zkvm>_program() {
     use std::{fs, path::Path, process::{Command, Stdio}};
 
@@ -303,56 +344,56 @@ Then call it from `main()`:
 fn main() {
     // ... existing code ...
 
-    #[cfg(all(not(clippy), feature = "<zkvm>"))]
+    #[cfg(all(not(clippy), feature = "<zkvm>-build-elf"))]
     build_<zkvm>_program();
 }
 ```
 
-#### 3. Add Feature Flags in `Cargo.toml`
+#### 4. Add Feature Flags in `Cargo.toml`
 
-Add to the root `Cargo.toml`:
+Add two features to `ethrex-guest-program/Cargo.toml`:
 
 ```toml
 [build-dependencies]
-# Add build-time SDK dependency if needed
+# Add build-time SDK dependency if needed (optional)
 <zkvm>-build = { version = "=X.Y.Z", optional = true }
 
 [features]
-<zkvm> = ["dep:<zkvm>-build"]  # Add any other required features
+# Base feature: crypto module + feature propagation. Used by guest binaries.
+<zkvm> = ["dep:k256", "dep:substrate-bn"]
+
+# Build-ELF feature: base + build tooling. Used by the prover host.
+# Guest binaries must NOT enable this — it triggers build.rs which
+# recompiles the guest binary.
+<zkvm>-build-elf = ["<zkvm>"]
 ```
 
-If your zkVM requires feature flags in dependent crates:
+If your zkVM has build-time Rust dependencies (like `sp1-build` or `risc0-build`), add them to the `-build-elf` feature:
 
 ```toml
-[features]
-<zkvm> = [
-    "dep:<zkvm>-build",
-    "ethrex-common/<zkvm>",
-    "ethrex-vm/<zkvm>",
-    "ethrex-l2-common/<zkvm>",
-]
+<zkvm>-build-elf = ["<zkvm>", "dep:<zkvm>-build"]
 ```
 
-#### 4. Add ELF Constants in `src/lib.rs`
+#### 5. Add ELF Constants in `src/lib.rs`
 
-Add static constants for the compiled ELF:
+Add static constants for the compiled ELF, gated on `-build-elf`:
 
 ```rust
-#[cfg(all(not(clippy), feature = "<zkvm>"))]
+#[cfg(all(not(clippy), feature = "<zkvm>-build-elf"))]
 pub static ZKVM_<ZKVM>_PROGRAM_ELF: &[u8] =
     include_bytes!("../bin/<zkvm>/out/<target-triple>-<zkvm>-elf");
-#[cfg(any(clippy, not(feature = "<zkvm>")))]
+#[cfg(any(clippy, not(feature = "<zkvm>-build-elf")))]
 pub const ZKVM_<ZKVM>_PROGRAM_ELF: &[u8] = &[];
 
 // If your zkVM produces a verification key:
-#[cfg(all(not(clippy), feature = "<zkvm>"))]
+#[cfg(all(not(clippy), feature = "<zkvm>-build-elf"))]
 pub static ZKVM_<ZKVM>_PROGRAM_VK: &str =
     include_str!("../bin/<zkvm>/out/<target-triple>-<zkvm>-vk");
-#[cfg(any(clippy, not(feature = "<zkvm>")))]
+#[cfg(any(clippy, not(feature = "<zkvm>-build-elf")))]
 pub const ZKVM_<ZKVM>_PROGRAM_VK: &str = "";
 ```
 
-#### 5. Add Makefile Targets
+#### 6. Add Makefile Targets
 
 Add to `Makefile`:
 
@@ -360,10 +401,10 @@ Add to `Makefile`:
 .PHONY: <zkvm> l2-<zkvm>
 
 <zkvm>:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features <zkvm>
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features <zkvm>-build-elf
 
 l2-<zkvm>:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features <zkvm>,l2
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features <zkvm>-build-elf,l2
 ```
 
 Update the `clean` target:
@@ -375,7 +416,7 @@ clean:
 
 Update the `help` target to include your new zkVM.
 
-#### 6. Add Patches for Cryptographic Libraries
+#### 7. Add Patches for Cryptographic Libraries
 
 Most zkVMs have optimized patches for cryptographic libraries. Common libraries that benefit from patches:
 
@@ -388,7 +429,7 @@ Most zkVMs have optimized patches for cryptographic libraries. Common libraries 
 
 Check your zkVM's documentation or patches repository for available optimizations.
 
-#### 7. (Optional) Add CI Workflow
+#### 8. (Optional) Add CI Workflow
 
 Add your zkVM to the CI workflow in `.github/workflows/`. See existing workflows for SP1, RISC0, ZisK, and OpenVM as examples.
 
