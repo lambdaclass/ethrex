@@ -186,13 +186,18 @@ pub async fn start_network(
     )
     .start();
 
-    context.tracker.spawn(serve_p2p_requests(context.clone()));
+    // Spawn one TCP listener per RLPx bind address. A dual-stack node will
+    // have two entries here (e.g. 0.0.0.0:30303 and [::]:30303).
+    for tcp_addr in context.network_config.bind_tcp_addrs() {
+        context
+            .tracker
+            .spawn(serve_p2p_requests(context.clone(), tcp_addr));
+    }
 
     Ok(())
 }
 
-pub(crate) async fn serve_p2p_requests(context: P2PContext) {
-    let tcp_addr = context.network_config.bind_tcp_addr();
+pub(crate) async fn serve_p2p_requests(context: P2PContext, tcp_addr: SocketAddr) {
     let external_tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,

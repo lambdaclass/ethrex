@@ -35,23 +35,38 @@ pub struct NetworkConfig {
     pub discovery_bind_addr: IpAddr,
     /// IP address announced to peers via discv4 Ping/Pong and ENR.
     pub discovery_external_addr: IpAddr,
-    /// Address to bind the TCP RLPx listener to.
-    pub rlpx_bind_addr: IpAddr,
-    /// IP address announced to peers for RLPx connections and ENR.
-    pub rlpx_external_addr: IpAddr,
+    /// Addresses to bind TCP RLPx listeners to. One entry per IP family for
+    /// dual-stack (e.g. `[0.0.0.0, ::]`); single entry for single-stack.
+    pub rlpx_bind_addrs: Vec<IpAddr>,
+    /// IP addresses announced to peers for RLPx connections and ENR.
+    /// Mirrors `rlpx_bind_addrs` but holds the externally-reachable IPs
+    /// (relevant behind NAT or for specific interface binding).
+    pub rlpx_external_addrs: Vec<IpAddr>,
     pub tcp_port: u16,
     pub udp_port: u16,
 }
 
 impl NetworkConfig {
-    /// Returns the socket address to bind the TCP RLPx listener to.
-    pub fn bind_tcp_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.rlpx_bind_addr, self.tcp_port)
+    /// Returns one socket address per RLPx bind address to listen on.
+    pub fn bind_tcp_addrs(&self) -> Vec<SocketAddr> {
+        self.rlpx_bind_addrs
+            .iter()
+            .map(|ip| SocketAddr::new(*ip, self.tcp_port))
+            .collect()
     }
 
     /// Returns the socket address to bind the UDP discovery socket to.
     pub fn bind_udp_addr(&self) -> SocketAddr {
         SocketAddr::new(self.discovery_bind_addr, self.udp_port)
+    }
+
+    /// Returns the primary external RLPx address (first entry). Used for
+    /// single-stack code paths and enode URL construction.
+    pub fn primary_rlpx_external_addr(&self) -> IpAddr {
+        self.rlpx_external_addrs
+            .first()
+            .copied()
+            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
     }
 
     /// Builds a `NetworkConfig` where all addresses are taken from `node`.
@@ -60,8 +75,8 @@ impl NetworkConfig {
         Self {
             discovery_bind_addr: node.ip,
             discovery_external_addr: node.ip,
-            rlpx_bind_addr: node.ip,
-            rlpx_external_addr: node.ip,
+            rlpx_bind_addrs: vec![node.ip],
+            rlpx_external_addrs: vec![node.ip],
             tcp_port: node.tcp_port,
             udp_port: node.udp_port,
         }
@@ -341,6 +356,21 @@ pub struct NodeRecordPairs {
     pub eth: Option<ForkId>,
 }
 
+impl NodeRecordPairs {
+    /// Returns the best TCP connection address for this peer, preferring IPv4
+    /// over IPv6. Returns `None` if neither `ip`+`tcp` nor `ip6`+`tcp6` are
+    /// present in the ENR.
+    pub fn connection_addr(&self) -> Option<(IpAddr, u16)> {
+        if let (Some(ip), Some(port)) = (self.ip, self.tcp_port) {
+            return Some((IpAddr::V4(ip), port));
+        }
+        if let (Some(ip6), Some(port)) = (self.ip6, self.tcp6_port) {
+            return Some((IpAddr::V6(ip6), port));
+        }
+        None
+    }
+}
+
 impl NodeRecord {
     pub fn decode_pairs(&self) -> NodeRecordPairs {
         let mut decoded_pairs = NodeRecordPairs::default();
@@ -440,6 +470,75 @@ impl NodeRecord {
 
         // ENR pairs must be sorted by key (spec requirement).
         record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        record.signature = record.sign_record(signer)?;
+
+        Ok(record)
+    }
+
+    /// Builds a dual-stack ENR from a [`NetworkConfig`].
+    ///
+    /// For every address in `network_config.rlpx_external_addrs`:
+    /// - An IPv4 address contributes `ip` / `tcp` / `udp` ENR pairs.
+    /// - An IPv6 address contributes `ip6` / `tcp6` / `udp6` ENR pairs.
+    ///
+    /// If both families are present the resulting record advertises both,
+    /// allowing peers to reach the node over whichever family they support.
+    pub fn from_network_config(
+        network_config: &NetworkConfig,
+        seq: u64,
+        signer: &SecretKey,
+    ) -> Result<Self, NodeError> {
+        let mut record = NodeRecord {
+            seq,
+            ..Default::default()
+        };
+        record
+            .pairs
+            .push(("id".into(), "v4".encode_to_vec().into()));
+        record.pairs.push((
+            "secp256k1".into(),
+            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
+                .serialize()
+                .encode_to_vec()
+                .into(),
+        ));
+
+        for addr in &network_config.rlpx_external_addrs {
+            match addr {
+                IpAddr::V4(ipv4) => {
+                    record
+                        .pairs
+                        .push(("ip".into(), ipv4.encode_to_vec().into()));
+                    record.pairs.push((
+                        "tcp".into(),
+                        network_config.tcp_port.encode_to_vec().into(),
+                    ));
+                    record.pairs.push((
+                        "udp".into(),
+                        network_config.udp_port.encode_to_vec().into(),
+                    ));
+                }
+                IpAddr::V6(ipv6) => {
+                    record
+                        .pairs
+                        .push(("ip6".into(), ipv6.encode_to_vec().into()));
+                    record.pairs.push((
+                        "tcp6".into(),
+                        network_config.tcp_port.encode_to_vec().into(),
+                    ));
+                    record.pairs.push((
+                        "udp6".into(),
+                        network_config.udp_port.encode_to_vec().into(),
+                    ));
+                }
+            }
+        }
+
+        // ENR pairs must be sorted by key and unique; deduplicate in case
+        // both families map to the same family (e.g. two IPv4 addrs).
+        record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        record.pairs.dedup_by(|a, b| a.0 == b.0);
 
         record.signature = record.sign_record(signer)?;
 

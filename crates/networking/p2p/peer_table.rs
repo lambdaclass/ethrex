@@ -120,13 +120,19 @@ impl Contact {
         self.enr_request_hash = Some(request_hash);
     }
 
-    // If hash does not match, ignore. Otherwise, reset enr_request_hash
+    // If hash does not match, ignore. Otherwise, reset enr_request_hash and
+    // refresh the node's TCP connection address from the ENR so that the
+    // RLPx initiator can reach the peer (including IPv6-only peers).
     pub fn record_enr_response_received(&mut self, request_hash: H256, record: NodeRecord) {
         if self
             .enr_request_hash
             .take_if(|h| *h == request_hash)
             .is_some()
         {
+            if let Some((ip, tcp_port)) = record.decode_pairs().connection_addr() {
+                self.node.ip = ip;
+                self.node.tcp_port = tcp_port;
+            }
             self.record = Some(record);
         }
     }
