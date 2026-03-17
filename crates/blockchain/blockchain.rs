@@ -2100,7 +2100,7 @@ impl Blockchain {
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        // Diagnostic: log parent state root for Polygon state root debugging
+        // Diagnostic: log parent state root and full account update details for Polygon
         if matches!(self.options.r#type, BlockchainType::Polygon) {
             let parent_header = self
                 .storage
@@ -2114,6 +2114,31 @@ impl Blockchain {
                 num_account_updates = updates.len(),
                 "Polygon: state root debug — parent trie root used"
             );
+            // Dump full account state for each updated account
+            for (i, update) in updates.iter().enumerate() {
+                warn!(
+                    block_number = block.header.number,
+                    idx = i,
+                    address = ?update.address,
+                    removed = update.removed,
+                    balance = ?update.info.as_ref().map(|info| info.balance),
+                    nonce = ?update.info.as_ref().map(|info| info.nonce),
+                    code_hash = ?update.info.as_ref().map(|info| info.code_hash),
+                    has_code = update.code.is_some(),
+                    storage_slots_changed = update.added_storage.len(),
+                    removed_storage = update.removed_storage,
+                    "Polygon: account update detail"
+                );
+                // Dump changed storage slots if any
+                for (key, value) in &update.added_storage {
+                    warn!(
+                        address = ?update.address,
+                        storage_key = ?key,
+                        storage_value = ?value,
+                        "Polygon: storage slot update"
+                    );
+                }
+            }
         }
 
         // Apply the account updates over the last block's state and compute the new state root
