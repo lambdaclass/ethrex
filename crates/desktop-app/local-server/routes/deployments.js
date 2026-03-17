@@ -276,6 +276,33 @@ router.post("/ai-deploy/monitor", async (req, res) => {
     }
   }
 
+  // 2.5. Extract contract addresses from deployer env file via SSH
+  if (keyPath) {
+    try {
+      const envContent = execFileSync("ssh", [
+        "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5",
+        "-i", keyPath, `ubuntu@${ip}`,
+        "docker cp $(docker ps -aq -f name=deployer | head -1):/env/.env /dev/stdout 2>/dev/null || cat /opt/tokamak/*/deployed.env 2>/dev/null || echo ''",
+      ], { timeout: 15000, stdio: "pipe" }).toString().trim();
+      if (envContent) {
+        const contracts = {};
+        for (const line of envContent.split("\n")) {
+          const [key, val] = line.split("=");
+          if (key && val) contracts[key.trim()] = val.trim();
+        }
+        result.contracts = {
+          bridge: contracts.ETHREX_WATCHER_BRIDGE_ADDRESS || null,
+          proposer: contracts.ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS || null,
+          timelock: contracts.ETHREX_TIMELOCK_ADDRESS || null,
+          sp1Verifier: contracts.ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS || null,
+          guestProgramRegistry: contracts.ETHREX_DEPLOYER_GUEST_PROGRAM_REGISTRY_ADDRESS || null,
+        };
+      }
+    } catch {
+      // Contract extraction is best-effort
+    }
+  }
+
   // 3. Check HTTP endpoints (parallel)
   const endpoints = [
     { name: "L2 RPC", port: 1729, type: "rpc" },

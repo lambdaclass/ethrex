@@ -550,7 +550,7 @@ function generateCloudDeployPrompt(opts) {
   sections.push(prerequisitesSection(cloud, keyPairName));
   sections.push(vmCreationSection({ cloud, region, vmType, vmName, storageGB, keyPairName, sgName }));
   sections.push(dockerInstallSection());
-  sections.push(composeFileSection({ composeContent, dataDir, projectName }));
+  sections.push(composeFileSection({ composeContent, dataDir, projectName, profile, l1ChainId }));
 
   if (isTestnet) {
     sections.push(testnetEnvSection({ cloud, l1RpcUrl, l1ChainId, l1Network, dataDir, walletConfig }));
@@ -860,7 +860,21 @@ docker compose version
 > \`newgrp docker\` 실행 후 셸이 끊기면 SSH로 재접속하세요. 재접속 후 \`docker ps\`가 sudo 없이 동작하면 OK.`;
 }
 
-function composeFileSection({ composeContent, dataDir, projectName }) {
+function composeFileSection({ composeContent, dataDir, projectName, profile, l1ChainId }) {
+  // Override genesis chainIds if user specified custom values
+  // Default L1 genesis chainId: 9, Default L2 genesis chainId: 65536999
+  const DEFAULT_L1_CHAIN_ID = 9;
+  const DEFAULT_L2_CHAIN_ID = 65536999;
+  const l2ChainId = composeContent.match(/ETHREX_L2_CHAIN_ID=(\d+)/)?.[1];
+
+  let chainIdOverrides = "";
+  if (l1ChainId && l1ChainId !== DEFAULT_L1_CHAIN_ID) {
+    chainIdOverrides += `\n# Set custom L1 Chain ID (default genesis uses chainId ${DEFAULT_L1_CHAIN_ID})\nsed -i 's/"chainId": ${DEFAULT_L1_CHAIN_ID}/"chainId": ${l1ChainId}/' ${dataDir}/genesis/l1.json\necho "✅ L1 Chain ID set to ${l1ChainId}"`;
+  }
+  if (l2ChainId && parseInt(l2ChainId) !== DEFAULT_L2_CHAIN_ID) {
+    chainIdOverrides += `\n# Set custom L2 Chain ID (default genesis uses chainId ${DEFAULT_L2_CHAIN_ID})\nsed -i 's/"chainId": ${DEFAULT_L2_CHAIN_ID}/"chainId": ${l2ChainId}/' ${dataDir}/genesis/${profile.genesisFile}\necho "✅ L2 Chain ID set to ${l2ChainId}"`;
+  }
+
   return `## Step 3: Write Docker Compose File
 
 \`\`\`bash
@@ -880,7 +894,7 @@ curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/
   -o ${dataDir}/genesis/private_keys_l1.txt 2>/dev/null || \\
 curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/feat/app-customized-framework/fixtures/keys/private_keys_l1.txt \\
   -o ${dataDir}/genesis/private_keys_l1.txt
-echo "✅ Genesis files downloaded"
+echo "✅ Genesis files downloaded"${chainIdOverrides}
 
 cat > docker-compose.yaml << 'COMPOSE_EOF'
 ${composeContent.trimEnd()}

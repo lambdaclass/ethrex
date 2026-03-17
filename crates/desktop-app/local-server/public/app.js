@@ -2234,17 +2234,38 @@ async function monitorAIDeployment(deploymentId) {
 
 async function saveAndCompleteDeployment(deploymentId, ip) {
   try {
-    // Save IP and RPC URL to deployment
+    // First, fetch contract addresses from the latest monitor data
+    let contracts = null;
+    try {
+      const dep = await fetch(`${API}/deployments/${deploymentId}`).then(r => r.json());
+      const config = dep.deployment?.config ? JSON.parse(dep.deployment.config) : {};
+      const monRes = await fetch(`${API}/deployments/ai-deploy/monitor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deploymentId }),
+      });
+      const monData = await monRes.json();
+      if (monData.contracts) contracts = monData.contracts;
+    } catch { /* best-effort */ }
+
+    // Save IP, RPC URL, and contract addresses to deployment
+    const updateData = {
+      phase: 'running',
+      status: 'running',
+      rpc_url: `http://${ip}:1729`,
+      l2_port: 1729,
+      l1_port: 8545,
+    };
+    if (contracts?.bridge) updateData.bridge_address = contracts.bridge;
+    if (contracts?.proposer) updateData.proposer_address = contracts.proposer;
+    if (contracts?.timelock) updateData.timelock_address = contracts.timelock;
+    if (contracts?.sp1Verifier) updateData.sp1_verifier_address = contracts.sp1Verifier;
+    if (contracts?.guestProgramRegistry) updateData.guest_program_registry_address = contracts.guestProgramRegistry;
+
     await fetch(`${API}/deployments/${deploymentId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phase: 'running',
-        status: 'running',
-        rpc_url: `http://${ip}:1729`,
-        l2_port: 1729,
-        l1_port: 8545,
-      }),
+      body: JSON.stringify(updateData),
     });
     // Clear chat state
     window._aiDeployDetailId = null;
@@ -3485,16 +3506,31 @@ async function checkDeploymentStatus() {
       }
     }
 
+    // Contracts
+    if (data.contracts) {
+      const c = data.contracts;
+      const hasAny = c.bridge || c.proposer || c.timelock;
+      if (hasAny) {
+        lines.push('\n📋 L1 컨트랙트:');
+        if (c.timelock) lines.push(`   Timelock: ${c.timelock}`);
+        if (c.proposer) lines.push(`   OnChainProposer: ${c.proposer}`);
+        if (c.bridge) lines.push(`   CommonBridge: ${c.bridge}`);
+        if (c.sp1Verifier) lines.push(`   SP1Verifier: ${c.sp1Verifier}`);
+        if (c.guestProgramRegistry) lines.push(`   GuestProgramRegistry: ${c.guestProgramRegistry}`);
+      }
+    }
+
     const actualVmName = data.vmName || vmName;
     const statusMsg = `🖥️ 배포 상태 모니터링\nVM: ${actualVmName} (${region})\n\n${lines.join('\n')}`;
     aiChatMessages.push({ role: 'assistant', content: statusMsg });
 
-    // Check if all services are healthy
+    // Check if all services are healthy AND contracts are deployed
     const allServicesOk = data.ec2?.State === 'running'
       && data.containers && data.containers.length > 0
       && data.containers.every(c => c.status?.startsWith('Up') || c.status?.includes('Exited (0)'))
       && Object.keys(data.services).length > 0
-      && Object.values(data.services).every(s => s.ok);
+      && Object.values(data.services).every(s => s.ok)
+      && data.contracts?.timelock; // Timelock contract must be deployed
 
     if (allServicesOk && data.ec2?.IP) {
       const ip = data.ec2.IP;
