@@ -980,8 +980,13 @@ jobs:
 
       - name: Clone and build ethrex-replay
         run: |
+          # Pin to a specific ethrex-replay commit to avoid unrelated replay
+          # regressions breaking ethrex CI. Update this SHA when replay is
+          # updated to match new ethrex API changes.
+          REPLAY_REF="c6bc19f"
           git clone https://github.com/lambdaclass/ethrex-replay.git /tmp/ethrex-replay
           cd /tmp/ethrex-replay
+          git checkout "$REPLAY_REF"
 
           # Override ethrex deps with the local checkout from the current PR.
           # This ensures ethrex-replay always builds against the PR's code,
