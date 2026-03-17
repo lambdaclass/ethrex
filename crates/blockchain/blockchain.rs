@@ -1490,12 +1490,17 @@ impl Blockchain {
             .header;
 
         // Get state at previous block
+        let first_parent_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)
+            .map_err(ChainError::StoreError)?
+            .ok_or(ChainError::ParentNotFound)?;
+        let initial_state_root = first_parent_header.state_root;
         let trie = self
             .storage
             .state_trie(first_block_header.parent_hash)
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let initial_state_root = trie.hash_no_commit();
 
         let (mut current_trie_witness, mut trie) = TrieLogger::open_trie(trie);
 
@@ -1528,6 +1533,7 @@ impl Blockchain {
                 .get_block_header_by_hash(parent_hash)
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
+            let parent_state_root = parent_header.state_root;
 
             // This assumes that the user has the necessary state stored already,
             // so if the user only has the state previous to the first block, it
@@ -1670,6 +1676,7 @@ impl Blockchain {
                     trie,
                     &account_updates,
                     used_storage_tries,
+                    parent_state_root,
                 )?;
 
             // We cannot ensure that the users of this function have the necessary
@@ -1832,12 +1839,12 @@ impl Blockchain {
         logger: &DatabaseLogger,
     ) -> Result<ExecutionWitness, ChainError> {
         // Get state at previous block
+        let initial_state_root = parent_header.state_root;
         let trie = self
             .storage
             .state_trie(parent_header.hash())
             .map_err(|_| ChainError::ParentStateNotFound)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let initial_state_root = trie.hash_no_commit();
 
         let (trie_witness, trie) = TrieLogger::open_trie(trie);
 
@@ -1940,6 +1947,7 @@ impl Blockchain {
                 trie,
                 &account_updates,
                 used_storage_tries,
+                parent_header.state_root,
             )?;
 
         for (address, (witness, _storage_trie)) in storage_tries_after_update {
@@ -2100,122 +2108,11 @@ impl Blockchain {
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        // Diagnostic: log parent state root and full account update details for Polygon
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            let parent_header = self
-                .storage
-                .get_block_header_by_hash(block.header.parent_hash)
-                .map_err(ChainError::StoreError)?;
-            warn!(
-                block_number = block.header.number,
-                parent_hash = ?block.header.parent_hash,
-                parent_state_root = ?parent_header.as_ref().map(|h| h.state_root),
-                expected_state_root = ?block.header.state_root,
-                num_account_updates = updates.len(),
-                "Polygon: state root debug — parent trie root used"
-            );
-            // Dump full account state for each updated account
-            for (i, update) in updates.iter().enumerate() {
-                warn!(
-                    block_number = block.header.number,
-                    idx = i,
-                    address = ?update.address,
-                    removed = update.removed,
-                    balance = ?update.info.as_ref().map(|info| info.balance),
-                    nonce = ?update.info.as_ref().map(|info| info.nonce),
-                    code_hash = ?update.info.as_ref().map(|info| info.code_hash),
-                    has_code = update.code.is_some(),
-                    storage_slots_changed = update.added_storage.len(),
-                    removed_storage = update.removed_storage,
-                    "Polygon: account update detail"
-                );
-                // Dump changed storage slots if any
-                for (key, value) in &update.added_storage {
-                    warn!(
-                        address = ?update.address,
-                        storage_key = ?key,
-                        storage_value = ?value,
-                        "Polygon: storage slot update"
-                    );
-                }
-            }
-        }
-
-        // Diagnostic: apply updates one-at-a-time to isolate which breaks the trie
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            if let Ok(Some(mut diag_trie)) = self.storage.state_trie(block.header.parent_hash) {
-                let initial_root = diag_trie.hash_no_commit();
-                warn!(
-                    block_number = block.header.number,
-                    initial_trie_root = ?initial_root,
-                    expected_parent_root = ?block.header.parent_hash,
-                    "Polygon: incremental trie update — starting"
-                );
-                for (i, update) in updates.iter().enumerate() {
-                    let hashed_address = keccak(update.address.to_fixed_bytes());
-                    // Read current state from trie
-                    let old_state = diag_trie
-                        .get(hashed_address.as_bytes())
-                        .ok()
-                        .flatten()
-                        .and_then(|enc| AccountState::decode(&enc).ok());
-                    let old_storage_root = old_state
-                        .as_ref()
-                        .map(|s| s.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH);
-
-                    if update.removed {
-                        let _ = diag_trie.remove(hashed_address.as_bytes());
-                    } else {
-                        let mut account_state = old_state.clone().unwrap_or_default();
-                        if update.removed_storage {
-                            account_state.storage_root = *EMPTY_TRIE_HASH;
-                        }
-                        if let Some(info) = &update.info {
-                            account_state.nonce = info.nonce;
-                            account_state.balance = info.balance;
-                            account_state.code_hash = info.code_hash;
-                        }
-                        // NOTE: We skip storage trie updates here — just testing
-                        // account-level trie changes. Storage root stays as-is.
-                        let _ = diag_trie.insert(
-                            hashed_address.as_bytes().to_vec(),
-                            account_state.encode_to_vec(),
-                        );
-                    }
-                    let root_after = diag_trie.hash_no_commit();
-                    warn!(
-                        idx = i,
-                        address = ?update.address,
-                        removed = update.removed,
-                        had_old_state = old_state.is_some(),
-                        old_storage_root = ?old_storage_root,
-                        new_balance = ?update.info.as_ref().map(|info| info.balance),
-                        new_nonce = ?update.info.as_ref().map(|info| info.nonce),
-                        storage_slots_changed = update.added_storage.len(),
-                        root_after = ?root_after,
-                        "Polygon: trie root after update"
-                    );
-                }
-            }
-        }
-
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, &updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
-
-        // Diagnostic: log computed state root for Polygon
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            warn!(
-                block_number = block.header.number,
-                computed_state_root = ?account_updates_list.state_trie_hash,
-                expected_state_root = ?block.header.state_root,
-                match_result = account_updates_list.state_trie_hash == block.header.state_root,
-                "Polygon: state root debug — computed vs expected"
-            );
-        }
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,

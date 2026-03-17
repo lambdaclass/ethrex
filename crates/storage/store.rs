@@ -1699,6 +1699,10 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        let state_root = header.state_root;
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1706,6 +1710,7 @@ impl Store {
         Ok(Some(self.apply_account_updates_from_trie_batch(
             &mut state_trie,
             account_updates,
+            state_root,
         )?))
     }
 
@@ -1713,10 +1718,10 @@ impl Store {
         &self,
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
+        state_root: H256,
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit();
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1781,12 +1786,11 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
         mut storage_tries: StorageTries,
+        state_root: H256,
     ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
-
-        let state_root = state_trie.hash_no_commit();
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
