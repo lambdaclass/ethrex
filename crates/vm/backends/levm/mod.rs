@@ -115,6 +115,10 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
+        // Deferred base fee accumulator for Polygon (tips are paid per-tx in PolygonHook)
+        let mut deferred_base_fee_total = U256::zero();
+        let is_polygon = matches!(vm_type, VMType::Polygon(_));
+        let base_fee_per_gas = block.header.base_fee_per_gas.unwrap_or_default();
         let transactions_with_sender =
             block
                 .body
@@ -153,6 +157,12 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
+            // Accumulate deferred base fee for Polygon (tips paid per-tx in PolygonHook)
+            if is_polygon {
+                deferred_base_fee_total +=
+                    U256::from(base_fee_per_gas).saturating_mul(U256::from(report.gas_spent));
+            }
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -163,8 +173,18 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        // Fee distribution for Polygon is handled per-tx in PolygonHook::finalize_execution
-        // (tips to coinbase, base fees to burnt contract — both applied in real-time).
+        // Polygon: Apply deferred base fee distribution after all transactions.
+        // Tips are already paid per-tx in PolygonHook::finalize_execution.
+        if let VMType::Polygon(ref polygon_fee_config) = vm_type {
+            if let Some(burnt_contract) = polygon_fee_config.burnt_contract
+                && !deferred_base_fee_total.is_zero()
+            {
+                let account = db.get_account_mut(burnt_contract).map_err(|_| {
+                    EvmError::DB(format!("Burnt contract account {burnt_contract} not found"))
+                })?;
+                account.info.balance += deferred_base_fee_total;
+            }
+        }
 
         // Set BAL index for post-execution phase (requests + withdrawals, uint16)
         // Order must match geth: requests (system calls) BEFORE withdrawals.

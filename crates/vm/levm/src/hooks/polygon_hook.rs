@@ -45,16 +45,13 @@ pub struct PolygonHook {
     sender_balance_before: U256,
     /// Coinbase balance captured BEFORE any fees are paid.
     coinbase_balance_before: U256,
-    /// Address to receive base fee revenue (from BorConfig.burnt_contract).
-    burnt_contract: Option<Address>,
 }
 
-impl PolygonHook {
-    pub fn new(burnt_contract: Option<Address>) -> Self {
+impl Default for PolygonHook {
+    fn default() -> Self {
         Self {
             sender_balance_before: U256::zero(),
             coinbase_balance_before: U256::zero(),
-            burnt_contract,
         }
     }
 }

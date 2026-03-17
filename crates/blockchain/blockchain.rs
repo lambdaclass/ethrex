@@ -445,7 +445,10 @@ impl Blockchain {
         }
 
         validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        // Polygon doesn't implement EIP-7685 (execution requests)
+        if !matches!(self.options.r#type, BlockchainType::Polygon) {
+            validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        }
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
@@ -578,11 +581,13 @@ impl Blockchain {
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
-                        validate_requests_hash(
-                            &block.header,
-                            &chain_config,
-                            &execution_result.requests,
-                        )?;
+                        if !matches!(self.options.r#type, BlockchainType::Polygon) {
+                            validate_requests_hash(
+                                &block.header,
+                                &chain_config,
+                                &execution_result.requests,
+                            )?;
+                        }
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -1408,7 +1413,9 @@ impl Blockchain {
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        if !matches!(self.options.r#type, BlockchainType::Polygon) {
+            validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        }
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
