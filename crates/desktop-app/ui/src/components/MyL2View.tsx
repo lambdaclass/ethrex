@@ -214,15 +214,20 @@ export default function MyL2View() {
       const rows = await invoke<DeploymentFromDB[]>('list_docker_deployments')
       const configs = rows.map(deploymentToL2Config)
 
-      // Reconcile live Docker status with stale SQLite status
+      // Phase 1: Show DB data immediately
+      setL2s(configs)
+
+      // Phase 2: Reconcile live status in background (non-blocking)
       const updated = await Promise.all(configs.map(async (l2) => {
+        // Skip live status check for stopped/configured deployments
+        if (l2.phase === 'stopped' || l2.phase === 'configured' || l2.status === 'stopped') {
+          return l2
+        }
         try {
           const containers = await invoke<{ name: string; service: string; state: string; status: string; ports: string; image: string; id: string }[]>(
             'get_docker_containers', { id: l2.id }
           )
           if (containers.length === 0) {
-            // No containers → actually stopped
-            // Also fix 'created' status for provisioned deployments (recovery set status=configured)
             if (l2.status === 'running' || l2.status === 'error' || (l2.status === 'created' && l2.dockerProject) || l2.everRunning) {
               return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
             }
@@ -233,7 +238,7 @@ export default function MyL2View() {
           const anyError = containers.some(c => c.state === 'exited' || c.state === 'dead')
 
           // Fetch real chain IDs from monitoring API if running
-          let l1ChainId: number | null = l2.l1ChainId  // keep config-based value as fallback
+          let l1ChainId: number | null = l2.l1ChainId
           let l2ChainId: number | null = l2.l2ChainId
           if (anyRunning) {
             try {
@@ -255,7 +260,6 @@ export default function MyL2View() {
             return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
           }
         } catch {
-          // Can't reach local-server — keep DB status
           return l2
         }
       }))
