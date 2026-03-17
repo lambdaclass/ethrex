@@ -5,15 +5,15 @@ use ethrex_common::{
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::FxBuildHasher;
-use std::sync::{Arc, OnceLock};
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::sync::{Arc, OnceLock, RwLock};
 
 pub mod gen_db;
 
 // Type aliases for cache storage maps
 type AccountCache = DashMap<Address, AccountState, FxBuildHasher>;
 type StorageCache = DashMap<(Address, H256), U256, FxBuildHasher>;
-type CodeCache = DashMap<H256, Code, FxBuildHasher>;
+type CodeCache = RwLock<FxHashMap<H256, Code>>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -71,7 +71,7 @@ impl CachingDatabase {
             inner,
             accounts: DashMap::with_hasher(FxBuildHasher),
             storage: DashMap::with_hasher(FxBuildHasher),
-            code: DashMap::with_hasher(FxBuildHasher),
+            code: RwLock::new(FxHashMap::default()),
             precompile_cache: PrecompileCache::new(),
             chain_config: OnceLock::new(),
         }
@@ -132,7 +132,13 @@ impl Database for CachingDatabase {
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
         // Check cache first
-        if let Some(code) = self.code.get(&code_hash).map(|r| r.clone()) {
+        if let Some(code) = self
+            .code
+            .read()
+            .map_err(|_| DatabaseError::Custom("Lock error".into()))?
+            .get(&code_hash)
+            .cloned()
+        {
             return Ok(code);
         }
 
@@ -140,7 +146,10 @@ impl Database for CachingDatabase {
         let code = self.inner.get_account_code(code_hash)?;
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
-        self.code.insert(code_hash, code.clone());
+        self.code
+            .write()
+            .map_err(|_| DatabaseError::Custom("Lock error".into()))?
+            .insert(code_hash, code.clone());
 
         Ok(code)
     }

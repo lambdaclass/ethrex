@@ -1375,9 +1375,9 @@ impl Blockchain {
 
             let mut state_accessed: HashMap<_, Vec<_>> = logger
                 .state_accessed
-                .iter()
-                .map(|entry| (*entry.key(), entry.value().clone()))
-                .collect();
+                .lock()
+                .map_err(|_| ChainError::Custom("Could not lock mutex".to_string()))?
+                .clone();
 
             // Deduplicate storage keys while preserving access order
             for keys in state_accessed.values_mut() {
@@ -1394,9 +1394,9 @@ impl Blockchain {
             // Get the used block hashes from the logger
             let logger_block_hashes: HashMap<_, _> = logger
                 .block_hashes_accessed
-                .iter()
-                .map(|entry| (*entry.key(), *entry.value()))
-                .collect();
+                .lock()
+                .map_err(|_| ChainError::Custom("Could not lock mutex".to_string()))?
+                .clone();
 
             blockhash_opcode_references.extend(logger_block_hashes);
 
@@ -1647,9 +1647,9 @@ impl Blockchain {
         // Get the used block hashes from the logger
         let blockhash_opcode_references: HashMap<_, _> = logger
             .block_hashes_accessed
-            .iter()
-            .map(|entry| (*entry.key(), *entry.value()))
-            .collect();
+            .lock()
+            .map_err(|_| ChainError::Custom("Could not lock mutex".to_string()))?
+            .clone();
 
         // Access all the accounts needed for withdrawals
         if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -1664,8 +1664,12 @@ impl Blockchain {
 
         // Access all the accounts from the initial trie
         // Record all the storage nodes for the initial state
-        for entry in logger.state_accessed.iter() {
-            let (account, acc_keys) = (entry.key(), entry.value());
+        let state_accessed = logger
+            .state_accessed
+            .lock()
+            .map_err(|_| ChainError::Custom("Could not lock mutex".to_string()))?
+            .clone();
+        for (account, acc_keys) in state_accessed.iter() {
             // Access the account from the state trie to record the nodes used to access it
             trie.get(&hash_address(account)).map_err(|_e| {
                 ChainError::WitnessGeneration("Failed to access account from trie".to_string())
