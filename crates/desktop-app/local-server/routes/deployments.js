@@ -183,17 +183,18 @@ router.post("/ai-deploy/monitor", async (req, res) => {
   let { vmName, region, keyPairName, deploymentId } = req.body;
   const { execFileSync } = require("child_process");
 
-  // If deploymentId provided, load config from DB
-  if (deploymentId && !vmName) {
+  // Load config from DB once (reused for parameter extraction and instance ID save)
+  let deployConfig = null;
+  if (deploymentId) {
     try {
       const dep = db.prepare("SELECT config FROM deployments WHERE id = ?").get(deploymentId);
-      if (dep?.config) {
-        const cfg = JSON.parse(dep.config);
-        vmName = cfg.vmName || vmName;
-        region = cfg.region || region;
-        keyPairName = cfg.keyPairName || keyPairName;
-      }
+      if (dep?.config) deployConfig = JSON.parse(dep.config);
     } catch {}
+  }
+  if (deployConfig && !vmName) {
+    vmName = deployConfig.vmName || vmName;
+    region = deployConfig.region || region;
+    keyPairName = deployConfig.keyPairName || keyPairName;
   }
 
   if (!vmName) return res.status(400).json({ error: "vmName required" });
@@ -213,17 +214,25 @@ router.post("/ai-deploy/monitor", async (req, res) => {
       "--query", jmesQuery, "--output", "json", "--region", awsRegion,
     ], { timeout: 10000, stdio: "pipe" }).toString().trim();
     let parsed = JSON.parse(ec2Json);
-    // Fallback: search all tokamak-l2-* instances
+    // Fallback: search all tokamak-* instances
     if (!parsed) {
       ec2Json = execFileSync("aws", [
         "ec2", "describe-instances",
-        "--filters", "Name=tag:Name,Values=tokamak-l2-*", "Name=instance-state-name,Values=pending,running,stopping,stopped",
+        "--filters", "Name=tag:Name,Values=tokamak-*", "Name=instance-state-name,Values=pending,running,stopping,stopped",
         "--query", jmesQuery, "--output", "json", "--region", awsRegion,
       ], { timeout: 10000, stdio: "pipe" }).toString().trim();
       parsed = JSON.parse(ec2Json);
     }
     result.ec2 = parsed || { State: "not_found" };
     if (result.ec2.Name) result.vmName = result.ec2.Name;
+    // Save instance ID and IP to DB for reliable future lookups (reuse deployConfig)
+    if (deploymentId && result.ec2.Id && deployConfig) {
+      if (deployConfig.ec2InstanceId !== result.ec2.Id || deployConfig.ec2IP !== result.ec2.IP) {
+        deployConfig.ec2InstanceId = result.ec2.Id;
+        deployConfig.ec2IP = result.ec2.IP;
+        try { db.prepare("UPDATE deployments SET config = ? WHERE id = ?").run(JSON.stringify(deployConfig), deploymentId); } catch {}
+      }
+    }
   } catch (e) {
     result.ec2 = { State: "not_found", error: (e.message || "").slice(0, 200) };
     return res.json(result);
@@ -697,14 +706,14 @@ router.get("/:id", (req, res) => {
 });
 
 // PUT /api/deployments/:id — update deployment
-router.put("/:id", (req, res) => {
+function updateDeploymentHandler(req, res) {
   try {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) {
       return res.status(404).json({ error: "Deployment not found" });
     }
 
-    const allowedFields = ["name", "chain_id", "l1_chain_id", "rpc_url", "config", "is_public", "hashtags", "platform_deployment_id"];
+    const allowedFields = ["name", "chain_id", "l1_chain_id", "rpc_url", "config", "is_public", "hashtags", "platform_deployment_id", "phase", "status"];
     const updates = [];
     const values = [];
 
@@ -725,7 +734,9 @@ router.put("/:id", (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
+}
+router.put("/:id", updateDeploymentHandler);
+router.patch("/:id", updateDeploymentHandler);
 
 // DELETE /api/deployments/:id — remove deployment
 router.delete("/:id", async (req, res) => {
@@ -1287,7 +1298,7 @@ router.post("/:id/ai-prompt", async (req, res) => {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
-    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig, storageGB, keyPairName } = req.body;
+    const { cloud, region, vmType, l1Mode, l1RpcUrl, l1ChainId, l1Network, includeProver, walletConfig, storageGB, keyPairName, awsAccount, programName } = req.body;
     if (!cloud) {
       return res.status(400).json({ error: "cloud is required" });
     }
@@ -1322,7 +1333,8 @@ router.post("/:id/ai-prompt", async (req, res) => {
     });
 
     // Save cloud config to deployment for persistent monitoring
-    const vmName = `tokamak-l2-${deployment.id.slice(0, 8)}`;
+    const safeName = (deployment.name || "l2").replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase().slice(0, 30);
+    const vmName = `tokamak-${safeName}-${deployment.id.slice(0, 8)}`;
     const cloudConfig = {
       mode: "ai-deploy",
       cloud,
@@ -1334,6 +1346,9 @@ router.post("/:id/ai-prompt", async (req, res) => {
       l1Mode: l1Mode || "local",
       l1RpcUrl, l1ChainId, l1Network,
       includeProver,
+      awsAccount: awsAccount || "",
+      programName: programName || deployment.program_slug || "evm-l2",
+      prompt,
     };
     db.prepare("UPDATE deployments SET config = ?, phase = 'ai-deploy' WHERE id = ?")
       .run(JSON.stringify(cloudConfig), deployment.id);

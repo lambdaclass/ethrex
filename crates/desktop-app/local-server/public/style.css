@@ -696,6 +696,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
 .phase-l1_starting, .phase-deploying_contracts, .phase-l2_starting,
 .phase-starting_prover, .phase-starting_tools { background: var(--yellow-100); color: var(--yellow-700); }
 .phase-running { background: var(--green-100); color: var(--green-600); }
+.phase-ai-deploy { background: #dbeafe; color: #2563eb; }
 .phase-stopped { background: var(--orange-100); color: var(--orange-600); }
 .phase-error { background: var(--red-100); color: var(--red-600); }
 

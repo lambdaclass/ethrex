@@ -523,10 +523,13 @@ function generateCloudDeployPrompt(opts) {
   const programSlug = deployment.program_slug || "evm-l2";
   const profile = getAppProfile(programSlug);
   const l2ChainId = deployment.chain_id || 65536999;
-  const projectName = `tokamak-${deployment.id.slice(0, 8)}`;
+  const shortId = deployment.id.slice(0, 8);
+  const safeName = (deployment.name || "l2").replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase().slice(0, 30);
+  const projectName = `tokamak-${safeName}-${shortId}`;
   const isTestnet = l1Mode === "testnet";
-  const vmName = `tokamak-l2-${deployment.id.slice(0, 8)}`;
-  const dataDir = `/opt/tokamak/${deployment.id.slice(0, 8)}`;
+  const vmName = `tokamak-${safeName}-${shortId}`;
+  const sgName = `tokamak-sg-${shortId}`;
+  const dataDir = `/opt/tokamak/${shortId}`;
 
   // Always generate the local-L1 remote compose as template.
   // For testnet, we provide modification instructions instead of using
@@ -545,7 +548,7 @@ function generateCloudDeployPrompt(opts) {
 
   sections.push(headerSection({ deployment, programSlug, profile, cloud, region, vmType, l2ChainId, isTestnet, l1RpcUrl, l1Network, l1ChainId, storageGB, keyPairName, includeProver }));
   sections.push(prerequisitesSection(cloud, keyPairName));
-  sections.push(vmCreationSection({ cloud, region, vmType, vmName, storageGB, keyPairName }));
+  sections.push(vmCreationSection({ cloud, region, vmType, vmName, storageGB, keyPairName, sgName }));
   sections.push(dockerInstallSection());
   sections.push(composeFileSection({ composeContent, dataDir, projectName }));
 
@@ -556,9 +559,9 @@ function generateCloudDeployPrompt(opts) {
   sections.push(deploySection({ projectName, dataDir, isTestnet }));
   sections.push(verifySection({ l2ChainId, isTestnet }));
   sections.push(toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, projectName }));
-  sections.push(firewallSection({ cloud, vmName, isTestnet }));
+  sections.push(firewallSection({ cloud, vmName, isTestnet, sgName, region }));
   sections.push(summarySection({ isTestnet, deployment }));
-  sections.push(troubleshootingSection({ projectName, dataDir }));
+  sections.push(troubleshootingSection({ projectName, dataDir, sgName, region, vmName }));
 
   return sections.join("\n\n");
 }
@@ -672,7 +675,7 @@ ls -la ~/.ssh/${sshKeyName}.pem || echo "❌ SSH key not found: ~/.ssh/${sshKeyN
 > SSH 키가 없으면: 매니저 AI Deploy Guide에서 키페어를 생성하세요.`;
 }
 
-function vmCreationSection({ cloud, region, vmType, vmName, storageGB = 30, keyPairName = "" }) {
+function vmCreationSection({ cloud, region, vmType, vmName, storageGB = 30, keyPairName = "", sgName = "tokamak-l2-sg" }) {
   if (cloud === "gcp") {
     return `## Step 1: Create VM
 
@@ -762,20 +765,48 @@ if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
   echo "✅ Instance already exists: $EXISTING"
   VM_IP=$EXISTING
 else
-  # Create a security group (if not exists)
-  aws ec2 create-security-group \\
-    --group-name tokamak-l2-sg \\
-    --description "Tokamak L2 appchain" \\
-    --region ${region} 2>/dev/null || true
+  # Find default VPC and a public subnet (with internet gateway route)
+  VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" \\
+    --query "Vpcs[0].VpcId" --output text --region ${region} 2>/dev/null)
+  if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+    VPC_ID=$(aws ec2 describe-vpcs --query "Vpcs[0].VpcId" --output text --region ${region})
+  fi
+  echo "VPC: $VPC_ID"
 
-  # Open SSH port (required for connection)
-  # For better security, replace 0.0.0.0/0 with your IP: curl -s ifconfig.me
+  # Find a public subnet (with IGW route, not NAT)
+  SUBNET_ID=""
+  for RT_ID in $(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \\
+    --query "RouteTables[?Routes[?GatewayId!=\`local\` && starts_with(GatewayId,\`igw-\`)]].Associations[].SubnetId" \\
+    --output text --region ${region} 2>/dev/null); do
+    if [ -n "$RT_ID" ] && [ "$RT_ID" != "None" ]; then
+      SUBNET_ID=$RT_ID
+      break
+    fi
+  done
+  if [ -z "$SUBNET_ID" ]; then
+    echo "❌ No public subnet with IGW route found. Check VPC route tables."
+    exit 1
+  fi
+  echo "Subnet: $SUBNET_ID (IGW route confirmed)"
+
+  # Create a security group in the VPC (if not exists)
+  SG_ID=$(aws ec2 create-security-group \\
+    --group-name ${sgName} --vpc-id $VPC_ID \\
+    --description "Tokamak L2 appchain" \\
+    --query "GroupId" --output text \\
+    --region ${region} 2>/dev/null) || \\
+  SG_ID=$(aws ec2 describe-security-groups \\
+    --filters "Name=group-name,Values=${sgName}" "Name=vpc-id,Values=$VPC_ID" \\
+    --query "SecurityGroups[0].GroupId" --output text --region ${region})
+  echo "Security Group: $SG_ID"
+
+  # Open SSH port with current IP
   MY_IP=$(curl -s ifconfig.me 2>/dev/null || echo "0.0.0.0")
   aws ec2 authorize-security-group-ingress \\
-    --group-name tokamak-l2-sg --protocol tcp --port 22 --cidr $MY_IP/32 \\
+    --group-id $SG_ID --protocol tcp --port 22 --cidr $MY_IP/32 \\
     --region ${region} 2>/dev/null || true
 
-  # Launch instance
+  # Launch instance in the public subnet
   aws ec2 run-instances \\
     --region ${region} \\
     --instance-type ${vmType} \\
@@ -783,7 +814,7 @@ else
     --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":${diskSize},"VolumeType":"gp3"}}]' \\
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=${vmName}}]' \\
     --key-name ${keyName} \\
-    --security-groups tokamak-l2-sg \\
+    --network-interfaces "SubnetId=$SUBNET_ID,AssociatePublicIpAddress=true,DeviceIndex=0,Groups=[$SG_ID]" \\
     --count 1
 
   # Wait for instance to be running
@@ -813,26 +844,43 @@ SSH Key: \`~/.ssh/${keyName}.pem\``;
 function dockerInstallSection() {
   return `## Step 2: Install Docker
 
-Run these commands on the VM:
-
 \`\`\`bash
 # Install Docker
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
+
+# newgrp으로 그룹 적용 (세션이 끊기면 SSH 재접속)
 newgrp docker
 
 # Verify
 docker --version
 docker compose version
-\`\`\``;
+\`\`\`
+
+> \`newgrp docker\` 실행 후 셸이 끊기면 SSH로 재접속하세요. 재접속 후 \`docker ps\`가 sudo 없이 동작하면 OK.`;
 }
 
 function composeFileSection({ composeContent, dataDir, projectName }) {
   return `## Step 3: Write Docker Compose File
 
 \`\`\`bash
-sudo mkdir -p ${dataDir}
+sudo mkdir -p ${dataDir}/genesis
 cd ${dataDir}
+
+# Download genesis files (L1 + L2) from repository
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/fixtures/genesis/l1.json \\
+  -o ${dataDir}/genesis/l1.json 2>/dev/null || \\
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/feat/app-customized-framework/fixtures/genesis/l1.json \\
+  -o ${dataDir}/genesis/l1.json
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/fixtures/genesis/${profile.genesisFile} \\
+  -o ${dataDir}/genesis/${profile.genesisFile} 2>/dev/null || \\
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/feat/app-customized-framework/fixtures/genesis/${profile.genesisFile} \\
+  -o ${dataDir}/genesis/${profile.genesisFile}
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/fixtures/keys/private_keys_l1.txt \\
+  -o ${dataDir}/genesis/private_keys_l1.txt 2>/dev/null || \\
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/feat/app-customized-framework/fixtures/keys/private_keys_l1.txt \\
+  -o ${dataDir}/genesis/private_keys_l1.txt
+echo "✅ Genesis files downloaded"
 
 cat > docker-compose.yaml << 'COMPOSE_EOF'
 ${composeContent.trimEnd()}
@@ -843,12 +891,28 @@ The compose project name is \`${projectName}\`.
 이 파일은 사전 빌드된 Docker 이미지(\`ghcr.io/tokamak-network/tokamak-appchain\`)를 pull합니다.
 
 \`\`\`bash
+# 키 환경변수 파일 생성 (compose에서 참조)
+cat > ${dataDir}/.env << 'ENV_EOF'
+# Default built-in L1 keys (test-only, no real assets)
+ETHREX_DEPLOYER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+ETHREX_BRIDGE_OWNER_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+ETHREX_DEPLOYER_SEQUENCER_REGISTRY_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+ETHREX_COMMITTER_L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d
+ENV_EOF
+chmod 600 ${dataDir}/.env
+
 # Prover에 필요한 programs.toml 생성
 cat > ${dataDir}/programs.toml << 'TOML_EOF'
 default_program = "evm-l2"
 enabled_programs = ["evm-l2", "zk-dex", "tokamon"]
 TOML_EOF
-\`\`\``;
+\`\`\`
+
+> ⚠️ \`.env\` 파일에 프라이빗 키가 포함됩니다. 서버 접근 권한을 관리하세요.
+> 위 키는 내장 L1 테스트용입니다. 테스트넷/메인넷 배포 시 실제 키로 교체하세요.`;
 }
 
 function testnetEnvSection({ cloud, l1RpcUrl, l1ChainId, l1Network, dataDir, walletConfig }) {
@@ -1000,17 +1064,22 @@ docker compose -p ${projectName} pull
 # Start the deployment
 docker compose -p ${projectName} up -d
 
-# Watch the deployer logs (wait for "Contract deployment complete")
+# Deployer 로그 확인 (완료될 때까지 대기 — 보통 3-5분)
 docker logs -f ${projectName}-deployer
+
+# Deployer 종료 확인 (exit code 0이어야 정상)
+docker wait ${projectName}-deployer
+docker inspect ${projectName}-deployer --format='{{.State.ExitCode}}'
 \`\`\`
 
-The deployer container will:
+Deployer 동작 순서:
 1. ${isTestnet ? "외부 L1 RPC에 연결" : "Built-in L1이 준비될 때까지 대기"}
 2. L1 컨트랙트 컴파일 및 배포 (CommonBridge, OnChainProposer, Timelock, SP1Verifier, GuestProgramRegistry)
 3. 배포된 주소를 공유 볼륨(\`/env/.env\`)에 기록
 4. 성공 시 exit code 0으로 종료
 
-Deployer가 종료되면 L2 노드와 Prover가 자동으로 시작됩니다.`;
+> Deployer가 종료되면 L2 노드와 Prover가 자동으로 시작됩니다.
+> exit code가 0이 아니면 \`docker logs ${projectName}-deployer\`로 에러를 확인하세요.`;
 }
 
 function verifySection({ l2ChainId, isTestnet }) {
@@ -1053,12 +1122,14 @@ Tools 스택:
 \`\`\`bash
 cd ${dataDir}
 
-# Download the tools compose file from the repository
+# Download tools compose (tokamak-dev, fallback to feature branch)
 curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/crates/l2/docker-compose-zk-dex-tools.yaml \\
+  -o docker-compose-tools.yaml 2>/dev/null || \\
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/feat/app-customized-framework/crates/l2/docker-compose-zk-dex-tools.yaml \\
   -o docker-compose-tools.yaml
 
 # Get the deployed contract addresses from the deployer
-docker cp $(docker ps -aq -f name=deployer | head -1):/env/.env ${dataDir}/deployed.env 2>/dev/null || echo "No deployed env found"
+docker cp ${projectName}-deployer:/env/.env ${dataDir}/deployed.env 2>/dev/null || echo "No deployed env found"
 
 # Set tools environment variables
 export TOOLS_L2_RPC_PORT=${DEFAULT_PORTS.l2}
@@ -1100,7 +1171,7 @@ curl -s http://localhost:${DEFAULT_PORTS.dashboard}/ | head -c 200
 \`\`\``;
 }
 
-function firewallSection({ cloud, vmName, isTestnet }) {
+function firewallSection({ cloud, vmName, isTestnet, sgName = "tokamak-l2-sg", region = "ap-northeast-2" }) {
   if (cloud === "gcp") {
     const ports = isTestnet
       ? `${DEFAULT_PORTS.l2},${DEFAULT_PORTS.l2Explorer},${DEFAULT_PORTS.dashboard}`
@@ -1139,23 +1210,27 @@ sudo ufw enable
   }
 
   // AWS
+  // Only open ports that external users need (L2 services + tools)
+  // L1 RPC/Explorer are internal — accessed within Docker network only
   const sgRules = [
     { port: DEFAULT_PORTS.l2, desc: "L2 RPC" },
     { port: DEFAULT_PORTS.l2Explorer, desc: "L2 Explorer" },
-    { port: DEFAULT_PORTS.dashboard, desc: "Dashboard" },
+    { port: DEFAULT_PORTS.l1Explorer, desc: "L1 Explorer" },
+    { port: DEFAULT_PORTS.dashboard, desc: "Bridge Dashboard" },
   ];
-  if (!isTestnet) {
-    sgRules.push({ port: DEFAULT_PORTS.l1, desc: "L1 RPC" });
-    sgRules.push({ port: DEFAULT_PORTS.l1Explorer, desc: "L1 Explorer" });
-  }
 
   const rules = sgRules.map(r =>
-    `aws ec2 authorize-security-group-ingress --group-name tokamak-l2-sg --protocol tcp --port ${r.port} --cidr 0.0.0.0/0  # ${r.desc}`
+    `aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port ${r.port} --cidr 0.0.0.0/0 --region ${region}  # ${r.desc}`
   ).join("\n");
 
   return `## Step 7: Open Firewall Ports
 
+> L2 RPC, Explorer, Dashboard 포트를 외부에서 접근할 수 있도록 개방합니다 (SSH 제외).
+> 실 운영 환경에서는 필요한 포트만 특정 IP로 제한하세요.
+
 \`\`\`bash
+# SG_ID가 없으면 조회
+SG_ID=\${SG_ID:-$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${sgName}" --query "SecurityGroups[0].GroupId" --output text --region ${region})}
 ${rules}
 \`\`\``;
 }
@@ -1186,7 +1261,7 @@ Replace \`VM_IP\` with the actual IP from Step 1.
 | **Currency Symbol** | ETH |`;
 }
 
-function troubleshootingSection({ projectName, dataDir }) {
+function troubleshootingSection({ projectName, dataDir, sgName = "", region = "ap-northeast-2", vmName = "" }) {
   return `## Troubleshooting
 
 \`\`\`bash
@@ -1220,7 +1295,43 @@ docker system df
 3. **Explorer 데이터 없음**: Blockscout 인덱서 초기화에 1-2분 소요
 4. **포트 충돌**: docker-compose.yaml에서 포트 매핑 변경
 5. **이미지 pull 실패**: \`docker login ghcr.io\` 또는 네트워크 확인
-6. **Prover 크래시**: 메모리 부족일 수 있음. VM 사양 업그레이드 고려`;
+6. **Prover 크래시**: 메모리 부족일 수 있음. VM 사양 업그레이드 고려
+
+### 리소스 정리 (비용 절약)
+
+> ⚠️ terminate는 복구 불가합니다. 단계별로 확인하면서 진행하세요.
+
+**1단계: 현재 상태 확인**
+\`\`\`bash
+aws ec2 describe-instances --filters "Name=tag:Name,Values=${vmName}" \\
+  --query "Reservations[].Instances[].{Id:InstanceId,State:State.Name,IP:PublicIpAddress}" \\
+  --output table --region ${region}
+\`\`\`
+
+**2단계: 인스턴스 중지 (일시 정지 — 나중에 재시작 가능)**
+\`\`\`bash
+aws ec2 stop-instances --instance-ids INSTANCE_ID --region ${region}
+\`\`\`
+> stop하면 인스턴스 비용 즉시 중지. EBS($0.096/GB/월)와 IP($3.60/월)는 계속 과금.
+> 💡 당장 삭제하지 않아도 stop만으로 인스턴스 비용을 절약할 수 있습니다. 나중에 start로 재시작 가능.
+
+**참고: AWS EC2 과금 방식**
+- 인스턴스는 **초 단위 과금** (최소 1분). stop/terminate 즉시 과금 중지.
+- 안 쓸 때는 **stop하면 인스턴스 비용 0원**. start로 언제든 재시작 가능.
+- 단, stop하면 Public IP가 바뀌고 Docker 컨테이너 재시작이 필요합니다.
+
+**3단계: 인스턴스 완전 삭제 (복구 불가 — 필요할 때만)**
+\`\`\`bash
+aws ec2 terminate-instances --instance-ids INSTANCE_ID --region ${region}
+\`\`\`
+> terminate: EBS, Public IP 모두 삭제. 과금 즉시 중지.
+
+**4단계: Security Group 삭제 (인스턴스 terminate 후)**
+\`\`\`bash
+aws ec2 delete-security-group --group-id $(aws ec2 describe-security-groups \\
+  --filters "Name=group-name,Values=${sgName}" \\
+  --query "SecurityGroups[0].GroupId" --output text --region ${region}) --region ${region}
+\`\`\``;
 }
 
 // ---------------------------------------------------------------------------
