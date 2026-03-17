@@ -110,7 +110,6 @@ pub fn verify_cell_kzg_proof_batch(
 }
 
 /// Verifies a KZG proof for blob committed data, as defined by c-kzg-4844.
-#[allow(unused_variables)]
 pub fn verify_blob_kzg_proof(
     blob: Blob,
     commitment: Commitment,
@@ -122,9 +121,9 @@ pub fn verify_blob_kzg_proof(
         not(feature = "kzg-rs")
     ))]
     {
-        Err(KzgError::Unimplemented(
+        return Err(KzgError::Unimplemented(
             "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
-        ))
+        ));
     }
     #[cfg(all(
         not(feature = "c-kzg"),
@@ -186,7 +185,6 @@ pub fn verify_kzg_proof_batch(
 }
 
 /// Verifies that p(z) = y given a commitment that corresponds to the polynomial p(x) and a KZG proof
-#[allow(unused_variables)]
 pub fn verify_kzg_proof(
     commitment_bytes: [u8; 48],
     z: [u8; 32],
@@ -199,9 +197,9 @@ pub fn verify_kzg_proof(
         not(feature = "kzg-rs")
     ))]
     {
-        Err(KzgError::Unimplemented(
+        return Err(KzgError::Unimplemented(
             "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
-        ))
+        ));
     }
     #[cfg(all(
         not(feature = "c-kzg"),

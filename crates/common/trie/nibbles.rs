@@ -195,7 +195,6 @@ unsafe fn pack_nibble_pairs(nibbles: &[u8], output: *mut u8) {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
-    #[allow(unused_imports)]
     use std::arch::x86_64::*;
 
     let n = nibbles.len(); // always even

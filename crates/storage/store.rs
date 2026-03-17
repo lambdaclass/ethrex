@@ -2911,10 +2911,13 @@ fn apply_trie_updates(
     // Commit removes the bottom layer and returns it, this is the mutation step.
     let (nodes, destroyed_accounts) = trie_mut.commit(root).unwrap_or_default();
 
-    // Clean up flattened storage and storage trie nodes for destroyed accounts
+    // Clean up flattened storage and storage trie nodes for destroyed accounts.
+    // Storage keys in the DB are nibble-encoded: the prefix for a given account is
+    // Nibbles::from_bytes(account_hash) ++ [17] (the separator nibble).
     for account_hash in destroyed_accounts {
-        write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, account_hash.as_bytes())?;
-        write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, account_hash.as_bytes())?;
+        let prefix = Nibbles::from_bytes(account_hash.as_bytes()).append_new(17);
+        write_tx.delete_range_with_prefix(STORAGE_FLATKEYVALUE, prefix.as_ref())?;
+        write_tx.delete_range_with_prefix(STORAGE_TRIE_NODES, prefix.as_ref())?;
     }
 
     let mut result = Ok(());

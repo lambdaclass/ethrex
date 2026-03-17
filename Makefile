@@ -32,12 +32,6 @@ lint-gpu:
 
 lint: lint-l1 lint-l2 ## 🧹 Linter check
 
-docker-lint: ## 🧹 Run linter check inside a Linux Docker container
-	docker run --rm -v $$(pwd):/ethrex -w /ethrex rust:1.90-slim-bookworm /bin/bash -c "\
-		apt-get update && apt-get install -y build-essential libclang-dev libssl-dev pkg-config && \
-		rustup component add clippy && \
-		make lint"
-
 CRATE ?= *
 # CAUTION: It is important that the ethrex-l2 crate remains excluded here,
 # as its tests depend on external setup that is not handled by this Makefile.
