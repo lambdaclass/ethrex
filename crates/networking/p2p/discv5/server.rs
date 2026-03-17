@@ -104,27 +104,27 @@ pub enum OutMessage {
 
 #[derive(Debug)]
 pub struct DiscoveryServer {
-    local_node: Node,
-    local_node_record: NodeRecord,
+    pub local_node: Node,
+    pub local_node_record: NodeRecord,
     signer: SecretKey,
     udp_socket: Arc<UdpSocket>,
-    peer_table: PeerTable,
+    pub peer_table: PeerTable,
     initial_lookup_interval: f64,
     /// Outgoing message count, used for nonce generation as per the spec.
     counter: u32,
     /// Pending outgoing messages awaiting WhoAreYou response, keyed by nonce.
-    pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
+    pub pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
-    pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
+    pub pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
     /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
-    whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
+    pub whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
     /// Key: reported IP, Value: set of voter node_ids (each peer votes once per round).
-    ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
+    pub ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
     /// When the current IP voting period started. None if no votes received yet.
-    ip_vote_period_start: Option<Instant>,
+    pub ip_vote_period_start: Option<Instant>,
     /// Whether the first (fast) voting round has completed.
-    first_ip_vote_round_completed: bool,
+    pub first_ip_vote_round_completed: bool,
 }
 
 impl DiscoveryServer {
@@ -177,6 +177,30 @@ impl DiscoveryServer {
             .await?;
 
         Ok(discovery_server.start())
+    }
+
+    pub fn new_for_test(
+        local_node: Node,
+        local_node_record: NodeRecord,
+        signer: SecretKey,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
+    ) -> Self {
+        Self {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            peer_table,
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: Default::default(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+        }
     }
 
     async fn handle_packet(
@@ -498,7 +522,7 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn handle_pong(
+    pub async fn handle_pong(
         &mut self,
         pong_message: PongMessage,
         sender_id: H256,
@@ -679,7 +703,7 @@ impl DiscoveryServer {
 
     /// Sends a WhoAreYou challenge packet in response to an unverified message.
     /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#whoareyou-packet-flag--1
-    async fn send_who_are_you(
+    pub async fn send_who_are_you(
         &mut self,
         nonce: [u8; 12],
         src_id: H256,
@@ -752,7 +776,7 @@ impl DiscoveryServer {
     /// ## Spec Recommendation
     /// Encode the current outgoing message count into the first 32 bits of the nonce and fill the remaining 64 bits with random data generated
     /// by a cryptographically secure random number generator.
-    fn next_nonce<R: RngCore>(&mut self, rng: &mut R) -> [u8; 12] {
+    pub fn next_nonce<R: RngCore>(&mut self, rng: &mut R) -> [u8; 12] {
         let counter = self.counter;
         self.counter = self.counter.wrapping_add(1);
 
@@ -764,7 +788,7 @@ impl DiscoveryServer {
 
     /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
-    fn cleanup_stale_entries(&mut self) {
+    pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
         // Clean pending outgoing messages
@@ -812,7 +836,7 @@ impl DiscoveryServer {
     /// Records an IP vote from a PONG recipient_addr.
     /// Uses voting rounds: first round ends after 3 votes, subsequent rounds after 5 minutes.
     /// At round end, the IP with most votes wins (if it has at least 3 votes).
-    fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
+    pub fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
         // Ignore private IPs - we only care about external IP detection
         if Self::is_private_ip(reported_ip) {
             return;
@@ -1041,552 +1065,4 @@ pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f6
 fn generate_req_id() -> Bytes {
     let mut rng = OsRng;
     Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
-        peer_table::PeerTable,
-        types::{INITIAL_ENR_SEQ, Node, NodeRecord},
-    };
-    use bytes::Bytes;
-    use ethrex_common::H256;
-    use ethrex_storage::{EngineType, Store};
-    use rand::{SeedableRng, rngs::StdRng};
-    use rustc_hash::FxHashSet;
-    use secp256k1::SecretKey;
-    use std::{
-        net::{IpAddr, SocketAddr},
-        sync::Arc,
-        time::Instant,
-    };
-    use tokio::net::UdpSocket;
-
-    #[tokio::test]
-    async fn test_next_nonce_counter() {
-        let mut rng = StdRng::seed_from_u64(7);
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let n1 = server.next_nonce(&mut rng);
-        let n2 = server.next_nonce(&mut rng);
-
-        assert_eq!(&n1[..4], &[0, 0, 0, 0]);
-        assert_eq!(&n2[..4], &[0, 0, 0, 1]);
-        assert_ne!(&n1[4..], &n2[4..]);
-    }
-
-    #[tokio::test]
-    async fn test_whoareyou_rate_limiting() {
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-        // Use port 0 to let the OS assign an available port
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let nonce = [0u8; 12];
-        let addr: SocketAddr = "192.168.1.1:30303".parse().unwrap();
-        let src_id1 = H256::from_low_u64_be(1);
-        let src_id2 = H256::from_low_u64_be(2);
-        let src_id3 = H256::from_low_u64_be(3);
-
-        // Initially, rate limit map should be empty
-        assert!(server.whoareyou_rate_limit.is_empty());
-
-        // First call should NOT be rate limited
-        let _ = server.send_who_are_you(nonce, src_id1, addr).await;
-
-        // Should have recorded the IP in rate limit map
-        assert!(server.whoareyou_rate_limit.contains_key(&addr.ip()));
-        // Should have added a pending challenge (proves packet was processed)
-        assert!(server.pending_challenges.contains_key(&src_id1));
-
-        // Second call with SAME IP should be rate limited
-        let _ = server.send_who_are_you(nonce, src_id2, addr).await;
-
-        // Should NOT have added a pending challenge for src_id2 (rate limited)
-        assert!(!server.pending_challenges.contains_key(&src_id2));
-
-        // Call with DIFFERENT IP should NOT be rate limited
-        let addr2: SocketAddr = "192.168.1.2:30303".parse().unwrap();
-        let _ = server.send_who_are_you(nonce, src_id3, addr2).await;
-
-        // Should have added a pending challenge for the different IP
-        assert!(server.pending_challenges.contains_key(&src_id3));
-        // Both IPs should now be in the rate limit map
-        assert_eq!(server.whoareyou_rate_limit.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_enr_update_request_on_pong() {
-        // Create local node
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-
-        // Create remote node - use a template node for IP/ports, but the record will use remote_signer's key
-        let remote_signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let remote_node_template = Node::from_enode_url(
-            "enode://a448f24c6d18e575453db127a3d8eeeea3e3426f0db43bd52067d85cc5a1e87ad09f44b2bbaa66bb3a8c47cff8082ca4cde4b03f5ba52c1e92b3d2b9125d6da5@127.0.0.1:30304",
-        ).expect("Bad enode url");
-
-        // Create NodeRecord for the remote node with seq = 5
-        // Note: from_node uses remote_signer's public key, so we derive node_id from the record
-        let remote_record =
-            NodeRecord::from_node(&remote_node_template, 5, &remote_signer).unwrap();
-        let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
-        let remote_node_id = remote_node.node_id();
-
-        let mut peer_table = PeerTable::spawn(
-            10,
-            Store::new("", EngineType::InMemory).expect("Failed to create store"),
-        );
-
-        // Add the remote node as a contact with its ENR record
-        peer_table
-            .new_contact_records(vec![remote_record], local_node.node_id())
-            .await
-            .unwrap();
-
-        // Set up a session for the remote node (required for send_ordinary)
-        let session = Session {
-            outbound_key: [0u8; 16],
-            inbound_key: [0u8; 16],
-        };
-        peer_table
-            .set_session_info(remote_node_id, session)
-            .await
-            .unwrap();
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table,
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        // Verify the contact was added
-        let contact = server.peer_table.get_contact(remote_node_id).await.unwrap();
-        assert!(
-            contact.is_some(),
-            "Contact should have been added to peer_table"
-        );
-        let contact = contact.unwrap();
-        assert_eq!(
-            contact.record.as_ref().map(|r| r.seq),
-            Some(5),
-            "Contact should have ENR with seq=5"
-        );
-
-        // Test 1: PONG with same enr_seq should NOT trigger FINDNODE
-        let pong_same_seq = PongMessage {
-            req_id: Bytes::from(vec![1, 2, 3]),
-            enr_seq: 5, // Same as cached
-            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
-        };
-        let initial_pending_count = server.pending_by_nonce.len();
-        server
-            .handle_pong(pong_same_seq, remote_node_id)
-            .await
-            .expect("handle_pong failed for matching enr_seq");
-        // No new message should be pending (no FINDNODE sent)
-        assert_eq!(server.pending_by_nonce.len(), initial_pending_count);
-
-        // Test 2: PONG with higher enr_seq should trigger FINDNODE
-        let pong_higher_seq = PongMessage {
-            req_id: Bytes::from(vec![4, 5, 6]),
-            enr_seq: 10, // Higher than cached (5)
-            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
-        };
-        server
-            .handle_pong(pong_higher_seq, remote_node_id)
-            .await
-            .expect("handle_pong failed for higher enr_seq");
-        // A new message should be pending (FINDNODE sent)
-        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
-
-        // Test 3: PONG with lower enr_seq should NOT trigger FINDNODE
-        let pong_lower_seq = PongMessage {
-            req_id: Bytes::from(vec![7, 8, 9]),
-            enr_seq: 3, // Lower than cached (5)
-            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
-        };
-        server
-            .handle_pong(pong_lower_seq, remote_node_id)
-            .await
-            .expect("handle_pong failed for lower enr_seq");
-        // No new message should be pending
-        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
-    }
-
-    #[tokio::test]
-    async fn test_ip_voting_updates_ip_on_threshold() {
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let original_ip = local_node.ip;
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-        let original_seq = local_node_record.seq;
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
-        let voter1 = H256::from_low_u64_be(1);
-        let voter2 = H256::from_low_u64_be(2);
-        let voter3 = H256::from_low_u64_be(3);
-
-        // Vote 1 - should not update yet
-        server.record_ip_vote(new_ip, voter1);
-        assert_eq!(server.local_node.ip, original_ip);
-        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
-
-        // Vote 2 from different peer - should not update yet
-        server.record_ip_vote(new_ip, voter2);
-        assert_eq!(server.local_node.ip, original_ip);
-        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(2));
-
-        // Vote 3 from different peer - should trigger update (threshold reached)
-        server.record_ip_vote(new_ip, voter3);
-        assert_eq!(server.local_node.ip, new_ip);
-        assert_eq!(server.local_node_record.seq, original_seq + 1);
-        // Votes should be cleared after update
-        assert!(server.ip_votes.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_ip_voting_same_peer_votes_once() {
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let original_ip = local_node.ip;
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
-        let same_voter = H256::from_low_u64_be(1);
-
-        // Same peer voting 3 times should only count as 1 vote
-        server.record_ip_vote(new_ip, same_voter);
-        server.record_ip_vote(new_ip, same_voter);
-        server.record_ip_vote(new_ip, same_voter);
-
-        // Should still only have 1 vote (same peer)
-        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
-        // IP should not change
-        assert_eq!(server.local_node.ip, original_ip);
-    }
-
-    #[tokio::test]
-    async fn test_ip_voting_no_update_if_same_ip() {
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let original_ip = local_node.ip;
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-        let original_seq = local_node_record.seq;
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let voter1 = H256::from_low_u64_be(1);
-        let voter2 = H256::from_low_u64_be(2);
-        let voter3 = H256::from_low_u64_be(3);
-
-        // Vote 3 times for the same IP we already have (from different peers)
-        // This triggers the first round to end after 3 votes
-        server.record_ip_vote(original_ip, voter1);
-        server.record_ip_vote(original_ip, voter2);
-        server.record_ip_vote(original_ip, voter3);
-
-        // IP and seq should remain unchanged (winner is our current IP)
-        assert_eq!(server.local_node.ip, original_ip);
-        assert_eq!(server.local_node_record.seq, original_seq);
-        // Votes cleared because round ended (even though no IP change)
-        assert!(server.ip_votes.is_empty());
-        // First round should now be completed
-        assert!(server.first_ip_vote_round_completed);
-    }
-
-    #[tokio::test]
-    async fn test_ip_voting_split_votes_no_update() {
-        // Tests that when votes are split and no IP reaches threshold, IP is not updated
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let original_ip = local_node.ip;
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let ip1: IpAddr = "203.0.113.50".parse().unwrap();
-        let ip2: IpAddr = "203.0.113.51".parse().unwrap();
-        let voter1 = H256::from_low_u64_be(1);
-        let voter2 = H256::from_low_u64_be(2);
-        let voter3 = H256::from_low_u64_be(3);
-
-        // First round: votes are split between two IPs
-        // Vote 1: ip1
-        server.record_ip_vote(ip1, voter1);
-        assert_eq!(server.local_node.ip, original_ip); // No change yet
-
-        // Vote 2: ip2
-        server.record_ip_vote(ip2, voter2);
-        assert_eq!(server.local_node.ip, original_ip); // No change yet
-
-        // Vote 3: ip1 - triggers first round end (3 total votes)
-        // ip1 has 2 votes, ip2 has 1 vote, but ip1 doesn't reach threshold of 3
-        server.record_ip_vote(ip1, voter3);
-        // IP should NOT change because no IP reached threshold
-        assert_eq!(server.local_node.ip, original_ip);
-        // Round still ends and votes are cleared
-        assert!(server.ip_votes.is_empty());
-        assert!(server.first_ip_vote_round_completed);
-    }
-
-    #[tokio::test]
-    async fn test_ip_vote_cleanup() {
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let ip: IpAddr = "203.0.113.50".parse().unwrap();
-        let voter1 = H256::from_low_u64_be(1);
-
-        // Manually insert a vote and set period start
-        let mut voters = FxHashSet::default();
-        voters.insert(voter1);
-        server.ip_votes.insert(ip, voters);
-        server.ip_vote_period_start = Some(Instant::now());
-        assert_eq!(server.ip_votes.len(), 1);
-
-        // Cleanup should retain votes (round hasn't timed out yet)
-        server.cleanup_stale_entries();
-        assert_eq!(server.ip_votes.len(), 1);
-
-        // Cleanup didn't finalize because the 5-minute window hasn't elapsed
-        assert!(!server.first_ip_vote_round_completed);
-    }
-
-    #[tokio::test]
-    async fn test_ip_voting_ignores_private_ips() {
-        let local_node = Node::from_enode_url(
-            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
-        ).expect("Bad enode url");
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let local_node_record =
-            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-
-        let mut server = DiscoveryServer {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
-            peer_table: PeerTable::spawn(
-                10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
-            ),
-            initial_lookup_interval: 1000.0,
-            counter: 0,
-            pending_by_nonce: Default::default(),
-            pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
-            ip_votes: Default::default(),
-            ip_vote_period_start: None,
-            first_ip_vote_round_completed: false,
-        };
-
-        let voter1 = H256::from_low_u64_be(1);
-        let voter2 = H256::from_low_u64_be(2);
-        let voter3 = H256::from_low_u64_be(3);
-
-        // Private IPs should be ignored
-        let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
-        server.record_ip_vote(private_ip, voter1);
-        server.record_ip_vote(private_ip, voter2);
-        server.record_ip_vote(private_ip, voter3);
-        assert!(server.ip_votes.is_empty());
-
-        // Loopback should be ignored
-        let loopback: IpAddr = "127.0.0.1".parse().unwrap();
-        server.record_ip_vote(loopback, voter1);
-        assert!(server.ip_votes.is_empty());
-
-        // Link-local should be ignored
-        let link_local: IpAddr = "169.254.1.1".parse().unwrap();
-        server.record_ip_vote(link_local, voter1);
-        assert!(server.ip_votes.is_empty());
-
-        // IPv6 loopback should be ignored
-        let ipv6_loopback: IpAddr = "::1".parse().unwrap();
-        server.record_ip_vote(ipv6_loopback, voter1);
-        assert!(server.ip_votes.is_empty());
-
-        // IPv6 link-local (fe80::/10) should be ignored
-        let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
-        server.record_ip_vote(ipv6_link_local, voter1);
-        assert!(server.ip_votes.is_empty());
-
-        // IPv6 unique local (fc00::/7) should be ignored
-        let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
-        server.record_ip_vote(ipv6_unique_local, voter1);
-        assert!(server.ip_votes.is_empty());
-
-        // Public IP should be recorded
-        let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
-        server.record_ip_vote(public_ip, voter1);
-        assert_eq!(server.ip_votes.get(&public_ip).map(|v| v.len()), Some(1));
-    }
 }

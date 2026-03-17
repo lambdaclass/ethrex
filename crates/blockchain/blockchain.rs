@@ -411,9 +411,12 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
+        let cancelled = AtomicBool::new(false);
+
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
+                let cancelled_ref = &cancelled;
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -422,14 +425,20 @@ impl Blockchain {
                         let start = Instant::now();
                         if let Some(bal) = bal {
                             // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) = LEVM::warm_block_from_bal(bal, caching_store) {
+                            if let Err(e) =
+                                LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
+                            {
                                 debug!("BAL warming failed (non-fatal): {e}");
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) =
-                                LEVM::warm_block(block, caching_store, vm_type, &NativeCrypto)
-                            {
+                            if let Err(e) = LEVM::warm_block(
+                                block,
+                                caching_store,
+                                vm_type,
+                                &NativeCrypto,
+                                cancelled_ref,
+                            ) {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
                         }
@@ -443,8 +452,9 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let (execution_result, produced_bal) =
-                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal)?;
+                        let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
+                        cancelled_ref.store(true, Ordering::Relaxed);
+                        let (execution_result, produced_bal) = result?;
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -499,22 +509,20 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
+                let execution_result = execution_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom("execution thread panicked".to_string()))
+                });
+                let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
+                    Err(StoreError::Custom(
+                        "merkleization thread panicked".to_string(),
+                    ))
+                });
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
-                Ok((
-                    execution_handle.join().unwrap_or_else(|_| {
-                        Err(ChainError::Custom("execution thread panicked".to_string()))
-                    }),
-                    merkleize_handle.join().unwrap_or_else(|_| {
-                        Err(StoreError::Custom(
-                            "merklization thread panicked".to_string(),
-                        ))
-                    }),
-                    warmer_duration,
-                ))
+                Ok((execution_result, merkleization_result, warmer_duration))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
@@ -1544,15 +1552,6 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
@@ -1573,12 +1572,9 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
+        for address in touched_account_storage_slots.keys() {
+            let hashed_address = hash_address(address);
+            let hashed_address_h256 = H256::from_slice(&hashed_address);
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
@@ -1595,7 +1591,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
         Ok(ExecutionWitness {
@@ -1605,7 +1601,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            keys,
         })
     }
 
@@ -1786,15 +1781,6 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
@@ -1815,12 +1801,9 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
+        for address in touched_account_storage_slots.keys() {
+            let hashed_address = hash_address(address);
+            let hashed_address_h256 = H256::from_slice(&hashed_address);
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
@@ -1837,7 +1820,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
         Ok(ExecutionWitness {
@@ -1847,7 +1830,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            keys,
         })
     }
 
