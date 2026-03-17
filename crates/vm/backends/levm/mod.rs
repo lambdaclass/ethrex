@@ -1407,12 +1407,17 @@ impl LEVM {
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        // Polygon: use BorConfig coinbase instead of header.coinbase (which is 0x0 on Polygon)
+        let coinbase = match &vm_type {
+            VMType::Polygon(pfc) => pfc.coinbase,
+            _ => block_header.coinbase,
+        };
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
             config,
             block_number: block_header.number,
-            coinbase: block_header.coinbase,
+            coinbase,
             timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
             slot_number: block_header
@@ -1730,18 +1735,19 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let coinbase = match &vm_type {
+        VMType::Polygon(pfc) => pfc.coinbase,
+        _ => block_header.coinbase,
+    };
     let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
-    let coinbase_backup = db
-        .current_accounts_state
-        .get(&block_header.coinbase)
-        .cloned();
+    let coinbase_backup = db.current_accounts_state.get(&coinbase).cloned();
     let env = Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
         gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         block_number: block_header.number,
-        coinbase: block_header.coinbase,
+        coinbase,
         timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         base_fee_per_gas: U256::zero(),
@@ -1799,11 +1805,10 @@ pub fn generic_system_contract_levm(
     }
 
     if let Some(coinbase_account) = coinbase_backup {
-        db.current_accounts_state
-            .insert(block_header.coinbase, coinbase_account);
+        db.current_accounts_state.insert(coinbase, coinbase_account);
     } else {
         // If the coinbase account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&block_header.coinbase);
+        db.current_accounts_state.remove(&coinbase);
     }
 
     Ok(report)
@@ -1828,16 +1833,17 @@ pub fn polygon_system_call_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let coinbase = match &vm_type {
+        VMType::Polygon(pfc) => pfc.coinbase,
+        _ => block_header.coinbase,
+    };
     let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
-    let coinbase_backup = db
-        .current_accounts_state
-        .get(&block_header.coinbase)
-        .cloned();
+    let coinbase_backup = db.current_accounts_state.get(&coinbase).cloned();
     let env = Environment {
         origin: system_address,
         gas_limit: gas_limit + TX_BASE_COST,
         block_number: block_header.number,
-        coinbase: block_header.coinbase,
+        coinbase,
         timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         base_fee_per_gas: U256::zero(),
@@ -1872,10 +1878,9 @@ pub fn polygon_system_call_levm(
 
     // Restore coinbase state (system calls should not affect the coinbase)
     if let Some(coinbase_account) = coinbase_backup {
-        db.current_accounts_state
-            .insert(block_header.coinbase, coinbase_account);
+        db.current_accounts_state.insert(coinbase, coinbase_account);
     } else {
-        db.current_accounts_state.remove(&block_header.coinbase);
+        db.current_accounts_state.remove(&coinbase);
     }
 
     Ok(report)
@@ -2023,6 +2028,10 @@ fn env_from_generic(
         header.slot_number.map(U256::from).unwrap_or(U256::zero())
     };
 
+    let coinbase = match &vm_type {
+        VMType::Polygon(pfc) => pfc.coinbase,
+        _ => header.coinbase,
+    };
     Ok(Environment {
         origin: tx.from.0.into(),
         gas_limit: tx
@@ -2030,7 +2039,7 @@ fn env_from_generic(
             .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number,
-        coinbase: header.coinbase,
+        coinbase,
         timestamp: header.timestamp,
         prev_randao: Some(header.prev_randao),
         slot_number,
