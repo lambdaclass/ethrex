@@ -298,7 +298,9 @@ export default function L2DetailPublishTab({ l2, ko }: Props) {
     setSubmitResult(null)
     try {
       // 0. Check if metadata already exists → decide register vs update
+      console.log('[publish] Step 0: checking metadata...', { l1ChainId: effectiveL1ChainId, timelock: l2.timelockAddress })
       const check = await checkMetadataExists(effectiveL1ChainId, 'tokamak-appchain', l2.timelockAddress)
+      console.log('[publish] Step 0 result:', check)
       const operation = check.exists ? 'update' : 'register'
 
       // 0.5. Fetch actual chain ID from L2 RPC (reuse cached value, or fetch fresh)
@@ -321,6 +323,7 @@ export default function L2DetailPublishTab({ l2, ko }: Props) {
       const resolvedNativeToken = (check.exists && check.nativeToken) ? check.nativeToken : undefined
 
       // 1. Sign metadata
+      console.log('[publish] Step 1: signing...', { operation, resolvedL2ChainId, timelock: l2.timelockAddress, key: selectedKey })
       const timestamp = Math.floor(Date.now() / 1000)
       const signResult = await invoke<{ signature: string; signerAddress: string }>('sign_appchain_metadata', {
         l1ChainId: effectiveL1ChainId,
@@ -345,7 +348,9 @@ export default function L2DetailPublishTab({ l2, ko }: Props) {
       metadata.metadata.signedBy = signResult.signerAddress
 
       // 3. Submit to platform server
+      console.log('[publish] Step 3: submitting...', { operation, l1ChainId: metadata.l1ChainId, l2ChainId: metadata.l2ChainId, name: metadata.name })
       const result = await submitMetadata(metadata, operation)
+      console.log('[publish] Step 3 result:', result)
       setSubmitResult(result)
 
       if (result.success) {
@@ -354,6 +359,7 @@ export default function L2DetailPublishTab({ l2, ko }: Props) {
         setSubmitError(result.error || 'Submission failed')
       }
     } catch (err) {
+      console.error('[publish] Error:', err)
       setSubmitError(err instanceof Error ? err.message : String(err))
     } finally {
       setSubmitting(false)

@@ -121,7 +121,7 @@ function deploymentToL2Config(d: DeploymentFromDB): L2Config {
     chainId: d.chain_id || 0,
     description: `${d.program_slug} · ${d.phase}`,
     status: statusMap[d.status] ?? 'stopped',
-    nativeToken: 'TON',
+    nativeToken: d.native_token || 'ETH',
     l1Rpc: d.rpc_url || '',
     rpcPort: d.l2_port || 0,
     sequencerStatus: d.status === 'running' ? 'running' : 'stopped',
