@@ -795,17 +795,22 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
-    // Advertise both eth/68 and eth/69. Bor (Polygon) uses a non-standard
-    // eth/69 status format (includes TD, omits head), which we handle via
-    // decode_bor_hybrid() fallback in Message::decode.
+    // Bor (Polygon) uses a non-standard eth/69 Status format that includes TD.
+    // If we negotiate eth/69, our standard Status (no TD) will be misinterpreted
+    // by Bor (genesis hash decoded as TD → BitLen > 100 → disconnect).
+    // Restrict to eth/68 for Polygon so both sides use the compatible eth/68 Status.
+    let chain_id = state.storage.get_chain_config().chain_id;
+    let is_polygon = chain_id == 137 || chain_id == 80002;
+    let supported_eth: &[Capability] = if is_polygon {
+        &[Capability::eth(68)]
+    } else {
+        &SUPPORTED_ETH_CAPABILITIES
+    };
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
     #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
+    let mut supported_capabilities: Vec<Capability> =
+        [supported_eth, &SUPPORTED_SNAP_CAPABILITIES[..]].concat();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
@@ -839,9 +844,7 @@ where
             for cap in &hello_message.capabilities {
                 match cap.protocol() {
                     "eth" => {
-                        if SUPPORTED_ETH_CAPABILITIES.contains(cap)
-                            && cap.version > negotiated_eth_version
-                        {
+                        if supported_eth.contains(cap) && cap.version > negotiated_eth_version {
                             negotiated_eth_version = cap.version;
                         }
                     }
