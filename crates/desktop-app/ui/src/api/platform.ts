@@ -8,7 +8,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
-const DEFAULT_PLATFORM_URL = 'https://tokamak-appchain.vercel.app'
+const DEFAULT_PLATFORM_URL = import.meta.env.VITE_PLATFORM_URL || 'https://tokamak-appchain.vercel.app'
 
 // Keychain-backed token management
 export const platformAuth = {
@@ -47,6 +47,43 @@ export interface OpenAppchain {
   status: string
 }
 
+export interface StoreAppchain {
+  id: string
+  name: string
+  description: string | null
+  chain_id: number | null
+  l2_chain_id: number | null
+  l1_chain_id: number | null
+  rpc_url: string | null
+  status: string
+  stack_type: string | null
+  network_mode: string | null
+  rollup_type: string | null
+  explorer_url: string | null
+  dashboard_url: string | null
+  bridge_url: string | null
+  native_token_symbol: string | null
+  native_token_decimals: number | null
+  native_token_type: string | null
+  native_token_l1_address: string | null
+  l1_contracts: Record<string, string>
+  operator_name: string | null
+  operator_website: string | null
+  screenshots: string[]
+  social_links: Record<string, string>
+  hashtags: string[]
+  owner_wallet: string | null
+  identity_contract: string | null
+  avg_rating: number | null
+  review_count: number
+  comment_count: number
+  created_at: number
+  // From legacy deployments
+  program_name?: string
+  program_slug?: string
+  owner_name?: string
+}
+
 class PlatformAPI {
   private baseUrl: string
   private token: string | null = null
@@ -57,6 +94,10 @@ class PlatformAPI {
 
   setBaseUrl(url: string) {
     this.baseUrl = url.replace(/\/$/, '')
+  }
+
+  getBaseUrl() {
+    return this.baseUrl
   }
 
   setToken(token: string | null) {
@@ -72,11 +113,17 @@ class PlatformAPI {
     }
 
     const resp = await window.fetch(`${this.baseUrl}${path}`, {
-      headers,
       ...options,
+      headers: { ...headers, ...(options?.headers as Record<string, string> || {}) },
     })
     const data = await resp.json()
-    if (!resp.ok) throw new Error(data.error || resp.statusText)
+    if (!resp.ok) {
+      if (resp.status === 401 && this.token) {
+        this.token = null
+        platformAuth.deleteToken().catch(() => {})
+      }
+      throw new Error(data.error || resp.statusText)
+    }
     return data
   }
 
@@ -215,6 +262,107 @@ class PlatformAPI {
       }
     }>(`/api/store/appchains/${id}`)
     return data.appchain
+  }
+
+  // ============================================================
+  // Store — Public Appchain Browsing
+  // ============================================================
+
+  async getPublicAppchains(params?: { search?: string; limit?: number; offset?: number; stack_type?: string; l1_chain_id?: string }) {
+    const qs = new URLSearchParams()
+    if (params?.search) qs.set('search', params.search)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    if (params?.stack_type) qs.set('stack_type', params.stack_type)
+    if (params?.l1_chain_id) qs.set('l1_chain_id', params.l1_chain_id)
+    const q = qs.toString()
+    const data = await this.fetch<{ appchains: StoreAppchain[] }>(`/api/store/appchains${q ? `?${q}` : ''}`)
+    return data.appchains
+  }
+
+  async getAppchainDetail(id: string) {
+    const data = await this.fetch<{ appchain: StoreAppchain }>(`/api/store/appchains/${id}`)
+    return data.appchain
+  }
+
+  async getAppchainReviews(id: string) {
+    return this.fetch<{
+      reviews: Array<{ id: string; wallet_address: string; rating: number; content: string; created_at: number }>
+      reactionCounts: Record<string, number>
+      userReactions: string[]
+    }>(`/api/store/appchains/${id}/reviews`)
+  }
+
+  async getAppchainComments(id: string) {
+    return this.fetch<{
+      comments: Array<{ id: string; wallet_address: string; content: string; parent_id: string | null; created_at: number }>
+      reactionCounts: Record<string, number>
+      userReactions: string[]
+    }>(`/api/store/appchains/${id}/comments`)
+  }
+
+  async getAppchainAnnouncements(id: string) {
+    const data = await this.fetch<{
+      announcements: Array<{ id: string; title: string; content: string; pinned: number; created_at: number }>
+    }>(`/api/store/appchains/${id}/announcements`)
+    return data.announcements
+  }
+
+  async toggleBookmark(id: string) {
+    return this.fetch<{ bookmarked: boolean }>(`/api/store/appchains/${id}/bookmark`, { method: 'POST' })
+  }
+
+  async getUserBookmarks() {
+    const data = await this.fetch<{ bookmarks: string[] }>('/api/store/bookmarks')
+    return data.bookmarks
+  }
+
+  async rpcProxy(id: string, method: string) {
+    return this.fetch<{ result: string }>(`/api/store/appchains/${id}/rpc-proxy`, {
+      method: 'POST',
+      body: JSON.stringify({ method, params: [] }),
+    })
+  }
+
+  // ============================================================
+  // Metadata Push — Push to GitHub metadata repository
+  // ============================================================
+
+  async pushMetadata(deploymentId: string) {
+    return this.fetch<{ success: boolean; path?: string }>(`/api/deployments/${deploymentId}/push-metadata`, {
+      method: 'POST',
+    })
+  }
+
+  async deleteMetadata(deploymentId: string) {
+    return this.fetch<{ success: boolean }>(`/api/deployments/${deploymentId}/delete-metadata`, {
+      method: 'POST',
+    })
+  }
+
+  // ============================================================
+  // Screenshot Upload — Upload images to Platform server
+  // ============================================================
+
+  async uploadScreenshots(deploymentId: string, files: File[]): Promise<{ urls: string[]; screenshots: string[] }> {
+    const formData = new FormData()
+    for (const file of files) {
+      formData.append('screenshots', file)
+    }
+
+    const headers: Record<string, string> = {}
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`
+    }
+
+    const resp = await window.fetch(`${this.baseUrl}/api/deployments/${deploymentId}/screenshots`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+    const data = await resp.json()
+    if (!resp.ok) throw new Error(data.error || resp.statusText)
+    return data
   }
 }
 

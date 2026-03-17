@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useLang } from '../App'
 import { t } from '../i18n'
-import { platformAPI } from '../api/platform'
+
 import { localServerAPI } from '../api/local-server'
 import type { L2Config } from './MyL2View'
 import type { Comment } from '../types/comments'
@@ -71,7 +71,7 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
   const [containers, setContainers] = useState<ContainerInfo[] | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
-  const [platformLoggedIn, setPlatformLoggedIn] = useState(false)
+
   const [tags, setTags] = useState<string[]>(l2Prop.hashtags || [])
   const [comments, setComments] = useState<Comment[]>(() => [...L2_DETAIL_MOCK_COMMENTS])
 
@@ -141,7 +141,6 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
   }, [l2Prop.id])
 
   useEffect(() => {
-    platformAPI.loadToken().then(ok => setPlatformLoggedIn(ok))
     fetchContainers()
     fetchMonitoring()
     const interval = setInterval(() => { fetchContainers(); fetchMonitoring() }, 5000)
@@ -256,7 +255,6 @@ export default function L2DetailView({ l2: l2Prop, onBack, onRefresh }: Props) {
         {activeTab === 'publish' && (
           <L2DetailPublishTab
             l2={l2} ko={ko}
-            platformLoggedIn={platformLoggedIn}
             onRefresh={onRefresh}
           />
         )}

@@ -86,8 +86,9 @@ function getActiveDeployments({ limit = 50, offset = 0, search } = {}) {
              WHERE d.status = 'active'`;
   const params = [];
   if (search) {
-    sql += ` AND (d.name LIKE ? OR p.name LIKE ?)`;
-    params.push(`%${search}%`, `%${search}%`);
+    const escaped = search.replace(/[%_\\]/g, '\\$&');
+    sql += ` AND (d.name LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\')`;
+    params.push(`%${escaped}%`, `%${escaped}%`);
   }
   sql += ` ORDER BY d.created_at DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);

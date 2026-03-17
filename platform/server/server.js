@@ -8,6 +8,7 @@ const storeRoutes = require("./routes/store");
 const programRoutes = require("./routes/programs");
 const adminRoutes = require("./routes/admin");
 const deploymentRoutes = require("./routes/deployments");
+const appchainRegistryRoutes = require("./routes/appchain-registry");
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -73,6 +74,7 @@ app.use("/api/store", storeRoutes);
 app.use("/api/programs", programRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/deployments", deploymentRoutes);
+app.use("/api/appchain-registry", appchainRegistryRoutes);
 // hosts and fs routes moved to Desktop local-server
 
 // Health check

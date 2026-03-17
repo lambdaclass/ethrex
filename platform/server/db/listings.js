@@ -15,6 +15,22 @@ function upsertListing(metadata, repoFilePath, sha) {
   const id = listingId(metadata.l1ChainId, metadata.stackType, metadata.identityContract);
   const now = Date.now();
 
+  // Resolve URLs from new schema (supportResources, explorers, bridges) with legacy fallbacks
+  const sr = metadata.supportResources || {};
+  const dashboardUrl = sr.dashboardUrl || metadata.dashboardUrl || null;
+  const explorerUrl = metadata.explorers?.[0]?.url || metadata.explorerUrl || null;
+  const bridgeUrl = metadata.bridges?.[0]?.url || metadata.bridgeUrl || null;
+  const operatorWebsite = metadata.website || metadata.operator?.website || null;
+  // Build social links from supportResources fields
+  const socialLinks = {};
+  if (sr.xUrl) socialLinks.twitter = sr.xUrl;
+  if (sr.communityUrl) socialLinks.discord = sr.communityUrl;
+  if (sr.telegramUrl) socialLinks.telegram = sr.telegramUrl;
+  if (sr.documentationUrl) socialLinks.github = sr.documentationUrl;
+  if (operatorWebsite) socialLinks.website = operatorWebsite;
+  // Merge with legacy operator.socialLinks
+  if (metadata.operator?.socialLinks) Object.assign(socialLinks, metadata.operator.socialLinks);
+
   const params = {
     id,
     l1_chain_id: metadata.l1ChainId,
@@ -25,17 +41,17 @@ function upsertListing(metadata, repoFilePath, sha) {
     rollup_type: metadata.rollupType || null,
     status: metadata.status || "active",
     rpc_url: metadata.rpcUrl || null,
-    explorer_url: metadata.explorerUrl || null,
-    bridge_url: metadata.bridgeUrl || null,
-    dashboard_url: metadata.dashboardUrl || null,
+    explorer_url: explorerUrl,
+    bridge_url: bridgeUrl,
+    dashboard_url: dashboardUrl,
     native_token_type: metadata.nativeToken?.type || "eth",
     native_token_symbol: metadata.nativeToken?.symbol || "ETH",
     native_token_decimals: metadata.nativeToken?.decimals ?? 18,
     native_token_l1_address: metadata.nativeToken?.l1Address || null,
     l1_contracts: metadata.l1Contracts ? JSON.stringify(metadata.l1Contracts) : null,
     operator_name: metadata.operator?.name || null,
-    operator_website: metadata.operator?.website || null,
-    operator_social_links: metadata.operator?.socialLinks ? JSON.stringify(metadata.operator.socialLinks) : null,
+    operator_website: operatorWebsite,
+    operator_social_links: Object.keys(socialLinks).length > 0 ? JSON.stringify(socialLinks) : null,
     description: metadata.description || null,
     screenshots: metadata.screenshots ? JSON.stringify(metadata.screenshots) : null,
     hashtags: metadata.hashtags ? JSON.stringify(metadata.hashtags) : null,

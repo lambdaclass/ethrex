@@ -837,56 +837,121 @@ pub async fn get_docker_containers(
 }
 
 // ============================================================================
-// Generic Keychain value storage (for Pinata JWT, etc.)
-// Keys are restricted to known prefixes to prevent arbitrary access.
+// Generic Keychain value storage — cross-platform.
+// macOS: uses `security` CLI for Keychain (compatible with Node.js keychain.js)
+// Windows/Linux: uses `keyring` crate (Windows Credential Manager / Secret Service)
 // ============================================================================
 
 const KEYRING_SERVICE: &str = "tokamak-appchain";
-const ALLOWED_KEY_PREFIXES: &[&str] = &["pinata_", "deployer_pk_"];
+
+/// Allowed key prefixes for frontend access (security boundary)
+const ALLOWED_KEY_PREFIXES: &[&str] = &["pinata_", "deployer_pk_", "ai-"];
 
 fn validate_keychain_key(key: &str) -> Result<(), String> {
-    if ALLOWED_KEY_PREFIXES.iter().any(|p| key.starts_with(p)) {
+    if ALLOWED_KEY_PREFIXES.iter().any(|prefix| key.starts_with(prefix)) {
         Ok(())
     } else {
         Err(format!(
-            "Key '{}' not allowed. Must start with one of: {:?}",
-            key, ALLOWED_KEY_PREFIXES
+            "Key '{}' is not allowed. Must start with one of: {}",
+            key,
+            ALLOWED_KEY_PREFIXES.join(", ")
         ))
+    }
+}
+
+// --- macOS: `security` CLI ---
+#[cfg(target_os = "macos")]
+fn keychain_get(account: &str) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("security")
+        .args(["find-generic-password", "-a", account, "-s", KEYRING_SERVICE, "-w"])
+        .output()
+        .map_err(|e| format!("Failed to run security CLI: {e}"))?;
+    if output.status.success() {
+        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("could not be found") || stderr.contains("SecKeychainSearchCopyNext") {
+            Ok(None)
+        } else {
+            Err(format!("Keychain error: {}", stderr.trim()))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_set(account: &str, secret: &str) -> Result<(), String> {
+    let _ = std::process::Command::new("security")
+        .args(["delete-generic-password", "-a", account, "-s", KEYRING_SERVICE])
+        .output();
+    let output = std::process::Command::new("security")
+        .args(["add-generic-password", "-a", account, "-s", KEYRING_SERVICE, "-w", secret])
+        .output()
+        .map_err(|e| format!("Failed to run security CLI: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("Failed to save keychain value: {}", String::from_utf8_lossy(&output.stderr).trim()))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn keychain_delete(account: &str) -> Result<(), String> {
+    let output = std::process::Command::new("security")
+        .args(["delete-generic-password", "-a", account, "-s", KEYRING_SERVICE])
+        .output()
+        .map_err(|e| format!("Failed to run security CLI: {e}"))?;
+    if output.status.success() || String::from_utf8_lossy(&output.stderr).contains("could not be found") {
+        Ok(())
+    } else {
+        Err(format!("Failed to delete keychain value: {}", String::from_utf8_lossy(&output.stderr).trim()))
+    }
+}
+
+// --- Windows/Linux: `keyring` crate ---
+#[cfg(not(target_os = "macos"))]
+fn keychain_get(account: &str) -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, account)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.get_password() {
+        Ok(pw) => Ok(Some(pw)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Keyring error: {e}")),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_set(account: &str, secret: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, account)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    entry.set_password(secret).map_err(|e| format!("Keyring error: {e}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_delete(account: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, account)
+        .map_err(|e| format!("Keyring error: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Keyring error: {e}")),
     }
 }
 
 #[tauri::command]
 pub fn get_keychain_value(key: String) -> Result<Option<String>, String> {
     validate_keychain_key(&key)?;
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    match entry.get_password() {
-        Ok(val) => Ok(Some(val)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Failed to get keychain value: {e}")),
-    }
+    keychain_get(&key)
 }
 
 #[tauri::command]
 pub fn save_keychain_value(key: String, value: String) -> Result<(), String> {
     validate_keychain_key(&key)?;
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    entry
-        .set_password(&value)
-        .map_err(|e| format!("Failed to save keychain value: {e}"))
+    keychain_set(&key, &value)
 }
 
 #[tauri::command]
 pub fn delete_keychain_value(key: String) -> Result<(), String> {
     validate_keychain_key(&key)?;
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Failed to delete keychain value: {e}")),
-    }
+    keychain_delete(&key)
 }
 
 // ============================================================================
@@ -914,12 +979,9 @@ pub async fn set_metadata_uri(
         return Err("Metadata URI is required".to_string());
     }
 
-    // Verify deployer key exists in keychain (validates ownership without loading the key)
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &keychain_key)
-        .map_err(|e| format!("Keyring error: {e}"))?;
-    entry
-        .get_password()
-        .map_err(|e| format!("No deployer key found: {e}"))?;
+    // Verify deployer key exists in keychain
+    keychain_get(&keychain_key)?
+        .ok_or_else(|| format!("No deployer key found for '{keychain_key}'"))?;
 
     // Build setMetadataURI calldata
     // Function selector: keccak256("setMetadataURI(string)")[:4] = 0x750c5d86
@@ -976,4 +1038,169 @@ pub async fn set_metadata_uri(
         "note": "Transaction calldata prepared. Use wallet to sign and send."
     })
     .to_string())
+}
+
+// ============================================================================
+// Appchain Metadata Signing (EIP-191 personal_sign with k256)
+// ============================================================================
+
+/// Sign appchain metadata for submission to the metadata repository.
+/// Uses EIP-191 personal_sign with the deployer key from OS Keychain.
+#[tauri::command]
+pub fn sign_appchain_metadata(
+    l1_chain_id: u64,
+    l2_chain_id: u64,
+    stack_type: String,
+    operation: String,
+    identity_contract: String,
+    timestamp: u64,
+    keychain_key: String,
+) -> Result<serde_json::Value, String> {
+    use k256::ecdsa::{SigningKey, VerifyingKey};
+    use sha3::{Digest, Keccak256};
+
+    // Validate inputs
+    if !identity_contract.starts_with("0x") || identity_contract.len() != 42 {
+        return Err("Invalid identity contract address".to_string());
+    }
+    if operation != "register" && operation != "update" {
+        return Err("Operation must be 'register' or 'update'".to_string());
+    }
+
+    // Load deployer private key from keychain
+    let pk_hex = keychain_get(&keychain_key)?
+        .ok_or_else(|| format!("No deployer key found for '{keychain_key}'"))?;
+
+    // Parse private key (strip 0x prefix if present)
+    let pk_bytes_hex = pk_hex.trim_start_matches("0x");
+    let pk_bytes =
+        hex::decode(pk_bytes_hex).map_err(|e| format!("Invalid private key hex: {e}"))?;
+    let signing_key =
+        SigningKey::from_bytes(pk_bytes.as_slice().into()).map_err(|e| format!("Invalid private key: {e}"))?;
+
+    // Build signing message (must match signature-validator.ts format exactly)
+    let contract = identity_contract.to_lowercase();
+    let message = [
+        "Tokamak Appchain Registry",
+        &format!("L1 Chain ID: {l1_chain_id}"),
+        &format!("L2 Chain ID: {l2_chain_id}"),
+        &format!("Stack: {stack_type}"),
+        &format!("Operation: {operation}"),
+        &format!("Contract: {contract}"),
+        &format!("Timestamp: {timestamp}"),
+    ].join("\n");
+
+    // EIP-191 personal_sign: keccak256("\x19Ethereum Signed Message:\n" + len + message)
+    let prefix = format!("\x19Ethereum Signed Message:\n{}", message.len());
+    let mut hasher = Keccak256::new();
+    hasher.update(prefix.as_bytes());
+    hasher.update(message.as_bytes());
+    let hash = hasher.finalize();
+
+    // Sign with recoverable signature
+    let (signature, recovery_id) = signing_key
+        .sign_prehash_recoverable(&hash)
+        .map_err(|e| format!("Signing failed: {e}"))?;
+
+    // Encode as 0x{r}{s}{v} where v = recovery_id + 27
+    let sig_bytes = signature.to_bytes();
+    let v = recovery_id.to_byte() + 27;
+    let mut full_sig = [0u8; 65];
+    full_sig[..64].copy_from_slice(&sig_bytes);
+    full_sig[64] = v;
+    let signature_hex = format!("0x{}", hex::encode(full_sig));
+
+    // Derive signer address from public key
+    let verifying_key = VerifyingKey::from(&signing_key);
+    let pubkey_bytes = verifying_key.to_encoded_point(false);
+    let pubkey_uncompressed = &pubkey_bytes.as_bytes()[1..]; // skip 0x04 prefix
+    let mut addr_hasher = Keccak256::new();
+    addr_hasher.update(pubkey_uncompressed);
+    let addr_hash = addr_hasher.finalize();
+    let signer_address = format!("0x{}", hex::encode(&addr_hash[12..]));
+
+    Ok(serde_json::json!({
+        "signature": signature_hex,
+        "signerAddress": signer_address,
+    }))
+}
+
+/// Internal signing helper (no keychain dependency, for testing).
+#[cfg(test)]
+pub fn sign_metadata_with_key(
+    pk_hex: &str,
+    l1_chain_id: u64,
+    l2_chain_id: u64,
+    stack_type: &str,
+    operation: &str,
+    identity_contract: &str,
+    timestamp: u64,
+) -> (String, String) {
+    use k256::ecdsa::{SigningKey, VerifyingKey};
+    use sha3::{Digest, Keccak256};
+
+    let pk_bytes = hex::decode(pk_hex.trim_start_matches("0x")).unwrap();
+    let signing_key = SigningKey::from_bytes(pk_bytes.as_slice().into()).unwrap();
+
+    let message = format!(
+        "Tokamak Appchain Registry\n\
+         L1 Chain ID: {l1_chain_id}\n\
+         L2 Chain ID: {l2_chain_id}\n\
+         Stack: {stack_type}\n\
+         Operation: {operation}\n\
+         Contract: {contract}\n\
+         Timestamp: {timestamp}",
+        contract = identity_contract.to_lowercase(),
+    );
+
+    let prefix = format!("\x19Ethereum Signed Message:\n{}", message.len());
+    let mut hasher = Keccak256::new();
+    hasher.update(prefix.as_bytes());
+    hasher.update(message.as_bytes());
+    let hash = hasher.finalize();
+
+    let (signature, recovery_id) = signing_key.sign_prehash_recoverable(&hash).unwrap();
+    let sig_bytes = signature.to_bytes();
+    let v = recovery_id.to_byte() + 27;
+    let mut full_sig = [0u8; 65];
+    full_sig[..64].copy_from_slice(&sig_bytes);
+    full_sig[64] = v;
+    let signature_hex = format!("0x{}", hex::encode(full_sig));
+
+    let verifying_key = VerifyingKey::from(&signing_key);
+    let pubkey_bytes = verifying_key.to_encoded_point(false);
+    let pubkey_uncompressed = &pubkey_bytes.as_bytes()[1..];
+    let mut addr_hasher = Keccak256::new();
+    addr_hasher.update(pubkey_uncompressed);
+    let addr_hash = addr_hasher.finalize();
+    let signer_address = format!("0x{}", hex::encode(&addr_hash[12..]));
+
+    (signature_hex, signer_address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sign_metadata_matches_ethers() {
+        // Hardhat account #0
+        let pk = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let expected_address = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        // ethers.js produced this signature for the same message:
+        let expected_sig = "0x04661a5da29005215bc53f225d2b6e98a5edfcfba30c8c5f264e9ebd29fea77c7c036b25079e6137252f4d8af34876efc307d57871aed9d355df09cc59bce0171c";
+
+        let (sig, addr) = sign_metadata_with_key(
+            pk,
+            11155111,
+            12345,
+            "tokamak-appchain",
+            "register",
+            "0x1234567890123456789012345678901234567890",
+            1710000000,
+        );
+
+        assert_eq!(addr, expected_address, "Address mismatch");
+        assert_eq!(sig, expected_sig, "Signature mismatch");
+    }
 }

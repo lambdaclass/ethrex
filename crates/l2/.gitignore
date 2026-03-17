@@ -10,3 +10,4 @@ out/
 dev_ethrex_l2/
 
 dev_ethrex_l1/
+.deployed-*-tools.env

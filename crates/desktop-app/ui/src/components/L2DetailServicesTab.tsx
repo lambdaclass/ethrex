@@ -61,6 +61,17 @@ export default function L2DetailServicesTab({
   l2, ko, containers, products, actionLoading, handleAction,
   onRefresh, onRetry, l1ChainId, l2ChainId, onOpenManager,
 }: Props) {
+  // Resolve host IP for AWS deployments
+  const hostIp = (() => {
+    try {
+      if (l2.rawConfig) {
+        const cfg = JSON.parse(l2.rawConfig)
+        if (cfg.ec2IP) return cfg.ec2IP as string
+      }
+    } catch { /* ignore */ }
+    return null
+  })()
+
   const [toolsLoading, setToolsLoading] = useState(false)
   const [bridgeConfig, setBridgeConfig] = useState<BridgeUIConfig | null>(null)
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null)
@@ -187,8 +198,12 @@ export default function L2DetailServicesTab({
           }
           const state = svcState(svc.service)
           const running = state === 'running'
-          const port = svc.portKey ? (l2[svc.portKey] ? `:${l2[svc.portKey]}` : null) : null
-          const displayPort = port || svcPort(svc.service)
+          const portNum = svc.portKey ? l2[svc.portKey] : null
+          const fallbackPort = svcPort(svc.service)
+          const coreHost = hostIp || 'localhost'
+          const serviceUrl = portNum
+            ? `http://${coreHost}:${portNum}`
+            : fallbackPort ? `http://${coreHost}${fallbackPort}` : null
           const chainId = svc.service === 'tokamak-app-l1' ? l1ChainId : svc.service === 'tokamak-app-l2' ? l2ChainId : undefined
           return (
             <div key={svc.service} className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]">
@@ -196,7 +211,15 @@ export default function L2DetailServicesTab({
               <span className="text-[12px] font-medium flex-shrink-0">{svc.label}</span>
               <span className={`text-[11px] ${running ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>{state}</span>
               {running && chainId ? <code className="text-[10px] font-mono text-[var(--color-text-secondary)]">ID: {chainId}</code> : null}
-              {displayPort && <code className="text-[10px] font-mono text-[#3b82f6] ml-auto">{displayPort}</code>}
+              {serviceUrl && running && serviceUrl.startsWith('http') ? (
+                <a href="#" onClick={e => { e.preventDefault(); window.open(serviceUrl, '_blank') }}
+                  className="text-[10px] font-mono text-[#3b82f6] ml-auto hover:underline cursor-pointer flex items-center gap-0.5">
+                  {serviceUrl}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </a>
+              ) : serviceUrl ? (
+                <code className="text-[10px] font-mono text-[#3b82f6] ml-auto">{serviceUrl}</code>
+              ) : null}
             </div>
           )
         })}
@@ -263,18 +286,21 @@ export default function L2DetailServicesTab({
           const running = state === 'running'
           const dbPort = svc.portKey ? (l2[svc.portKey] as number | null) : null
           const containerPort = svcPort(svc.service)
-          const displayPort = dbPort ? `:${dbPort}` : containerPort
+          const host = hostIp || 'localhost'
+          const toolUrl = dbPort
+            ? `http://${host}:${dbPort}`
+            : containerPort ? `http://${host}${containerPort}` : null
           return (
             <div key={svc.service} className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]">
               <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dotColor(state) }} />
               <span className="text-[12px] font-medium flex-shrink-0">{svc.label}</span>
               <span className={`text-[11px] ${running ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}>{state}</span>
-              {displayPort && running && (
+              {toolUrl && running && (
                 <button
-                  onClick={() => openInBrowser(`http://localhost${displayPort}`)}
+                  onClick={() => openInBrowser(toolUrl)}
                   className="ml-auto flex items-center gap-1 text-[10px] font-mono text-[#3b82f6] hover:opacity-70 cursor-pointer bg-transparent border-none"
                 >
-                  {displayPort}
+                  {toolUrl}
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
                   </svg>

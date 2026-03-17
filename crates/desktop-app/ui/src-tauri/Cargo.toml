@@ -27,13 +27,17 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json"] }
-keyring = "3"
 open = "5"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rand = "0.8"
 sha2 = "0.10"
+sha3 = "0.10"
 hex = "0.4"
 regex = "1"
+k256 = { version = "0.13", features = ["ecdsa-core", "ecdsa"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+keyring = "3"
 
 [dev-dependencies]
 tempfile = "3"

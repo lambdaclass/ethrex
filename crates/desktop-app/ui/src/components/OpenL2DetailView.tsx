@@ -1,60 +1,81 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { t, type Lang } from '../i18n'
-import type { Comment } from '../types/comments'
-import type { L2Service } from './OpenL2View'
-import CommentSection from './CommentSection'
-
-const OPEN_L2_MOCK_COMMENTS: Comment[] = [
-  {
-    id: '1', author: 'alice_dev', avatar: 'A', text: '이 앱체인 TPS가 꽤 높네요! 메인넷에서도 이 정도 나오나요?',
-    time: '30분 전', likes: 7, liked: false,
-    replies: [
-      { id: '1-1', author: 'operator', avatar: 'OP', text: '네, 메인넷에서도 비슷한 수준입니다. 프루버 최적화 덕분이에요.',
-        time: '20분 전', likes: 3, liked: false, replies: [] },
-    ],
-  },
-  {
-    id: '2', author: 'bob_web3', avatar: 'B', text: 'RPC 연결 가이드가 있나요? MetaMask 설정 방법이 궁금합니다.',
-    time: '2시간 전', likes: 4, liked: true,
-    replies: [],
-  },
-  {
-    id: '3', author: 'carol_dao', avatar: 'C', text: '브릿지 수수료가 정말 저렴하네요. 다른 L2 대비 경쟁력 있습니다 👍',
-    time: '5시간 전', likes: 15, liked: false,
-    replies: [
-      { id: '3-1', author: 'dave_trader', avatar: 'D', text: '동의합니다. 저도 여기로 옮길 생각 중이에요.',
-        time: '4시간 전', likes: 2, liked: false, replies: [] },
-      { id: '3-2', author: 'operator', avatar: 'OP', text: '감사합니다! 앞으로도 비용 효율성에 집중하겠습니다.',
-        time: '3시간 전', likes: 5, liked: false, replies: [] },
-    ],
-  },
-]
+import { platformAPI, type StoreAppchain } from '../api/platform'
+import { ipfsToHttp } from '../api/ipfs'
 
 interface OpenL2DetailViewProps {
-  l2: L2Service
+  appchain: StoreAppchain
   onBack: () => void
   ko: boolean
   lang: Lang
 }
 
-export default function OpenL2DetailView({ l2, onBack, ko, lang }: OpenL2DetailViewProps) {
+export default function OpenL2DetailView({ appchain, onBack, ko, lang }: OpenL2DetailViewProps) {
   const [openDetailTab, setOpenDetailTab] = useState<'overview' | 'community'>('overview')
   const [l2Liked, setL2Liked] = useState(false)
-  const [l2LikeCount, setL2LikeCount] = useState(248)
+  const [l2LikeCount, setL2LikeCount] = useState(0)
   const [userRating, setUserRating] = useState(0)
-  const [comments, setComments] = useState<Comment[]>(() => [...OPEN_L2_MOCK_COMMENTS])
+  const [onlineStatus, setOnlineStatus] = useState<'checking' | 'online' | 'offline'>('checking')
+  const [blockNumber, setBlockNumber] = useState<string | null>(null)
 
-  const mockScreenshots = [
-    { label: ko ? '메인 화면' : 'Main Screen', color: '#3b82f6' },
-    { label: ko ? '거래 화면' : 'Trading', color: '#8b5cf6' },
-    { label: ko ? '브릿지' : 'Bridge', color: '#10b981' },
-  ]
-  const avgRating = 4.2
-  const ratingCount = 89
+  // Community data from API
+  const [reviews, setReviews] = useState<Array<{ id: string; wallet_address: string; rating: number; content: string; created_at: number }>>([])
+  const [comments, setComments] = useState<Array<{ id: string; wallet_address: string; content: string; parent_id: string | null; created_at: number }>>([])
+  const [announcements, setAnnouncements] = useState<Array<{ id: string; title: string; content: string; pinned: number; created_at: number }>>([])
+  const [communityLoading, setCommunityLoading] = useState(false)
+
+  const chainId = appchain.chain_id || appchain.l2_chain_id
+  const avgRating = appchain.avg_rating
+  const ratingCount = appchain.review_count || 0
+
+  // Check RPC status via proxy
+  useEffect(() => {
+    if (!appchain.rpc_url) {
+      setOnlineStatus('offline')
+      return
+    }
+    platformAPI.rpcProxy(appchain.id, 'eth_blockNumber')
+      .then(data => {
+        if (data?.result) {
+          setOnlineStatus('online')
+          setBlockNumber(String(parseInt(data.result, 16)))
+        } else {
+          setOnlineStatus('offline')
+        }
+      })
+      .catch(() => setOnlineStatus('offline'))
+  }, [appchain.id, appchain.rpc_url])
+
+  // Load community data when tab changes
+  useEffect(() => {
+    if (openDetailTab !== 'community') return
+    setCommunityLoading(true)
+    Promise.all([
+      platformAPI.getAppchainReviews(appchain.id).catch(() => ({ reviews: [], reactionCounts: {}, userReactions: [] })),
+      platformAPI.getAppchainComments(appchain.id).catch(() => ({ comments: [], reactionCounts: {}, userReactions: [] })),
+      platformAPI.getAppchainAnnouncements(appchain.id).catch(() => []),
+    ]).then(([reviewData, commentData, announcementData]) => {
+      setReviews(reviewData.reviews)
+      setComments(commentData.comments)
+      setAnnouncements(announcementData)
+    }).finally(() => setCommunityLoading(false))
+  }, [openDetailTab, appchain.id])
+
   const detailTabs: { id: 'overview' | 'community'; label: string }[] = [
     { id: 'overview', label: ko ? '개요' : 'Overview' },
-    { id: 'community', label: ko ? '커뮤니티' : 'Community' },
+    { id: 'community', label: ko ? `커뮤니티 (${ratingCount + (appchain.comment_count || 0)})` : `Community (${ratingCount + (appchain.comment_count || 0)})` },
   ]
+
+  const socialLinks = appchain.social_links || {}
+
+  const safeOpen = (url: string) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      }
+    } catch { /* invalid URL, ignore */ }
+  }
 
   return (
     <div className="flex flex-col h-full bg-[var(--color-bg-main)]">
@@ -68,26 +89,45 @@ export default function OpenL2DetailView({ l2, onBack, ko, lang }: OpenL2DetailV
         </button>
         {/* Hero */}
         <div className="flex items-start gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-[var(--color-bg-main)] flex items-center justify-center text-2xl border border-[var(--color-border)] flex-shrink-0">
-            {l2.icon}
+          <div className="w-12 h-12 rounded-2xl bg-[var(--color-bg-main)] flex items-center justify-center text-2xl border border-[var(--color-border)] flex-shrink-0 overflow-hidden">
+            {appchain.screenshots && appchain.screenshots.length > 0 ? (
+              <img src={ipfsToHttp(appchain.screenshots[0])} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-[18px] font-bold text-[var(--color-text-secondary)]">{appchain.name.charAt(0).toUpperCase()}</span>
+            )}
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-[14px] font-bold">{l2.name}</h1>
-            <div className="text-[10px] text-[var(--color-text-secondary)]">by {l2.operator}</div>
+            <h1 className="text-[14px] font-bold">{appchain.name}</h1>
+            <div className="text-[10px] text-[var(--color-text-secondary)]">
+              {appchain.operator_name ? `by ${appchain.operator_name}` : appchain.owner_name ? `by ${appchain.owner_name}` : ''}
+              {appchain.stack_type && <span className="ml-1.5 text-[var(--color-tag-text)] bg-[var(--color-tag-bg)] px-1 py-0.5 rounded">{appchain.stack_type}</span>}
+            </div>
             <div className="flex items-center gap-3 mt-0.5">
               <div className="flex items-center gap-1">
-                <span className={`w-2 h-2 rounded-full ${l2.status === 'online' ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-secondary)]'}`} />
+                <span className={`w-2 h-2 rounded-full ${
+                  onlineStatus === 'checking' ? 'bg-yellow-400 animate-pulse' :
+                  onlineStatus === 'online' ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-secondary)]'
+                }`} />
                 <span className="text-[10px] text-[var(--color-text-secondary)]">
-                  {l2.status === 'online' ? t('openl2.online', lang) : t('openl2.offline', lang)}
+                  {onlineStatus === 'checking' ? '...' : onlineStatus === 'online' ? t('openl2.online', lang) : t('openl2.offline', lang)}
                 </span>
               </div>
-              <span className="text-[10px] text-[var(--color-text-secondary)]">{l2.members.toLocaleString()} {t('openl2.users', lang)}</span>
+              {blockNumber && <span className="text-[10px] text-[var(--color-text-secondary)]">Block #{blockNumber}</span>}
+              {appchain.network_mode && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                  appchain.network_mode === 'mainnet' ? 'bg-green-100 text-green-700' :
+                  appchain.network_mode === 'testnet' ? 'bg-blue-100 text-blue-700' :
+                  'bg-gray-100 text-gray-600'
+                }`}>{appchain.network_mode}</span>
+              )}
               {/* Rating inline */}
-              <div className="flex items-center gap-0.5">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                <span className="text-[10px] font-medium">{avgRating}</span>
-                <span className="text-[9px] text-[var(--color-text-secondary)]">({ratingCount})</span>
-              </div>
+              {avgRating != null && (
+                <div className="flex items-center gap-0.5">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                  <span className="text-[10px] font-medium">{avgRating.toFixed(1)}</span>
+                  <span className="text-[9px] text-[var(--color-text-secondary)]">({ratingCount})</span>
+                </div>
+              )}
             </div>
           </div>
           {/* Like */}
@@ -117,16 +157,20 @@ export default function OpenL2DetailView({ l2, onBack, ko, lang }: OpenL2DetailV
           >{tab.label}</button>
         ))}
         {/* Dashboard link in tab bar */}
-        <div className="flex-1" />
-        <button
-          onClick={() => window.open(`http://dashboard.example.com/${l2.chainId}`, '_blank')}
-          className="flex items-center gap-1 text-[10px] text-[#3b82f6] hover:underline cursor-pointer px-2 py-2"
-        >
-          {ko ? '대시보드' : 'Dashboard'}
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-          </svg>
-        </button>
+        {appchain.dashboard_url && (
+          <>
+            <div className="flex-1" />
+            <button
+              onClick={() => safeOpen(appchain.dashboard_url!)}
+              className="flex items-center gap-1 text-[10px] text-[#3b82f6] hover:underline cursor-pointer px-2 py-2"
+            >
+              {ko ? '대시보드' : 'Dashboard'}
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Tab Content */}
@@ -135,80 +179,57 @@ export default function OpenL2DetailView({ l2, onBack, ko, lang }: OpenL2DetailV
         {/* Overview */}
         {openDetailTab === 'overview' && (<>
           {/* Hashtags */}
-          <div className="flex flex-wrap gap-1.5">
-            {l2.hashtags.map(tag => (
-              <span key={tag} className="text-[11px] bg-[var(--color-tag-bg)] px-2 py-0.5 rounded text-[var(--color-tag-text)]">#{tag}</span>
-            ))}
-          </div>
-
-          {/* Description */}
-          <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{ko ? '소개' : 'About'}</span>
-            <p className="text-[12px] mt-1.5 leading-relaxed">{l2.description}</p>
-            <p className="text-[12px] mt-2 leading-relaxed text-[var(--color-text-secondary)]">
-              {ko
-                ? '이 앱체인은 Tokamak Network 기반의 L2 롤업으로, 고성능 트랜잭션 처리와 낮은 수수료를 제공합니다. ZK 증명을 통해 L1의 보안성을 그대로 유지합니다.'
-                : 'This appchain is an L2 rollup built on Tokamak Network, offering high-performance transaction processing with low fees. ZK proofs maintain full L1 security guarantees.'}
-            </p>
-          </div>
-
-          {/* Screenshots */}
-          <div>
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] px-1">{ko ? '스크린샷' : 'Screenshots'}</span>
-            <div className="flex gap-2 mt-1.5 overflow-x-auto pb-1">
-              {mockScreenshots.map((s, i) => (
-                <div key={i} className="flex-shrink-0 w-36 h-24 rounded-xl border border-[var(--color-border)] flex items-center justify-center" style={{ backgroundColor: `${s.color}15` }}>
-                  <div className="text-center">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={s.color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mx-auto mb-1">
-                      <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-                    </svg>
-                    <span className="text-[9px]" style={{ color: s.color }}>{s.label}</span>
-                  </div>
-                </div>
+          {appchain.hashtags && appchain.hashtags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {appchain.hashtags.map(tag => (
+                <span key={tag} className="text-[11px] bg-[var(--color-tag-bg)] px-2 py-0.5 rounded text-[var(--color-tag-text)]">#{tag}</span>
               ))}
             </div>
-          </div>
+          )}
+
+          {/* Description */}
+          {appchain.description && (
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{ko ? '소개' : 'About'}</span>
+              <p className="text-[12px] mt-1.5 leading-relaxed whitespace-pre-wrap">{appchain.description}</p>
+            </div>
+          )}
+
+          {/* Screenshots */}
+          {appchain.screenshots && appchain.screenshots.length > 0 ? (
+            <div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] px-1">{ko ? '스크린샷' : 'Screenshots'}</span>
+              <div className="flex gap-2 mt-1.5 overflow-x-auto pb-1">
+                {appchain.screenshots.map((uri, i) => (
+                  <img
+                    key={i}
+                    src={ipfsToHttp(uri)}
+                    alt={`Screenshot ${i + 1}`}
+                    className="flex-shrink-0 w-36 h-24 rounded-xl border border-[var(--color-border)] object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => safeOpen(ipfsToHttp(uri))}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[11px] text-[var(--color-text-secondary)] text-center py-4">
+              {t('openl2.noScreenshots', lang)}
+            </div>
+          )}
 
           {/* Quick Stats */}
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-[var(--color-bg-sidebar)] rounded-lg p-2.5 border border-[var(--color-border)]">
-              <div className="text-[10px] text-[var(--color-text-secondary)]">TVL</div>
-              <div className="text-[14px] font-bold font-mono mt-0.5">{l2.tvlUsd}</div>
-              <div className="text-[9px] text-[var(--color-text-secondary)]">{l2.tvl}</div>
+              <div className="text-[10px] text-[var(--color-text-secondary)]">{t('openl2.reviews', lang)}</div>
+              <div className="text-[14px] font-bold font-mono mt-0.5">{ratingCount}</div>
             </div>
             <div className="bg-[var(--color-bg-sidebar)] rounded-lg p-2.5 border border-[var(--color-border)]">
-              <div className="text-[10px] text-[var(--color-text-secondary)]">{ko ? '사용자' : 'Users'}</div>
-              <div className="text-[14px] font-bold font-mono mt-0.5">{l2.members.toLocaleString()}</div>
+              <div className="text-[10px] text-[var(--color-text-secondary)]">{t('openl2.comments', lang)}</div>
+              <div className="text-[14px] font-bold font-mono mt-0.5">{appchain.comment_count || 0}</div>
             </div>
             <div className="bg-[var(--color-bg-sidebar)] rounded-lg p-2.5 border border-[var(--color-border)]">
-              <div className="text-[10px] text-[var(--color-text-secondary)]">TPS</div>
-              <div className="text-[14px] font-bold font-mono mt-0.5">12.4</div>
-              <div className="text-[9px] text-[var(--color-text-secondary)]">2s / block</div>
-            </div>
-          </div>
-
-          {/* Gas & Bridge */}
-          <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{ko ? '가스 · 브릿지' : 'Gas & Bridge'}</span>
-            <div className="grid grid-cols-4 gap-2 mt-1.5">
-              <div className="bg-[var(--color-bg-main)] rounded-lg p-2 border border-[var(--color-border)]">
-                <div className="text-[9px] text-[var(--color-text-secondary)]">{ko ? 'L2 가스' : 'L2 Gas'}</div>
-                <div className="text-[12px] font-semibold font-mono mt-0.5">0.001</div>
-                <div className="text-[8px] text-[var(--color-text-secondary)]">gwei</div>
-              </div>
-              <div className="bg-[var(--color-bg-main)] rounded-lg p-2 border border-[var(--color-border)]">
-                <div className="text-[9px] text-[var(--color-text-secondary)]">{ko ? '수수료' : 'Revenue'}</div>
-                <div className="text-[12px] font-semibold font-mono mt-0.5">2.18</div>
-                <div className="text-[8px] text-[var(--color-text-secondary)]">TON</div>
-              </div>
-              <div className="bg-[var(--color-bg-main)] rounded-lg p-2 border border-[var(--color-border)]">
-                <div className="text-[9px] text-[var(--color-text-secondary)]">{ko ? '입금' : 'Deposits'}</div>
-                <div className="text-[12px] font-semibold font-mono mt-0.5">342</div>
-              </div>
-              <div className="bg-[var(--color-bg-main)] rounded-lg p-2 border border-[var(--color-border)]">
-                <div className="text-[9px] text-[var(--color-text-secondary)]">{ko ? '출금' : 'Withdraw'}</div>
-                <div className="text-[12px] font-semibold font-mono mt-0.5">89</div>
-              </div>
+              <div className="text-[10px] text-[var(--color-text-secondary)]">{t('openl2.rating', lang)}</div>
+              <div className="text-[14px] font-bold font-mono mt-0.5">{avgRating != null ? avgRating.toFixed(1) : '-'}</div>
             </div>
           </div>
 
@@ -216,45 +237,184 @@ export default function OpenL2DetailView({ l2, onBack, ko, lang }: OpenL2DetailV
           <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{t('openl2.connectionInfo', lang)}</span>
             <div className="mt-1.5 space-y-1 text-[11px]">
-              <div className="flex justify-between">
-                <span className="text-[var(--color-text-secondary)]">Chain ID</span>
-                <span className="font-mono">{l2.chainId}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--color-text-secondary)]">RPC</span>
-                <code className="font-mono text-[10px] text-[#3b82f6]">{l2.rpcUrl}</code>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--color-text-secondary)]">{ko ? '네이티브 토큰' : 'Native Token'}</span>
-                <span>TON</span>
-              </div>
+              {chainId && (
+                <div className="flex justify-between">
+                  <span className="text-[var(--color-text-secondary)]">Chain ID</span>
+                  <span className="font-mono">{chainId}</span>
+                </div>
+              )}
+              {appchain.rpc_url && (
+                <div className="flex justify-between">
+                  <span className="text-[var(--color-text-secondary)]">RPC</span>
+                  <code className="font-mono text-[10px] text-[#3b82f6] truncate ml-2 max-w-[200px]">{appchain.rpc_url}</code>
+                </div>
+              )}
+              {appchain.native_token_symbol && (
+                <div className="flex justify-between">
+                  <span className="text-[var(--color-text-secondary)]">{t('openl2.nativeToken', lang)}</span>
+                  <span>{appchain.native_token_symbol}</span>
+                </div>
+              )}
+              {appchain.l1_chain_id && (
+                <div className="flex justify-between">
+                  <span className="text-[var(--color-text-secondary)]">L1 Chain</span>
+                  <span className="font-mono">{appchain.l1_chain_id === 1 ? 'Mainnet' : appchain.l1_chain_id === 11155111 ? 'Sepolia' : appchain.l1_chain_id}</span>
+                </div>
+              )}
+              {appchain.explorer_url && (
+                <div className="flex justify-between">
+                  <span className="text-[var(--color-text-secondary)]">Explorer</span>
+                  <button onClick={() => safeOpen(appchain.explorer_url!)} className="text-[10px] text-[#3b82f6] hover:underline cursor-pointer truncate ml-2 max-w-[200px]">{appchain.explorer_url}</button>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Social Links */}
+          {Object.keys(socialLinks).length > 0 && (
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{ko ? '소셜 링크' : 'Social Links'}</span>
+              <div className="mt-1.5 space-y-1">
+                {Object.entries(socialLinks).filter(([, v]) => v).map(([key, url]) => (
+                  <div key={key} className="flex items-center justify-between text-[11px]">
+                    <span className="text-[var(--color-text-secondary)] capitalize">{key}</span>
+                    <button onClick={() => safeOpen(url)} className="text-[#3b82f6] hover:underline cursor-pointer truncate ml-2 max-w-[200px] text-[10px]">{url}</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* L1 Contracts */}
+          {appchain.l1_contracts && Object.keys(appchain.l1_contracts).length > 0 && (
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">L1 Contracts</span>
+              <div className="mt-1.5 space-y-1">
+                {Object.entries(appchain.l1_contracts).map(([key, addr]) => (
+                  <div key={key} className="flex items-center justify-between text-[11px]">
+                    <span className="text-[var(--color-text-secondary)] capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                    <code className="font-mono text-[9px] text-[var(--color-text-secondary)]">{String(addr).slice(0, 8)}...{String(addr).slice(-6)}</code>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </>)}
 
         {/* Community */}
         {openDetailTab === 'community' && (<>
-          {/* My Rating */}
-          <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{ko ? '내 평점' : 'Rate this Appchain'}</span>
-            <div className="flex items-center gap-1.5 mt-1.5">
-              {[1, 2, 3, 4, 5].map(star => (
-                <button key={star} onClick={() => setUserRating(star === userRating ? 0 : star)} className="cursor-pointer">
-                  <svg width="22" height="22" viewBox="0 0 24 24"
-                    fill={star <= userRating ? '#f59e0b' : 'none'}
-                    stroke={star <= userRating ? '#f59e0b' : 'currentColor'}
-                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                    className={star <= userRating ? '' : 'text-[var(--color-text-secondary)] opacity-40 hover:opacity-70'}
-                  >
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                  </svg>
-                </button>
-              ))}
-              {userRating > 0 && <span className="text-[11px] text-[var(--color-text-secondary)] ml-2">{ko ? '감사합니다!' : 'Thanks!'}</span>}
+          {communityLoading ? (
+            <div className="flex items-center justify-center py-8 text-[var(--color-text-secondary)]">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2" />
+              <span className="text-[12px]">{ko ? '로딩 중...' : 'Loading...'}</span>
             </div>
-          </div>
+          ) : (<>
+            {/* My Rating */}
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{ko ? '내 평점' : 'Rate this Appchain'}</span>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {[1, 2, 3, 4, 5].map(star => (
+                  <button key={star} onClick={() => setUserRating(star === userRating ? 0 : star)} className="cursor-pointer">
+                    <svg width="22" height="22" viewBox="0 0 24 24"
+                      fill={star <= userRating ? '#f59e0b' : 'none'}
+                      stroke={star <= userRating ? '#f59e0b' : 'currentColor'}
+                      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                      className={star <= userRating ? '' : 'text-[var(--color-text-secondary)] opacity-40 hover:opacity-70'}
+                    >
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                    </svg>
+                  </button>
+                ))}
+                {userRating > 0 && <span className="text-[11px] text-[var(--color-text-secondary)] ml-2">{ko ? '(지갑 서명 후 제출 — 준비 중)' : '(Wallet signing required — coming soon)'}</span>}
+              </div>
+            </div>
 
-          <CommentSection comments={comments} onCommentsChange={setComments} ko={ko} />
+            {/* Announcements */}
+            {announcements.length > 0 && (
+              <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{t('openl2.announcements', lang)}</span>
+                <div className="mt-1.5 space-y-2">
+                  {announcements.map(a => (
+                    <div key={a.id} className="bg-[var(--color-bg-main)] rounded-lg p-2.5 border border-[var(--color-border)]">
+                      <div className="flex items-center gap-1.5">
+                        {a.pinned === 1 && <span className="text-[8px] bg-yellow-100 text-yellow-700 px-1 py-0.5 rounded">PIN</span>}
+                        <span className="text-[11px] font-medium">{a.title}</span>
+                      </div>
+                      <p className="text-[10px] text-[var(--color-text-secondary)] mt-1 whitespace-pre-wrap">{a.content}</p>
+                      <div className="text-[8px] text-[var(--color-text-secondary)] mt-1">
+                        {new Date(a.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Reviews */}
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                {t('openl2.reviews', lang)} ({reviews.length})
+              </span>
+              {reviews.length === 0 ? (
+                <p className="text-[11px] text-[var(--color-text-secondary)] mt-2">{ko ? '아직 리뷰가 없습니다' : 'No reviews yet'}</p>
+              ) : (
+                <div className="mt-1.5 space-y-2">
+                  {reviews.map(r => (
+                    <div key={r.id} className="bg-[var(--color-bg-main)] rounded-lg p-2.5 border border-[var(--color-border)]">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-5 h-5 rounded-full bg-[var(--color-border)] flex items-center justify-center text-[8px] font-bold">
+                          {r.wallet_address.slice(2, 4).toUpperCase()}
+                        </div>
+                        <span className="text-[10px] font-mono text-[var(--color-text-secondary)]">
+                          {r.wallet_address.slice(0, 6)}...{r.wallet_address.slice(-4)}
+                        </span>
+                        <div className="flex items-center gap-0.5">
+                          {[1, 2, 3, 4, 5].map(s => (
+                            <svg key={s} width="8" height="8" viewBox="0 0 24 24" fill={s <= r.rating ? '#f59e0b' : 'none'} stroke="#f59e0b" strokeWidth="2">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                            </svg>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-[11px] mt-1">{r.content}</p>
+                      <div className="text-[8px] text-[var(--color-text-secondary)] mt-1">
+                        {new Date(r.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Comments */}
+            <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-3 border border-[var(--color-border)]">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                {t('openl2.comments', lang)} ({comments.length})
+              </span>
+              {comments.length === 0 ? (
+                <p className="text-[11px] text-[var(--color-text-secondary)] mt-2">{ko ? '아직 댓글이 없습니다' : 'No comments yet'}</p>
+              ) : (
+                <div className="mt-1.5 space-y-2">
+                  {comments.map(c => (
+                    <div key={c.id} className={`bg-[var(--color-bg-main)] rounded-lg p-2.5 border border-[var(--color-border)] ${c.parent_id ? 'ml-4' : ''}`}>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-5 h-5 rounded-full bg-[var(--color-border)] flex items-center justify-center text-[8px] font-bold">
+                          {c.wallet_address.slice(2, 4).toUpperCase()}
+                        </div>
+                        <span className="text-[10px] font-mono text-[var(--color-text-secondary)]">
+                          {c.wallet_address.slice(0, 6)}...{c.wallet_address.slice(-4)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] mt-1">{c.content}</p>
+                      <div className="text-[8px] text-[var(--color-text-secondary)] mt-1">
+                        {new Date(c.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>)}
         </>)}
 
       </div>

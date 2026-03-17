@@ -178,6 +178,7 @@ pub fn run() {
             save_keychain_value,
             delete_keychain_value,
             set_metadata_uri,
+            sign_appchain_metadata,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
