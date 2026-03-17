@@ -2,7 +2,7 @@ volumes:
   envb:
 
 services:
-  contract_deployer:
+  tokamak-app-deployer:
     volumes:
       - ../../fixtures/genesis/l2b.json:${DOCKER_ETHREX_WORKDIR}/fixtures/genesis/l2.json
       - envb:/env/
@@ -16,10 +16,10 @@ services:
       --router.address ${ETHREX_SHARED_BRIDGE_ROUTER_ADDRESS}
       --randomize-contract-deployment
 
-  ethrex_l2:
+  tokamak-app-l2:
 
-  ethrex_l2_b:
-    container_name: ethrex_l2_b
+  tokamak-app-l2-b:
+    container_name: tokamak-app-l2-b
     image: "ethrex:main-l2"
     build:
       context: ../../
@@ -32,7 +32,7 @@ services:
       - ${ETHREX_PROOF_COORDINATOR_ADDRESS:-127.0.0.1}:3901:3901
     environment:
       # Default values are taken from cmd/ethrex/l2/options.rs defaults.
-      - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
+      - ETHREX_ETH_RPC_URL=http://tokamak-app-l1:8545
       - ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM:-false}
       - ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME:-5000}
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
@@ -72,5 +72,5 @@ services:
       --proof-coordinator.port 3901
       --no-monitor
     depends_on:
-      contract_deployer:
+      tokamak-app-deployer:
         condition: service_completed_successfully

@@ -1,6 +1,6 @@
 # Mount and use database created from blobs, for the state reconstruct test.
 services:
-  ethrex_l2:
+  tokamak-app-l2:
     volumes:
       - ./store:/store
     command: >

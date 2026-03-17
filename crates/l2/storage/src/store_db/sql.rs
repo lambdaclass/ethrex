@@ -32,7 +32,7 @@ impl Debug for SQLStore {
     }
 }
 
-const DB_SCHEMA: [&str; 20] = [
+const DB_SCHEMA: [&str; 21] = [
     "CREATE TABLE IF NOT EXISTS blocks (block_number INT PRIMARY KEY, batch INT)",
     "CREATE TABLE IF NOT EXISTS l1_messages (batch INT, idx INT, message_hash BLOB, PRIMARY KEY (batch, idx))",
     "CREATE TABLE IF NOT EXISTS l2_rolling_hashes (batch INT PRIMARY KEY, value BLOB)",
@@ -53,6 +53,7 @@ const DB_SCHEMA: [&str; 20] = [
     "CREATE TABLE IF NOT EXISTS batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
     "CREATE TABLE IF NOT EXISTS batch_prover_input (batch INT, prover_version TEXT, prover_input BLOB, PRIMARY KEY (batch, prover_version))",
     "CREATE TABLE IF NOT EXISTS fee_config (block_number INT PRIMARY KEY, fee_config BLOB)",
+    "CREATE TABLE IF NOT EXISTS batch_program_id (batch INT PRIMARY KEY, program_id TEXT NOT NULL)",
 ];
 
 impl SQLStore {
@@ -462,6 +463,13 @@ fn read_from_row_int(row: &Row, index: i32) -> Result<u64, RollupStoreError> {
 fn read_from_row_blob(row: &Row, index: i32) -> Result<Vec<u8>, RollupStoreError> {
     match row.get_value(index)? {
         Value::Blob(vec) => Ok(vec),
+        _ => Err(RollupStoreError::SQLInvalidTypeError),
+    }
+}
+
+fn read_from_row_text(row: &Row, index: i32) -> Result<String, RollupStoreError> {
+    match row.get_value(index)? {
+        Value::Text(s) => Ok(s),
         _ => Err(RollupStoreError::SQLInvalidTypeError),
     }
 }
@@ -1091,6 +1099,37 @@ impl StoreEngineRollup for SQLStore {
         if let Some(row) = rows.next().await? {
             let vec = read_from_row_blob(&row, 1)?;
             return Ok(Some(bincode::deserialize(&vec)?));
+        }
+        Ok(None)
+    }
+
+    async fn store_program_id_by_batch(
+        &self,
+        batch_number: u64,
+        program_id: &str,
+    ) -> Result<(), RollupStoreError> {
+        self.execute_in_tx(
+            vec![(
+                "INSERT OR REPLACE INTO batch_program_id VALUES (?1, ?2)",
+                (batch_number, program_id).into_params()?,
+            )],
+            None,
+        )
+        .await
+    }
+
+    async fn get_program_id_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<String>, RollupStoreError> {
+        let mut rows = self
+            .query(
+                "SELECT program_id FROM batch_program_id WHERE batch = ?1",
+                vec![batch_number],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            return Ok(Some(read_from_row_text(&row, 0)?));
         }
         Ok(None)
     }

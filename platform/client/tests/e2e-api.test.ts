@@ -1,0 +1,471 @@
+/**
+ * E2E API tests — runs against a live Next.js dev server.
+ *
+ * Prerequisites:
+ *   1. DATABASE_URL must be set (Neon Postgres or local Postgres)
+ *   2. Dev server running (npm run dev)
+ *
+ * Run: TEST_BASE_URL=http://localhost:3099 npx tsx tests/e2e-api.test.ts
+ */
+
+(async () => {
+  const BASE = process.env.TEST_BASE_URL || "http://localhost:3000";
+
+  let passed = 0;
+  let failed = 0;
+  let sessionToken = "";
+  const testEmail = `e2e-${Date.now()}@test.local`;
+  const testPassword = "testpassword123";
+  const testName = "E2E Tester";
+
+  async function test(name: string, fn: () => Promise<void>) {
+    try {
+      await fn();
+      passed++;
+      console.log(`  PASS: ${name}`);
+    } catch (e) {
+      failed++;
+      console.error(`  FAIL: ${name} — ${e}`);
+    }
+  }
+
+  function assert(condition: boolean, msg: string) {
+    if (!condition) throw new Error(msg);
+  }
+
+  async function api(path: string, opts?: RequestInit) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(opts?.headers as Record<string, string> || {}),
+    };
+    if (sessionToken) {
+      headers["Authorization"] = `Bearer ${sessionToken}`;
+    }
+    const res = await fetch(`${BASE}${path}`, { ...opts, headers });
+    const data = await res.json();
+    return { status: res.status, data };
+  }
+
+  // ---- Health ----
+  console.log("\n=== Health ===");
+
+  await test("GET /api/health", async () => {
+    const { status, data } = await api("/api/health");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.status === "ok", `expected ok, got ${data.status}`);
+  });
+
+  // ---- Auth ----
+  console.log("\n=== Auth ===");
+
+  await test("POST /api/auth/signup — creates user", async () => {
+    const { status, data } = await api("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail, password: testPassword, name: testName }),
+    });
+    assert(status === 201, `expected 201, got ${status}: ${JSON.stringify(data)}`);
+    assert(data.token.startsWith("ps_"), "token should start with ps_");
+    assert(data.user.email === testEmail, "email mismatch");
+    sessionToken = data.token;
+  });
+
+  await test("POST /api/auth/signup — duplicate email rejected", async () => {
+    const { status } = await api("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail, password: testPassword, name: testName }),
+    });
+    assert(status === 409, `expected 409, got ${status}`);
+  });
+
+  await test("POST /api/auth/login — correct password", async () => {
+    const { status, data } = await api("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail, password: testPassword }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.token.startsWith("ps_"), "token should start with ps_");
+    sessionToken = data.token;
+  });
+
+  await test("POST /api/auth/login — wrong password", async () => {
+    const { status } = await api("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: testEmail, password: "wrongpassword" }),
+    });
+    assert(status === 401, `expected 401, got ${status}`);
+  });
+
+  await test("GET /api/auth/me — returns current user", async () => {
+    const { status, data } = await api("/api/auth/me");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.email === testEmail, "email mismatch");
+    assert(data.name === testName, "name mismatch");
+  });
+
+  await test("GET /api/auth/me — 401 without token", async () => {
+    const saved = sessionToken;
+    sessionToken = "";
+    const { status } = await api("/api/auth/me");
+    sessionToken = saved;
+    assert(status === 401, `expected 401, got ${status}`);
+  });
+
+  await test("GET /api/auth/providers — returns providers", async () => {
+    const { status, data } = await api("/api/auth/providers");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(typeof data.google === "boolean", "google should be boolean");
+    assert(typeof data.naver === "boolean", "naver should be boolean");
+    assert(typeof data.kakao === "boolean", "kakao should be boolean");
+  });
+
+  await test("PUT /api/auth/profile — updates name", async () => {
+    const { status, data } = await api("/api/auth/profile", {
+      method: "PUT",
+      body: JSON.stringify({ name: "Updated Name" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.user.name === "Updated Name", "name not updated");
+  });
+
+  // ---- Store (public) ----
+  console.log("\n=== Store ===");
+
+  await test("GET /api/store/programs — lists programs", async () => {
+    const { status, data } = await api("/api/store/programs");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(Array.isArray(data.programs), "programs should be array");
+  });
+
+  await test("GET /api/store/categories — lists categories", async () => {
+    const { status, data } = await api("/api/store/categories");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(Array.isArray(data.categories), "categories should be array");
+  });
+
+  await test("GET /api/store/featured — lists featured", async () => {
+    const { status, data } = await api("/api/store/featured");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(Array.isArray(data.programs), "programs should be array");
+  });
+
+  await test("GET /api/store/appchains — lists appchains", async () => {
+    const { status, data } = await api("/api/store/appchains");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(Array.isArray(data.appchains), "appchains should be array");
+  });
+
+  // ---- Programs (authenticated) ----
+  console.log("\n=== Programs ===");
+
+  let programDbId = "";
+  const testProgramId = `e2e-prog-${Date.now()}`;
+
+  await test("POST /api/programs — creates program", async () => {
+    const { status, data } = await api("/api/programs", {
+      method: "POST",
+      body: JSON.stringify({
+        programId: testProgramId,
+        name: "E2E Test Program",
+        description: "Test program for e2e",
+        category: "general",
+      }),
+    });
+    assert(status === 201, `expected 201, got ${status}: ${JSON.stringify(data)}`);
+    assert(data.program.program_id === testProgramId, "programId mismatch");
+    programDbId = data.program.id;
+  });
+
+  await test("GET /api/programs — lists my programs", async () => {
+    const { status, data } = await api("/api/programs");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.programs.some((p: { id: string }) => p.id === programDbId), "should contain created program");
+  });
+
+  await test("GET /api/programs/[id] — gets program", async () => {
+    const { status, data } = await api(`/api/programs/${programDbId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.program.id === programDbId, "id mismatch");
+  });
+
+  await test("PUT /api/programs/[id] — updates program", async () => {
+    const { status, data } = await api(`/api/programs/${programDbId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: "Updated Program" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.program.name === "Updated Program", "name not updated");
+  });
+
+  // ---- Deployments (authenticated) ----
+  console.log("\n=== Deployments ===");
+
+  let deploymentId = "";
+
+  await test("Find official program for deployment", async () => {
+    const { status, data } = await api("/api/store/programs?search=evm-l2");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.programs.length > 0, "should find evm-l2");
+  });
+
+  await test("POST /api/deployments — creates deployment", async () => {
+    const { data: storeData } = await api("/api/store/programs?search=evm-l2");
+    const evmL2 = storeData.programs[0];
+
+    const { status, data } = await api("/api/deployments", {
+      method: "POST",
+      body: JSON.stringify({
+        programId: evmL2.id,
+        name: "E2E Test Deployment",
+        chainId: 12345,
+      }),
+    });
+    assert(status === 201, `expected 201, got ${status}: ${JSON.stringify(data)}`);
+    assert(data.deployment.name === "E2E Test Deployment", "name mismatch");
+    deploymentId = data.deployment.id;
+  });
+
+  await test("GET /api/deployments — lists my deployments", async () => {
+    const { status, data } = await api("/api/deployments");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployments.some((d: { id: string }) => d.id === deploymentId), "should contain created deployment");
+  });
+
+  await test("GET /api/deployments/[id] — gets deployment", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.id === deploymentId, "id mismatch");
+  });
+
+  await test("PUT /api/deployments/[id] — updates deployment", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: "Updated Deployment", chain_id: 99999 }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.name === "Updated Deployment", "name not updated");
+  });
+
+  await test("POST /api/deployments/[id]/activate — activates", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}/activate`, { method: "POST" });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.status === "active", "should be active");
+  });
+
+  // ---- Showroom (Appchain Detail & Social) ----
+  console.log("\n=== Showroom ===");
+
+  await test("PUT /api/deployments/[id] — updates showroom fields (description, social_links)", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "A test appchain for E2E testing",
+        network_mode: "testnet",
+        l1_chain_id: 11155111,
+        bridge_address: "0x1234567890abcdef1234567890abcdef12345678",
+        proposer_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        explorer_url: "http://localhost:8080",
+        dashboard_url: "http://localhost:3010",
+        social_links: JSON.stringify({ website: "https://example.com", github: "https://github.com/test" }),
+        screenshots: JSON.stringify(["ipfs://Qm123", "ipfs://Qm456"]),
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.description === "A test appchain for E2E testing", "description mismatch");
+    assert(data.deployment.network_mode === "testnet", "network_mode mismatch");
+    assert(data.deployment.l1_chain_id === 11155111, "l1_chain_id mismatch");
+  });
+
+  await test("GET /api/store/appchains — lists active appchains (includes test deployment)", async () => {
+    const { status, data } = await api("/api/store/appchains");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(Array.isArray(data.appchains), "appchains should be array");
+    const found = data.appchains.find((a: { id: string }) => a.id === deploymentId);
+    assert(found, "should find activated deployment in showroom");
+    assert(found.description === "A test appchain for E2E testing", "description should appear in listing");
+    assert(found.network_mode === "testnet", "network_mode should appear in listing");
+  });
+
+  await test("GET /api/store/appchains/:id — returns detail with parsed JSON", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    const a = data.appchain;
+    assert(a.name === "Updated Deployment", "name mismatch");
+    assert(a.description === "A test appchain for E2E testing", "description mismatch");
+    assert(a.l1_chain_id === 11155111, "l1_chain_id mismatch");
+    assert(a.network_mode === "testnet", "network_mode mismatch");
+    assert(a.bridge_address === "0x1234567890abcdef1234567890abcdef12345678", "bridge_address mismatch");
+    assert(a.explorer_url === "http://localhost:8080", "explorer_url mismatch");
+    assert(a.dashboard_url === "http://localhost:3010", "dashboard_url mismatch");
+    // JSON fields should be parsed
+    assert(Array.isArray(a.screenshots), "screenshots should be parsed as array");
+    assert(a.screenshots.length === 2, `expected 2 screenshots, got ${a.screenshots.length}`);
+    assert(a.screenshots[0] === "ipfs://Qm123", "screenshot[0] mismatch");
+    assert(typeof a.social_links === "object", "social_links should be parsed as object");
+    assert(a.social_links.website === "https://example.com", "social_links.website mismatch");
+    assert(a.social_links.github === "https://github.com/test", "social_links.github mismatch");
+    // Owner info
+    assert(a.owner_name, "owner_name should be present");
+  });
+
+  await test("GET /api/store/appchains/:id — 404 for non-existent id", async () => {
+    const { status } = await api("/api/store/appchains/non-existent-id-12345");
+    assert(status === 404, `expected 404, got ${status}`);
+  });
+
+  await test("GET /api/store/appchains?search — filters by name", async () => {
+    const { status, data } = await api("/api/store/appchains?search=Updated");
+    assert(status === 200, `expected 200, got ${status}`);
+    const found = data.appchains.find((a: { id: string }) => a.id === deploymentId);
+    assert(found, "should find deployment by search");
+  });
+
+  await test("GET /api/store/appchains?search — no match returns empty", async () => {
+    const { status, data } = await api("/api/store/appchains?search=zzz_nonexistent_xyz");
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.appchains.length === 0, "should return empty array for no match");
+  });
+
+  await test("POST /api/store/appchains/:id/rpc-proxy — rejects disallowed method", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
+      method: "POST",
+      body: JSON.stringify({ method: "eth_sendTransaction", params: [] }),
+    });
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "Method not allowed", "should reject disallowed method");
+  });
+
+  await test("POST /api/store/appchains/:id/rpc-proxy — rejects missing method", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
+      method: "POST",
+      body: JSON.stringify({ params: [] }),
+    });
+    assert(status === 400, `expected 400, got ${status}`);
+    assert(data.error === "Method not allowed", "should reject missing method");
+  });
+
+  await test("PUT /api/deployments/[id] — deactivate (unpublish)", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ status: "inactive" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.status === "inactive", "should be inactive");
+  });
+
+  await test("GET /api/store/appchains/:id — 404 after deactivation", async () => {
+    const { status } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 404, `expected 404 after deactivation, got ${status}`);
+  });
+
+  await test("POST /api/deployments/[id]/activate — reactivate for cleanup", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}/activate`, { method: "POST" });
+    assert(status === 200, `expected 200, got ${status}`);
+  });
+
+  // ---- Phase 2: On-chain Metadata & IPFS ----
+  console.log("\n=== Phase 2: On-chain Metadata ===");
+
+  await test("POST /api/store/appchains/:id/rpc-proxy — allows ethrex_metadata method", async () => {
+    // ethrex_metadata should be in the allowlist (even though node is offline, should get 502 not 400)
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}/rpc-proxy`, {
+      method: "POST",
+      body: JSON.stringify({ method: "ethrex_metadata", params: [] }),
+    });
+    // 502 = node unreachable (expected since no real L2 running), NOT 400 (method not allowed)
+    assert(status !== 400, `ethrex_metadata should be allowed, got 400: ${JSON.stringify(data)}`);
+  });
+
+  await test("PUT /api/deployments/[id] — updates metadata-related fields", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "Phase 2 metadata test",
+        screenshots: JSON.stringify(["ipfs://QmTestHash1", "ipfs://QmTestHash2", "ipfs://QmTestHash3"]),
+        social_links: JSON.stringify({ website: "https://phase2.test", twitter: "https://twitter.com/test", discord: "https://discord.gg/test" }),
+        explorer_url: "https://explorer.phase2.test",
+        dashboard_url: "https://bridge.phase2.test",
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.deployment.description === "Phase 2 metadata test", "description mismatch");
+  });
+
+  await test("GET /api/store/appchains/:id — returns updated Phase 2 fields with 3 screenshots", async () => {
+    const { status, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(status === 200, `expected 200, got ${status}`);
+    const a = data.appchain;
+    assert(a.description === "Phase 2 metadata test", "description mismatch");
+    assert(Array.isArray(a.screenshots), "screenshots should be array");
+    assert(a.screenshots.length === 3, `expected 3 screenshots, got ${a.screenshots.length}`);
+    assert(a.screenshots[0] === "ipfs://QmTestHash1", "screenshot[0] mismatch");
+    assert(a.screenshots[2] === "ipfs://QmTestHash3", "screenshot[2] mismatch");
+    assert(a.social_links.twitter === "https://twitter.com/test", "twitter link mismatch");
+    assert(a.social_links.discord === "https://discord.gg/test", "discord link mismatch");
+    assert(a.explorer_url === "https://explorer.phase2.test", "explorer_url mismatch");
+    assert(a.dashboard_url === "https://bridge.phase2.test", "dashboard_url mismatch");
+  });
+
+  await test("PUT /api/deployments/[id] — empty screenshots array clears screenshots", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ screenshots: JSON.stringify([]) }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    const { data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(data.appchain.screenshots.length === 0, "screenshots should be empty after clear");
+  });
+
+  await test("PUT /api/deployments/[id] — malformed screenshots JSON doesn't crash detail", async () => {
+    // Store malformed JSON directly
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({ screenshots: "not-valid-json" }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+    const { status: detailStatus, data } = await api(`/api/store/appchains/${deploymentId}`);
+    assert(detailStatus === 200, `detail should not crash, got ${detailStatus}`);
+    assert(Array.isArray(data.appchain.screenshots), "screenshots should fallback to empty array");
+  });
+
+  await test("PUT /api/deployments/[id] — restore valid data for subsequent tests", async () => {
+    const { status } = await api(`/api/deployments/${deploymentId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        description: "A test appchain for E2E testing",
+        screenshots: JSON.stringify(["ipfs://Qm123"]),
+        social_links: JSON.stringify({ website: "https://example.com" }),
+      }),
+    });
+    assert(status === 200, `expected 200, got ${status}`);
+  });
+
+  // ---- Cleanup ----
+  console.log("\n=== Cleanup ===");
+
+  await test("DELETE /api/deployments/[id] — deletes deployment", async () => {
+    const { status, data } = await api(`/api/deployments/${deploymentId}`, { method: "DELETE" });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.ok === true, "should return ok");
+  });
+
+  await test("DELETE /api/programs/[id] — soft deletes program", async () => {
+    const { status, data } = await api(`/api/programs/${programDbId}`, { method: "DELETE" });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.program.status === "disabled", "should be disabled");
+  });
+
+  await test("POST /api/auth/logout — destroys session", async () => {
+    const { status, data } = await api("/api/auth/logout", { method: "POST" });
+    assert(status === 200, `expected 200, got ${status}`);
+    assert(data.ok === true, "should return ok");
+  });
+
+  await test("GET /api/auth/me — 401 after logout", async () => {
+    const { status } = await api("/api/auth/me");
+    assert(status === 401, `expected 401, got ${status}`);
+  });
+
+  // ---- Summary ----
+  console.log(`\n=== E2E Results: ${passed} passed, ${failed} failed ===\n`);
+  process.exit(failed > 0 ? 1 : 0);
+})();

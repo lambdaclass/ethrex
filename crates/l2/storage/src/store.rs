@@ -411,6 +411,15 @@ impl Store {
             .await
     }
 
+    pub async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        self.engine
+            .get_non_privileged_transactions_by_batch(batch_number)
+            .await
+    }
+
     /// Reverts to a previous batch, discarding operations in them
     pub async fn revert_to_batch(&self, batch_number: u64) -> Result<(), RollupStoreError> {
         self.engine.revert_to_batch(batch_number).await
@@ -461,5 +470,22 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<FeeConfig>, RollupStoreError> {
         self.engine.get_fee_config_by_block(block_number).await
+    }
+
+    pub async fn store_program_id_by_batch(
+        &self,
+        batch_number: u64,
+        program_id: &str,
+    ) -> Result<(), RollupStoreError> {
+        self.engine
+            .store_program_id_by_batch(batch_number, program_id)
+            .await
+    }
+
+    pub async fn get_program_id_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<String>, RollupStoreError> {
+        self.engine.get_program_id_by_batch(batch_number).await
     }
 }

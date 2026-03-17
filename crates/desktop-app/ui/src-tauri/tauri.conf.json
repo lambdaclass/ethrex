@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tokamak Appchain",
+  "version": "0.1.1",
+  "identifier": "network.tokamak.apps",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "cd ../local-server && npm install --omit=dev && cd ../ui && pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Tokamak Appchain",
+        "width": 420,
+        "height": 720,
+        "minWidth": 380,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../../local-server/**/*"
+    ]
+  }
+}

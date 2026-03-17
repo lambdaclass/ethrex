@@ -91,6 +91,8 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
         bytes32 lastBlockHash,
         uint256 nonPrivilegedTransactions,
         bytes32 commitHash,
+        uint8 programTypeId,
+        bytes32 publicValuesHash,
         ICommonBridge.BalanceDiff[] calldata balanceDiffs,
         ICommonBridge.L2MessageRollingHash[] calldata l2MessageRollingHashes
     ) external onlyRole(SEQUENCER) {
@@ -102,6 +104,8 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
             lastBlockHash,
             nonPrivilegedTransactions,
             commitHash,
+            programTypeId,
+            publicValuesHash,
             balanceDiffs,
             l2MessageRollingHashes
         );
@@ -112,13 +116,15 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
         uint256 batchNumber,
         bytes memory risc0BlockProof,
         bytes memory sp1ProofBytes,
-        bytes memory tdxSignature
+        bytes memory tdxSignature,
+        bytes memory customPublicValues
     ) external onlyRole(SEQUENCER) {
         onChainProposer.verifyBatch(
             batchNumber,
             risc0BlockProof,
             sp1ProofBytes,
-            tdxSignature
+            tdxSignature,
+            customPublicValues
         );
     }
 
@@ -134,6 +140,27 @@ contract Timelock is TimelockControllerUpgradeable, UUPSUpgradeable, ITimelock {
             lastBatchNumber,
             sp1MerkleProofsList,
             risc0MerkleProofsList
+        );
+    }
+
+    /// @notice Registers a verification key for a guest program on the OnChainProposer.
+    /// @dev Used during deployment to set up VKs for custom guest programs (e.g., zk-dex).
+    /// @param commit_hash The git commit hash identifying the build version.
+    /// @param programTypeId The on-chain program type identifier (e.g., 2 for zk-dex).
+    /// @param verifierId The verifier type (e.g., 1 for SP1).
+    /// @param new_vk The verification key derived from the program ELF.
+    /// @custom:access Restricted to accounts with the `SECURITY_COUNCIL` role.
+    function upgradeVerificationKey(
+        bytes32 commit_hash,
+        uint8 programTypeId,
+        uint8 verifierId,
+        bytes32 new_vk
+    ) external onlyRole(SECURITY_COUNCIL) {
+        onChainProposer.upgradeVerificationKey(
+            commit_hash,
+            programTypeId,
+            verifierId,
+            new_vk
         );
     }
 

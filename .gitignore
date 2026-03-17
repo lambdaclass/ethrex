@@ -42,6 +42,7 @@ jwt.hex
 *tests*.tar.gz
 
 .env
+.keys.env
 
 levm_ef_tests_report.txt
 levm_ef_tests_summary_slack.txt
@@ -77,9 +78,12 @@ bench-results/
 Claude.md
 GEMINI.md
 .claude/
+Claude-Sessions/
 
 # RKYV
 *.bin
+# Allow fixture binary files for offline proving/verification tests
+!crates/guest-program/tests/fixtures/**/*.bin
 
 # Documentation Graphs
 !docs/internal/l1/healing/*.svg
@@ -87,6 +91,9 @@ GEMINI.md
 # Default database directories for Ethrex in Dev mode
 dev_ethrex_l1/
 dev_ethrex_l2/
+
+# ZK-DEX localnet runtime directory
+.zk-dex-localnet/
 
 # Logs
 logs/
@@ -137,17 +144,32 @@ core.*
 
 __pycache__/
 
-# Next.js build artifacts
+# Next.js build output
 .next/
 
-# SP1 guest program build artifacts
-crates/guest-program/bin/sp1/out/
-crates/guest-program/bin/sp1-tokamon/
-crates/guest-program/bin/sp1-zk-dex/
+# SP1 guest program build artifacts (ELF/VK binaries)
+crates/guest-program/bin/*/out/
 
-# Local L2 config files
+# SP1 guest program lock files (generated per build)
+crates/guest-program/bin/sp1-tokamon/Cargo.lock
+crates/guest-program/bin/sp1-zk-dex/Cargo.lock
+
+# Platform local SQLite WAL/SHM files
+platform/server/db/*.sqlite-shm
+platform/server/db/*.sqlite-wal
+
+# Generated L2 config files
 zk-dex-l2-*.toml
 
-# Platform build artifacts
-platform/
+crates/desktop-app/ui/node_modules/
+crates/desktop-app/local-server/node_modules/
 
+# TypeScript build info
+*.tsbuildinfo
+
+# Platform SQLite database (runtime data)
+platform/server/db/platform.sqlite
+
+# ZK-DEX deployed contract addresses (local deployment state)
+crates/l2/.zk-dex-deployed.env
+.vercel

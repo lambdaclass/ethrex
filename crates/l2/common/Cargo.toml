@@ -30,6 +30,9 @@ tracing.workspace = true
 
 secp256k1 = { workspace = true, optional = true }
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

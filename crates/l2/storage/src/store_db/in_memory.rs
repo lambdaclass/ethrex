@@ -59,6 +59,8 @@ struct StoreInner {
     batch_prover_input: HashMap<(u64, String), Vec<u8>>,
     /// Map of block number to FeeConfig
     fee_config_by_block: HashMap<BlockNumber, FeeConfig>,
+    /// Map of batch number to guest program ID
+    program_id_by_batch: HashMap<u64, String>,
 }
 
 impl Store {
@@ -472,6 +474,28 @@ impl StoreEngineRollup for Store {
             .inner()?
             .fee_config_by_block
             .get(&block_number)
+            .cloned())
+    }
+
+    async fn store_program_id_by_batch(
+        &self,
+        batch_number: u64,
+        program_id: &str,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?
+            .program_id_by_batch
+            .insert(batch_number, program_id.to_string());
+        Ok(())
+    }
+
+    async fn get_program_id_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<String>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .program_id_by_batch
+            .get(&batch_number)
             .cloned())
     }
 }

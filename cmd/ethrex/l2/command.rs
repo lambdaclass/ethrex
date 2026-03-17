@@ -400,7 +400,9 @@ impl Command {
                 )
                 .await?;
 
-                let chain_id = store.get_chain_config().chain_id;
+                let chain_config = store.get_chain_config();
+                let chain_id = chain_config.chain_id;
+                let native_token_scale_factor = chain_config.native_token_scale_factor();
 
                 let rollup_store =
                     StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;
@@ -522,6 +524,7 @@ impl Command {
                         None,
                         blobs_bundle,
                         chain_id,
+                        native_token_scale_factor,
                     )
                     .await?;
 

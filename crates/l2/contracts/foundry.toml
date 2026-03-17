@@ -1,0 +1,24 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "forge-out"
+libs = ["lib"]
+
+# Solidity version matching existing contracts
+solc_version = "0.8.31"
+evm_version = "cancun"
+
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/",
+]
+
+via_ir = true
+optimizer = true
+
+[profile.default.optimizer_details]
+yul = true
+
+[profile.default.fuzz]
+runs = 256

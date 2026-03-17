@@ -19,6 +19,7 @@ concurrency:
 jobs:
   check-license:
     name: Verify Dual License
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
 
     steps:

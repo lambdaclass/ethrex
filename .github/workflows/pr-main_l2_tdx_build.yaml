@@ -3,8 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["**"]
+  # Disabled: not needed for app chain
+  # pull_request:
+  #   branches: ["**"]
 
 permissions:
   contents: read
@@ -20,6 +21,7 @@ env:
 
 jobs:
   detect-changes:
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}

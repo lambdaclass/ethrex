@@ -1,6 +1,6 @@
-# Docker Compose file to run ethrex_l2 with TDX support
+# Docker Compose file to run tokamak-app-l2 with TDX support
 services:
-  ethrex_l2:
+  tokamak-app-l2:
     volumes:
       - ./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool:/automata-dcap-qpl-tool:ro,exec
       - ../../cmd/.env:/env/.env

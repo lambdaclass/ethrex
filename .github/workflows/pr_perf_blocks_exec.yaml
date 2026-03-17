@@ -1,8 +1,10 @@
 name: Benchmark Block execution
 
 on:
-  pull_request:
-    branches: ["**"]
+  # Disabled: not needed for app chain
+  # pull_request:
+  #   branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,6 +24,7 @@ jobs:
       matrix:
         branch: [base, head]
     name: Build ethrex for ${{ matrix.branch }}
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache

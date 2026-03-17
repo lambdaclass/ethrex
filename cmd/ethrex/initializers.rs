@@ -161,10 +161,16 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
         Store::new(datadir, EngineType::InMemory)
     } else {
         #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        {
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
+            Store::new(datadir, EngineType::RocksDB)
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            let _ = datadir;
+            compile_error!("Database feature must be enabled (Available: `rocksdb`).");
+        }
     }
 }
 
@@ -282,12 +288,16 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         authrpc_socket_addr = get_authrpc_socket_addr(opts)
     );
 
+    let dev_network_block_time_ms: u64 = std::env::var("ETHREX_DEV_BLOCK_TIME_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(12000);
     let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
         url,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         head_block_hash,
         max_tries,
-        1000,
+        dev_network_block_time_ms,
         ethrex_common::Address::default(),
     );
     tracker.spawn(block_producer_engine);

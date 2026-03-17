@@ -16,6 +16,9 @@
 # Documentation
 docs/
 
+# Git history (not needed in Docker builds, vergen uses env var fallback)
+.git/
+
 # Local development
 hive/
 ethereum-package/

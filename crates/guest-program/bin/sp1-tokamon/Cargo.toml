@@ -1,0 +1,20 @@
+[package]
+name = "ethrex-guest-sp1-tokamon"
+version = "9.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[dependencies]
+sp1-zkvm = { version = "=5.0.8" }
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+
+ethrex-guest-program = { path = "../../", default-features = false }
+
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }

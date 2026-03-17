@@ -10,7 +10,7 @@ services:
       - ../../fixtures/keys:/keys
     command: "--http-host-allowlist=* --key-store-path=/keys eth1 --chain-id=1729"
 
-  ethrex_l2:
+  tokamak-app-l2:
     command: >
       --network /genesis/l2.json
       --http.addr 0.0.0.0

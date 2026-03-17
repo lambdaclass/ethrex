@@ -1,0 +1,18 @@
+# Guest Program Registry Configuration
+#
+# Controls which guest programs the prover loads at startup.
+# The proof coordinator decides which program_id to assign per batch
+# (via ETHREX_GUEST_PROGRAM_ID env var), and the prover must have that
+# program registered here to be able to prove it.
+#
+# Available built-in programs:
+#   evm-l2  — Default EVM execution (type_id: 1)
+#   zk-dex  — DEX order matching circuits (type_id: 2)
+#   tokamon — Gaming state transition circuits (type_id: 3)
+
+# The program used when no specific program_id is requested.
+default_program = "evm-l2"
+
+# Only these programs will be registered in the prover.
+# Remove entries you don't need to reduce memory usage.
+enabled_programs = ["evm-l2", "zk-dex", "tokamon"]

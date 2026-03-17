@@ -75,6 +75,8 @@ pub struct ProofCoordinatorConfig {
     pub validium: bool,
     pub tdx_private_key: Option<SecretKey>,
     pub qpl_tool_path: Option<String>,
+    /// Which guest program to assign to batches (e.g. "evm-l2", "zk-dex", "tokamon").
+    pub guest_program_id: String,
 }
 
 #[derive(Clone, Debug)]

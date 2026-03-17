@@ -1,0 +1,16 @@
+{
+  "app": "evm-l2",
+  "batch_number": 2,
+  "program_type_id": 1,
+  "chain_id": 65536999,
+  "description": "auto-collected batch 2",
+  "committer": {
+    "balance_diffs": [],
+    "l2_in_message_rolling_hashes": [],
+    "last_block_hash": "0x7899b9d3ba9b0b3e35b9db48de840d89b67aac276d0c19204e18146160f1c721",
+    "new_state_root": "0xa78787f950a30d9f2fa738ec930abbe3a04ae45b20c6b16df5ced92c3ef8b954",
+    "non_privileged_txs": 0,
+    "priv_tx_rolling_hash": "0x002dcc87993a76c41ea203b3c1b2cb3ab93b6e8480e95ae18cb6346758892e25",
+    "withdrawals_merkle_root": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 use ethrex_guest_program::input::ProgramInput;
+use ethrex_guest_program::traits::backends;
 use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
+use rkyv::rancor::Error as RkyvError;
 use serde::{Deserialize, Serialize};
 
 pub mod error;
@@ -53,6 +55,26 @@ pub enum BackendType {
     OpenVM,
 }
 
+impl BackendType {
+    /// Returns the backend name string matching
+    /// [`ethrex_guest_program::traits::backends`] constants.
+    ///
+    /// This is used to ask a [`GuestProgram`] for the correct ELF binary.
+    pub fn as_backend_name(&self) -> &'static str {
+        match self {
+            BackendType::Exec => backends::EXEC,
+            #[cfg(feature = "sp1")]
+            BackendType::SP1 => backends::SP1,
+            #[cfg(feature = "risc0")]
+            BackendType::RISC0 => backends::RISC0,
+            #[cfg(feature = "zisk")]
+            BackendType::ZisK => backends::ZISK,
+            #[cfg(feature = "openvm")]
+            BackendType::OpenVM => backends::OPENVM,
+        }
+    }
+}
+
 // Needed for Clap
 impl FromStr for BackendType {
     type Err = String;
@@ -78,6 +100,17 @@ impl FromStr for BackendType {
 /// All proving backends (SP1, RISC0, ZisK, OpenVM, Exec) implement this trait,
 /// providing a unified interface for execution, proving, verification, and
 /// batch proof conversion.
+///
+/// # ELF-based methods
+///
+/// The `*_with_elf` methods accept an explicit ELF binary and pre-serialized
+/// input bytes instead of relying on compiled-in constants and the concrete
+/// [`ProgramInput`] type.  This decouples the backend from the guest program,
+/// allowing different guest programs to be proven by the same backend.
+///
+/// All `*_with_elf` methods have default implementations that return
+/// [`BackendError::NotImplemented`] so that existing backends continue to
+/// compile while they are migrated incrementally.
 pub trait ProverBackend {
     /// The proof output type specific to this backend.
     type ProofOutput;
@@ -87,6 +120,13 @@ pub trait ProverBackend {
 
     /// Returns the ProverType for this backend.
     fn prover_type(&self) -> ProverType;
+
+    /// Returns the backend name as a string matching the well-known constants
+    /// in [`ethrex_guest_program::traits::backends`].
+    ///
+    /// This is used to ask a [`GuestProgram`](ethrex_guest_program::traits::GuestProgram)
+    /// for the correct ELF binary.
+    fn backend_name(&self) -> &'static str;
 
     /// Serialize the program input into the backend-specific format.
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError>;
@@ -101,6 +141,19 @@ pub trait ProverBackend {
         let start = Instant::now();
         let serialized = self.serialize_input(input)?;
         Ok((serialized, start.elapsed()))
+    }
+
+    /// Serialize the program input into raw bytes (rkyv format).
+    ///
+    /// Returns the backend-agnostic byte representation of `ProgramInput`.
+    /// These bytes are then passed through `GuestProgram::serialize_input()`
+    /// and fed to `*_with_elf` methods.
+    ///
+    /// The default implementation uses rkyv.  Backends can override if they
+    /// need a different wire format.
+    fn serialize_raw(&self, input: &ProgramInput) -> Result<Vec<u8>, BackendError> {
+        let bytes = rkyv::to_bytes::<RkyvError>(input).map_err(BackendError::serialization)?;
+        Ok(bytes.to_vec())
     }
 
     /// Execute the program without generating a proof (for testing/debugging).
@@ -142,6 +195,49 @@ pub trait ProverBackend {
     ) -> Result<(Self::ProofOutput, Duration), BackendError> {
         let start = Instant::now();
         let proof = self.prove(input, format)?;
+        Ok((proof, start.elapsed()))
+    }
+
+    // -- ELF-based methods (guest-program agnostic) --------------------------
+
+    /// Execute a guest program given its ELF binary and pre-serialized input.
+    ///
+    /// `serialized_input` contains the bytes the guest program reads from the
+    /// zkVM stdin (typically rkyv-encoded `ProgramInput`).
+    fn execute_with_elf(&self, _elf: &[u8], _serialized_input: &[u8]) -> Result<(), BackendError> {
+        Err(BackendError::not_implemented("execute_with_elf"))
+    }
+
+    /// Generate a proof given an explicit ELF binary and pre-serialized input.
+    fn prove_with_elf(
+        &self,
+        _elf: &[u8],
+        _serialized_input: &[u8],
+        _format: ProofFormat,
+    ) -> Result<Self::ProofOutput, BackendError> {
+        Err(BackendError::not_implemented("prove_with_elf"))
+    }
+
+    /// Execute with an explicit ELF and measure the duration.
+    fn execute_with_elf_timed(
+        &self,
+        elf: &[u8],
+        serialized_input: &[u8],
+    ) -> Result<Duration, BackendError> {
+        let start = Instant::now();
+        self.execute_with_elf(elf, serialized_input)?;
+        Ok(start.elapsed())
+    }
+
+    /// Prove with an explicit ELF and measure the duration.
+    fn prove_with_elf_timed(
+        &self,
+        elf: &[u8],
+        serialized_input: &[u8],
+        format: ProofFormat,
+    ) -> Result<(Self::ProofOutput, Duration), BackendError> {
+        let start = Instant::now();
+        let proof = self.prove_with_elf(elf, serialized_input, format)?;
         Ok((proof, start.elapsed()))
     }
 }

@@ -1,0 +1,6 @@
+node_modules/
+uploads/
+data/
+*.db
+*.db-journal
+.env

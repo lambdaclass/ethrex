@@ -1,0 +1,176 @@
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: "user" | "admin";
+  picture: string | null;
+  authProvider?: string;
+}
+
+export interface Program {
+  id: string;
+  program_id: string;
+  program_type_id: number | null;
+  creator_id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  icon_url: string | null;
+  elf_hash: string | null;
+  elf_storage_path: string | null;
+  vk_sp1: string | null;
+  vk_risc0: string | null;
+  status: "pending" | "active" | "rejected" | "disabled";
+  use_count: number;
+  batch_count: number;
+  is_official: boolean;
+  created_at: number;
+  approved_at: number | null;
+}
+
+export interface Deployment {
+  id: string;
+  user_id: string;
+  program_id: string;
+  program_name?: string;
+  program_slug?: string;
+  category?: string;
+  name: string;
+  chain_id: number | null;
+  rpc_url: string | null;
+  status: string;
+  config: string | null;
+  host_id: string | null;
+  docker_project: string | null;
+  l1_port: number | null;
+  l2_port: number | null;
+  phase: string;
+  bridge_address: string | null;
+  proposer_address: string | null;
+  error_message: string | null;
+  tools_l1_explorer_port: number | null;
+  tools_l2_explorer_port: number | null;
+  tools_bridge_ui_port: number | null;
+  tools_metrics_port: number | null;
+  created_at: number;
+}
+
+export interface ContainerStatus {
+  Name: string;
+  State: string;
+  Status: string;
+  Service: string;
+}
+
+export interface DeploymentStatus {
+  phase: string;
+  containers: ContainerStatus[];
+  endpoints: {
+    l1Rpc: string | null;
+    l2Rpc: string | null;
+  };
+  contracts: {
+    bridge: string | null;
+    proposer: string | null;
+  };
+  error: string | null;
+}
+
+export interface MonitoringData {
+  l1: {
+    healthy: boolean;
+    blockNumber: number | null;
+    chainId: number | null;
+    balance: string | null;
+    rpcUrl: string;
+  } | null;
+  l2: {
+    healthy: boolean;
+    blockNumber: number | null;
+    chainId: number | null;
+    balance: string | null;
+    rpcUrl: string;
+  } | null;
+}
+
+export interface Host {
+  id: string;
+  user_id: string;
+  name: string;
+  hostname: string;
+  port: number;
+  username: string;
+  auth_method: string;
+  status: string;
+  last_tested: number | null;
+  created_at: number;
+}
+
+export interface DeploymentEvent {
+  event: string;
+  phase?: string;
+  message?: string;
+  timestamp: number;
+  l1Rpc?: string;
+  l2Rpc?: string;
+  bridgeAddress?: string;
+  proposerAddress?: string;
+}
+
+/** Appchain summary (explore list view). */
+export interface Appchain {
+  id: string;
+  name: string;
+  description: string | null;
+  chain_id: number | null;
+  l2_chain_id: number | null;
+  rpc_url: string | null;
+  status: string;
+  phase: string;
+  bridge_address: string | null;
+  proposer_address: string | null;
+  identity_contract: string | null;
+  l1_chain_id: number | null;
+  network_mode: string | null;
+  stack_type: string | null;
+  rollup_type: string | null;
+  native_token_symbol: string | null;
+  operator_name: string | null;
+  program_name: string;
+  program_slug: string;
+  category: string;
+  owner_name: string;
+  created_at: number;
+  hashtags: string[];
+  avg_rating: number | null;
+  review_count: number;
+  comment_count: number;
+}
+
+/** Appchain full detail (explore detail view). */
+export interface AppchainDetail extends Appchain {
+  user_id: string;
+  explorer_url: string | null;
+  dashboard_url: string | null;
+  bridge_url: string | null;
+  screenshots: string[];
+  social_links: Record<string, string>;
+  l1_contracts: Record<string, string>;
+  native_token_type: string | null;
+  native_token_decimals: number | null;
+  native_token_l1_address: string | null;
+  operator_website: string | null;
+  owner_wallet: string | null;
+  signed_by: string | null;
+  owner_picture: string | null;
+}
+
+/** Derive display name for an appchain. */
+export function getAppchainDisplayName(a: Appchain): string {
+  return a.name || `Chain ${a.l2_chain_id || a.chain_id || a.id}`;
+}
+
+/** Derive effective chain ID for an appchain. */
+export function getAppchainChainId(a: Appchain): number | null {
+  return a.l2_chain_id || a.chain_id;
+}

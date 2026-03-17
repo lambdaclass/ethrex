@@ -114,6 +114,17 @@ pub async fn wait_for_transaction_receipt(
     client: &EthClient,
     max_retries: u64,
 ) -> Result<RpcReceipt, EthClientError> {
+    let chain_id = client.get_chain_id().await.unwrap_or(9u64.into());
+    let interval_secs = if chain_id > 100u64.into() { 12 } else { 2 };
+    wait_for_transaction_receipt_with_interval(tx_hash, client, max_retries, interval_secs).await
+}
+
+pub async fn wait_for_transaction_receipt_with_interval(
+    tx_hash: H256,
+    client: &EthClient,
+    max_retries: u64,
+    interval_secs: u64,
+) -> Result<RpcReceipt, EthClientError> {
     let mut r#try = 1;
     loop {
         match client.get_transaction_receipt(tx_hash).await {
@@ -133,7 +144,7 @@ pub async fn wait_for_transaction_receipt(
             }
         }
 
-        println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
+        println!("[{try}/{max_retries}] Waiting {interval_secs}s for transaction receipt {tx_hash:#x}");
 
         if max_retries == r#try {
             return Err(EthClientError::Custom(format!(
@@ -142,7 +153,7 @@ pub async fn wait_for_transaction_receipt(
         }
         r#try += 1;
 
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
     }
 }
 

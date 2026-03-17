@@ -70,6 +70,7 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
     let calldata = ProofCalldata {
         prover_type: ProverType::TDX,
         calldata: vec![Value::Bytes(signature.into())],
+        public_values: vec![],
     };
 
     submit_proof(batch_number, BatchProof::ProofCalldata(calldata)).await?;

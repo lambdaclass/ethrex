@@ -21,13 +21,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         .host_triple(true)
         .build()?;
 
-    // Export git commit hash and branch name as environment variables
-    let git2 = Git2Builder::default().branch(true).sha(false).build()?;
-
-    Emitter::default()
-        .add_instructions(&rustc)?
-        .add_instructions(&git2)?
-        .emit()?;
+    // Export git commit hash and branch name as environment variables.
+    // In Docker builds without .git, fall back to env vars (set in Dockerfile).
+    if let (Ok(branch), Ok(sha)) = (
+        std::env::var("VERGEN_GIT_BRANCH"),
+        std::env::var("VERGEN_GIT_SHA"),
+    ) {
+        Emitter::default().add_instructions(&rustc)?.emit()?;
+        println!("cargo:rustc-env=VERGEN_GIT_BRANCH={}", branch.trim());
+        println!("cargo:rustc-env=VERGEN_GIT_SHA={}", sha.trim());
+    } else {
+        let git2 = Git2Builder::default().branch(true).sha(true).build()?;
+        Emitter::default()
+            .add_instructions(&rustc)?
+            .add_instructions(&git2)?
+            .emit()?;
+    }
 
     #[cfg(feature = "l2")]
     {

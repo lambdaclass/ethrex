@@ -1,0 +1,9 @@
+# Guest program registry configuration.
+#
+# default_program: the program_id used when no specific program is requested.
+# enabled_programs: list of program_ids to register in the prover.
+#
+# If this file is not provided, all built-in programs are enabled.
+
+default_program = "evm-l2"
+enabled_programs = ["evm-l2", "zk-dex", "tokamon"]
