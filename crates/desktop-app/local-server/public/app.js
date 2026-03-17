@@ -2214,7 +2214,7 @@ async function cancelAIDeployment(deploymentId) {
       body: JSON.stringify({ phase: 'configured', status: 'configured' }),
     });
     if (!res.ok) throw new Error('Failed to update');
-    loadMyL2s();
+    showView('deployments');
   } catch (e) {
     alert(`오류: ${e.message}`);
   }
@@ -3657,7 +3657,10 @@ function aiChatGoBack() {
   if (window._aiDeployDetailId) {
     const id = window._aiDeployDetailId;
     window._aiDeployDetailId = null;
-    showView('deployments');
+    // Switch to detail view directly (skip loadDeployments which reconciles all)
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const detailView = document.getElementById('view-detail');
+    if (detailView) detailView.classList.add('active');
     showDeploymentDetail(id);
     return;
   }

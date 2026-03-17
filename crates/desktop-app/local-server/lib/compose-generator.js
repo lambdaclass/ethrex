@@ -404,8 +404,8 @@ services:
     image: "${l1Image}"
     ports:
       - ${bindAddress}:${l1Port}:8545
-${l1ExtraVolumes}    volumes:
-      - ${dataDir}/genesis/l1.json:/genesis/l1.json:ro
+${l1ExtraVolumes ? l1ExtraVolumes + "\n      - " + dataDir + "/genesis/l1.json:/genesis/l1.json:ro" : `    volumes:
+      - ${dataDir}/genesis/l1.json:/genesis/l1.json:ro`}
     environment:
       - ETHREX_LOG_LEVEL
     command: --network /genesis/l1.json --http.addr 0.0.0.0 --http.port 8545 --dev

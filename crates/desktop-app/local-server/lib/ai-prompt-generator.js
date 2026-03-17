@@ -524,7 +524,7 @@ function generateCloudDeployPrompt(opts) {
   const profile = getAppProfile(programSlug);
   const l2ChainId = deployment.chain_id || 65536999;
   const shortId = deployment.id.slice(0, 8);
-  const safeName = (deployment.name || "l2").replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase().slice(0, 30);
+  const safeName = (deployment.name || "l2").replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 30);
   const projectName = `tokamak-${safeName}-${shortId}`;
   const isTestnet = l1Mode === "testnet";
   const vmName = `tokamak-${safeName}-${shortId}`;

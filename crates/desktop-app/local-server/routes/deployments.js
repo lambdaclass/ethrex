@@ -1333,7 +1333,7 @@ router.post("/:id/ai-prompt", async (req, res) => {
     });
 
     // Save cloud config to deployment for persistent monitoring
-    const safeName = (deployment.name || "l2").replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase().slice(0, 30);
+    const safeName = (deployment.name || "l2").replace(/[^a-zA-Z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 30);
     const vmName = `tokamak-${safeName}-${deployment.id.slice(0, 8)}`;
     const cloudConfig = {
       mode: "ai-deploy",
