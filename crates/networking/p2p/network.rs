@@ -28,6 +28,7 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};
@@ -138,11 +139,7 @@ pub async fn start_network(
         .collect();
 
     for (bind_addr, external_addr) in udp_pairs {
-        let udp_socket = Arc::new(
-            UdpSocket::bind(bind_addr)
-                .await
-                .map_err(NetworkError::UdpSocketError)?,
-        );
+        let udp_socket = Arc::new(udp_socket(bind_addr).map_err(NetworkError::UdpSocketError)?);
 
         // Build a discovery-specific local node using the external address for
         // this socket's family so Ping `from` endpoints advertise correctly.
@@ -239,6 +236,30 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext, tcp_addr: SocketAddr
 
         let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
     }
+}
+
+/// Creates a UDP socket with `SO_REUSEADDR` + `SO_REUSEPORT` set before
+/// binding, matching what `listener()` does for TCP.
+///
+/// IPv6 sockets are created with `IPV6_V6ONLY=true` so that binding
+/// `[::]:port` does not also claim `0.0.0.0:port` on systems where the
+/// `net.ipv6.bindv6only` sysctl defaults to 0 (most Linux distros).
+fn udp_socket(bind_addr: SocketAddr) -> Result<UdpSocket, io::Error> {
+    let domain = if bind_addr.is_ipv6() {
+        Domain::IPV6
+    } else {
+        Domain::IPV4
+    };
+    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true).ok();
+    #[cfg(unix)]
+    socket.set_reuse_port(true).ok();
+    if bind_addr.is_ipv6() {
+        socket.set_only_v6(true)?;
+    }
+    socket.bind(&bind_addr.into())?;
+    socket.set_nonblocking(true)?;
+    UdpSocket::from_std(socket.into())
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {

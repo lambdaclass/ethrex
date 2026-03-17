@@ -55,6 +55,7 @@ rand = "0.8.5"
 aes-gcm = "0.10.3"
 hkdf = "0.12.4"
 
+socket2 = { version = "0.5", features = ["all"] }
 rayon = "1.10.0"
 crossbeam.workspace = true
 
