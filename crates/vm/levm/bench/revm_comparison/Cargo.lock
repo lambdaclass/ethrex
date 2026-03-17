@@ -1115,6 +1115,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hex-simd",
+ "indexmap",
  "k256",
  "kzg-rs",
  "lazy_static",
