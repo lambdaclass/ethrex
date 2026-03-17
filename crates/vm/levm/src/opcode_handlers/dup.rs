@@ -44,11 +44,10 @@ impl OpcodeHandler for OpDupNHandler {
         //   - 0x5B, which corresponds to a JUMPDEST opcode.
         //   - 0x5F to 0x7F, which corresponds to PUSHx opcodes.
         //   - The extra 3 values (0x5C, 0x5D and 0x5E) are probably included to simplify decoding.
-        let relative_offset = match relative_offset {
-            x if x <= 0x5A => x.wrapping_add(17),
-            x if x < 0x80 => return Err(ExceptionalHalt::InvalidOpcode.into()),
-            x => x.wrapping_sub(20),
-        };
+        if (0x5B..0x80).contains(&relative_offset) {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        let relative_offset = relative_offset.wrapping_add(145);
 
         // Stack grows downwards, so we add the offset to get deeper elements
         // relative_offset is 1-indexed stack depth (17-235), convert to 0-indexed for array access

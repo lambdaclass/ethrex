@@ -51,7 +51,10 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, info, instrument, warn};
-use constants::{MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use constants::{
+    AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
+    POST_OSAKA_GAS_LIMIT_CAP,
+};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -65,7 +68,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -419,6 +422,8 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        validate_block_body(&block.header, &block.body)
+            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -1416,15 +1421,6 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
@@ -1445,12 +1441,9 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
+        for address in touched_account_storage_slots.keys() {
+            let hashed_address = hash_address(address);
+            let hashed_address_h256 = H256::from_slice(&hashed_address);
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
@@ -1467,7 +1460,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
         Ok(ExecutionWitness {
@@ -1477,7 +1470,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            keys,
         })
     }
 
@@ -1658,15 +1650,6 @@ impl Blockchain {
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
-        // Create a list of all read/write addresses and storage slots
-        let mut keys = Vec::new();
-        for (address, touched_storage_slots) in touched_account_storage_slots {
-            keys.push(address.as_bytes().to_vec());
-            for slot in touched_storage_slots.iter() {
-                keys.push(slot.as_bytes().to_vec());
-            }
-        }
-
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
@@ -1687,12 +1670,9 @@ impl Blockchain {
             Trie::new_temp()
         };
         let mut storage_trie_roots = BTreeMap::new();
-        for key in &keys {
-            if key.len() != 20 {
-                continue; // not an address
-            }
-            let address = Address::from_slice(key);
-            let hashed_address = hash_address(&address);
+        for address in touched_account_storage_slots.keys() {
+            let hashed_address = hash_address(address);
+            let hashed_address_h256 = H256::from_slice(&hashed_address);
             let Some(encoded_account) = state_trie.get(&hashed_address)? else {
                 continue; // empty account, doesn't have a storage trie
             };
@@ -1709,7 +1689,7 @@ impl Blockchain {
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
-            storage_trie_roots.insert(address, (*node).clone());
+            storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
         Ok(ExecutionWitness {
@@ -1719,7 +1699,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            keys,
         })
     }
 
@@ -1815,8 +1794,9 @@ impl Blockchain {
     /// Returns a two-level Result:
     /// - Outer `Err`: pipeline couldn't start (e.g. parent header not found).
     /// - Inner `Result`: block storage outcome. The produced BAL is returned
-    ///   regardless of whether storage succeeded, so callers like
-    ///   `add_block_pipeline_bal` can retrieve it even on storage failure.
+    ///   even when storage fails, so callers like `add_block_pipeline_bal` can
+    ///   retrieve it. Note: if *execution* itself fails (outer `Result`), the
+    ///   BAL is not available.
     fn add_block_pipeline_inner(
         &self,
         block: Block,
@@ -2423,9 +2403,15 @@ impl Blockchain {
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
+        // [EIP-7954] - Amsterdam increases the limit
+        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+            AMSTERDAM_MAX_INITCODE_SIZE
+        } else {
+            MAX_INITCODE_SIZE
+        };
         if config.is_shanghai_activated(header.timestamp)
             && tx.is_contract_creation()
-            && tx.data().len() > MAX_INITCODE_SIZE as usize
+            && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
