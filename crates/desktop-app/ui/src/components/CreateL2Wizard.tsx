@@ -44,6 +44,7 @@ interface KeysResolution {
 export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Props) {
   const { lang } = useLang()
   const [networkMode, setNetworkMode] = useState<NetworkMode | null>(initialNetwork ?? null)
+  const [stackType, setStackType] = useState<'ethrex' | 'thanos'>('ethrex')
   const [step, setStep] = useState(0)
   const [config, setConfig] = useState(() => {
     const preset = initialNetwork ? networkPresets[initialNetwork] : networkPresets.local
@@ -54,6 +55,7 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
       nativeToken: 'TON',
       isPublic: false, hashtags: '',
       deployerKeychainKey: '', committerKeychainKey: '', proofCoordinatorKeychainKey: '', bridgeOwnerKeychainKey: '',
+      stackType: 'ethrex',
     }
   })
   const [chainIdLoading, setChainIdLoading] = useState(true)
@@ -216,6 +218,39 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12">
           <h1 className="text-lg font-bold mb-1">{t('myl2.wizard.title', lang)}</h1>
+
+          {/* Stack Selection */}
+          <div style={{ marginBottom: 24, width: '100%' }}>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: 15 }}>{t('myl2.wizard.stackTitle', lang)}</h3>
+            <p style={{ margin: '0 0 16px 0', fontSize: 13, color: '#888' }}>{t('myl2.wizard.stackDesc', lang)}</p>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => { setStackType('ethrex'); setConfig(c => ({ ...c, stackType: 'ethrex' })) }}
+                style={{
+                  flex: 1, padding: '16px 12px', borderRadius: 8, cursor: 'pointer',
+                  border: stackType === 'ethrex' ? '2px solid #6366f1' : '1px solid #333',
+                  background: stackType === 'ethrex' ? 'rgba(99,102,241,0.1)' : '#1a1a2e',
+                  color: '#fff', textAlign: 'left',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{t('myl2.wizard.stackEthrex', lang)}</div>
+                <div style={{ fontSize: 12, color: '#aaa' }}>{t('myl2.wizard.stackEthrexDesc', lang)}</div>
+              </button>
+              <button
+                onClick={() => { setStackType('thanos'); setConfig(c => ({ ...c, stackType: 'thanos', proverType: 'none' })) }}
+                style={{
+                  flex: 1, padding: '16px 12px', borderRadius: 8, cursor: 'pointer',
+                  border: stackType === 'thanos' ? '2px solid #f59e0b' : '1px solid #333',
+                  background: stackType === 'thanos' ? 'rgba(245,158,11,0.1)' : '#1a1a2e',
+                  color: '#fff', textAlign: 'left',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{t('myl2.wizard.stackThanos', lang)}</div>
+                <div style={{ fontSize: 12, color: '#aaa' }}>{t('myl2.wizard.stackThanosDesc', lang)}</div>
+              </button>
+            </div>
+          </div>
+
           <p className="text-[13px] text-[var(--color-text-secondary)] mb-6">{t('myl2.wizard.selectNetwork', lang)}</p>
           <div className="w-full space-y-2">
             {([
@@ -590,9 +625,11 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
             <div className="bg-[var(--color-bg-sidebar)] rounded-xl p-4 border border-[var(--color-border)]">
               <label className="text-[11px] text-[var(--color-text-secondary)] block mb-1">{t('myl2.wizard.proverType', lang)}</label>
               <div className="w-full bg-[var(--color-bg-main)] rounded-lg px-3 py-2 text-sm border border-[var(--color-border)] text-[var(--color-text-primary)] font-medium">
-                SP1
+                {stackType === 'thanos' ? 'Fault Proof' : 'SP1'}
               </div>
-              <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">Succinct SP1 프로버가 사용됩니다</p>
+              <p className="text-[10px] text-[var(--color-text-secondary)] mt-1">
+                {stackType === 'thanos' ? t('myl2.wizard.thanosNoProver', lang) : t('myl2.wizard.sp1ProverDesc', lang)}
+              </p>
             </div>
           </>
         )}

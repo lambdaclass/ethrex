@@ -31,6 +31,7 @@ let launchStep = 1;
 let programs = [];
 let selectedProgram = null;
 let launchMode = 'ai-deploy';
+let selectedStackType = 'ethrex';
 let launchDeploymentId = null;
 let cachedDeployList = [];
 let buildLogLines = [];
@@ -170,6 +171,31 @@ const TESTNET_STEPS = [
   { phase: 'running', label: 'Running' },
 ];
 
+const THANOS_LOCAL_STEPS = [
+  { phase: 'checking_docker', label: 'Checking Docker' },
+  { phase: 'pulling', label: 'Pulling Docker Images' },
+  { phase: 'l1_starting', label: 'Starting L1 geth' },
+  { phase: 'deploying_contracts', label: 'Deploying Contracts' },
+  { phase: 'l2_starting', label: 'Starting op-geth (L2)' },
+  { phase: 'starting_op_node', label: 'Starting op-node' },
+  { phase: 'starting_batcher', label: 'Starting op-batcher' },
+  { phase: 'starting_proposer', label: 'Starting op-proposer' },
+  { phase: 'starting_tools', label: 'Starting Tools (Explorer, Bridge)' },
+  { phase: 'running', label: 'Running' },
+];
+
+const THANOS_TESTNET_STEPS = [
+  { phase: 'checking_docker', label: 'Checking Docker' },
+  { phase: 'pulling', label: 'Pulling Docker Images' },
+  { phase: 'deploying_contracts', label: 'Deploying L1 Contracts' },
+  { phase: 'l2_starting', label: 'Starting op-geth (L2)' },
+  { phase: 'starting_op_node', label: 'Starting op-node' },
+  { phase: 'starting_batcher', label: 'Starting op-batcher' },
+  { phase: 'starting_proposer', label: 'Starting op-proposer' },
+  { phase: 'starting_tools', label: 'Starting Tools (Explorer, Bridge)' },
+  { phase: 'running', label: 'Running' },
+];
+
 const TESTNET_L1_VALUES = new Set(['sepolia', 'holesky', 'custom-l1']);
 const TESTNET_NETWORKS = {
   sepolia: { chainId: 11155111, name: 'Sepolia', rpcPlaceholder: 'https://sepolia.infura.io/v3/YOUR_KEY' },
@@ -222,26 +248,9 @@ async function loadPrograms() {
 
 function renderPrograms() {
   const grid = document.getElementById('programs-grid');
-  const search = (document.getElementById('program-search')?.value || '').toLowerCase();
-  const catFilter = document.getElementById('category-filter')?.value || '';
-
-  // Populate category filter
-  const catSelect = document.getElementById('category-filter');
-  if (catSelect && catSelect.options.length <= 1) {
-    const cats = [...new Set(programs.map(p => p.category).filter(Boolean))];
-    cats.forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c; opt.textContent = c;
-      catSelect.appendChild(opt);
-    });
-  }
 
   const filtered = programs.filter(p => {
-    const matchSearch = p.name.toLowerCase().includes(search) ||
-      (p.description || '').toLowerCase().includes(search) ||
-      (p.program_id || '').toLowerCase().includes(search);
-    const matchCat = !catFilter || p.category === catFilter;
-    return matchSearch && matchCat;
+    return !p.stack || p.stack === selectedStackType;
   });
 
   if (filtered.length === 0) {
@@ -259,6 +268,7 @@ function renderPrograms() {
         </div>
       </div>
       <div class="program-card-badges">
+        ${p.stack === 'thanos' ? '<span class="badge-category" style="background:#fef3c7;color:#92400e">Optimism</span>' : '<span class="badge-category" style="background:#ede9fe;color:#5b21b6">Tokamak-appchain</span>'}
         ${p.category ? `<span class="badge-category">${esc(p.category)}</span>` : ''}
         ${p.is_official ? '<span class="badge-official">Official</span>' : ''}
         ${p.use_count ? `<span class="badge-deploys">${p.use_count} deployments</span>` : ''}
@@ -269,7 +279,7 @@ function renderPrograms() {
   `).join('');
 }
 
-function filterPrograms() { renderPrograms(); }
+
 
 async function selectProgram(id) {
   selectedProgram = programs.find(p => p.id === id);
@@ -328,8 +338,12 @@ function launchGoStep(step) {
 
     // Selected program card with app config inside
     const pid = selectedProgram.program_id || selectedProgram.id;
+    const isThanos = selectedStackType === 'thanos';
+
     let configHtml = '<h4>App Configuration</h4>';
-    if (pid === 'zk-dex') {
+    if (isThanos) {
+      configHtml += '<p>Stack: Thanos (Optimism)<br>Proof: Fault Proofs<br>Images: Pre-built (pull only, no build)</p>';
+    } else if (pid === 'zk-dex') {
       configHtml += '<p>ZK Circuits: SP1 (DEX order matching + settlement)<br>Verification: SP1 Verifier Contract<br>Genesis: Custom L2 genesis with DEX pre-deploys</p>';
     } else if (pid === 'evm-l2') {
       configHtml += '<p>Circuits: Standard EVM execution<br>Verification: Default Verifier Contract<br>Genesis: Standard L2 genesis</p>';
@@ -350,19 +364,35 @@ function launchGoStep(step) {
           <button class="btn-change" onclick="launchGoStep(1)" style="margin-top:4px">Change</button>
         </div>
         <div class="app-config-box" style="padding:6px 12px;margin:0;flex:1;font-size:11px">${configHtml}
-          <div id="docker-image-status" style="margin-top:6px;font-size:11px;color:var(--text-muted)">Checking Docker image...</div>
+          ${isThanos ? '<div style="margin-top:6px;font-size:11px;color:#16a34a">✓ Pre-built Docker images will be pulled</div>' : '<div id="docker-image-status" style="margin-top:6px;font-size:11px;color:var(--text-muted)">Checking Docker image...</div>'}
         </div>
       </div>
     `;
 
+    // Thanos: force L1 to geth, hide L1 node selector
+    if (isThanos) {
+      const l1Select = document.getElementById('launch-l1-image');
+      if (l1Select) l1Select.value = 'geth';
+      const l1NodeArea = document.getElementById('l1-node-area');
+      if (l1NodeArea) l1NodeArea.style.display = 'none';
+    }
+
     setLaunchMode(launchMode);
-    checkDockerImage(pid);
+    if (!isThanos) checkDockerImage(pid);
   }
+}
+
+function setStackType(stack) {
+  selectedStackType = stack;
+  document.querySelectorAll('.mode-card[data-stack]').forEach(b => {
+    b.classList.toggle('active', b.dataset.stack === stack);
+  });
+  renderPrograms();
 }
 
 function setLaunchMode(mode) {
   launchMode = mode;
-  document.querySelectorAll('.mode-card').forEach(b => {
+  document.querySelectorAll('.mode-card[data-mode]').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
   const remoteArea = document.getElementById('remote-host-area');
@@ -788,6 +818,7 @@ async function handleLaunchDeploy() {
     const body = {
       programSlug: selectedProgram.program_id || selectedProgram.id,
       name,
+      stackType: selectedStackType,
       chainId: parseInt(document.getElementById('launch-chain-id').value) || undefined,
       config: {
         mode: launchMode === 'ai-deploy' ? 'ai-deploy' : launchMode,
@@ -1102,7 +1133,12 @@ function startDeployProgress(id) {
 
 function renderProgressSteps() {
   const container = document.getElementById('deploy-progress-steps');
-  const steps = launchMode === 'remote' ? REMOTE_STEPS : (isTestnetL1() ? TESTNET_STEPS : LOCAL_STEPS);
+  let steps;
+  if (selectedStackType === 'thanos') {
+    steps = isTestnetL1() ? THANOS_TESTNET_STEPS : THANOS_LOCAL_STEPS;
+  } else {
+    steps = launchMode === 'remote' ? REMOTE_STEPS : (isTestnetL1() ? TESTNET_STEPS : LOCAL_STEPS);
+  }
   const currentIdx = steps.findIndex(s => s.phase === currentPhase);
   const hasError = document.getElementById('deploy-error-msg').style.display !== 'none';
   const isTerminal = currentPhase === 'running' || hasError;
@@ -2012,10 +2048,12 @@ function renderPhaseBadge(phase, hasError) {
   const labels = {
     configured: 'Not deployed', 'ai-deploy': 'Deploying (AI)', checking_docker: 'Checking Docker', building: 'Building',
     pulling: 'Pulling Images', l1_starting: 'Starting L1', deploying_contracts: 'Deploying',
-    verifying_contracts: 'Verifying', l2_starting: 'Starting L2', starting_prover: 'Starting Prover', starting_tools: 'Starting Tools',
+    verifying_contracts: 'Verifying', l2_starting: 'Starting L2', starting_prover: 'Starting Prover',
+    starting_op_node: 'Starting op-node', starting_batcher: 'Starting op-batcher', starting_proposer: 'Starting op-proposer',
+    starting_tools: 'Starting Tools',
     running: 'Running', stopped: 'Stopped', error: 'Error',
   };
-  const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools'];
+  const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_op_node','starting_batcher','starting_proposer','starting_tools'];
   const label = labels[phase] || phase;
   if (hasError && phase !== 'error') {
     return `<span class="phase-badge phase-error" title="Error during: ${label}">${label} - Error</span>`;

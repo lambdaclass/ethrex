@@ -311,6 +311,147 @@ const PULL_IMAGES = {
   "tokamak-appchain:sp1": imageRef("tokamak-appchain:sp1"),
 };
 
+// Thanos (Optimism) pre-built images — tags from trh-sdk constants
+// op-geth has its own tag; all other stack components share ThanosStackImageTag
+const THANOS_OP_GETH_TAG = "nightly-f8c04dcb";
+const THANOS_STACK_TAG = "nightly-c9d8d16a";
+const THANOS_DEVNET_PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const THANOS_IMAGES = {
+  "l1-geth": "ethereum/client-go:v1.13.15",
+  "op-geth": `tokamaknetwork/thanos-op-geth:${THANOS_OP_GETH_TAG}`,
+  "op-node": `tokamaknetwork/thanos-op-node:${THANOS_STACK_TAG}`,
+  "op-batcher": `tokamaknetwork/thanos-op-batcher:${THANOS_STACK_TAG}`,
+  "op-proposer": `tokamaknetwork/thanos-op-proposer:${THANOS_STACK_TAG}`,
+};
+
+/**
+ * Generate Thanos L1 geth service definition (for local and remote modes).
+ */
+function thanosL1Service({ projectName, l1Port, l1ChainId, bindAddr }) {
+  return `  thanos-l1:
+    container_name: ${projectName}-l1
+    image: "${THANOS_IMAGES["l1-geth"]}"
+    ports:
+      - ${bindAddr}:${l1Port}:8545
+    volumes:
+      - thanos-l1-data:/root/.ethereum
+    command:
+      - --dev
+      - --dev.period=3
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3,debug,txpool,admin
+      - --http.corsdomain=*
+      - --http.vhosts=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --ws.api=eth,net,web3,debug,txpool
+      - --networkid=${l1ChainId}
+    healthcheck:
+      test: ["CMD", "geth", "attach", "--exec", "eth.blockNumber", "http://localhost:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 20`;
+}
+
+/**
+ * Generate common Thanos service definitions (L2, op-node, op-batcher, op-proposer).
+ * Shared across local, testnet, and remote compose generators.
+ */
+function thanosServices({ projectName, l2Port, l2ChainId, l1RpcUrl, bindAddr, privateKey }) {
+  const pk = privateKey || THANOS_DEVNET_PRIVATE_KEY;
+  return `
+  thanos-l2:
+    container_name: ${projectName}-l2
+    image: "${THANOS_IMAGES["op-geth"]}"
+    ports:
+      - ${bindAddr}:${l2Port}:8545
+    volumes:
+      - thanos-l2-data:/root/.ethereum
+      - thanos-shared:/shared
+    environment:
+      - OP_GETH_GENESIS_FILE_PATH=/shared/genesis-l2.json
+      - OP_GETH_SEQUENCER_HTTP=http://thanos-l2:8545
+    command:
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3,debug,txpool,engine
+      - --http.corsdomain=*
+      - --http.vhosts=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --ws.api=eth,net,web3,debug,txpool,engine
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.jwtsecret=/shared/jwt-secret.txt
+      - --authrpc.vhosts=*
+      - --networkid=${l2ChainId}
+      - --rollup.sequencerhttp=http://thanos-l2:8545
+      - --rollup.disabletxpoolgossip
+      - --gcmode=archive
+      - --nodiscover
+      - --maxpeers=0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8545 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  thanos-op-node:
+    container_name: ${projectName}-op-node
+    image: "${THANOS_IMAGES["op-node"]}"
+    depends_on:
+      thanos-l2:
+        condition: service_healthy
+    volumes:
+      - thanos-shared:/shared
+    environment:
+      - OP_NODE_L1_ETH_RPC=${l1RpcUrl}
+      - OP_NODE_L1_BEACON=${l1RpcUrl}
+      - OP_NODE_L2_ENGINE_RPC=http://thanos-l2:8551
+      - OP_NODE_L2_ENGINE_AUTH=/shared/jwt-secret.txt
+      - OP_NODE_ROLLUP_CONFIG=/shared/rollup.json
+      - OP_NODE_P2P_DISABLE=true
+      - OP_NODE_SEQUENCER_ENABLED=true
+      - OP_NODE_SEQUENCER_L1_CONFS=0
+      - OP_NODE_RPC_ADDR=0.0.0.0
+      - OP_NODE_RPC_PORT=9545
+
+  thanos-op-batcher:
+    container_name: ${projectName}-batcher
+    image: "${THANOS_IMAGES["op-batcher"]}"
+    depends_on:
+      - thanos-op-node
+    volumes:
+      - thanos-shared:/shared
+    environment:
+      - OP_BATCHER_L1_ETH_RPC=${l1RpcUrl}
+      - OP_BATCHER_L2_ETH_RPC=http://thanos-l2:8545
+      - OP_BATCHER_ROLLUP_RPC=http://thanos-op-node:9545
+      - OP_BATCHER_PRIVATE_KEY=${pk}
+      - OP_BATCHER_MAX_CHANNEL_DURATION=1
+      - OP_BATCHER_SUB_SAFETY_MARGIN=4
+
+  thanos-op-proposer:
+    container_name: ${projectName}-proposer
+    image: "${THANOS_IMAGES["op-proposer"]}"
+    depends_on:
+      - thanos-op-node
+    volumes:
+      - thanos-shared:/shared
+    environment:
+      - OP_PROPOSER_L1_ETH_RPC=${l1RpcUrl}
+      - OP_PROPOSER_ROLLUP_RPC=http://thanos-op-node:9545
+      - OP_PROPOSER_PRIVATE_KEY=${pk}
+      - OP_PROPOSER_L2OO_ADDRESS_FILE=/shared/L2OutputOracleProxy.json
+      - OP_PROPOSER_POLL_INTERVAL=6s
+`;
+}
+
 /**
  * Generate docker-compose.yaml for REMOTE deployment.
  *
@@ -950,11 +1091,118 @@ async function writeCustomL1Genesis(l1ChainId, deploymentId, customDir) {
   return outPath;
 }
 
+/**
+ * Generate docker-compose.yaml for Thanos (OP Stack) LOCAL deployment.
+ *
+ * Thanos uses separate services: L1 geth, contract deployer, op-geth (L2),
+ * op-node, op-batcher, op-proposer. All pre-built images (no build step).
+ *
+ * Tools (Blockscout, Bridge UI) are started separately via the existing tools pipeline.
+ *
+ * @param {Object} opts
+ * @param {number} opts.l1Port - Host port for L1 RPC
+ * @param {number} opts.l2Port - Host port for L2 RPC (maps to 8545 inside op-geth)
+ * @param {string} opts.projectName - Docker Compose project name
+ * @param {boolean} [opts.isPublic=false] - Bind to 0.0.0.0 for public access
+ * @param {number} [opts.l2ChainId] - L2 chain ID
+ * @param {number} [opts.l1ChainId] - L1 chain ID
+ * @returns {string} docker-compose.yaml content
+ */
+function generateThanosComposeFile(opts) {
+  const { l1Port, l2Port, projectName, isPublic = false, l2ChainId = 901, l1ChainId = 900 } = opts;
+  const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
+  const l1RpcUrl = 'http://thanos-l1:8545';
+
+  return `# Auto-generated by Tokamak Platform
+# Stack: Thanos (Optimism)
+# Project: ${projectName}
+# Mode: local (built-in L1 geth)
+
+volumes:
+  thanos-shared:
+  thanos-l1-data:
+  thanos-l2-data:
+
+services:
+${thanosL1Service({ projectName, l1Port, l1ChainId, bindAddr })}
+${thanosServices({ projectName, l2Port, l2ChainId, l1RpcUrl, bindAddr, privateKey: THANOS_DEVNET_PRIVATE_KEY })}
+`;
+}
+
+/**
+ * Generate docker-compose.yaml for Thanos TESTNET deployment.
+ * No L1 container — uses external L1 RPC URL.
+ *
+ * @param {Object} opts
+ * @param {number} opts.l2Port - Host port for L2 RPC
+ * @param {string} opts.projectName
+ * @param {string} opts.l1RpcUrl - External L1 RPC URL
+ * @param {string} opts.deployerPrivateKey
+ * @param {number} [opts.l2ChainId]
+ * @param {boolean} [opts.isPublic=false]
+ * @returns {string}
+ */
+function generateThanosTestnetComposeFile(opts) {
+  const { l2Port, projectName, l1RpcUrl, deployerPrivateKey, l2ChainId = 901, isPublic = false } = opts;
+  const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
+
+  return `# Auto-generated by Tokamak Platform
+# Stack: Thanos (Optimism)
+# Project: ${projectName}
+# Mode: testnet (external L1: ${l1RpcUrl})
+
+volumes:
+  thanos-shared:
+  thanos-l2-data:
+
+services:
+${thanosServices({ projectName, l2Port, l2ChainId, l1RpcUrl, bindAddr, privateKey: deployerPrivateKey })}
+`;
+}
+
+/**
+ * Generate docker-compose.yaml for Thanos REMOTE deployment.
+ * Pre-built images, deployed via SSH to a remote server.
+ *
+ * @param {Object} opts
+ * @param {number} opts.l1Port
+ * @param {number} opts.l2Port
+ * @param {string} opts.projectName
+ * @param {string} opts.dataDir - Remote data directory
+ * @param {number} [opts.l2ChainId]
+ * @param {number} [opts.l1ChainId]
+ * @param {string} [opts.bindAddress='0.0.0.0']
+ * @returns {string}
+ */
+function generateThanosRemoteComposeFile(opts) {
+  const { l1Port, l2Port, projectName, deployerPrivateKey, l2ChainId = 901, l1ChainId = 900, bindAddress = '0.0.0.0' } = opts;
+  if (!deployerPrivateKey) throw new Error("Remote Thanos deployment requires an explicit private key");
+  const l1RpcUrl = 'http://thanos-l1:8545';
+
+  return `# Auto-generated by Tokamak Platform (REMOTE mode)
+# Stack: Thanos (Optimism)
+# Project: ${projectName}
+# Pre-built images — no build step required
+
+volumes:
+  thanos-shared:
+  thanos-l1-data:
+  thanos-l2-data:
+
+services:
+${thanosL1Service({ projectName, l1Port, l1ChainId, bindAddr: bindAddress })}
+${thanosServices({ projectName, l2Port, l2ChainId, l1RpcUrl, bindAddr: bindAddress, privateKey: deployerPrivateKey })}
+`;
+}
+
 module.exports = {
   generateComposeFile,
   generateTestnetComposeFile,
   generateRemoteComposeFile,
   generateRemoteTestnetComposeFile,
+  generateThanosComposeFile,
+  generateThanosTestnetComposeFile,
+  generateThanosRemoteComposeFile,
   generateProgramsToml,
   writeComposeFile,
   writeCustomGenesis,
@@ -962,4 +1210,5 @@ module.exports = {
   getDeploymentDir,
   getAppProfile,
   APP_PROFILES,
+  THANOS_IMAGES,
 };

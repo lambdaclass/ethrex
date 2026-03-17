@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS deployments (
   id TEXT PRIMARY KEY,
   program_slug TEXT NOT NULL DEFAULT 'evm-l2',
+  stack_type TEXT NOT NULL DEFAULT 'ethrex',
   name TEXT NOT NULL,
   chain_id INTEGER,
   l1_chain_id INTEGER,

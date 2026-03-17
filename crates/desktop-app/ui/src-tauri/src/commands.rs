@@ -170,6 +170,7 @@ pub struct CreateAppchainRequest {
     pub prover_type: String,
     pub is_public: bool,
     pub hashtags: String,
+    pub stack_type: Option<String>,
 }
 
 #[tauri::command]
@@ -199,6 +200,7 @@ pub fn create_appchain(
         chain_id: req.chain_id,
         description: req.description,
         network_mode,
+        stack_type: req.stack_type.unwrap_or_else(|| "ethrex".to_string()),
         l1_rpc_url: req.l1_rpc_url,
         l2_rpc_port: req.l2_rpc_port,
         sequencer_mode: req.sequencer_mode,
@@ -249,7 +251,7 @@ pub async fn start_appchain_setup(
     tg_manager.notify(&format!("🟡 앱체인 '{}' 생성을 시작합니다.", config.name));
 
     let has_prover = config.prover_type != "none";
-    am.init_setup_progress(&id, &config.network_mode, has_prover);
+    am.init_setup_progress(&id, &config.network_mode, has_prover, &config.stack_type);
     am.update_status(&id, AppchainStatus::SettingUp);
 
     // Step 1: Config - mark done immediately
@@ -257,42 +259,50 @@ pub async fn start_appchain_setup(
     am.add_log(&id, format!("Config saved for '{}'", config.name));
     am.advance_step(&id);
 
-    match config.network_mode {
-        NetworkMode::Local => {
-            am.update_step_status(&id, "dev", StepStatus::InProgress);
-            am.add_log(&id, "Starting ethrex l2 --dev ...".to_string());
+    if config.stack_type == "thanos" {
+        // Thanos stack: all modes use local-server Docker pipeline
+        am.update_step_status(&id, "pulling", StepStatus::InProgress);
+        am.add_log(&id, "Thanos (OP Stack) deployment — delegating to local-server Docker pipeline...".to_string());
+        // The actual provisioning is triggered from the deployment manager UI
+        // via local-server POST /api/deployments/:id/provision
+    } else {
+        match config.network_mode {
+            NetworkMode::Local => {
+                am.update_step_status(&id, "dev", StepStatus::InProgress);
+                am.add_log(&id, "Starting ethrex l2 --dev ...".to_string());
 
-            // Clone Arc handles for the background task
-            let am_clone = am.inner().clone();
-            let runner_clone = runner.inner().clone();
-            let tg_clone = tg_manager.inner().clone();
-            let chain_id = id.clone();
-            let chain_name = config.name.clone();
+                // Clone Arc handles for the background task
+                let am_clone = am.inner().clone();
+                let runner_clone = runner.inner().clone();
+                let tg_clone = tg_manager.inner().clone();
+                let chain_id = id.clone();
+                let chain_name = config.name.clone();
 
-            // Spawn the actual process in background
-            tokio::spawn(async move {
-                ProcessRunner::start_local_dev(runner_clone, am_clone.clone(), chain_id.clone()).await;
-                // Notify after setup completes
-                let status = am_clone.get_appchain(&chain_id)
-                    .map(|c| format!("{:?}", c.status))
-                    .unwrap_or_default();
-                match status.as_str() {
-                    "Running" => tg_clone.notify(&format!("🟢 앱체인 '{chain_name}' 이(가) 시작되었습니다.")),
-                    "Error" => tg_clone.notify(&format!("❌ 앱체인 '{chain_name}' 생성 중 오류가 발생했습니다.")),
-                    _ => {}
-                }
-            });
-        }
-        _ => {
-            // Testnet/Mainnet - not yet implemented
-            am.update_step_status(&id, "l1_check", StepStatus::InProgress);
-            am.add_log(
-                &id,
-                format!(
-                    "Checking L1 connection to {} ... (not yet implemented)",
-                    config.l1_rpc_url
-                ),
-            );
+                // Spawn the actual process in background
+                tokio::spawn(async move {
+                    ProcessRunner::start_local_dev(runner_clone, am_clone.clone(), chain_id.clone()).await;
+                    // Notify after setup completes
+                    let status = am_clone.get_appchain(&chain_id)
+                        .map(|c| format!("{:?}", c.status))
+                        .unwrap_or_default();
+                    match status.as_str() {
+                        "Running" => tg_clone.notify(&format!("🟢 앱체인 '{chain_name}' 이(가) 시작되었습니다.")),
+                        "Error" => tg_clone.notify(&format!("❌ 앱체인 '{chain_name}' 생성 중 오류가 발생했습니다.")),
+                        _ => {}
+                    }
+                });
+            }
+            _ => {
+                // Testnet/Mainnet - not yet implemented
+                am.update_step_status(&id, "l1_check", StepStatus::InProgress);
+                am.add_log(
+                    &id,
+                    format!(
+                        "Checking L1 connection to {} ... (not yet implemented)",
+                        config.l1_rpc_url
+                    ),
+                );
+            }
         }
     }
 

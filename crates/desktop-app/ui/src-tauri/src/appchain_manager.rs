@@ -55,6 +55,7 @@ pub struct AppchainConfig {
     pub chain_id: u64,
     pub description: String,
     pub network_mode: NetworkMode,
+    pub stack_type: String,
 
     // Network
     pub l1_rpc_url: String,
@@ -203,7 +204,7 @@ impl AppchainManager {
         map.get(id).cloned()
     }
 
-    pub fn init_setup_progress(&self, id: &str, network_mode: &NetworkMode, has_prover: bool) {
+    pub fn init_setup_progress(&self, id: &str, network_mode: &NetworkMode, has_prover: bool, stack_type: &str) {
         let mut steps = vec![
             SetupStep {
                 id: "config".to_string(),
@@ -212,7 +213,51 @@ impl AppchainManager {
             },
         ];
 
-        if *network_mode == NetworkMode::Local {
+        if stack_type == "thanos" {
+            // Thanos (OP Stack): pull → L1 → contracts → L2 → op-node → batcher → proposer → tools
+            steps.push(SetupStep {
+                id: "pulling".to_string(),
+                label: "Pulling Docker images".to_string(),
+                status: StepStatus::Pending,
+            });
+            if *network_mode == NetworkMode::Local {
+                steps.push(SetupStep {
+                    id: "l1_starting".to_string(),
+                    label: "Starting L1 geth".to_string(),
+                    status: StepStatus::Pending,
+                });
+            }
+            steps.push(SetupStep {
+                id: "deploying_contracts".to_string(),
+                label: "Deploying contracts".to_string(),
+                status: StepStatus::Pending,
+            });
+            steps.push(SetupStep {
+                id: "l2_starting".to_string(),
+                label: "Starting op-geth (L2)".to_string(),
+                status: StepStatus::Pending,
+            });
+            steps.push(SetupStep {
+                id: "op_node".to_string(),
+                label: "Starting op-node".to_string(),
+                status: StepStatus::Pending,
+            });
+            steps.push(SetupStep {
+                id: "batcher".to_string(),
+                label: "Starting op-batcher".to_string(),
+                status: StepStatus::Pending,
+            });
+            steps.push(SetupStep {
+                id: "proposer".to_string(),
+                label: "Starting op-proposer".to_string(),
+                status: StepStatus::Pending,
+            });
+            steps.push(SetupStep {
+                id: "tools".to_string(),
+                label: "Starting support tools".to_string(),
+                status: StepStatus::Pending,
+            });
+        } else if *network_mode == NetworkMode::Local {
             steps.push(SetupStep {
                 id: "dev".to_string(),
                 label: "Starting L1 + Deploy + L2 (dev mode)".to_string(),
@@ -236,7 +281,7 @@ impl AppchainManager {
             });
         }
 
-        if has_prover {
+        if has_prover && stack_type != "thanos" {
             steps.push(SetupStep {
                 id: "prover".to_string(),
                 label: "Starting prover".to_string(),
@@ -325,6 +370,7 @@ mod tests {
             chain_id: 17001,
             description: "test".to_string(),
             network_mode: NetworkMode::Local,
+            stack_type: "ethrex".to_string(),
             l1_rpc_url: "http://localhost:8545".to_string(),
             l2_rpc_port: 1729,
             sequencer_mode: "standalone".to_string(),
@@ -396,7 +442,7 @@ mod tests {
     #[test]
     fn test_setup_progress_local() {
         let am = test_manager();
-        am.init_setup_progress("chain-6", &NetworkMode::Local, false);
+        am.init_setup_progress("chain-6", &NetworkMode::Local, false, "ethrex");
 
         let progress = am.get_setup_progress("chain-6").unwrap();
         // Local without prover: config, dev, done = 3 steps
@@ -409,7 +455,7 @@ mod tests {
     #[test]
     fn test_setup_progress_testnet_with_prover() {
         let am = test_manager();
-        am.init_setup_progress("chain-7", &NetworkMode::Testnet, true);
+        am.init_setup_progress("chain-7", &NetworkMode::Testnet, true, "ethrex");
 
         let progress = am.get_setup_progress("chain-7").unwrap();
         // Testnet with prover: config, l1_check, deploy, l2, prover, done = 6 steps
@@ -421,7 +467,7 @@ mod tests {
     #[test]
     fn test_step_status_and_advance() {
         let am = test_manager();
-        am.init_setup_progress("chain-8", &NetworkMode::Local, false);
+        am.init_setup_progress("chain-8", &NetworkMode::Local, false, "ethrex");
 
         am.update_step_status("chain-8", "config", StepStatus::Done);
         am.advance_step("chain-8");
@@ -434,7 +480,7 @@ mod tests {
     #[test]
     fn test_add_log_and_limit() {
         let am = test_manager();
-        am.init_setup_progress("chain-9", &NetworkMode::Local, false);
+        am.init_setup_progress("chain-9", &NetworkMode::Local, false, "ethrex");
 
         for i in 0..600 {
             am.add_log("chain-9", format!("log line {i}"));
@@ -448,7 +494,7 @@ mod tests {
     #[test]
     fn test_set_setup_error() {
         let am = test_manager();
-        am.init_setup_progress("chain-10", &NetworkMode::Local, false);
+        am.init_setup_progress("chain-10", &NetworkMode::Local, false, "ethrex");
 
         am.set_setup_error("chain-10", "something failed".to_string());
         let progress = am.get_setup_progress("chain-10").unwrap();

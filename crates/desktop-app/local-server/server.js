@@ -61,10 +61,11 @@ app.get("/api/store/programs", async (req, res) => {
   } catch (_) {
     // Platform unreachable, use defaults
   }
-  // Fallback — 2 official programs (only ones with ready implementations)
+  // Fallback — official programs per stack
   res.json([
-    { id: "evm-l2", program_id: "evm-l2", name: "EVM L2", description: "Default Ethereum execution environment. Full EVM compatibility for general-purpose L2 chains.", author: "Tokamak", category: "defi", tags: ["evm", "defi"], is_official: true },
-    { id: "zk-dex", program_id: "zk-dex", name: "ZK-DEX", description: "Decentralized exchange circuits optimized for on-chain order matching and settlement.", author: "Tokamak", category: "defi", tags: ["zk", "defi", "exchange"], is_official: true },
+    { id: "evm-l2", program_id: "evm-l2", name: "EVM L2", description: "Default Ethereum execution environment. Full EVM compatibility for general-purpose L2 chains.", author: "Tokamak", category: "defi", tags: ["evm", "defi"], is_official: true, stack: "ethrex" },
+    { id: "zk-dex", program_id: "zk-dex", name: "ZK-DEX", description: "Decentralized exchange circuits optimized for on-chain order matching and settlement.", author: "Tokamak", category: "defi", tags: ["zk", "defi", "exchange"], is_official: true, stack: "ethrex" },
+    { id: "thanos-l2", program_id: "thanos-l2", name: "Thanos L2", description: "OP Stack-based Optimistic Rollup. Fault proof secured, fully EVM compatible L2 chain.", author: "Tokamak", category: "defi", tags: ["optimism", "op-stack", "defi"], is_official: true, stack: "thanos" },
   ]);
 });
 

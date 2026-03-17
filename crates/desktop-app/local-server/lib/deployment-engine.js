@@ -23,6 +23,8 @@ const {
   generateTestnetComposeFile,
   generateRemoteComposeFile,
   generateRemoteTestnetComposeFile,
+  generateThanosComposeFile,
+  generateThanosTestnetComposeFile,
   generateProgramsToml,
   writeComposeFile,
   writeCustomGenesis,
@@ -103,6 +105,20 @@ const PHASES = [
 const ACTIVE_PHASES = [
   "checking_docker", "building", "pulling", "l1_starting",
   "deploying_contracts", "verifying_contracts", "l2_starting", "starting_prover", "starting_tools",
+];
+
+const THANOS_PHASES = [
+  "configured",
+  "checking_docker",
+  "pulling",
+  "l1_starting",
+  "deploying_contracts",
+  "l2_starting",
+  "starting_op_node",
+  "starting_batcher",
+  "starting_proposer",
+  "starting_tools",
+  "running",
 ];
 
 function getEmitter(deploymentId) {
@@ -2277,6 +2293,374 @@ async function recoverStuckDeployments() {
 // HELPERS
 // ============================================================
 
+// ============================================================
+// THANOS (OP STACK) PROVISIONING
+// ============================================================
+
+/**
+ * Provision a Thanos (OP Stack) deployment locally.
+ * All pre-built images — pull only, no build step.
+ * Services: L1 geth → contract deployer → op-geth (L2) → op-node → op-batcher → op-proposer
+ * Then start tools (Blockscout, Bridge UI) via existing tools pipeline.
+ */
+async function provisionThanos(deployment) {
+  const { id } = deployment;
+
+  const provisionInfo = { startedAt: Date.now(), phase: "checking_docker" };
+  activeProvisions.set(id, provisionInfo);
+  clearDeployEvents(id);
+
+  emit(id, "phase", { phase: "checking_docker", message: "Checking Docker availability..." });
+  updateDeployment(id, { phase: "checking_docker", error_message: null });
+
+  if (!docker.isDockerAvailable()) {
+    const errMsg = "Docker is not running. Please install and start Docker Desktop first.";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  emit(id, "phase", { phase: "checking_docker", message: "Docker is available" });
+
+  const { l1Port, l2Port, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
+  const projectName = `tokamak-${id.slice(0, 8)}`;
+
+  // Assign chain IDs for Thanos
+  let l2ChainId = deployment.chain_id || getNextAvailableL2ChainId();
+  let l1ChainId = deployment.l1_chain_id || getNextAvailableL1ChainId();
+
+  updateDeployment(id, {
+    docker_project: projectName,
+    l1_port: l1Port,
+    l2_port: l2Port,
+    chain_id: l2ChainId,
+    l1_chain_id: l1ChainId,
+    tools_l1_explorer_port: toolsL1ExplorerPort,
+    tools_l2_explorer_port: toolsL2ExplorerPort,
+    tools_bridge_ui_port: toolsBridgeUIPort,
+    tools_db_port: toolsDbPort,
+    tools_metrics_port: toolsMetricsPort,
+    phase: "pulling",
+    error_message: null,
+  });
+
+  provisionInfo.phase = "pulling";
+  emit(id, "phase", { phase: "pulling", message: "Generating Thanos Docker Compose configuration..." });
+
+  let composeFile = null;
+  try {
+    const composeContent = generateThanosComposeFile({
+      l1Port, l2Port, projectName,
+      l2ChainId, l1ChainId,
+    });
+    composeFile = writeComposeFile(id, composeContent);
+
+    emit(id, "phase", { phase: "pulling", message: "Pulling Thanos Docker images..." });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.pullImages(projectName, composeFile, (chunk) => {
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          emit(id, "log", { message: line });
+        }
+      })
+    );
+
+    checkCancelled(provisionInfo);
+
+    // Start L1
+    provisionInfo.phase = "l1_starting";
+    emit(id, "phase", { phase: "l1_starting", message: "Starting L1 geth node..." });
+    updateDeployment(id, { phase: "l1_starting" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-l1"])
+    );
+    await waitForHealthy(`http://127.0.0.1:${l1Port}`, 60000, id);
+    emit(id, "phase", { phase: "l1_starting", message: "L1 geth node is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Contract deployment — skipped for now (Thanos devnet uses pre-configured genesis)
+    provisionInfo.phase = "deploying_contracts";
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contract deployment (devnet pre-configured)" });
+    updateDeployment(id, { phase: "deploying_contracts" });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Using devnet defaults — contracts ready" });
+
+    checkCancelled(provisionInfo);
+
+    // Start L2 (op-geth)
+    provisionInfo.phase = "l2_starting";
+    emit(id, "phase", { phase: "l2_starting", message: "Starting op-geth (L2)..." });
+    updateDeployment(id, { phase: "l2_starting" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-l2"])
+    );
+    await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
+    emit(id, "phase", { phase: "l2_starting", message: "op-geth (L2) is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start op-node
+    provisionInfo.phase = "starting_op_node";
+    emit(id, "phase", { phase: "starting_op_node", message: "Starting op-node..." });
+    updateDeployment(id, { phase: "starting_op_node" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-op-node"])
+    );
+    emit(id, "phase", { phase: "starting_op_node", message: "op-node is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start batcher
+    provisionInfo.phase = "starting_batcher";
+    emit(id, "phase", { phase: "starting_batcher", message: "Starting op-batcher..." });
+    updateDeployment(id, { phase: "starting_batcher" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-op-batcher"])
+    );
+    emit(id, "phase", { phase: "starting_batcher", message: "op-batcher is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start proposer
+    provisionInfo.phase = "starting_proposer";
+    emit(id, "phase", { phase: "starting_proposer", message: "Starting op-proposer..." });
+    updateDeployment(id, { phase: "starting_proposer" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-op-proposer"])
+    );
+    emit(id, "phase", { phase: "starting_proposer", message: "op-proposer is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start tools (Blockscout, Bridge UI)
+    provisionInfo.phase = "starting_tools";
+    emit(id, "phase", { phase: "starting_tools", message: "Starting support tools (Blockscout, Bridge UI)..." });
+    updateDeployment(id, { phase: "starting_tools" });
+    try {
+      const latestDep = getDeploymentById(id);
+      // Thanos doesn't use extractEnv — build minimal env for tools
+      const toolsEnvVars = {
+        ETHREX_ETH_RPC_URL: `http://127.0.0.1:${l1Port}`,
+      };
+      await docker.startTools(`${projectName}-tools`, toolsEnvVars, {
+        toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort,
+        toolsDbPort, l1Port, l2Port, toolsMetricsPort,
+        l2ChainId: latestDep.chain_id, l1ChainId: latestDep.l1_chain_id,
+      });
+      emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
+    } catch (toolsErr) {
+      emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
+    }
+
+    // Done!
+    emit(id, "phase", {
+      phase: "running",
+      message: "Thanos deployment is running!",
+      l1Rpc: `http://127.0.0.1:${l1Port}`,
+      l2Rpc: `http://127.0.0.1:${l2Port}`,
+    });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null, ever_running: 1 });
+    activeProvisions.delete(id);
+    return updateDeployment(id, {});
+  } catch (err) {
+    if (composeFile) {
+      try {
+        await docker.stop(projectName, composeFile);
+        emit(id, "log", { message: `Stopped all containers for ${projectName}` });
+      } catch (stopErr) {
+        console.warn(`[deploy-engine] Failed to stop containers on error: ${stopErr.message}`);
+      }
+    }
+    if (!provisionInfo.cancelled) {
+      emit(id, "error", { message: err.message });
+      updateDeployment(id, { error_message: err.message });
+    }
+    activeProvisions.delete(id);
+    throw err;
+  }
+}
+
+/**
+ * Provision a Thanos (OP Stack) deployment in testnet mode.
+ * No L1 container — uses external L1 RPC URL.
+ */
+async function provisionThanosTestnet(deployment) {
+  const { id } = deployment;
+
+  const provisionInfo = { startedAt: Date.now(), phase: "checking_docker" };
+  activeProvisions.set(id, provisionInfo);
+  clearDeployEvents(id);
+
+  emit(id, "phase", { phase: "checking_docker", message: "Checking Docker availability..." });
+  updateDeployment(id, { phase: "checking_docker", error_message: null });
+
+  if (!docker.isDockerAvailable()) {
+    const errMsg = "Docker is not running. Please install and start Docker Desktop first.";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  // Parse testnet config
+  let l1RpcUrl, deployerPrivateKey;
+  try {
+    const config = deployment.config ? JSON.parse(deployment.config) : {};
+    const testnet = config.testnet || {};
+    l1RpcUrl = testnet.l1RpcUrl;
+    deployerPrivateKey = await keychain.resolveKey(testnet.deployerKeychainKey);
+  } catch (e) {
+    const errMsg = `Failed to parse testnet config: ${e.message}`;
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  if (!l1RpcUrl) {
+    const errMsg = "L1 RPC URL is required for testnet deployment";
+    emit(id, "error", { message: errMsg });
+    updateDeployment(id, { error_message: errMsg });
+    activeProvisions.delete(id);
+    throw new Error(errMsg);
+  }
+
+  const { l2Port, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
+  const projectName = `tokamak-${id.slice(0, 8)}`;
+
+  let l2ChainId = deployment.chain_id || getNextAvailableL2ChainId();
+
+  updateDeployment(id, {
+    docker_project: projectName,
+    l2_port: l2Port,
+    chain_id: l2ChainId,
+    tools_l2_explorer_port: toolsL2ExplorerPort,
+    tools_bridge_ui_port: toolsBridgeUIPort,
+    tools_db_port: toolsDbPort,
+    tools_metrics_port: toolsMetricsPort,
+    phase: "pulling",
+    error_message: null,
+  });
+
+  provisionInfo.phase = "pulling";
+  emit(id, "phase", { phase: "pulling", message: "Generating Thanos testnet Docker Compose..." });
+
+  let composeFile = null;
+  try {
+    const composeContent = generateThanosTestnetComposeFile({
+      l2Port, projectName, l1RpcUrl, deployerPrivateKey, l2ChainId,
+    });
+    composeFile = writeComposeFile(id, composeContent);
+
+    emit(id, "phase", { phase: "pulling", message: "Pulling Thanos Docker images..." });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.pullImages(projectName, composeFile, (chunk) => {
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          emit(id, "log", { message: line });
+        }
+      })
+    );
+
+    checkCancelled(provisionInfo);
+
+    // Contract deployment — skipped (Thanos contract deployment via Foundry/Forge is planned)
+    provisionInfo.phase = "deploying_contracts";
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contract deployment (skipped — devnet mode)" });
+    updateDeployment(id, { phase: "deploying_contracts" });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Using devnet defaults" });
+
+    checkCancelled(provisionInfo);
+
+    // Start L2 (op-geth)
+    provisionInfo.phase = "l2_starting";
+    emit(id, "phase", { phase: "l2_starting", message: "Starting op-geth (L2)..." });
+    updateDeployment(id, { phase: "l2_starting" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-l2"])
+    );
+    await waitForHealthy(`http://127.0.0.1:${l2Port}`, 120000, id);
+    emit(id, "phase", { phase: "l2_starting", message: "op-geth (L2) is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start op-node
+    provisionInfo.phase = "starting_op_node";
+    emit(id, "phase", { phase: "starting_op_node", message: "Starting op-node..." });
+    updateDeployment(id, { phase: "starting_op_node" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-op-node"])
+    );
+    emit(id, "phase", { phase: "starting_op_node", message: "op-node is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start batcher
+    provisionInfo.phase = "starting_batcher";
+    emit(id, "phase", { phase: "starting_batcher", message: "Starting op-batcher..." });
+    updateDeployment(id, { phase: "starting_batcher" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-op-batcher"])
+    );
+    emit(id, "phase", { phase: "starting_batcher", message: "op-batcher is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start proposer
+    provisionInfo.phase = "starting_proposer";
+    emit(id, "phase", { phase: "starting_proposer", message: "Starting op-proposer..." });
+    updateDeployment(id, { phase: "starting_proposer" });
+    await trackedDockerRun(provisionInfo, () =>
+      docker.runCompose(projectName, composeFile, ["up", "-d", "thanos-op-proposer"])
+    );
+    emit(id, "phase", { phase: "starting_proposer", message: "op-proposer is running" });
+
+    checkCancelled(provisionInfo);
+
+    // Start tools
+    provisionInfo.phase = "starting_tools";
+    emit(id, "phase", { phase: "starting_tools", message: "Starting support tools..." });
+    updateDeployment(id, { phase: "starting_tools" });
+    try {
+      const latestDep = getDeploymentById(id);
+      const toolsEnvVars = {};
+      await docker.startTools(`${projectName}-tools`, toolsEnvVars, {
+        toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, l2Port, toolsMetricsPort,
+        l2ChainId: latestDep.chain_id,
+        skipL1Explorer: true,
+        l1RpcUrl,
+      });
+      emit(id, "phase", { phase: "starting_tools", message: "Support tools started" });
+    } catch (toolsErr) {
+      emit(id, "phase", { phase: "starting_tools", message: `Tools setup skipped: ${toolsErr.message}` });
+    }
+
+    emit(id, "phase", {
+      phase: "running",
+      message: "Thanos testnet deployment is running!",
+      l2Rpc: `http://127.0.0.1:${l2Port}`,
+    });
+    updateDeployment(id, { phase: "running", status: "active", error_message: null, ever_running: 1 });
+    activeProvisions.delete(id);
+    return updateDeployment(id, {});
+  } catch (err) {
+    if (composeFile) {
+      try {
+        await docker.stop(projectName, composeFile);
+      } catch (stopErr) {
+        console.warn(`[deploy-engine] Failed to stop containers on error: ${stopErr.message}`);
+      }
+    }
+    if (!provisionInfo.cancelled) {
+      emit(id, "error", { message: err.message });
+      updateDeployment(id, { error_message: err.message });
+    }
+    activeProvisions.delete(id);
+    throw err;
+  }
+}
+
 async function waitForHealthy(url, timeoutMs, deploymentId) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -2384,6 +2768,8 @@ module.exports = {
   provisionTestnet,
   provisionRemote,
   provisionRemoteTestnet,
+  provisionThanos,
+  provisionThanosTestnet,
   stopDeployment,
   startDeployment,
   destroyDeployment,
@@ -2396,4 +2782,5 @@ module.exports = {
   recoverStuckDeployments,
   parseContractAddressesFromLogs,
   PHASES,
+  THANOS_PHASES,
 };

@@ -76,14 +76,21 @@
 
         <!-- Step 1: Select Program -->
         <div id="launch-step1" class="launch-step">
-          <h2>Select an App</h2>
-          <p class="step-desc">Choose an application to deploy on your L2 chain.</p>
-          <div class="search-bar" style="display:flex;gap:10px">
-            <input type="text" id="program-search" placeholder="Search apps..." oninput="filterPrograms()" style="flex:1">
-            <select id="category-filter" onchange="filterPrograms()" style="width:auto;min-width:140px">
-              <option value="">All Categories</option>
-            </select>
+          <h2>Select Appchain (L2)</h2>
+          <p class="step-desc">Choose the L2 stack and application for your appchain.</p>
+
+          <label style="margin-bottom:6px;font-weight:600;font-size:13px">L2 Stack</label>
+          <div class="mode-cards" style="margin-bottom:16px">
+            <button type="button" class="mode-card active" data-stack="ethrex" onclick="setStackType('ethrex')" style="padding:10px">
+              <div class="mode-title">Tokamak-appchain (ethrex)</div>
+              <div class="mode-desc">Tokamak native ZK Rollup with SP1 prover</div>
+            </button>
+            <button type="button" class="mode-card" data-stack="thanos" onclick="setStackType('thanos')" style="padding:10px">
+              <div class="mode-title">Thanos (Optimism)</div>
+              <div class="mode-desc">Optimistic Rollup with fault proofs</div>
+            </button>
           </div>
+
           <div id="programs-grid" class="card-grid">
             <p class="empty-state">Loading programs...</p>
           </div>

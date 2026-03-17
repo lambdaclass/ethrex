@@ -628,6 +628,7 @@ function findImage(programSlug) {
 }
 
 module.exports = {
+  runCompose,
   findImage,
   buildImages,
   pullImages,

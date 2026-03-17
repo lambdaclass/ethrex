@@ -9,6 +9,8 @@ const {
   provisionTestnet,
   provisionRemote,
   provisionRemoteTestnet,
+  provisionThanos,
+  provisionThanosTestnet,
   stopDeployment,
   startDeployment,
   destroyDeployment,
@@ -348,7 +350,7 @@ router.get("/next-chain-id", (req, res) => {
 // POST /api/deployments — create a new deployment
 router.post("/", (req, res) => {
   try {
-    const { programSlug, name, chainId, config } = req.body;
+    const { programSlug, name, chainId, config, stackType } = req.body;
     if (!name) {
       return res.status(400).json({ error: "name is required" });
     }
@@ -357,9 +359,9 @@ router.post("/", (req, res) => {
     const now = Date.now();
 
     db.prepare(`
-      INSERT INTO deployments (id, program_slug, name, chain_id, config, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, programSlug || "evm-l2", name.trim(), chainId || null, config ? JSON.stringify(config) : null, now);
+      INSERT INTO deployments (id, program_slug, stack_type, name, chain_id, config, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, programSlug || "evm-l2", stackType || "ethrex", name.trim(), chainId || null, config ? JSON.stringify(config) : null, now);
 
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(id);
     res.status(201).json({ deployment });
@@ -797,7 +799,7 @@ router.post("/:id/provision", async (req, res) => {
       return res.status(400).json({ error: "Deployment is already running" });
     }
 
-    const inProgressPhases = ["checking_docker", "building", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools"];
+    const inProgressPhases = ["checking_docker", "building", "pulling", "l1_starting", "deploying_contracts", "l2_starting", "starting_prover", "starting_tools", "starting_op_node", "starting_batcher", "starting_proposer"];
     if (inProgressPhases.includes(deployment.phase)) {
       return res.status(400).json({ error: "Deployment is already in progress" });
     }
@@ -812,8 +814,21 @@ router.post("/:id/provision", async (req, res) => {
 
     res.json({ ok: true, message: "Provisioning started", remote: !!hostId, mode: deployMode });
 
+    // Determine stack type from deployment DB row
+    const stackType = deployment.stack_type || 'ethrex';
+
     let provisionFn;
-    if (hostId && deployMode === 'testnet') {
+    if (stackType === 'thanos') {
+      // Thanos (Optimism) provisioning — remote not yet supported
+      if (hostId) {
+        return; // already sent response; log error
+      }
+      if (deployMode === 'testnet') {
+        provisionFn = () => provisionThanosTestnet(deployment);
+      } else {
+        provisionFn = () => provisionThanos(deployment);
+      }
+    } else if (hostId && deployMode === 'testnet') {
       provisionFn = () => provisionRemoteTestnet(deployment, hostId);
     } else if (hostId) {
       provisionFn = () => provisionRemote(deployment, hostId);
