@@ -2141,52 +2141,61 @@ impl Blockchain {
             }
         }
 
-        // Diagnostic: verify trie contains each updated account BEFORE applying updates
+        // Diagnostic: apply updates one-at-a-time to isolate which breaks the trie
         if matches!(self.options.r#type, BlockchainType::Polygon) {
-            if let Ok(Some(trie)) = self.storage.state_trie(block.header.parent_hash) {
-                let trie_root = trie.hash_no_commit();
-                let parent_root = self
-                    .storage
-                    .get_block_header_by_hash(block.header.parent_hash)
-                    .ok()
-                    .flatten()
-                    .map(|h| h.state_root);
+            if let Ok(Some(mut diag_trie)) = self.storage.state_trie(block.header.parent_hash) {
+                let initial_root = diag_trie.hash_no_commit();
                 warn!(
-                    trie_hash_no_commit = ?trie_root,
-                    header_state_root = ?parent_root,
-                    trie_matches_header = parent_root.map(|r| r == trie_root),
-                    "Polygon: trie integrity check"
+                    block_number = block.header.number,
+                    initial_trie_root = ?initial_root,
+                    expected_parent_root = ?block.header.parent_hash,
+                    "Polygon: incremental trie update — starting"
                 );
-                for update in &updates {
-                    let hashed = keccak(update.address.to_fixed_bytes());
-                    match trie.get(hashed.as_bytes()) {
-                        Ok(Some(encoded)) => {
-                            if let Ok(state) = ethrex_common::types::AccountState::decode(&encoded)
-                            {
-                                warn!(
-                                    address = ?update.address,
-                                    trie_nonce = state.nonce,
-                                    trie_balance = ?state.balance,
-                                    trie_code_hash = ?state.code_hash,
-                                    trie_storage_root = ?state.storage_root,
-                                    "Polygon: pre-update trie account state"
-                                );
-                            }
+                for (i, update) in updates.iter().enumerate() {
+                    let hashed_address = keccak(update.address.to_fixed_bytes());
+                    // Read current state from trie
+                    let old_state = diag_trie
+                        .get(hashed_address.as_bytes())
+                        .ok()
+                        .flatten()
+                        .and_then(|enc| AccountState::decode(&enc).ok());
+                    let old_storage_root = old_state
+                        .as_ref()
+                        .map(|s| s.storage_root)
+                        .unwrap_or(*EMPTY_TRIE_HASH);
+
+                    if update.removed {
+                        let _ = diag_trie.remove(hashed_address.as_bytes());
+                    } else {
+                        let mut account_state = old_state.clone().unwrap_or_default();
+                        if update.removed_storage {
+                            account_state.storage_root = *EMPTY_TRIE_HASH;
                         }
-                        Ok(None) => {
-                            warn!(
-                                address = ?update.address,
-                                "Polygon: account NOT FOUND in parent trie — will use default"
-                            );
+                        if let Some(info) = &update.info {
+                            account_state.nonce = info.nonce;
+                            account_state.balance = info.balance;
+                            account_state.code_hash = info.code_hash;
                         }
-                        Err(e) => {
-                            warn!(
-                                address = ?update.address,
-                                error = %e,
-                                "Polygon: trie lookup ERROR"
-                            );
-                        }
+                        // NOTE: We skip storage trie updates here — just testing
+                        // account-level trie changes. Storage root stays as-is.
+                        let _ = diag_trie.insert(
+                            hashed_address.as_bytes().to_vec(),
+                            account_state.encode_to_vec(),
+                        );
                     }
+                    let root_after = diag_trie.hash_no_commit();
+                    warn!(
+                        idx = i,
+                        address = ?update.address,
+                        removed = update.removed,
+                        had_old_state = old_state.is_some(),
+                        old_storage_root = ?old_storage_root,
+                        new_balance = ?update.info.as_ref().map(|info| info.balance),
+                        new_nonce = ?update.info.as_ref().map(|info| info.nonce),
+                        storage_slots_changed = update.added_storage.len(),
+                        root_after = ?root_after,
+                        "Polygon: trie root after update"
+                    );
                 }
             }
         }
