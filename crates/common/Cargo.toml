@@ -33,6 +33,7 @@ rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true
 rustc-hash.workspace = true
+indexmap.workspace = true
 k256.workspace = true
 
 hex-simd = "0.8.0"

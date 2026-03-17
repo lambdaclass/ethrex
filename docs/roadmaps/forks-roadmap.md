@@ -35,10 +35,10 @@
 | **7954** | Increase Max Contract Size | 🔴 Not implemented (24KiB → 32KiB) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ⚠️ PR #8760 (Draft) | 🔴 | CFI |
 | **7976** | Increase Calldata Floor Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | 🔴 | 🔴 | CFI |
 | **7981** | Increase Access List Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1943) | 🔴 | 🔴 | CFI |
-| **8037** | State Creation Gas Cost Increase | ✅ Implemented ([#6271] merged, PR [#6216] open) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | ✅ bal@v5.3.0 | ⚠️ PR [#6216] | CFI |
+| **8037** | State Creation Gas Cost Increase | ✅ Implemented ([#6271] merged, PR [#6216] open) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | ✅ bal@v5.4.0 | ⚠️ PR [#6216] | CFI |
 | **8038** | State-Access Gas Cost Update | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1941) | 🔴 | 🔴 | CFI |
 
-> **Priority note:** All core devnet EIPs are merged. EIP-8037 fully implemented with reservoir model, nested revert fixes, and CREATE collision escrow. BAL optimizations shipped: parallel execution ([#6233]), batched reads + parallel state root ([#6227]). bal-devnet-3 tracking PR [#6216] open with bal@v5.3.0 fixtures, Amsterdam consume-engine hive tests in CI. **Up next:** merge PR [#6216], EIP-7954 ([#6214]). Remaining gas repricing EIPs are **low priority** — no other client has started them. Monitor CFI decisions at ACDE calls.
+> **Priority note:** All core devnet EIPs are merged. EIP-8037 fully implemented with reservoir model, nested revert fixes, and CREATE collision escrow. BAL optimizations shipped: parallel execution ([#6233]), batched reads + parallel state root ([#6227]). bal-devnet-3 tracking PR [#6216] open with bal@v5.4.0 fixtures, Amsterdam consume-engine hive tests in CI. **Up next:** merge PR [#6216], EIP-7954 ([#6214]). Remaining gas repricing EIPs are **low priority** — no other client has started them. Monitor CFI decisions at ACDE calls.
 
 ### Other Amsterdam EIPs
 
@@ -76,7 +76,7 @@
 - [x] Update hive tests for Amsterdam (PR [#6009] merged ✅)
 - [x] bal-devnet-2 fixes (PR [#6201] merged ✅)
 - [ ] Monitor EEST test changes / EIP spec changes
-- [x] EIP-8037 State Creation Gas Cost ([#6271] merged, PR [#6216] open with bal@v5.3.0 passing)
+- [x] EIP-8037 State Creation Gas Cost ([#6271] merged, PR [#6216] open with bal@v5.4.0 passing)
 - [x] BAL optimizations: parallel execution ([#6233] merged), batched reads + parallel state root ([#6227] merged)
 - [ ] EIP-7954 Max Contract Size ([#6214])
 - [ ] RPC: eth_simulateV1 ([#6212])
@@ -155,7 +155,7 @@ PR [#6293] closed, work continues in PR [#6216] which tracks the `bal-devnet-3-d
 - BAL recorder clone replaced with `IndexMap` tx-level checkpoint (perf)
 
 **CI / Fixtures:**
-- Bumped to bal@v5.3.0 fixtures
+- Bumped to bal@v5.4.0 fixtures
 - Amsterdam consume-engine hive tests added to PR CI (~1000 tests)
 - Amsterdam hive tests marked as optional (fork spec still evolving)
 
