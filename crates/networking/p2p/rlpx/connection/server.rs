@@ -674,15 +674,43 @@ where
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
-            68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
-            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            68 => {
+                let msg = StatusMessage68::new(&state.storage).await?;
+                info!(
+                    peer=%state.node,
+                    eth_version = msg.eth_version,
+                    network_id = msg.network_id,
+                    total_difficulty = %msg.total_difficulty,
+                    block_hash = ?msg.block_hash,
+                    genesis = ?msg.genesis,
+                    fork_id_hash = ?msg.fork_id.fork_hash,
+                    fork_id_next = msg.fork_id.fork_next,
+                    "Sending Status(68)"
+                );
+                Message::Status68(msg)
+            }
+            69 => {
+                let msg = StatusMessage69::new(&state.storage).await?;
+                info!(
+                    peer=%state.node,
+                    eth_version = msg.eth_version,
+                    network_id = msg.network_id,
+                    genesis = ?msg.genesis,
+                    fork_id_hash = ?msg.fork_id.fork_hash,
+                    fork_id_next = msg.fork_id.fork_next,
+                    earliest_block = msg.earliest_block,
+                    latest_block = msg.lastest_block,
+                    latest_hash = ?msg.lastest_block_hash,
+                    "Sending Status(69)"
+                );
+                Message::Status69(msg)
+            }
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
                 )));
             }
         };
-        trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
