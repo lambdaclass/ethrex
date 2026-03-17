@@ -3891,6 +3891,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "dashmap 6.1.0",
  "ethereum-types",
  "ethrex-common 9.0.0",
  "ethrex-crypto",

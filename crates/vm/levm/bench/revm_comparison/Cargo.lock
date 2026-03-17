@@ -1225,6 +1225,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "dashmap",
  "ethereum-types",
  "ethrex-common",
  "ethrex-crypto",
