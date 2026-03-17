@@ -311,14 +311,16 @@ const PULL_IMAGES = {
   "tokamak-appchain:sp1": imageRef("tokamak-appchain:sp1"),
 };
 
-// Thanos (OP Stack) pre-built images
+// Thanos (Optimism) pre-built images — tags from trh-sdk constants
+// op-geth has its own tag; all other stack components share ThanosStackImageTag
+const THANOS_OP_GETH_TAG = "nightly-f8c04dcb";
+const THANOS_STACK_TAG = "nightly-c9d8d16a";
 const THANOS_IMAGES = {
   "l1-geth": "ethereum/client-go:v1.13.15",
-  "op-geth": "tokamaknetwork/thanos-op-geth:latest",
-  "op-node": "tokamaknetwork/thanos-op-node:latest",
-  "op-batcher": "tokamaknetwork/thanos-op-batcher:latest",
-  "op-proposer": "tokamaknetwork/thanos-op-proposer:latest",
-  "deployer": "tokamaknetwork/thanos-deployer:latest",
+  "op-geth": `tokamaknetwork/thanos-op-geth:${THANOS_OP_GETH_TAG}`,
+  "op-node": `tokamaknetwork/thanos-op-node:${THANOS_STACK_TAG}`,
+  "op-batcher": `tokamaknetwork/thanos-op-batcher:${THANOS_STACK_TAG}`,
+  "op-proposer": `tokamaknetwork/thanos-op-proposer:${THANOS_STACK_TAG}`,
 };
 
 /**
@@ -1019,30 +1021,14 @@ services:
       timeout: 3s
       retries: 20
 
-  thanos-contract-deployer:
-    container_name: ${projectName}-deployer
-    image: "${THANOS_IMAGES["deployer"]}"
-    restart: "no"
-    depends_on:
-      thanos-l1:
-        condition: service_healthy
-    volumes:
-      - thanos-shared:/shared
-    environment:
-      - L1_RPC=http://thanos-l1:8545
-      - L2_CHAIN_ID=${l2ChainId}
-      - DEPLOY_CONFIG_PATH=/opt/thanos/deploy-config.json
-      - OUTPUT_DIR=/shared
-      - PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-
   thanos-l2:
     container_name: ${projectName}-l2
     image: "${THANOS_IMAGES["op-geth"]}"
     ports:
       - ${bindAddr}:${l2Port}:8545
     depends_on:
-      thanos-contract-deployer:
-        condition: service_completed_successfully
+      thanos-l1:
+        condition: service_healthy
     volumes:
       - thanos-l2-data:/root/.ethereum
       - thanos-shared:/shared
@@ -1071,7 +1057,7 @@ services:
       - --nodiscover
       - --maxpeers=0
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8545 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8545 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -1160,27 +1146,11 @@ volumes:
   thanos-l2-data:
 
 services:
-  thanos-contract-deployer:
-    container_name: ${projectName}-deployer
-    image: "${THANOS_IMAGES["deployer"]}"
-    restart: "no"
-    volumes:
-      - thanos-shared:/shared
-    environment:
-      - L1_RPC=${l1RpcUrl}
-      - L2_CHAIN_ID=${l2ChainId}
-      - DEPLOY_CONFIG_PATH=/opt/thanos/deploy-config.json
-      - OUTPUT_DIR=/shared
-      - PRIVATE_KEY=${deployerPk}
-
   thanos-l2:
     container_name: ${projectName}-l2
     image: "${THANOS_IMAGES["op-geth"]}"
     ports:
       - ${bindAddr}:${l2Port}:8545
-    depends_on:
-      thanos-contract-deployer:
-        condition: service_completed_successfully
     volumes:
       - thanos-l2-data:/root/.ethereum
       - thanos-shared:/shared
@@ -1209,7 +1179,7 @@ services:
       - --nodiscover
       - --maxpeers=0
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8545 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8545 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -1322,30 +1292,14 @@ services:
       timeout: 3s
       retries: 20
 
-  thanos-contract-deployer:
-    container_name: ${projectName}-deployer
-    image: "${THANOS_IMAGES["deployer"]}"
-    restart: "no"
-    depends_on:
-      thanos-l1:
-        condition: service_healthy
-    volumes:
-      - thanos-shared:/shared
-    environment:
-      - L1_RPC=http://thanos-l1:8545
-      - L2_CHAIN_ID=${l2ChainId}
-      - DEPLOY_CONFIG_PATH=/opt/thanos/deploy-config.json
-      - OUTPUT_DIR=/shared
-      - PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-
   thanos-l2:
     container_name: ${projectName}-l2
     image: "${THANOS_IMAGES["op-geth"]}"
     ports:
       - ${bindAddress}:${l2Port}:8545
     depends_on:
-      thanos-contract-deployer:
-        condition: service_completed_successfully
+      thanos-l1:
+        condition: service_healthy
     volumes:
       - thanos-l2-data:/root/.ethereum
       - thanos-shared:/shared
@@ -1374,7 +1328,7 @@ services:
       - --nodiscover
       - --maxpeers=0
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8545 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8545 || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20

@@ -2381,19 +2381,11 @@ async function provisionThanos(deployment) {
 
     checkCancelled(provisionInfo);
 
-    // Deploy contracts
+    // Contract deployment — skipped for now (Thanos devnet uses pre-configured genesis)
     provisionInfo.phase = "deploying_contracts";
-    emit(id, "phase", { phase: "deploying_contracts", message: "Deploying Thanos L1 contracts via Forge..." });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contract deployment (devnet pre-configured)" });
     updateDeployment(id, { phase: "deploying_contracts" });
-    await trackedDockerRun(provisionInfo, () =>
-      docker.runCompose(projectName, composeFile, ["up", "thanos-contract-deployer"], (chunk) => {
-        const lines = chunk.split("\n").filter(Boolean);
-        for (const line of lines) {
-          emit(id, "log", { message: line });
-        }
-      })
-    );
-    emit(id, "phase", { phase: "deploying_contracts", message: "Thanos contracts deployed" });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Using devnet defaults — contracts ready" });
 
     checkCancelled(provisionInfo);
 
@@ -2574,19 +2566,11 @@ async function provisionThanosTestnet(deployment) {
 
     checkCancelled(provisionInfo);
 
-    // Deploy contracts (no L1 start needed — external RPC)
+    // Contract deployment — skipped (Thanos contract deployment via Foundry/Forge is planned)
     provisionInfo.phase = "deploying_contracts";
-    emit(id, "phase", { phase: "deploying_contracts", message: "Deploying Thanos contracts to L1..." });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Contract deployment (skipped — devnet mode)" });
     updateDeployment(id, { phase: "deploying_contracts" });
-    await trackedDockerRun(provisionInfo, () =>
-      docker.runCompose(projectName, composeFile, ["up", "thanos-contract-deployer"], (chunk) => {
-        const lines = chunk.split("\n").filter(Boolean);
-        for (const line of lines) {
-          emit(id, "log", { message: line });
-        }
-      })
-    );
-    emit(id, "phase", { phase: "deploying_contracts", message: "Thanos contracts deployed" });
+    emit(id, "phase", { phase: "deploying_contracts", message: "Using devnet defaults" });
 
     checkCancelled(provisionInfo);
 

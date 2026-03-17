@@ -139,7 +139,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'myl2.wizard.stackDesc': '앱체인에 사용할 L2 스택을 선택하세요',
     'myl2.wizard.stackEthrex': 'ethrex (ZK Rollup)',
     'myl2.wizard.stackEthrexDesc': 'Tokamak 자체 개발 ZK 기반 L2. SP1 prover 사용.',
-    'myl2.wizard.stackThanos': 'Thanos (OP Stack)',
+    'myl2.wizard.stackThanos': 'Thanos (Optimism)',
     'myl2.wizard.stackThanosDesc': 'OP Stack 기반 Optimistic Rollup. Fault proof 사용.',
     'myl2.wizard.thanosNoProver': 'Thanos는 Fault Proof를 사용하므로 별도 프루버 설정이 필요 없습니다.',
     // Chat
@@ -398,7 +398,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'myl2.wizard.stackDesc': 'Select the L2 stack for your appchain',
     'myl2.wizard.stackEthrex': 'ethrex (ZK Rollup)',
     'myl2.wizard.stackEthrexDesc': 'Tokamak native ZK-based L2 with SP1 prover.',
-    'myl2.wizard.stackThanos': 'Thanos (OP Stack)',
+    'myl2.wizard.stackThanos': 'Thanos (Optimism)',
     'myl2.wizard.stackThanosDesc': 'OP Stack-based Optimistic Rollup with fault proofs.',
     'myl2.wizard.thanosNoProver': 'Thanos uses Fault Proofs — no separate prover setup needed.',
     // Chat
