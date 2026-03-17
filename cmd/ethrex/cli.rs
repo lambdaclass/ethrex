@@ -481,6 +481,19 @@ pub enum Subcommand {
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         l2: bool,
+        #[arg(
+            long = "export-bal",
+            value_name = "DIR",
+            help = "Export BALs produced during sequential execution to this directory (one RLP file per block)"
+        )]
+        export_bal: Option<String>,
+        #[arg(
+            long = "with-bal",
+            value_name = "DIR",
+            help = "Load BALs from this directory and use the parallel execution path",
+            conflicts_with = "export_bal"
+        )]
+        with_bal: Option<String>,
     },
     #[command(
         name = "export",
@@ -603,7 +616,13 @@ impl Subcommand {
                 )
                 .await?;
             }
-            Subcommand::ImportBench { path, removedb, l2 } => {
+            Subcommand::ImportBench {
+                path,
+                removedb,
+                l2,
+                export_bal,
+                with_bal,
+            } => {
                 if removedb {
                     remove_db(&effective_datadir, opts.force);
                 }
@@ -624,6 +643,8 @@ impl Subcommand {
                         perf_logs_enabled: true,
                         ..Default::default()
                     },
+                    export_bal.as_deref(),
+                    with_bal.as_deref(),
                 )
                 .await?;
             }
@@ -837,6 +858,8 @@ pub async fn import_blocks_bench(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    export_bal_dir: Option<&str>,
+    with_bal_dir: Option<&str>,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
@@ -844,6 +867,15 @@ pub async fn import_blocks_bench(
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
+
+    // Create BAL export directory if needed
+    if let Some(bal_dir) = export_bal_dir {
+        std::fs::create_dir_all(bal_dir).expect("Failed to create BAL export directory");
+        info!(path = %bal_dir, "Will export BALs to directory");
+    }
+    if let Some(bal_dir) = with_bal_dir {
+        info!(path = %bal_dir, "Will load BALs from directory (parallel path)");
+    }
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
@@ -905,13 +937,54 @@ pub async fn import_blocks_bench(
             validate_block_body(&block.header, &block.body)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
-            blockchain
-                .add_block_pipeline(block, None)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+            // Load BAL from disk if --with-bal was provided
+            let bal = if let Some(bal_dir) = with_bal_dir {
+                let bal_path = Path::new(bal_dir).join(format!("block_{number}.rlp"));
+                match std::fs::read(&bal_path) {
+                    Ok(bytes) => {
+                        use ethrex_common::types::block_access_list::BlockAccessList;
+                        use ethrex_rlp::decode::RLPDecode as _;
+                        match BlockAccessList::decode(&bytes) {
+                            Ok(bal) => Some(bal),
+                            Err(e) => {
+                                warn!("Failed to decode BAL for block {number}: {e}");
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("No BAL file for block {number} at {}: {e}", bal_path.display());
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            if let Some(bal_dir) = export_bal_dir {
+                // Sequential path: execute and capture the produced BAL
+                let produced_bal = blockchain
+                    .add_block_pipeline_bal(block, None)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+
+                // Export the BAL to disk
+                if let Some(bal) = produced_bal {
+                    let bal_path = Path::new(bal_dir).join(format!("block_{number}.rlp"));
+                    let encoded = bal.encode_to_vec();
+                    std::fs::write(&bal_path, &encoded).expect("Failed to write BAL file");
+                }
+            } else {
+                // Normal path (or parallel if BAL was loaded)
+                blockchain
+                    .add_block_pipeline(block, bal.as_ref())
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+            }
 
             // TODO: replace this
             // This sleep is because we have a background process writing to disk the last layer
