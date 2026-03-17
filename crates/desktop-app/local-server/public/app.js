@@ -2190,6 +2190,32 @@ async function monitorAIDeployment(deploymentId) {
   }
 }
 
+async function saveAndCompleteDeployment(deploymentId, ip) {
+  try {
+    // Save IP and RPC URL to deployment
+    await fetch(`${API}/deployments/${deploymentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phase: 'running',
+        status: 'running',
+        rpc_url: `http://${ip}:1729`,
+        l2_port: 1729,
+        l1_port: 8545,
+      }),
+    });
+    // Clear chat state
+    window._aiDeployDetailId = null;
+    aiChatRawPrompt = '';
+    aiChatMessages = [];
+    // Navigate to detail view
+    showView('deployments');
+    setTimeout(() => showDeploymentDetail(deploymentId), 300);
+  } catch (e) {
+    alert(`저장 실패: ${e.message}`);
+  }
+}
+
 async function confirmAIDeployComplete(deploymentId) {
   if (!confirm('배포가 완료되었나요? 완료 확인 후 상태가 "running"으로 변경됩니다.')) return;
   try {
@@ -3266,6 +3292,30 @@ async function checkDeploymentStatus() {
     const actualVmName = data.vmName || vmName;
     const statusMsg = `🖥️ 배포 상태 모니터링\nVM: ${actualVmName} (${region})\n\n${lines.join('\n')}`;
     aiChatMessages.push({ role: 'assistant', content: statusMsg });
+
+    // Check if all services are healthy
+    const allServicesOk = data.ec2?.State === 'running'
+      && data.containers && data.containers.length > 0
+      && data.containers.every(c => c.status?.startsWith('Up') || c.status?.includes('Exited (0)'))
+      && Object.keys(data.services).length > 0
+      && Object.values(data.services).every(s => s.ok);
+
+    if (allServicesOk && data.ec2?.IP) {
+      const ip = data.ec2.IP;
+      const deployId = window._aiDeployDetailId || launchDeploymentId;
+      aiChatMessages.push({ role: 'assistant', content: `✅ 모든 서비스가 정상 동작합니다!\n\n| 서비스 | URL |\n|--------|-----|\n| L2 RPC | http://${ip}:1729 |\n| L2 Explorer | http://${ip}:8082 |\n| L1 Explorer | http://${ip}:8083 |\n| Dashboard | http://${ip}:3000 |\n\n아래 버튼을 누르면 배포 정보를 저장하고 대시보드 화면으로 이동합니다.` });
+      // Add save button after render
+      setTimeout(() => {
+        const container = document.getElementById('ai-chat-messages');
+        if (!container) return;
+        const btnDiv = document.createElement('div');
+        btnDiv.style.cssText = 'align-self:flex-start;margin-top:-4px';
+        btnDiv.innerHTML = `<button onclick="saveAndCompleteDeployment('${deployId}', '${ip}')" style="padding:8px 20px;font-size:13px;border:none;border-radius:8px;background:#22c55e;color:white;cursor:pointer;font-weight:600">✅ 배포 완료 — 정보 저장</button>`;
+        container.appendChild(btnDiv);
+        container.scrollTop = container.scrollHeight;
+      }, 100);
+    }
+
     renderChatMessages();
 
     // Summary in status bar
