@@ -21,6 +21,46 @@ use thiserror::Error;
 
 use crate::utils::node_id;
 
+/// Holds the local node's network addressing configuration, separating the
+/// socket bind address from the externally-announced address.
+///
+/// This is relevant for nodes running behind NAT: they bind to a private
+/// address (e.g. `0.0.0.0`) but must announce their public IP to peers.
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    /// Address to bind UDP/TCP sockets to (e.g. `0.0.0.0` or `::`)
+    pub bind_addr: IpAddr,
+    /// Address announced to peers (e.g. the public/NAT-mapped IP)
+    pub external_addr: IpAddr,
+    pub tcp_port: u16,
+    pub udp_port: u16,
+    pub public_key: H512,
+}
+
+impl NetworkConfig {
+    /// Returns the socket address to bind the TCP listener to.
+    pub fn bind_tcp_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.bind_addr, self.tcp_port)
+    }
+
+    /// Returns the socket address to bind the UDP socket to.
+    pub fn bind_udp_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.bind_addr, self.udp_port)
+    }
+
+    /// Builds a `NetworkConfig` where bind and external addresses are both
+    /// taken from `node`. Useful when no NAT mapping is needed.
+    pub fn from_node(node: &Node) -> Self {
+        Self {
+            bind_addr: node.ip,
+            external_addr: node.ip,
+            tcp_port: node.tcp_port,
+            udp_port: node.udp_port,
+            public_key: node.public_key,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum NodeError {
     #[error("Invalid format: {0}")]
