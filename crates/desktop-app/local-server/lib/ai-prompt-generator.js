@@ -558,8 +558,8 @@ function generateCloudDeployPrompt(opts) {
 
   sections.push(deploySection({ projectName, dataDir, isTestnet }));
   sections.push(verifySection({ l2ChainId, isTestnet }));
-  sections.push(toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, projectName }));
   sections.push(firewallSection({ cloud, vmName, isTestnet, sgName, region }));
+  sections.push(toolsSection({ dataDir, l2ChainId, isTestnet, l1ChainId, l1Network, l1RpcUrl, programSlug, projectName }));
   sections.push(summarySection({ isTestnet, deployment }));
   sections.push(troubleshootingSection({ projectName, dataDir, sgName, region, vmName }));
 
@@ -1123,10 +1123,20 @@ Tools 스택:
 cd ${dataDir}
 
 # Download tools compose (tokamak-dev, fallback to feature branch)
-curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/crates/l2/docker-compose-zk-dex-tools.yaml \\
+BRANCH="tokamak-dev"
+curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/$BRANCH/crates/l2/docker-compose-zk-dex-tools.yaml \\
   -o docker-compose-tools.yaml 2>/dev/null || \\
-curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/feat/app-customized-framework/crates/l2/docker-compose-zk-dex-tools.yaml \\
-  -o docker-compose-tools.yaml
+{ BRANCH="feat/app-customized-framework"; \\
+  curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/$BRANCH/crates/l2/docker-compose-zk-dex-tools.yaml \\
+  -o docker-compose-tools.yaml; }
+
+# Download bridge UI source (needed for tools build)
+mkdir -p ${dataDir}/tooling/bridge
+for f in Dockerfile entrypoint.sh index.html dashboard.html withdraw-status.html; do
+  curl -fsSL https://raw.githubusercontent.com/tokamak-network/ethrex/$BRANCH/crates/l2/tooling/bridge/$f \\
+    -o ${dataDir}/tooling/bridge/$f 2>/dev/null
+done
+echo "✅ Bridge UI source downloaded"
 
 # Get the deployed contract addresses from the deployer
 docker cp ${projectName}-deployer:/env/.env ${dataDir}/deployed.env 2>/dev/null || echo "No deployed env found"
