@@ -744,6 +744,7 @@ impl TelegramBot {
             chain_id,
             description: "Created via Telegram Pilot".to_string(),
             network_mode: network_mode.clone(),
+            stack_type: "ethrex".to_string(),
             l1_rpc_url: "http://localhost:8545".to_string(),
             l2_rpc_port,
             sequencer_mode: "single".to_string(),

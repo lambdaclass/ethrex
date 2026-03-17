@@ -38,6 +38,7 @@ const migrations = [
   "ALTER TABLE deployments ADD COLUMN public_dashboard_url TEXT",
   "ALTER TABLE deployments ADD COLUMN l1_chain_id INTEGER",
   "ALTER TABLE deployments ADD COLUMN platform_deployment_id TEXT",
+  "ALTER TABLE deployments ADD COLUMN stack_type TEXT DEFAULT 'ethrex'",
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (e) { if (!e.message.includes('duplicate column name')) { console.error(`Migration failed for "${sql}":`, e); } }

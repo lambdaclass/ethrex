@@ -2,13 +2,13 @@ const { v4: uuidv4 } = require("uuid");
 const net = require("net");
 const db = require("./db");
 
-function createDeployment({ programSlug, name, chainId, rpcUrl, config }) {
+function createDeployment({ programSlug, name, chainId, rpcUrl, config, stackType }) {
   const id = uuidv4();
   const now = Date.now();
   db.prepare(
-    `INSERT INTO deployments (id, program_slug, name, chain_id, rpc_url, config, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, programSlug || "evm-l2", name, chainId || null, rpcUrl || null, config ? JSON.stringify(config) : null, now);
+    `INSERT INTO deployments (id, program_slug, stack_type, name, chain_id, rpc_url, config, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, programSlug || "evm-l2", stackType || "ethrex", name, chainId || null, rpcUrl || null, config ? JSON.stringify(config) : null, now);
   return getDeploymentById(id);
 }
 
@@ -22,7 +22,7 @@ function getAllDeployments() {
 
 function updateDeployment(id, fields) {
   const allowed = [
-    "name", "chain_id", "l1_chain_id", "rpc_url", "status", "config",
+    "name", "stack_type", "chain_id", "l1_chain_id", "rpc_url", "status", "config",
     "docker_project", "deploy_dir",
     "l1_port", "l2_port", "proof_coord_port",
     "phase", "bridge_address", "proposer_address", "timelock_address", "sp1_verifier_address",

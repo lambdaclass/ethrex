@@ -10,6 +10,7 @@ export interface LocalServerStatus {
 export interface Deployment {
   id: string
   program_slug: string
+  stack_type: string
   name: string
   chain_id: number | null
   rpc_url: string | null

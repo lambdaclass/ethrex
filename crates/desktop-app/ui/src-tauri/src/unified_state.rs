@@ -72,6 +72,7 @@ pub struct L2Info {
     pub chain_id: Option<u64>,
     pub network_mode: String,
     pub native_token: String,
+    pub stack_type: String,
 
     // Runtime state
     pub status: L2Status,
@@ -273,6 +274,7 @@ impl UnifiedL2State {
                     })
                     .unwrap_or_else(|| "local".to_string()),
                 native_token: "TON".to_string(),
+                stack_type: dep.stack_type.clone(),
                 status,
                 health,
                 l1_rpc_url: dep.rpc_url.clone().or_else(|| {
@@ -477,6 +479,7 @@ fn diff_and_emit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deployment_db::{MonitoringInfo, RpcHealth};
 
     // ── Test helpers ──
 
@@ -488,6 +491,7 @@ mod tests {
             chain_id: Some(17001),
             network_mode: "Local".to_string(),
             native_token: "TON".to_string(),
+            stack_type: "ethrex".to_string(),
             status,
             health: None,
             l1_rpc_url: Some("http://localhost:8545".to_string()),
@@ -509,6 +513,7 @@ mod tests {
             chain_id: Some(17001),
             network_mode: "local".to_string(),
             native_token: "TON".to_string(),
+            stack_type: "ethrex".to_string(),
             status,
             health: None,
             l1_rpc_url: Some("http://127.0.0.1:8545".to_string()),
