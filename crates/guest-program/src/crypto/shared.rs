@@ -120,6 +120,11 @@ pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], Cryp
     #[allow(clippy::arithmetic_side_effects)]
     let result = g1_a + g1_b;
 
+    // Convert from Jacobian (G1) to affine before serialization.
+    // G1 uses Jacobian coordinates (X, Y, Z) internally, so .x() returns
+    // the Jacobian X, not the affine x = X/Z². The SP1 patch only
+    // accelerates AffineG1 operations, not G1 (Jacobian), so this
+    // conversion is required for correct results.
     let affine = AffineG1::from_jacobian(result)
         .ok_or(CryptoError::InvalidPoint("failed to convert to affine"))?;
 
@@ -166,6 +171,11 @@ pub(crate) fn substrate_bn_g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64
     #[allow(clippy::arithmetic_side_effects)]
     let result = g1 * s;
 
+    // Convert from Jacobian (G1) to affine before serialization.
+    // G1 uses Jacobian coordinates (X, Y, Z) internally, so .x() returns
+    // the Jacobian X, not the affine x = X/Z². The SP1 patch only
+    // accelerates AffineG1 operations, not G1 (Jacobian), so this
+    // conversion is required for correct results.
     let affine = AffineG1::from_jacobian(result)
         .ok_or(CryptoError::InvalidPoint("failed to convert to affine"))?;
 
