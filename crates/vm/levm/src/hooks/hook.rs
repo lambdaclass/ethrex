@@ -36,5 +36,5 @@ pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
 }
 
 pub fn polygon_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
-    vec![Rc::new(RefCell::new(PolygonHook))]
+    vec![Rc::new(RefCell::new(PolygonHook::default()))]
 }

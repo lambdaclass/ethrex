@@ -703,7 +703,9 @@ impl<'a> VM<'a> {
 
         // Only include logs if transaction succeeded. When a transaction reverts,
         // no logs should be emitted (including EIP-7708 Transfer logs).
-        let logs = if ctx_result.is_success() {
+        // Exception: Polygon always includes logs because the PolygonHook appends
+        // a LogFeeTransfer log after finalization, even for failed transactions.
+        let logs = if ctx_result.is_success() || matches!(self.vm_type, VMType::Polygon(_)) {
             self.substate.extract_logs()
         } else {
             Vec::new()
