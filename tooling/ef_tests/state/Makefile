@@ -32,7 +32,7 @@ $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
 amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(VECTORS_DIR)
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/amsterdam
+	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/for_amsterdam
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'

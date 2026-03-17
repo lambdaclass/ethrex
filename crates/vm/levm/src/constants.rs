@@ -26,8 +26,15 @@ pub const TX_BASE_COST: u64 = 21000;
 // https://eips.ethereum.org/EIPS/eip-7825
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 
+/// EIP-7825/EIP-8037: Maximum tx gas_limit for Prague (EIP-7825) and Amsterdam reservoir threshold.
+pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
+
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
+// EIP-7954 (Amsterdam): increased limits
+pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x8000;
+#[allow(clippy::as_conversions)]
+pub const AMSTERDAM_INIT_CODE_MAX_SIZE: usize = 2 * AMSTERDAM_MAX_CODE_SIZE as usize;
 
 // https://eips.ethereum.org/EIPS/eip-3541
 pub const EOF_PREFIX: u8 = 0xef;
@@ -82,8 +89,10 @@ pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 // Set the code of authority to be 0xef0100 || address. This is a delegation designation.
 // len(SET_CODE_DELEGATION_BYTES) == 3 + len(Address) == 20 -> 23
 pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
-pub const PER_AUTH_BASE_COST: u64 = 12500;
+pub const PER_AUTH_BASE_COST: u64 = 7500;
 pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
+// EIP-7702: refund per existing authority (pre-Amsterdam)
+pub const REFUND_AUTH_PER_EXISTING_ACCOUNT: u64 = 12500;
 
 /// EIP-7708: keccak256('Transfer(address,address,uint256)')
 pub const TRANSFER_EVENT_TOPIC: H256 = H256([
@@ -91,8 +100,8 @@ pub const TRANSFER_EVENT_TOPIC: H256 = H256([
     0x95, 0x2b, 0xa7, 0xf1, 0x63, 0xc4, 0xa1, 0x16, 0x28, 0xf5, 0x5a, 0x4d, 0xf5, 0x23, 0xb3, 0xef,
 ]);
 
-/// EIP-7708: keccak256('Selfdestruct(address,uint256)')
-pub const SELFDESTRUCT_EVENT_TOPIC: H256 = H256([
-    0x4b, 0xfa, 0xba, 0x34, 0x43, 0xc1, 0xa1, 0x83, 0x6c, 0xd3, 0x62, 0x41, 0x8e, 0xdc, 0x67, 0x9f,
-    0xc9, 0x6c, 0xae, 0x84, 0x49, 0xcb, 0xef, 0xcc, 0xb6, 0x45, 0x7c, 0xdf, 0x2c, 0x94, 0x30, 0x83,
+/// EIP-7708: keccak256('Burn(address,uint256)')
+pub const BURN_EVENT_TOPIC: H256 = H256([
+    0xcc, 0x16, 0xf5, 0xdb, 0xb4, 0x87, 0x32, 0x80, 0x81, 0x5c, 0x1e, 0xe0, 0x9d, 0xbd, 0x06, 0x73,
+    0x6c, 0xff, 0xcc, 0x18, 0x44, 0x12, 0xcf, 0x7a, 0x71, 0xa0, 0xfd, 0xb7, 0x5d, 0x39, 0x7c, 0xa5,
 ]);
