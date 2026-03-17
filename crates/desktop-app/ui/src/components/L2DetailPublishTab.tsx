@@ -100,16 +100,30 @@ function buildAppchainMetadata(
   if (filteredSocial.github) supportResources.documentationUrl = filteredSocial.github
 
   // nativeToken: use override (from existing registry) or derive from L2Config
+  // erc20 requires l1Address — if missing, fall back to 'eth' type
   let nativeToken: Record<string, unknown>
   if (overrides?.nativeToken) {
     nativeToken = { ...overrides.nativeToken }
   } else {
-    const isErc20 = l2.nativeToken && l2.nativeToken !== 'ETH'
-    nativeToken = {
-      type: isErc20 ? 'erc20' : 'eth',
-      symbol: l2.nativeToken || 'ETH',
-      name: l2.nativeToken || 'Ether',
-      decimals: 18,
+    const symbol = l2.nativeToken || 'ETH'
+    const isErc20 = symbol !== 'ETH' && symbol !== 'Ether'
+    if (isErc20) {
+      // ERC20 token needs l1Address — without it, cannot submit as erc20
+      // TODO: add l1Address field to L2Config when ERC20 native token is supported
+      nativeToken = {
+        type: 'eth',
+        symbol: 'ETH',
+        name: 'Ether',
+        decimals: 18,
+      }
+      console.warn(`[publish] nativeToken "${symbol}" is ERC20 but l1Address is missing — falling back to ETH`)
+    } else {
+      nativeToken = {
+        type: 'eth',
+        symbol,
+        name: symbol === 'ETH' ? 'Ether' : symbol,
+        decimals: 18,
+      }
     }
   }
 
