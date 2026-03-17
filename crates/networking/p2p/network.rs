@@ -125,12 +125,22 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
+    // Build a discovery-specific local node using the discovery external address.
+    // This ensures discv4/discv5 Ping `from` endpoints advertise the correct
+    // address when discovery runs on a different interface than RLPx.
+    let discovery_local_node = Node::new(
+        context.network_config.discovery_external_addr,
+        context.network_config.udp_port,
+        context.network_config.tcp_port,
+        context.local_node.public_key,
+    );
+
     // Start protocol servers first to get their handles
     let discv4_handle = if config.discv4_enabled {
         Some(
             Discv4Server::spawn(
                 context.storage.clone(),
-                context.local_node.clone(),
+                discovery_local_node.clone(),
                 context.signer,
                 udp_socket.clone(),
                 context.table.clone(),
@@ -150,7 +160,7 @@ pub async fn start_network(
         Some(
             Discv5Server::spawn(
                 context.storage.clone(),
-                context.local_node.clone(),
+                discovery_local_node,
                 context.signer,
                 udp_socket.clone(),
                 context.table.clone(),

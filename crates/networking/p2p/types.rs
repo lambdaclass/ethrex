@@ -22,34 +22,46 @@ use thiserror::Error;
 use crate::utils::node_id;
 
 /// Holds the local node's network addressing configuration, separating the
-/// socket bind address from the externally-announced address.
+/// socket bind addresses from the externally-announced addresses, and
+/// separating the UDP discovery channel from the TCP RLPx channel.
 ///
-/// This is relevant for nodes running behind NAT: they bind to a private
-/// address (e.g. `0.0.0.0`) but must announce their public IP to peers.
+/// This supports two independent axes of configuration:
+/// - NAT traversal: bind to `0.0.0.0` but announce a public IP (`--nat.extip`).
+/// - Split transports: run UDP discovery on a different address than TCP RLPx
+///   (`--discovery.addr`), enabling e.g. IPv4 discv4 with IPv6 RLPx.
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
-    /// Address to bind UDP/TCP sockets to (e.g. `0.0.0.0` or `::`)
-    pub bind_addr: IpAddr,
+    /// Address to bind the UDP discovery socket to.
+    pub discovery_bind_addr: IpAddr,
+    /// IP address announced to peers via discv4 Ping/Pong and ENR.
+    pub discovery_external_addr: IpAddr,
+    /// Address to bind the TCP RLPx listener to.
+    pub rlpx_bind_addr: IpAddr,
+    /// IP address announced to peers for RLPx connections and ENR.
+    pub rlpx_external_addr: IpAddr,
     pub tcp_port: u16,
     pub udp_port: u16,
 }
 
 impl NetworkConfig {
-    /// Returns the socket address to bind the TCP listener to.
+    /// Returns the socket address to bind the TCP RLPx listener to.
     pub fn bind_tcp_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.bind_addr, self.tcp_port)
+        SocketAddr::new(self.rlpx_bind_addr, self.tcp_port)
     }
 
-    /// Returns the socket address to bind the UDP socket to.
+    /// Returns the socket address to bind the UDP discovery socket to.
     pub fn bind_udp_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.bind_addr, self.udp_port)
+        SocketAddr::new(self.discovery_bind_addr, self.udp_port)
     }
 
-    /// Builds a `NetworkConfig` where bind and external addresses are both
-    /// taken from `node`. Useful when no NAT mapping is needed.
+    /// Builds a `NetworkConfig` where all addresses are taken from `node`.
+    /// Useful for tests or when no NAT/split-transport mapping is needed.
     pub fn from_node(node: &Node) -> Self {
         Self {
-            bind_addr: node.ip,
+            discovery_bind_addr: node.ip,
+            discovery_external_addr: node.ip,
+            rlpx_bind_addr: node.ip,
+            rlpx_external_addr: node.ip,
             tcp_port: node.tcp_port,
             udp_port: node.udp_port,
         }
@@ -310,13 +322,16 @@ pub struct NodeRecordPairs {
     // I think the confusion comes from the fact that geth decodes the bytes and then builds an IPV4/6 big-integer structure.
     pub tcp_port: Option<u16>,
     pub udp_port: Option<u16>,
+    /// TCP port for IPv6 RLPx connections (ENR key `tcp6`).
+    pub tcp6_port: Option<u16>,
+    /// UDP port for IPv6 discovery (ENR key `udp6`).
+    pub udp6_port: Option<u16>,
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<ForkId>,
     // Snap entry is being used by some tests such as `test_encode_enr_response`.
     pub snap: Option<Vec<u32>>,
     pub other: Vec<(Bytes, Bytes)>,
-    // TODO implement ipv6 specific ports
 }
 
 impl NodeRecordPairs {
@@ -330,7 +345,9 @@ impl NodeRecordPairs {
                 b"ip" => decoded_pairs.ip = Some(Ipv4Addr::decode(&value)?),
                 b"ip6" => decoded_pairs.ip6 = Some(Ipv6Addr::decode(&value)?),
                 b"tcp" => decoded_pairs.tcp_port = Some(u16::decode(&value)?),
+                b"tcp6" => decoded_pairs.tcp6_port = Some(u16::decode(&value)?),
                 b"udp" => decoded_pairs.udp_port = Some(u16::decode(&value)?),
+                b"udp6" => decoded_pairs.udp6_port = Some(u16::decode(&value)?),
                 b"secp256k1" => decoded_pairs.secp256k1 = Some(H264(<[u8; 33]>::decode(&value)?)),
                 b"snap" => decoded_pairs.snap = Some(Vec::<u32>::decode(&value)?),
                 b"eth" => {
@@ -385,8 +402,14 @@ impl NodeRecordPairs {
         if let Some(tcp) = self.tcp_port {
             pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
         }
+        if let Some(tcp6) = self.tcp6_port {
+            pairs.push(("tcp6".into(), tcp6.encode_to_vec().into()));
+        }
         if let Some(udp) = self.udp_port {
             pairs.push(("udp".into(), udp.encode_to_vec().into()));
+        }
+        if let Some(udp6) = self.udp6_port {
+            pairs.push(("udp6".into(), udp6.encode_to_vec().into()));
         }
         pairs.extend(self.other.clone());
         pairs.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
