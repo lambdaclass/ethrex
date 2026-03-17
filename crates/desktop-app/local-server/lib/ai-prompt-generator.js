@@ -774,20 +774,30 @@ else
   echo "VPC: $VPC_ID"
 
   # Find a public subnet (with IGW route, not NAT)
-  SUBNET_ID=""
-  for RT_ID in $(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \\
-    --query "RouteTables[?Routes[?GatewayId!=\`local\` && starts_with(GatewayId,\`igw-\`)]].Associations[].SubnetId" \\
-    --output text --region ${region} 2>/dev/null); do
-    if [ -n "$RT_ID" ] && [ "$RT_ID" != "None" ]; then
-      SUBNET_ID=$RT_ID
-      break
-    fi
-  done
+  # Step 1: Find route table with IGW default route
+  IGW_RT=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \\
+    --query "RouteTables[*].[RouteTableId,Routes[?GatewayId && GatewayId!=\`local\`].GatewayId|[0],Associations[*].SubnetId]" \\
+    --output json --region ${region} 2>/dev/null | \\
+    python3 -c "
+import json,sys
+rts = json.load(sys.stdin)
+for rt_id, gw, subnets in rts:
+    if gw and gw.startswith('igw-') and subnets:
+        for s in subnets:
+            if s: print(s); break
+        break
+" 2>/dev/null)
+  SUBNET_ID=\${IGW_RT:-""}
   if [ -z "$SUBNET_ID" ]; then
-    echo "❌ No public subnet with IGW route found. Check VPC route tables."
+    # Fallback: use default VPC's first subnet (default VPCs have public subnets)
+    SUBNET_ID=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \\
+      --query "Subnets[0].SubnetId" --output text --region ${region} 2>/dev/null)
+  fi
+  if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
+    echo "❌ No public subnet found. Check VPC route tables."
     exit 1
   fi
-  echo "Subnet: $SUBNET_ID (IGW route confirmed)"
+  echo "Subnet: $SUBNET_ID"
 
   # Create a security group in the VPC (if not exists)
   SG_ID=$(aws ec2 create-security-group \\
@@ -817,23 +827,24 @@ else
     --network-interfaces "SubnetId=$SUBNET_ID,AssociatePublicIpAddress=true,DeviceIndex=0,Groups=[$SG_ID]" \\
     --count 1
 
-  # Wait for instance to be running
+  # Wait for instance to be running + status checks (SSH ready)
   echo "Waiting for instance to start..."
-  aws ec2 wait instance-running \\
-    --filters "Name=tag:Name,Values=${vmName}" \\
-    --region ${region}
+  INSTANCE_ID=$(aws ec2 describe-instances \\
+    --filters "Name=tag:Name,Values=${vmName}" "Name=instance-state-name,Values=pending,running" \\
+    --query 'Reservations[0].Instances[0].InstanceId' \\
+    --output text --region ${region})
+  aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID --region ${region}
 
   # Get the public IP
-  VM_IP=$(aws ec2 describe-instances \\
-    --filters "Name=tag:Name,Values=${vmName}" "Name=instance-state-name,Values=running" \\
+  VM_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID \\
     --query 'Reservations[0].Instances[0].PublicIpAddress' \\
     --output text --region ${region})
-  echo "✅ Instance created: $VM_IP"
+  echo "✅ Instance ready: $VM_IP (status checks passed)"
 fi
 
 echo "VM_IP=$VM_IP"
 
-# SSH into the instance (may need to wait 30s for SSH to be ready)
+# SSH into the instance
 ssh -o StrictHostKeyChecking=no -i ~/.ssh/${keyName}.pem ubuntu@$VM_IP
 \`\`\`
 
