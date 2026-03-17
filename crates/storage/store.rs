@@ -21,6 +21,7 @@ use crate::{
 };
 
 use bytes::Bytes;
+use dashmap::DashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -185,7 +186,7 @@ pub struct Store {
 
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
-    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+    code_metadata_cache: Arc<DashMap<H256, CodeMetadata, FxBuildHasher>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -754,13 +755,7 @@ impl Store {
         }
 
         // Check cache first
-        if let Some(metadata) = self
-            .code_metadata_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .get(&code_hash)
-            .copied()
-        {
+        if let Some(metadata) = self.code_metadata_cache.get(&code_hash).map(|v| *v) {
             return Ok(Some(metadata));
         }
 
@@ -804,10 +799,7 @@ impl Store {
         };
 
         // Update cache
-        self.code_metadata_cache
-            .lock()
-            .map_err(|_| StoreError::LockError)?
-            .insert(code_hash, metadata);
+        self.code_metadata_cache.insert(code_hash, metadata);
 
         Ok(Some(metadata))
     }
@@ -1503,7 +1495,7 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
-            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            code_metadata_cache: Arc::new(DashMap::with_hasher(FxBuildHasher)),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
