@@ -462,6 +462,17 @@ impl<'a> VM<'a> {
 
         let mut substate = Substate::initialize(&env, tx)?;
 
+        // Polygon: remove BLS precompile addresses (0x0b-0x11) from warm set.
+        // Our fork is Prague (which adds BLS precompiles), but Bor doesn't have them.
+        // Wrong warm set would cause gas differences for calls to those addresses.
+        if matches!(vm_type, VMType::Polygon(_)) {
+            for i in (SIZE_PRECOMPILES_CANCUN + 1)..=SIZE_PRECOMPILES_PRAGUE {
+                substate
+                    .accessed_addresses
+                    .remove(&Address::from_low_u64_be(i));
+            }
+        }
+
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
         let fork = env.config.fork;
@@ -495,7 +506,11 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: if matches!(vm_type, VMType::Polygon(_)) {
+                VM::build_opcode_table_polygon(fork)
+            } else {
+                VM::build_opcode_table(fork)
+            },
             crypto,
         };
 

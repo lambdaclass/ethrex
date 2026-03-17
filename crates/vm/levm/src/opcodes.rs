@@ -636,7 +636,7 @@ impl<'a> VM<'a> {
     /// - BLOBHASH (0x49) and BLOBBASEFEE (0x4A) are disabled — no blob transactions
     /// - CLZ (0x1E) is only activated at Lisovo fork
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    fn build_opcode_table_polygon(fork: Fork) -> [OpCodeFn; 256] {
+    pub(crate) fn build_opcode_table_polygon(fork: Fork) -> [OpCodeFn; 256] {
         // Start from the Amsterdam table (includes all Ethereum opcodes)
         let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
 

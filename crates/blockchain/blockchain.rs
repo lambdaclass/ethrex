@@ -403,15 +403,30 @@ impl Blockchain {
                     computed = ?computed_root,
                     "Receipts root mismatch"
                 );
-                // Log first few receipts for debugging
-                for (i, receipt) in execution_result.receipts.iter().enumerate().take(5) {
+                // Log each receipt's encoded bytes for byte-level comparison
+                for (i, receipt) in execution_result.receipts.iter().enumerate() {
+                    let encoded = receipt.encode_inner_with_bloom();
+                    // Log first 64 bytes of encoding (type prefix + RLP header + status + gas)
+                    let preview_len = encoded.len().min(64);
                     warn!(
                         receipt_idx = i,
                         tx_type = ?receipt.tx_type,
+                        tx_type_byte = receipt.tx_type as u8,
                         succeeded = receipt.succeeded,
                         cumulative_gas = receipt.cumulative_gas_used,
                         log_count = receipt.logs.len(),
+                        encoded_len = encoded.len(),
+                        encoded_hex = hex::encode(&encoded[..preview_len]),
                         "Receipt detail"
+                    );
+                }
+                // Also log the tx types from the block body for comparison
+                for (i, tx) in block.body.transactions.iter().enumerate() {
+                    warn!(
+                        tx_idx = i,
+                        tx_type = ?tx.tx_type(),
+                        tx_type_byte = tx.tx_type() as u8,
+                        "Block tx type"
                     );
                 }
             }
