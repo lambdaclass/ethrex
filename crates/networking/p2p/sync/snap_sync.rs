@@ -493,8 +493,8 @@ pub async fn snap_sync(
 
     store.generate_flatkeyvalue()?;
 
-    debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
-    debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
+    assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
+    assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
     info!("Finished healing");
 
