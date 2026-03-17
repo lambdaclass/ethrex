@@ -152,9 +152,11 @@ impl RLPxMessage for HelloMessage {
         let decoder = Decoder::new(msg_data)?;
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
-        if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
+        // Accept P2P versions 4 and 5 — both are widely used in the wild
+        // (e.g. some Bor nodes advertise v4). The Hello format is identical.
+        if protocol_version < 4 || protocol_version > SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
             return Err(RLPDecodeError::IncompatibleProtocol(format!(
-                "Received message is encoded in p2p version {} when negotiated p2p version was {} ",
+                "Received message is encoded in p2p version {} when supported range is 4..={} ",
                 protocol_version, SUPPORTED_P2P_CAPABILITY_VERSION
             )));
         }
