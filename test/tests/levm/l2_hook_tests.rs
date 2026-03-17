@@ -224,6 +224,7 @@ fn finalize_mutation_failure_reverts_all_changes() {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        disable_sender_eoa_check: false,
     };
 
     let fee_config = FeeConfig {
@@ -347,6 +348,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        disable_sender_eoa_check: false,
     };
 
     let fee_config = FeeConfig {
@@ -454,6 +456,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         is_privileged: true,
         fee_token: None,
         disable_balance_check: false,
+        disable_sender_eoa_check: false,
     };
 
     let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {

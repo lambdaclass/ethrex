@@ -18,12 +18,12 @@ pub struct RpcTransaction {
     #[serde(flatten)]
     pub tx: Transaction,
     #[serde(with = "serde_utils::u64::hex_str_opt")]
-    block_number: Option<BlockNumber>,
-    block_hash: Option<BlockHash>,
-    from: Address,
+    pub block_number: Option<BlockNumber>,
+    pub block_hash: Option<BlockHash>,
+    pub from: Address,
     pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str_opt")]
-    transaction_index: Option<u64>,
+    pub transaction_index: Option<u64>,
 }
 
 impl RpcTransaction {

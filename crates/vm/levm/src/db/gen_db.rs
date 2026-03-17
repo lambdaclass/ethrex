@@ -42,6 +42,12 @@ pub struct GeneralizedDatabase {
     /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
     /// (state transitions come from BAL instead).
     skip_initial_tracking: bool,
+    /// Block hash overrides for simulated blocks (eth_simulateV1).
+    /// Maps block_number → block_hash. Checked before the underlying store.
+    pub block_hash_overrides: FxHashMap<u64, H256>,
+    /// Precompile address remappings for eth_simulateV1 movePrecompileToAddress.
+    /// Maps new_address → original_precompile_address.
+    pub precompile_overrides: FxHashMap<Address, Address>,
 }
 
 impl GeneralizedDatabase {
@@ -56,6 +62,8 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            block_hash_overrides: FxHashMap::default(),
+            precompile_overrides: FxHashMap::default(),
         }
     }
 
@@ -87,6 +95,8 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
+            block_hash_overrides: FxHashMap::default(),
+            precompile_overrides: FxHashMap::default(),
         }
     }
 
@@ -144,6 +154,8 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            block_hash_overrides: FxHashMap::default(),
+            precompile_overrides: FxHashMap::default(),
         }
     }
 
@@ -397,6 +409,91 @@ impl GeneralizedDatabase {
         self.current_accounts_state.clear();
         self.codes.clear();
         self.code_metadata.clear();
+        Ok(account_updates)
+    }
+
+    /// Computes state transitions without clearing or draining any caches.
+    /// This is useful for simulation scenarios (eth_simulateV1) where state
+    /// must persist across multiple blocks.
+    pub fn get_state_transitions_readonly(&self) -> Result<Vec<AccountUpdate>, VMError> {
+        let mut account_updates: Vec<AccountUpdate> = vec![];
+        for (address, new_state_account) in self.current_accounts_state.iter() {
+            if new_state_account.is_unmodified() {
+                continue;
+            }
+            let initial_state_account =
+                self.initial_accounts_state.get(address).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    )))
+                })?;
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            if initial_state_account.info.balance != new_state_account.info.balance {
+                acc_info_updated = true;
+            }
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                Some(
+                    self.codes
+                        .get(&new_state_account.info.code_hash)
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            let removed_storage = was_destroyed && initial_state_account.has_storage;
+
+            let mut added_storage: FxHashMap<_, _> = Default::default();
+            for (key, new_value) in &new_state_account.storage {
+                let old_value = if !was_destroyed {
+                    initial_state_account
+                        .storage
+                        .get(key)
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}"
+                            )))
+                        })?
+                } else {
+                    &ZERO_U256
+                };
+                if new_value != old_value {
+                    added_storage.insert(*key, *new_value);
+                    storage_updated = true;
+                }
+            }
+
+            let info = acc_info_updated.then(|| new_state_account.info.clone());
+
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
+
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+                continue;
+            }
+
+            account_updates.push(AccountUpdate {
+                address: *address,
+                removed,
+                info,
+                code: code.cloned(),
+                added_storage,
+                removed_storage,
+            });
+        }
         Ok(account_updates)
     }
 

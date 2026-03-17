@@ -199,6 +199,13 @@ impl Evm {
         LEVM::get_state_transitions(&mut self.db)
     }
 
+    /// Like [get_state_transitions] but does not clear the caches.
+    /// Used by eth_simulateV1 to compute per-block state roots while
+    /// keeping state across blocks.
+    pub fn get_state_transitions_readonly(&self) -> Result<Vec<AccountUpdate>, EvmError> {
+        Ok(self.db.get_state_transitions_readonly()?)
+    }
+
     /// Wraps [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
@@ -241,6 +248,21 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<ExecutionResult, EvmError> {
         LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref())
+    }
+
+    /// Like [simulate_tx_from_generic] but keeps real baseFee and block gas limit.
+    pub fn simulate_tx_from_generic_validated(
+        &mut self,
+        tx: &GenericTransaction,
+        header: &BlockHeader,
+    ) -> Result<ExecutionResult, EvmError> {
+        LEVM::simulate_tx_from_generic_validated(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
     }
 
     pub fn create_access_list(

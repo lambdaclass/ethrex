@@ -98,8 +98,10 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, &code.bytecode)?;
+        if !vm.env.disable_sender_eoa_check {
+            let code = vm.db.get_code(sender_info.code_hash)?;
+            validate_sender(sender_address, &code.bytecode)?;
+        }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;

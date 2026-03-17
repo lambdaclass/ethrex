@@ -20,6 +20,7 @@ tracing-subscriber.workspace = true
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
+ethrex-levm.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-metrics.workspace = true
 ethrex-crypto.workspace = true
