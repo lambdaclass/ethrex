@@ -581,12 +581,28 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         vm.increase_account_balance(to, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
-        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
         let from = vm.env.origin;
-        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
-            let log = create_eth_transfer_log(from, to, value);
-            vm.substate.add_log(log);
+        if !value.is_zero() {
+            // Polygon: emit Bor LogTransfer for native value transfers
+            if matches!(vm.vm_type, crate::vm::VMType::Polygon(_)) {
+                let sender_bal = vm.db.get_account(from)?.info.balance;
+                let recipient_bal = vm.db.get_account(to)?.info.balance;
+                let log = crate::hooks::polygon_hook::build_value_transfer_log(
+                    from,
+                    to,
+                    value,
+                    sender_bal,
+                    recipient_bal,
+                );
+                vm.substate.add_log(log);
+            }
+
+            // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
+            // Self-transfers (origin == to) should NOT emit a log per the EIP spec
+            if vm.env.config.fork >= Fork::Amsterdam && from != to {
+                let log = create_eth_transfer_log(from, to, value);
+                vm.substate.add_log(log);
+            }
         }
     }
     Ok(())

@@ -2,8 +2,9 @@ use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
+    hooks::polygon_hook::build_value_transfer_log,
     utils::create_eth_transfer_log,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
@@ -142,11 +143,27 @@ impl<'a> VM<'a> {
         let value = self.current_call_frame.msg_value;
         self.increase_account_balance(new_contract_address, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
-        // Origin is sender, new_contract_address is the recipient.
-        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
-            let log = create_eth_transfer_log(self.env.origin, new_contract_address, value);
-            self.substate.add_log(log);
+        if !value.is_zero() {
+            // Polygon: emit Bor LogTransfer
+            if matches!(self.vm_type, VMType::Polygon(_)) {
+                let sender_bal = self.db.get_account(self.env.origin)?.info.balance;
+                let recipient_bal = self.db.get_account(new_contract_address)?.info.balance;
+                let log = build_value_transfer_log(
+                    self.env.origin,
+                    new_contract_address,
+                    value,
+                    sender_bal,
+                    recipient_bal,
+                );
+                self.substate.add_log(log);
+            }
+
+            // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
+            // Origin is sender, new_contract_address is the recipient.
+            if self.env.config.fork >= Fork::Amsterdam {
+                let log = create_eth_transfer_log(self.env.origin, new_contract_address, value);
+                self.substate.add_log(log);
+            }
         }
 
         self.increment_account_nonce(new_contract_address)?;

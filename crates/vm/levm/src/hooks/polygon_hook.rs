@@ -136,15 +136,78 @@ fn build_fee_transfer_log(
     output1: U256,
     output2: U256,
 ) -> Log {
-    // Topics: [event_sig, fee_address, sender, coinbase]
-    let topics = vec![
+    build_transfer_log(
         LOG_FEE_TRANSFER_TOPIC,
+        sender,
+        coinbase,
+        amount,
+        input1,
+        input2,
+        output1,
+        output2,
+    )
+}
+
+/// Topic hash for LogTransfer events (native value transfers).
+/// keccak256("LogTransfer(address,address,address,uint256,uint256,uint256,uint256,uint256)")
+const LOG_TRANSFER_TOPIC: H256 = H256([
+    0xe6, 0x49, 0x7e, 0x3e, 0xe5, 0x48, 0xa3, 0x37, 0x21, 0x36, 0xaf, 0x2f, 0xcb, 0x06, 0x96, 0xdb,
+    0x31, 0xfc, 0x6c, 0xf2, 0x02, 0x60, 0x70, 0x76, 0x45, 0x06, 0x8b, 0xd3, 0xfe, 0x97, 0xf3, 0xc4,
+]);
+
+/// Builds a Bor LogTransfer log for native value transfers.
+/// Matches `core/bor_fee_log.go:AddTransferLog`.
+///
+/// Call this AFTER the balance transfer has been applied.
+/// Reconstructs before-balances from after-balances and the transfer amount.
+pub fn build_value_transfer_log(
+    sender: Address,
+    recipient: Address,
+    amount: U256,
+    sender_balance_after: U256,
+    recipient_balance_after: U256,
+) -> Log {
+    // Reconstruct pre-transfer balances
+    let (input1, input2) = if sender == recipient {
+        // Self-transfer: balances didn't change
+        (sender_balance_after, recipient_balance_after)
+    } else {
+        (
+            sender_balance_after.saturating_add(amount),
+            recipient_balance_after.saturating_sub(amount),
+        )
+    };
+
+    build_transfer_log(
+        LOG_TRANSFER_TOPIC,
+        sender,
+        recipient,
+        amount,
+        input1,
+        input2,
+        sender_balance_after,
+        recipient_balance_after,
+    )
+}
+
+/// Shared log builder for both LogFeeTransfer and LogTransfer.
+fn build_transfer_log(
+    event_sig: H256,
+    from: Address,
+    to: Address,
+    amount: U256,
+    input1: U256,
+    input2: U256,
+    output1: U256,
+    output2: U256,
+) -> Log {
+    let topics = vec![
+        event_sig,
         address_to_h256(BOR_FEE_CONTRACT),
-        address_to_h256(sender),
-        address_to_h256(coinbase),
+        address_to_h256(from),
+        address_to_h256(to),
     ];
 
-    // Data: 5 × 32 bytes (amount, input1, input2, output1, output2)
     let mut data = Vec::with_capacity(160);
     data.extend_from_slice(&amount.to_big_endian());
     data.extend_from_slice(&input1.to_big_endian());
