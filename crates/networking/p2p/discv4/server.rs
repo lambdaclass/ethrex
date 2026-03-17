@@ -265,21 +265,24 @@ impl DiscoveryServer {
             .get_contact_for_lookup(DiscoveryProtocol::Discv4)
             .await?
         {
-            if let Err(e) = self
-                .udp_socket
-                .send_to(&self.find_node_message, &contact.node.udp_addr())
-                .await
-            {
-                error!(protocol = "discv4", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
-                METRICS.record_new_discarded_node();
-            }
+            // Only contact peers whose address family matches this socket.
+            if contact.node.ip.is_ipv6() == self.local_node.ip.is_ipv6() {
+                if let Err(e) = self
+                    .udp_socket
+                    .send_to(&self.find_node_message, &contact.node.udp_addr())
+                    .await
+                {
+                    error!(protocol = "discv4", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
+                    self.peer_table
+                        .set_disposable(&contact.node.node_id())
+                        .await?;
+                    METRICS.record_new_discarded_node();
+                }
 
-            self.peer_table
-                .increment_find_node_sent(&contact.node.node_id())
-                .await?;
+                self.peer_table
+                    .increment_find_node_sent(&contact.node.node_id())
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -664,6 +667,9 @@ impl DiscoveryServer {
         message: Message,
         addr: SocketAddr,
     ) -> Result<usize, DiscoveryServerError> {
+        if addr.is_ipv6() != self.local_node.ip.is_ipv6() {
+            return Ok(0);
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
@@ -676,6 +682,9 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<H256, DiscoveryServerError> {
+        if node.ip.is_ipv6() != self.local_node.ip.is_ipv6() {
+            return Ok(H256::zero());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         let message_hash: [u8; 32] = buf[..32]

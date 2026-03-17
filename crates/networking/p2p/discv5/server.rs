@@ -759,12 +759,19 @@ impl DiscoveryServer {
     }
 
     /// Encodes and sends a packet over UDP.
+    ///
+    /// Silently skips sends to addresses whose family doesn't match this
+    /// socket (e.g. an IPv6 address on an IPv4-bound socket) to avoid
+    /// EAFNOSUPPORT errors when IPv6 peers are discovered via IPv4 bootnodes.
     async fn send_packet(
         &self,
         packet: &Packet,
         dest_id: &H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        if addr.is_ipv6() != self.local_node.ip.is_ipv6() {
+            return Ok(());
+        }
         let mut buf = BytesMut::new();
         packet.encode(&mut buf, dest_id)?;
         self.udp_socket.send_to(&buf, addr).await?;
