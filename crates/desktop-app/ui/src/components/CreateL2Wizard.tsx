@@ -225,7 +225,7 @@ export default function CreateL2Wizard({ onBack, onCreate, initialNetwork }: Pro
             <p style={{ margin: '0 0 16px 0', fontSize: 13, color: '#888' }}>{t('myl2.wizard.stackDesc', lang)}</p>
             <div style={{ display: 'flex', gap: 12 }}>
               <button
-                onClick={() => { setStackType('ethrex'); setConfig(c => ({ ...c, stackType: 'ethrex' })) }}
+                onClick={() => { setStackType('ethrex'); setConfig(c => ({ ...c, stackType: 'ethrex', proverType: 'sp1' })) }}
                 style={{
                   flex: 1, padding: '16px 12px', borderRadius: 8, cursor: 'pointer',
                   border: stackType === 'ethrex' ? '2px solid #6366f1' : '1px solid #333',

@@ -2509,7 +2509,12 @@ async function provisionThanosTestnet(deployment) {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     const testnet = config.testnet || {};
     l1RpcUrl = testnet.l1RpcUrl;
-    deployerPrivateKey = await keychain.resolveKey(testnet.deployerKeychainKey);
+    if (testnet.keychainKeyName) {
+      deployerPrivateKey = keychain.getSecret(testnet.keychainKeyName);
+      if (!deployerPrivateKey) throw new Error(`Key "${testnet.keychainKeyName}" not found in Keychain`);
+    } else if (testnet.deployerPrivateKey) {
+      deployerPrivateKey = testnet.deployerPrivateKey;
+    }
   } catch (e) {
     const errMsg = `Failed to parse testnet config: ${e.message}`;
     emit(id, "error", { message: errMsg });

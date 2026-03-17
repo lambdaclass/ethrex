@@ -812,18 +812,18 @@ router.post("/:id/provision", async (req, res) => {
       deployMode = config.mode || 'local';
     } catch {}
 
-    res.json({ ok: true, message: "Provisioning started", remote: !!hostId, mode: deployMode });
-
     // Determine stack type from deployment DB row
     const stackType = deployment.stack_type || 'ethrex';
 
+    // Validate unsupported combinations before responding
+    if (stackType === 'thanos' && hostId) {
+      return res.status(400).json({ error: "Remote deployment is not yet supported for Thanos stack" });
+    }
+
+    res.json({ ok: true, message: "Provisioning started", remote: !!hostId, mode: deployMode });
+
     let provisionFn;
     if (stackType === 'thanos') {
-      // Thanos (Optimism) provisioning — remote not yet supported
-      if (hostId) {
-        console.warn(`[provision] Thanos remote deployment not yet supported for ${deployment.id}`);
-        return;
-      }
       if (deployMode === 'testnet') {
         provisionFn = () => provisionThanosTestnet(deployment);
       } else {
