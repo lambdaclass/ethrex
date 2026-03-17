@@ -30,17 +30,19 @@ router.get("/keys/:name", (req, res) => {
     if (!exists) {
       return res.status(404).json({ error: "Key not found" });
     }
-    // Derive Ethereum address from private key (server-side only, never sent raw)
+    // Derive Ethereum address only for private key entries (deployer_pk_*)
     let address = null;
-    try {
-      const pk = keychain.getSecret(name);
-      if (pk) {
-        const { ethers } = require("ethers");
-        const wallet = new ethers.Wallet(pk);
-        address = wallet.address;
+    if (name.startsWith("deployer_pk_")) {
+      try {
+        const pk = keychain.getSecret(name);
+        if (pk) {
+          const { ethers } = require("ethers");
+          const wallet = new ethers.Wallet(pk);
+          address = wallet.address;
+        }
+      } catch (e) {
+        console.warn(`Failed to derive address for key "${name}":`, e.message);
       }
-    } catch (e) {
-      console.error(`Failed to derive address for key "${name}":`, e.message);
     }
     res.json({ name, exists: true, address });
   } catch (e) {
