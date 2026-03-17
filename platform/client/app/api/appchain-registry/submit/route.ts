@@ -8,7 +8,6 @@ import {
   checkSubmitRateLimit, buildSigningMessage, validateMetadataStructure,
   IDENTITY_CONTRACT_FIELD, getRpcUrl, verifyOnChainOwnership, buildPrTitleAndBody,
 } from "@/lib/appchain-registry";
-
 export async function POST(req: NextRequest) {
   try {
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";

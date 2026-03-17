@@ -1135,6 +1135,11 @@ router.get("/:id/status", async (req, res) => {
     const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(req.params.id);
     if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
+    // Skip SSH polling for stopped/configured deployments (no need to probe unreachable servers)
+    if (deployment.phase === 'stopped' || deployment.phase === 'configured' || deployment.status === 'stopped') {
+      return res.json({ phase: deployment.phase, containers: [], endpoints: {} });
+    }
+
     // Determine if this is a remote deployment (SSH host or AI-deploy with EC2)
     const dConfig = deployment.config ? (typeof deployment.config === 'string' ? JSON.parse(deployment.config) : deployment.config) : {};
     const isHostRemote = !!deployment.host_id;
