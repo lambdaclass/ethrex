@@ -328,7 +328,7 @@ export default function OpenL2View() {
           <div className="flex flex-col items-center justify-center h-full text-[var(--color-text-secondary)] text-[13px] gap-2">
             <div>{t('openl2.loadError', lang)}</div>
             <div className="text-[10px] text-[var(--color-error)]">{error}</div>
-            <button onClick={fetchAppchains} className="text-[11px] text-[#3b82f6] hover:underline cursor-pointer">
+            <button onClick={() => fetchAppchains()} className="text-[11px] text-[#3b82f6] hover:underline cursor-pointer">
               {t('openl2.retry', lang)}
             </button>
           </div>
