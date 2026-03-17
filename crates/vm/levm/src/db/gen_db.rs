@@ -411,11 +411,25 @@ impl GeneralizedDatabase {
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in self.current_accounts_state.drain() {
-            if new_state_account.is_unmodified() {
-                // Skip processing account that we know wasn't mutably accessed during execution
-                continue;
-            }
+
+        // Extract only modified accounts; keep unmodified ones cached so subsequent
+        // transactions can reuse them without hitting the backing store (DashMap/trie).
+        let modified_addrs: Vec<Address> = self
+            .current_accounts_state
+            .iter()
+            .filter(|(_, account)| !account.is_unmodified())
+            .map(|(addr, _)| *addr)
+            .collect();
+
+        for address in modified_addrs {
+            let new_state_account =
+                self.current_accounts_state
+                    .remove(&address)
+                    .ok_or_else(|| {
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Modified account {address} disappeared from cache",
+                        )))
+                    })?;
             // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
             let initial_state_account =
                 self.initial_accounts_state.get(&address).ok_or_else(|| {
