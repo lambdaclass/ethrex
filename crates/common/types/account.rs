@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
@@ -29,11 +30,10 @@ pub struct Code {
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    pub jump_targets: Arc<[u32]>,
 }
 
 impl Code {
@@ -41,7 +41,7 @@ impl Code {
     // the real code hash (i.e. it was precomputed and we're reusing)
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
+        let jump_targets: Arc<[u32]> = Self::compute_jump_targets(&code).into();
         Self {
             hash,
             bytecode: code,
@@ -50,7 +50,7 @@ impl Code {
     }
 
     pub fn from_bytecode(code: Bytes) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
+        let jump_targets: Arc<[u32]> = Self::compute_jump_targets(&code).into();
         Self {
             hash: keccak(code.as_ref()),
             bytecode: code,
@@ -92,7 +92,7 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
         hash_size + bytes_size + vec_size
     }
 }
@@ -166,7 +166,7 @@ impl Default for Code {
         Self {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
-            jump_targets: Vec::new(),
+            jump_targets: Arc::from([]),
         }
     }
 }

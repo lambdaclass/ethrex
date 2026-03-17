@@ -707,7 +707,7 @@ impl Store {
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets: <Vec<u32>>::decode(targets)?.into(),
         };
 
         // insert into cache and evict if needed
@@ -3147,11 +3147,10 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
-    );
+    let mut buf =
+        Vec::with_capacity(6 + code.bytecode.len() + std::mem::size_of_val(&*code.jump_targets));
     code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
+    code.jump_targets.to_vec().encode(&mut buf);
     buf
 }
 

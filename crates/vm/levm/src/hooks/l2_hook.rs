@@ -21,6 +21,7 @@ use ethrex_common::{
     },
 };
 use ethrex_rlp::encode::RLPEncode;
+use std::sync::Arc;
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -500,7 +501,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),
-            jump_targets: Vec::new(),
+            jump_targets: Arc::from([]),
         })?;
         return Ok(());
     }
