@@ -492,7 +492,7 @@ export default function L2DetailPublishTab({ l2, ko }: Props) {
       {/* Save Draft */}
       <div className="flex items-center justify-between">
         <button
-          onClick={saveDraft}
+          onClick={() => saveDraft()}
           className="bg-[var(--color-accent)] text-[var(--color-accent-text)] text-[11px] font-medium px-4 py-1.5 rounded-lg cursor-pointer disabled:opacity-50 transition-colors hover:opacity-90"
         >
           {ko ? '저장' : 'Save'}
