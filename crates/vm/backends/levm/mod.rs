@@ -317,6 +317,10 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
         let mut block_gas_used = 0_u64;
+        // Deferred base fee accumulator for Polygon
+        let is_polygon = matches!(vm_type, VMType::Polygon(_));
+        let mut deferred_base_fee_total = U256::zero();
+        let base_fee_per_gas = block.header.base_fee_per_gas.unwrap_or_default();
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -365,6 +369,12 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
+            // Accumulate deferred base fee for Polygon
+            if is_polygon {
+                deferred_base_fee_total +=
+                    U256::from(base_fee_per_gas).saturating_mul(U256::from(report.gas_spent));
+            }
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -387,6 +397,19 @@ impl LEVM {
 
         if queue_length.load(Ordering::Relaxed) == 0 {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
+        }
+
+        // Polygon: Apply deferred base fee distribution after all transactions.
+        // Tips are already paid per-tx in PolygonHook::finalize_execution.
+        if let VMType::Polygon(ref polygon_fee_config) = vm_type {
+            if let Some(burnt_contract) = polygon_fee_config.burnt_contract
+                && !deferred_base_fee_total.is_zero()
+            {
+                let account = db.get_account_mut(burnt_contract).map_err(|_| {
+                    EvmError::DB(format!("Burnt contract account {burnt_contract} not found"))
+                })?;
+                account.info.balance += deferred_base_fee_total;
+            }
         }
 
         // Set BAL index for post-execution phase (requests + withdrawals, uint16)
