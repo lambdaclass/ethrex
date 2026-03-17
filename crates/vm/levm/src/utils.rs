@@ -588,3 +588,189 @@ pub fn create_selfdestruct_log(contract: Address, balance: U256) -> Log {
         data: Bytes::from(data.to_vec()),
     }
 }
+
+// ================== Optimized U256 arithmetic ======================
+
+/// Wrapping 256-bit addition.
+///
+/// On aarch64 this uses inline assembly to emit `adds/adcs` which is ~2x fewer
+/// instructions than the `uint` crate's macro-generated carry tracking.
+#[inline(always)]
+pub fn u256_wrapping_add(a: U256, b: U256) -> U256 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let (r0, r1, r2, r3): (u64, u64, u64, u64);
+        // SAFETY: pure arithmetic on general-purpose registers, no memory access.
+        #[expect(unsafe_code)]
+        unsafe {
+            core::arch::asm!(
+                "adds {r0}, {a0}, {b0}",
+                "adcs {r1}, {a1}, {b1}",
+                "adcs {r2}, {a2}, {b2}",
+                "adc  {r3}, {a3}, {b3}",
+                a0 = in(reg) a.0[0],
+                a1 = in(reg) a.0[1],
+                a2 = in(reg) a.0[2],
+                a3 = in(reg) a.0[3],
+                b0 = in(reg) b.0[0],
+                b1 = in(reg) b.0[1],
+                b2 = in(reg) b.0[2],
+                b3 = in(reg) b.0[3],
+                r0 = out(reg) r0,
+                r1 = out(reg) r1,
+                r2 = out(reg) r2,
+                r3 = out(reg) r3,
+                options(pure, nomem, nostack),
+            );
+        }
+        U256([r0, r1, r2, r3])
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        a.overflowing_add(b).0
+    }
+}
+
+/// Wrapping 256-bit subtraction.
+///
+/// On aarch64 this uses inline assembly to emit `subs/sbcs` which is ~2x fewer
+/// instructions than the `uint` crate's macro-generated borrow tracking.
+#[inline(always)]
+pub fn u256_wrapping_sub(a: U256, b: U256) -> U256 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let (r0, r1, r2, r3): (u64, u64, u64, u64);
+        // SAFETY: pure arithmetic on general-purpose registers, no memory access.
+        #[expect(unsafe_code)]
+        unsafe {
+            core::arch::asm!(
+                "subs {r0}, {a0}, {b0}",
+                "sbcs {r1}, {a1}, {b1}",
+                "sbcs {r2}, {a2}, {b2}",
+                "sbc  {r3}, {a3}, {b3}",
+                a0 = in(reg) a.0[0],
+                a1 = in(reg) a.0[1],
+                a2 = in(reg) a.0[2],
+                a3 = in(reg) a.0[3],
+                b0 = in(reg) b.0[0],
+                b1 = in(reg) b.0[1],
+                b2 = in(reg) b.0[2],
+                b3 = in(reg) b.0[3],
+                r0 = out(reg) r0,
+                r1 = out(reg) r1,
+                r2 = out(reg) r2,
+                r3 = out(reg) r3,
+                options(pure, nomem, nostack),
+            );
+        }
+        U256([r0, r1, r2, r3])
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        a.overflowing_sub(b).0
+    }
+}
+
+/// 256-bit equality comparison.
+///
+/// On aarch64 this takes references and loads limbs directly into GPRs,
+/// avoiding the NEON→GPR register spill that occurs when copying U256
+/// values via `*stack.pop()`.
+#[inline(always)]
+pub fn u256_eq(a: &U256, b: &U256) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let result: u64;
+        // SAFETY: reads 4 u64 limbs from each U256 via pointer. The references
+        // guarantee the memory is valid and properly aligned.
+        #[expect(unsafe_code)]
+        unsafe {
+            core::arch::asm!(
+                // Load a's limbs directly into GPRs
+                "ldp {a0}, {a1}, [{a_ptr}]",
+                "ldp {a2}, {a3}, [{a_ptr}, #16]",
+                // Load b's limbs directly into GPRs
+                "ldp {b0}, {b1}, [{b_ptr}]",
+                "ldp {b2}, {b3}, [{b_ptr}, #16]",
+                // Compare with conditional-compare chain
+                "cmp {a3}, {b3}",
+                "ccmp {a2}, {b2}, #0, eq",
+                "ccmp {a1}, {b1}, #0, eq",
+                "ccmp {a0}, {b0}, #0, eq",
+                "cset {res}, eq",
+                a_ptr = in(reg) a.0.as_ptr(),
+                b_ptr = in(reg) b.0.as_ptr(),
+                a0 = out(reg) _,
+                a1 = out(reg) _,
+                a2 = out(reg) _,
+                a3 = out(reg) _,
+                b0 = out(reg) _,
+                b1 = out(reg) _,
+                b2 = out(reg) _,
+                b3 = out(reg) _,
+                res = out(reg) result,
+                options(pure, readonly, nostack),
+            );
+        }
+        result != 0
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        a == b
+    }
+}
+
+/// 256-bit unsigned less-than comparison.
+///
+/// On aarch64 this takes references and loads limbs directly into GPRs,
+/// avoiding the NEON→GPR register spill.
+#[inline(always)]
+pub fn u256_lt(a: &U256, b: &U256) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let result: u64;
+        // SAFETY: reads 4 u64 limbs from each U256 via pointer.
+        #[expect(unsafe_code)]
+        unsafe {
+            core::arch::asm!(
+                "ldp {a0}, {a1}, [{a_ptr}]",
+                "ldp {a2}, {a3}, [{a_ptr}, #16]",
+                "ldp {b0}, {b1}, [{b_ptr}]",
+                "ldp {b2}, {b3}, [{b_ptr}, #16]",
+                // Compare most-significant first with conditional-compare
+                "cmp {a3}, {b3}",
+                "ccmp {a2}, {b2}, #0, eq",
+                "ccmp {a1}, {b1}, #0, eq",
+                "ccmp {a0}, {b0}, #0, eq",
+                "cset {res}, lo",
+                a_ptr = in(reg) a.0.as_ptr(),
+                b_ptr = in(reg) b.0.as_ptr(),
+                a0 = out(reg) _,
+                a1 = out(reg) _,
+                a2 = out(reg) _,
+                a3 = out(reg) _,
+                b0 = out(reg) _,
+                b1 = out(reg) _,
+                b2 = out(reg) _,
+                b3 = out(reg) _,
+                res = out(reg) result,
+                options(pure, readonly, nostack),
+            );
+        }
+        result != 0
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        a < b
+    }
+}
+
+/// 256-bit unsigned greater-than comparison.
+#[inline(always)]
+pub fn u256_gt(a: &U256, b: &U256) -> bool {
+    u256_lt(b, a)
+}

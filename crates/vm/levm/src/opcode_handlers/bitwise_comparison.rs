@@ -20,6 +20,7 @@ use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::OpcodeHandler,
+    utils::{u256_eq, u256_gt, u256_lt},
     vm::VM,
 };
 use ethrex_common::U256;
@@ -31,11 +32,9 @@ impl OpcodeHandler for OpLtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::LT)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        #[expect(clippy::as_conversions, reason = "safe")]
-        vm.current_call_frame
-            .stack
-            .push(((lhs < rhs) as u64).into())?;
+        let [ref lhs, ref rhs] = *vm.current_call_frame.stack.pop()?;
+        let result: U256 = (u256_lt(lhs, rhs) as u64).into();
+        vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -48,11 +47,9 @@ impl OpcodeHandler for OpGtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GT)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        #[expect(clippy::as_conversions, reason = "safe")]
-        vm.current_call_frame
-            .stack
-            .push(((lhs > rhs) as u64).into())?;
+        let [ref lhs, ref rhs] = *vm.current_call_frame.stack.pop()?;
+        let result: U256 = (u256_gt(lhs, rhs) as u64).into();
+        vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -65,18 +62,17 @@ impl OpcodeHandler for OpSLtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let [ref lhs, ref rhs] = *vm.current_call_frame.stack.pop()?;
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
 
-        vm.current_call_frame
-            .stack
-            .push(match (lhs_sign, rhs_sign) {
-                (false, true) => U256::zero(),
-                (true, false) => U256::one(),
-                #[expect(clippy::as_conversions, reason = "safe")]
-                _ => ((lhs < rhs) as u64).into(),
-            })?;
+        let result: U256 = match (lhs_sign, rhs_sign) {
+            (false, true) => U256::zero(),
+            (true, false) => U256::one(),
+            #[expect(clippy::as_conversions, reason = "safe")]
+            _ => (u256_lt(lhs, rhs) as u64).into(),
+        };
+        vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -89,18 +85,17 @@ impl OpcodeHandler for OpSGtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
+        let [ref lhs, ref rhs] = *vm.current_call_frame.stack.pop()?;
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
 
-        vm.current_call_frame
-            .stack
-            .push(match (lhs_sign, rhs_sign) {
-                (false, true) => U256::one(),
-                (true, false) => U256::zero(),
-                #[expect(clippy::as_conversions, reason = "safe")]
-                _ => ((lhs > rhs) as u64).into(),
-            })?;
+        let result: U256 = match (lhs_sign, rhs_sign) {
+            (false, true) => U256::one(),
+            (true, false) => U256::zero(),
+            #[expect(clippy::as_conversions, reason = "safe")]
+            _ => (u256_gt(lhs, rhs) as u64).into(),
+        };
+        vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -113,11 +108,9 @@ impl OpcodeHandler for OpEqHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        #[expect(clippy::as_conversions, reason = "safe")]
-        vm.current_call_frame
-            .stack
-            .push(((lhs == rhs) as u64).into())?;
+        let [ref lhs, ref rhs] = *vm.current_call_frame.stack.pop()?;
+        let result: U256 = (u256_eq(lhs, rhs) as u64).into();
+        vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
     }

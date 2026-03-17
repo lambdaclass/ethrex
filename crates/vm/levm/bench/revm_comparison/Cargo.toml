@@ -31,3 +31,7 @@ path = "src/compile.rs"
 [[bin]]
 name = "benchmark"
 path = "src/benchmark.rs"
+
+[[bin]]
+name = "opcode_microbench"
+path = "src/opcode_microbench.rs"

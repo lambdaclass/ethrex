@@ -87,7 +87,16 @@ impl Memory {
         self.len = new_memory_size;
 
         let mut buffer = self.buffer.borrow_mut();
+        self.ensure_buffer_capacity(new_memory_size, &mut buffer);
 
+        Ok(())
+    }
+
+    /// Ensures the underlying buffer has enough capacity for `new_memory_size` bytes
+    /// from `current_base`. Called with an already-borrowed buffer to avoid redundant
+    /// RefCell borrow checks.
+    #[inline(always)]
+    fn ensure_buffer_capacity(&self, new_memory_size: usize, buffer: &mut Vec<u8>) {
         #[allow(clippy::arithmetic_side_effects)]
         let real_new_memory_size = new_memory_size + self.current_base;
 
@@ -96,8 +105,6 @@ impl Memory {
             let new_size = real_new_memory_size.next_multiple_of(64);
             buffer.resize(new_size, 0);
         }
-
-        Ok(())
     }
 
     /// Load `size` bytes from the given offset. Returning a Bytes.
@@ -108,13 +115,22 @@ impl Memory {
         }
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
+
+        let new_memory_size = new_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
         let true_offset = offset.wrapping_add(self.current_base);
 
-        let buf = self.buffer.borrow();
+        // Single borrow: resize (if needed) + read in one scope.
+        let mut buf = self.buffer.borrow_mut();
 
-        // SAFETY: resize already makes sure bounds are correct.
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buf);
+        }
+
+        // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
             Ok(Bytes::copy_from_slice(buf.get_unchecked(
@@ -127,12 +143,22 @@ impl Memory {
     #[inline(always)]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {
         let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+        let new_memory_size = new_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
-        let buf = self.buffer.borrow();
-        // SAFETY: resize already makes sure bounds are correct.
+        // Single borrow: resize (if needed) + read in one scope.
+        let mut buf = self.buffer.borrow_mut();
+
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buf);
+        }
+
+        let true_offset = offset.wrapping_add(self.current_base);
+
+        // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
         #[allow(unsafe_code)]
         unsafe {
             Ok(*buf
@@ -149,22 +175,30 @@ impl Memory {
         Ok(u256_from_big_endian_const(value))
     }
 
-    /// Stores the given data and data size at the given offset.
-    ///
-    /// Internal use.
+    /// Stores the given data at the given offset.
     #[inline(always)]
-    fn store(&self, data: &[u8], at_offset: usize, data_size: usize) -> Result<(), VMError> {
-        if data_size == 0 {
+    pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
+        if data.is_empty() {
             return Ok(());
         }
+        let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
 
-        let real_offset = self.current_base.wrapping_add(at_offset);
+        let new_memory_size = new_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
+        let real_offset = self.current_base.wrapping_add(offset);
+        let real_data_size = data.len();
+
+        // Single borrow: resize (if needed) + write in one scope.
         let mut buffer = self.buffer.borrow_mut();
 
-        let real_data_size = data_size.min(data.len());
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buffer);
+        }
 
-        // SAFETY: Used internally, resize always called before this function.
+        // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
         #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
         #[allow(unsafe_code)]
         unsafe {
@@ -180,17 +214,6 @@ impl Memory {
         Ok(())
     }
 
-    /// Stores the given data at the given offset.
-    #[inline(always)]
-    pub fn store_data(&mut self, offset: usize, data: &[u8]) -> Result<(), VMError> {
-        if data.is_empty() {
-            return Ok(());
-        }
-        let new_size = offset.checked_add(data.len()).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
-        self.store(data, offset, data.len())
-    }
-
     /// Stores data and zero-pads up to total_size at the given offset.
     #[inline(always)]
     pub fn store_data_zero_padded(
@@ -204,11 +227,34 @@ impl Memory {
         }
 
         let new_size = offset.checked_add(total_size).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
+
+        let new_memory_size = new_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
+
+        // Single borrow: resize + copy + zero-pad all in one scope.
+        let mut buffer = self.buffer.borrow_mut();
+
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buffer);
+        }
 
         let copy_size = data.len().min(total_size);
         if copy_size > 0 {
-            self.store(data, offset, copy_size)?;
+            let real_offset = self.current_base.wrapping_add(offset);
+            // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
+            #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+            #[allow(unsafe_code)]
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    data.get_unchecked(..copy_size).as_ptr(),
+                    buffer
+                        .get_unchecked_mut(real_offset..(real_offset + copy_size))
+                        .as_mut_ptr(),
+                    copy_size,
+                );
+            }
         }
 
         #[allow(clippy::arithmetic_side_effects)]
@@ -218,9 +264,8 @@ impl Memory {
             let zero_offset = offset.wrapping_add(copy_size);
             let zero_size = total_size - copy_size;
             let real_offset = self.current_base.wrapping_add(zero_offset);
-            let mut buffer = self.buffer.borrow_mut();
 
-            // resize ensures bounds are correct
+            // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
             #[expect(unsafe_code)]
             unsafe {
                 buffer
@@ -239,8 +284,34 @@ impl Memory {
             .checked_add(WORD_SIZE_IN_BYTES_USIZE)
             .ok_or(OutOfBounds)?;
 
-        self.resize(new_size)?;
-        self.store(&u256_to_big_endian(word), offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        let new_memory_size = new_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
+
+        let data = u256_to_big_endian(word);
+        let real_offset = self.current_base.wrapping_add(offset);
+
+        // Single borrow: resize (if needed) + write in one scope.
+        let mut buffer = self.buffer.borrow_mut();
+
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buffer);
+        }
+
+        // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
+        #[allow(clippy::arithmetic_side_effects)]
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                buffer
+                    .get_unchecked_mut(real_offset..(real_offset + WORD_SIZE_IN_BYTES_USIZE))
+                    .as_mut_ptr(),
+                WORD_SIZE_IN_BYTES_USIZE,
+            );
+        }
+
         Ok(())
     }
 
@@ -257,12 +328,12 @@ impl Memory {
             return Ok(());
         }
 
-        self.resize(
-            to_offset
-                .max(from_offset)
-                .checked_add(size)
-                .ok_or(InternalError::Overflow)?,
-        )?;
+        let new_memory_size = to_offset
+            .max(from_offset)
+            .checked_add(size)
+            .ok_or(InternalError::Overflow)?
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
         let true_from_offset = from_offset
             .checked_add(self.current_base)
@@ -271,7 +342,14 @@ impl Memory {
         let true_to_offset = to_offset
             .checked_add(self.current_base)
             .ok_or(OutOfBounds)?;
+
+        // Single borrow: resize (if needed) + copy in one scope.
         let mut buffer = self.buffer.borrow_mut();
+
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buffer);
+        }
 
         buffer.copy_within(
             true_from_offset
@@ -291,12 +369,22 @@ impl Memory {
         }
 
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
-        self.resize(new_size)?;
+
+        let new_memory_size = new_size
+            .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
+            .ok_or(OutOfBounds)?;
 
         let real_offset = self.current_base.wrapping_add(offset);
+
+        // Single borrow: resize (if needed) + zero-fill in one scope.
         let mut buffer = self.buffer.borrow_mut();
 
-        // resize ensures bounds are correct
+        if new_memory_size > self.len {
+            self.len = new_memory_size;
+            self.ensure_buffer_capacity(new_memory_size, &mut buffer);
+        }
+
+        // SAFETY: ensure_buffer_capacity guarantees bounds are correct.
         #[expect(unsafe_code)]
         unsafe {
             buffer

@@ -18,6 +18,7 @@ use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::OpcodeHandler,
+    utils::{u256_wrapping_add, u256_wrapping_sub},
     vm::VM,
 };
 use ethrex_common::{U256, U512};
@@ -30,8 +31,9 @@ impl OpcodeHandler for OpAddHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        let (res, _) = lhs.overflowing_add(rhs);
-        vm.current_call_frame.stack.push(res)?;
+        vm.current_call_frame
+            .stack
+            .push(u256_wrapping_add(lhs, rhs))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -45,7 +47,7 @@ impl OpcodeHandler for OpSubHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        let (res, _) = lhs.overflowing_sub(rhs);
+        let res = u256_wrapping_sub(lhs, rhs);
         vm.current_call_frame.stack.push(res)?;
 
         Ok(OpcodeResult::Continue)
@@ -96,18 +98,18 @@ impl OpcodeHandler for OpSDivHandler {
 
         let mut sign = false;
         if lhs.bit(255) {
-            lhs = U256::zero().overflowing_sub(lhs).0;
+            lhs = u256_wrapping_sub(U256::zero(), lhs);
             sign = !sign;
         }
         if rhs.bit(255) {
-            rhs = U256::zero().overflowing_sub(rhs).0;
+            rhs = u256_wrapping_sub(U256::zero(), rhs);
             sign = !sign;
         }
 
         match lhs.checked_div(rhs) {
             Some(mut res) => {
                 if sign {
-                    res = U256::zero().overflowing_sub(res).0;
+                    res = u256_wrapping_sub(U256::zero(), res);
                 }
 
                 vm.current_call_frame.stack.push(res)?
@@ -148,16 +150,16 @@ impl OpcodeHandler for OpSModHandler {
 
         let sign = lhs.bit(255);
         if sign {
-            (lhs, _) = (!lhs).overflowing_add(U256::one());
+            lhs = u256_wrapping_sub(U256::zero(), lhs);
         }
         if rhs.bit(255) {
-            (rhs, _) = (!rhs).overflowing_add(U256::one());
+            rhs = u256_wrapping_sub(U256::zero(), rhs);
         }
 
         match lhs.checked_rem(rhs) {
             Some(mut res) => {
                 if sign {
-                    (res, _) = (!res).overflowing_add(U256::one());
+                    res = u256_wrapping_sub(U256::zero(), res);
                 }
 
                 vm.current_call_frame.stack.push(res)?
