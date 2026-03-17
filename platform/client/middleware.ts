@@ -4,6 +4,7 @@ const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || "").split(",").filter(Boole
 if (ALLOWED_ORIGINS.length === 0) {
   ALLOWED_ORIGINS.push(
     "http://localhost:3000", "http://localhost:3001",
+    "http://localhost:5173", "http://localhost:1420",  // Vite dev servers
     "tauri://localhost", "https://tauri.localhost",
   );
 }
