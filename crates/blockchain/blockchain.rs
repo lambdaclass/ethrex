@@ -384,6 +384,39 @@ impl Blockchain {
 
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
+
+        // Diagnostic logging for receipts root mismatch (Polygon debugging)
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let computed_root =
+                ethrex_common::types::compute_receipts_root(&execution_result.receipts);
+            let expected_root = block.header.receipts_root;
+            if computed_root != expected_root {
+                warn!(
+                    block_number = block.header.number,
+                    block_hash = ?block.hash(),
+                    tx_count = block.body.transactions.len(),
+                    receipt_count = execution_result.receipts.len(),
+                    gas_used_header = block.header.gas_used,
+                    gas_used_exec = execution_result.block_gas_used,
+                    cumulative_gas_last = execution_result.receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0),
+                    expected = ?expected_root,
+                    computed = ?computed_root,
+                    "Receipts root mismatch"
+                );
+                // Log first few receipts for debugging
+                for (i, receipt) in execution_result.receipts.iter().enumerate().take(5) {
+                    warn!(
+                        receipt_idx = i,
+                        tx_type = ?receipt.tx_type,
+                        succeeded = receipt.succeeded,
+                        cumulative_gas = receipt.cumulative_gas_used,
+                        log_count = receipt.logs.len(),
+                        "Receipt detail"
+                    );
+                }
+            }
+        }
+
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {

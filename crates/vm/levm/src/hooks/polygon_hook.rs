@@ -1,9 +1,10 @@
 use crate::{
-    errors::{ContextResult, VMError},
+    errors::ContextResult,
+    errors::{InternalError, VMError},
     hooks::{
         default_hook::{
-            DefaultHook, compute_actual_gas_used, compute_gas_refunded,
-            delete_self_destruct_accounts, refund_sender, undo_value_transfer,
+            DefaultHook, compute_gas_refunded, delete_self_destruct_accounts, refund_sender,
+            undo_value_transfer,
         },
         hook::Hook,
     },
@@ -16,6 +17,10 @@ use crate::{
 /// but skips `pay_coinbase()` in `finalize_execution` because Polygon uses deferred
 /// fee distribution: fees are accumulated across all transactions and applied after
 /// all transactions have been executed.
+///
+/// Also uses Polygon-specific gas computation: Bor does NOT implement EIP-7623
+/// (calldata floor gas), so the gas_spent is simply gas_used minus refund,
+/// without the `max(exec_gas, floor_gas)` enforcement that Ethereum Prague adds.
 pub struct PolygonHook;
 
 impl Hook for PolygonHook {
@@ -35,7 +40,13 @@ impl Hook for PolygonHook {
 
         let gas_used_pre_refund = ctx_result.gas_used;
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
-        let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
+
+        // Polygon gas computation: simple subtraction without EIP-7623 floor.
+        // Bor doesn't implement EIP-7623 (calldata floor gas from Ethereum Pectra),
+        // so gas_spent = gas_used - refund, no floor enforcement.
+        let gas_spent = gas_used_pre_refund
+            .checked_sub(gas_refunded)
+            .ok_or(InternalError::Underflow)?;
 
         refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
 

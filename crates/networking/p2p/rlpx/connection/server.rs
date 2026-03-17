@@ -425,7 +425,7 @@ impl GenServer for PeerConnectionServer {
                     | PeerConnectionError::InvalidMessageLength
                     | PeerConnectionError::StateError(_)
                     | PeerConnectionError::InvalidRecoveryId => {
-                        trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
+                        debug!(peer=%established_state.node, error=e.to_string(), "Peer connection stopped");
                         return CastResponse::Stop;
                     }
                     PeerConnectionError::IoError(e)
@@ -477,7 +477,12 @@ impl GenServer for PeerConnectionServer {
     async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
         match self.state {
             ConnectionState::Established(mut established_state) => {
-                trace!(peer=%established_state.node, "Closing connection with established peer");
+                debug!(
+                    peer=%established_state.node,
+                    is_validated=established_state.is_validated,
+                    disconnect_reason=?established_state.disconnect_reason,
+                    "Tearing down peer connection"
+                );
                 if established_state.is_validated {
                     // If its validated the peer was connected, so we record the disconnection.
                     let reason = established_state
