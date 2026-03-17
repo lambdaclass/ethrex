@@ -403,10 +403,9 @@ impl Blockchain {
                     computed = ?computed_root,
                     "Receipts root mismatch"
                 );
-                // Log each receipt's encoded bytes for byte-level comparison
+                // Log each receipt's details including individual log data
                 for (i, receipt) in execution_result.receipts.iter().enumerate() {
                     let encoded = receipt.encode_inner_with_bloom();
-                    // Log first 64 bytes of encoding (type prefix + RLP header + status + gas)
                     let preview_len = encoded.len().min(64);
                     warn!(
                         receipt_idx = i,
@@ -419,6 +418,19 @@ impl Blockchain {
                         encoded_hex = hex::encode(&encoded[..preview_len]),
                         "Receipt detail"
                     );
+                    // Dump each log's address, topics, and data for comparison
+                    for (j, log) in receipt.logs.iter().enumerate() {
+                        warn!(
+                            receipt_idx = i,
+                            log_idx = j,
+                            address = ?log.address,
+                            topic_count = log.topics.len(),
+                            topics = ?log.topics,
+                            data_len = log.data.len(),
+                            data_hex = hex::encode(&log.data),
+                            "Log detail"
+                        );
+                    }
                 }
                 // Also log the tx types from the block body for comparison
                 for (i, tx) in block.body.transactions.iter().enumerate() {
