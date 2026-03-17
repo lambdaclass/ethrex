@@ -1209,14 +1209,15 @@ router.get("/:id/status", async (req, res) => {
     }
 
     // Use remote host IP for endpoints when applicable
-    const rpcHost = (isRemote && host) ? host.hostname : "127.0.0.1";
+    const hasValidHost = isRemote && host && host.hostname && host.hostname !== '(pending)';
+    const rpcHost = hasValidHost ? host.hostname : (isRemote ? null : "127.0.0.1");
 
     res.json({
       phase: deployment.phase,
       containers,
       endpoints: {
-        l1Rpc: deployment.l1_port ? `http://${rpcHost}:${deployment.l1_port}` : null,
-        l2Rpc: deployment.l2_port ? `http://${rpcHost}:${deployment.l2_port}` : null,
+        l1Rpc: (rpcHost && deployment.l1_port) ? `http://${rpcHost}:${deployment.l1_port}` : null,
+        l2Rpc: (rpcHost && deployment.l2_port) ? `http://${rpcHost}:${deployment.l2_port}` : null,
       },
       contracts: {
         bridge: deployment.bridge_address,

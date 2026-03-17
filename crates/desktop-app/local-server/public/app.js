@@ -2324,7 +2324,7 @@ function renderOverviewTab() {
     const epLabel = isRemote && fullUrl ? fullUrl : endpoint;
     const ep = endpoint
       ? (running
-        ? `<span style="font-size:11px;font-family:monospace;color:var(--blue-600)">${esc(epLabel)}</span> <a href="${esc(fullUrl)}" target="_blank" title="Open in browser" style="color:var(--blue-600)">${openIcon}</a>`
+        ? `<span style="font-size:11px;font-family:monospace;color:var(--blue-600)">${esc(epLabel)}</span> <a href="${escAttr(fullUrl)}" target="_blank" title="Open in browser" style="color:var(--blue-600)">${openIcon}</a>`
         : `<span style="font-size:11px;font-family:monospace;color:var(--text-muted)">${esc(epLabel)}</span>`)
       : '';
     const btn = isTools ? '' : (running
@@ -2962,16 +2962,25 @@ async function browseDirPicker() {
 function copyCmd(btn) {
   const text = btn.getAttribute('data-copy');
   if (!text) return;
-  navigator.clipboard.writeText(text);
   const original = btn.innerHTML;
-  btn.textContent = 'Copied!';
-  setTimeout(() => { btn.innerHTML = original; }, 1500);
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.innerHTML = original; }, 1500);
+  }).catch(() => {
+    btn.textContent = 'Failed';
+    setTimeout(() => { btn.innerHTML = original; }, 1500);
+  });
 }
 
 function esc(str) {
   const div = document.createElement('div');
   div.textContent = str || '';
   return div.innerHTML;
+}
+
+// Escape for use inside HTML attributes (also escapes quotes)
+function escAttr(str) {
+  return esc(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function toggleRpcUrl(uid, btn) {
