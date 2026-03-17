@@ -20,7 +20,7 @@ pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     match vm_type {
         VMType::L1 => l1_hooks(),
         VMType::L2(fee_config) => l2_hooks(*fee_config),
-        VMType::Polygon(_) => polygon_hooks(),
+        VMType::Polygon(pfc) => polygon_hooks(pfc.burnt_contract),
     }
 }
 
@@ -35,6 +35,8 @@ pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     ]
 }
 
-pub fn polygon_hooks() -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
-    vec![Rc::new(RefCell::new(PolygonHook::default()))]
+pub fn polygon_hooks(
+    burnt_contract: Option<ethrex_common::Address>,
+) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![Rc::new(RefCell::new(PolygonHook::new(burnt_contract)))]
 }

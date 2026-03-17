@@ -32,24 +32,28 @@ const LOG_FEE_TRANSFER_TOPIC: H256 = H256([
 ///
 /// Reuses DefaultHook's `prepare_execution` (same sender deduction, validation, etc.)
 /// but replaces `pay_coinbase()` with Polygon-specific fee distribution:
-/// - Tips (priority fees) go to BorConfig coinbase in real-time per tx
-/// - Base fees go to burnt contract in real-time per tx
+/// - Base fees go to burnt contract per-tx: `state.AddBalance(burntContract, gasUsed * baseFee)`
+/// - Tips (priority fees) go to BorConfig coinbase per-tx: `state.AddBalance(coinbase, gasUsed * effectiveTip)`
 ///
 /// Also uses Polygon-specific gas computation: Bor does NOT implement EIP-7623
 /// (calldata floor gas), so the gas_spent is simply gas_used minus refund,
 /// without the `max(exec_gas, floor_gas)` enforcement that Ethereum Prague adds.
 ///
 /// Emits a `LogFeeTransfer` log after every transaction (matching Bor behavior).
+/// The fee log records only the TIP amount with synthetic before/after balances.
 pub struct PolygonHook {
+    /// Burnt contract address (receives base fee per-tx). From BorConfig.
+    burnt_contract: Option<Address>,
     /// Sender balance captured BEFORE gas deduction (buyGas).
     sender_balance_before: U256,
     /// Coinbase balance captured BEFORE any fees are paid.
     coinbase_balance_before: U256,
 }
 
-impl Default for PolygonHook {
-    fn default() -> Self {
+impl PolygonHook {
+    pub fn new(burnt_contract: Option<Address>) -> Self {
         Self {
+            burnt_contract,
             sender_balance_before: U256::zero(),
             coinbase_balance_before: U256::zero(),
         }
@@ -89,14 +93,25 @@ impl Hook for PolygonHook {
 
         refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
 
-        // Pay tip to coinbase in real-time (matching Bor's state_transition.go).
-        // Base fee distribution is deferred — handled in execute_block after all txs.
+        let gas_spent_u256 = U256::from(gas_spent);
+
+        // Pay base fee to burnt contract per-tx (Bor state_transition.go line 619).
+        if let Some(burnt_contract) = self.burnt_contract {
+            let base_fee_amount = gas_spent_u256
+                .checked_mul(vm.env.base_fee_per_gas)
+                .ok_or(InternalError::Overflow)?;
+            if !base_fee_amount.is_zero() {
+                vm.increase_account_balance(burnt_contract, base_fee_amount)?;
+            }
+        }
+
+        // Pay tip to coinbase per-tx (Bor state_transition.go line 624).
         let effective_tip = vm
             .env
             .gas_price
             .checked_sub(vm.env.base_fee_per_gas)
             .unwrap_or(U256::zero());
-        let tip_amount = U256::from(gas_spent)
+        let tip_amount = gas_spent_u256
             .checked_mul(effective_tip)
             .ok_or(InternalError::Overflow)?;
 
@@ -105,7 +120,7 @@ impl Hook for PolygonHook {
         }
 
         // Emit LogFeeTransfer log (Bor adds this after every transaction).
-        // amount = gas_spent * effective_tip
+        // Log records only TIP amount with synthetic before/after balances.
         if !tip_amount.is_zero() {
             // Bor computes synthetic output values: output1 = input1 - amount, output2 = input2 + amount
             // These do NOT reflect actual state — they model the tip movement from pre-tx balances.

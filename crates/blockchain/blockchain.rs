@@ -458,6 +458,47 @@ impl Blockchain {
             )?;
         }
 
+        // Diagnostic: dump key account balances for Polygon state root debugging
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            // Collect tx senders
+            let mut key_addresses: Vec<(String, Address)> = Vec::new();
+            for (i, tx) in block.body.transactions.iter().enumerate() {
+                if let Ok(sender) = tx.sender(&NativeCrypto) {
+                    key_addresses.push((format!("tx_sender_{i}"), sender));
+                }
+            }
+            // BorConfig coinbase
+            if let Some(bor_config) =
+                ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+            {
+                let bor_coinbase = bor_config.get_coinbase(block.header.number);
+                key_addresses.push(("bor_coinbase".to_string(), bor_coinbase));
+                if let Some(burnt) = bor_config.get_burnt_contract(block.header.number) {
+                    key_addresses.push(("burnt_contract".to_string(), burnt));
+                }
+            }
+            // Header coinbase (0x0 on Polygon)
+            key_addresses.push(("header_coinbase".to_string(), block.header.coinbase));
+
+            // Build a lookup from account_updates
+            let balance_map: std::collections::HashMap<Address, U256> = account_updates
+                .iter()
+                .filter_map(|u| u.info.as_ref().map(|info| (u.address, info.balance)))
+                .collect();
+
+            for (label, addr) in &key_addresses {
+                let balance = balance_map.get(addr);
+                warn!(
+                    block_number = block.header.number,
+                    label = label.as_str(),
+                    address = ?addr,
+                    balance = ?balance,
+                    in_updates = balance.is_some(),
+                    "Polygon state debug"
+                );
+            }
+        }
+
         Ok((execution_result, account_updates))
     }
 

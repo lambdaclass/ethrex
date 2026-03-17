@@ -5,7 +5,7 @@ use ethereum_types::Address;
 /// Polygon distributes fees differently from Ethereum L1:
 /// - Base fee revenue goes to a "burnt contract" address (not actually burned)
 /// - Tips (priority fees) go to a BorConfig-specified coinbase (not header.coinbase)
-/// - Fee distribution is deferred until after all transactions execute
+/// - Both fee components are paid per-tx during execution (not deferred)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PolygonFeeConfig {
     /// Address to receive base fee revenue (base_fee * gas_used).
