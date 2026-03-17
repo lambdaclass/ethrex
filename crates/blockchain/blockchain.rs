@@ -2100,11 +2100,38 @@ impl Blockchain {
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
+        // Diagnostic: log parent state root for Polygon state root debugging
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let parent_header = self
+                .storage
+                .get_block_header_by_hash(block.header.parent_hash)
+                .map_err(ChainError::StoreError)?;
+            warn!(
+                block_number = block.header.number,
+                parent_hash = ?block.header.parent_hash,
+                parent_state_root = ?parent_header.as_ref().map(|h| h.state_root),
+                expected_state_root = ?block.header.state_root,
+                num_account_updates = updates.len(),
+                "Polygon: state root debug — parent trie root used"
+            );
+        }
+
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(block.header.parent_hash, &updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
+
+        // Diagnostic: log computed state root for Polygon
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            warn!(
+                block_number = block.header.number,
+                computed_state_root = ?account_updates_list.state_trie_hash,
+                expected_state_root = ?block.header.state_root,
+                match_result = account_updates_list.state_trie_hash == block.header.state_root,
+                "Polygon: state root debug — computed vs expected"
+            );
+        }
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
