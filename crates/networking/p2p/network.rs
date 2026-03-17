@@ -269,6 +269,9 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     }?;
     tcp_socket.set_reuseport(true).ok();
     tcp_socket.set_reuseaddr(true).ok();
+    if tcp_addr.is_ipv6() {
+        tcp_socket.set_only_v6(true)?;
+    }
     tcp_socket.bind(tcp_addr)?;
 
     tcp_socket.listen(50)
