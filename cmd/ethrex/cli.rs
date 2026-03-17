@@ -926,6 +926,7 @@ pub async fn import_blocks_bench(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
+        let mut bal_index = 0usize;
         for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
@@ -953,8 +954,16 @@ pub async fn import_blocks_bench(
             validate_block_body(&block.header, &block.body)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
-            // Look up preloaded BAL for this block (if --with-bal was provided)
-            let bal = preloaded_bals.as_ref().and_then(|bals| bals.get(index));
+            // Look up preloaded BAL for this block (if --with-bal was provided).
+            // BALs are only produced for Amsterdam+ blocks, so use a separate counter
+            // that only advances for blocks that have a BAL hash in the header.
+            let bal = if block.header.block_access_list_hash.is_some() {
+                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                bal_index += 1;
+                b
+            } else {
+                None
+            };
 
             if export_bal_path.is_some() {
                 // Sequential path: execute and capture the produced BAL
