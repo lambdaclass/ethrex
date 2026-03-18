@@ -281,7 +281,7 @@ async fn test_store_block_receipt(store: Store) {
 }
 
 async fn test_store_account_code(store: Store) {
-    let code = Code::from_bytecode(Bytes::from("kiwi"));
+    let code = Code::from_bytecode(Bytes::from("kiwi"), &ethrex_crypto::NativeCrypto);
     let code_hash = code.hash;
 
     store.add_account_code(code.clone()).await.unwrap();

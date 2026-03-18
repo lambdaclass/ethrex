@@ -160,7 +160,7 @@ fn fee_token_lock_only_contract() -> Account {
     ];
     Account::new(
         U256::zero(),
-        Code::from_bytecode(Bytes::from(bytecode)),
+        Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto),
         1,
         FxHashMap::default(),
     )
