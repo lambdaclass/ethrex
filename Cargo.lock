@@ -3910,6 +3910,7 @@ version = "9.0.0"
 dependencies = [
  "bytes",
  "crossbeam 0.8.4",
+ "ethrex-binary-trie",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-metrics",

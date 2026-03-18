@@ -26,6 +26,11 @@ pub struct BinaryTrieState {
     /// Code by keccak256 hash — for fast `get_account_code` lookups.
     /// Code is also chunked in the trie, but reconstructing from chunks
     /// on every CALL would be expensive.
+    ///
+    /// INVARIANT: every non-empty code_hash leaf in the trie must have a
+    /// corresponding entry here. This is maintained by `apply_genesis` and
+    /// `apply_account_update`. Any future deserialization or state-loading
+    /// path must also populate this map, or `get_account_code` will fail.
     code_store: HashMap<H256, Bytes>,
 
     /// Tracks which storage keys each account has written.
