@@ -283,6 +283,8 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
+    /// EIP-8037: snapshot of VM.state_gas_used at the start of this frame (for revert restoration)
+    pub state_gas_used_snapshot: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -307,6 +309,7 @@ impl CallFrameBackup {
                 storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
+                exists: account.exists,
             });
 
         Ok(())
@@ -376,6 +379,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
+            state_gas_used_snapshot: 0,
         }
     }
 
