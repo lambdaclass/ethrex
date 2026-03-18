@@ -17,7 +17,7 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use ethrex_prover::ProofData;
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
@@ -161,8 +161,8 @@ impl L1ProofCoordinator {
         let msg: Result<ProofData<ProgramInput>, _> = serde_json::from_slice(&buffer);
         match msg {
             Ok(proof_data) => match proof_data {
-                ProofData::InputRequest { .. } => {
-                    if let Err(e) = self.handle_request(&mut stream).await {
+                ProofData::InputRequest { prover_type, .. } => {
+                    if let Err(e) = self.handle_request(&mut stream, prover_type).await {
                         error!("Failed to handle input request: {e}");
                     }
                 }
@@ -187,20 +187,41 @@ impl L1ProofCoordinator {
         }
     }
 
-    /// Handle a witness request from a prover: return the next pending input.
-    async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), L1CoordinatorError> {
-        debug!("Witness request received from prover");
+    /// Handle a witness request from a prover: return the next pending input
+    /// that still needs a proof of the given `prover_type`.
+    async fn handle_request(
+        &self,
+        stream: &mut TcpStream,
+        prover_type: ProverType,
+    ) -> Result<(), L1CoordinatorError> {
+        debug!(%prover_type, "Input request received from prover");
 
-        // Find the oldest pending request.
+        // Find the oldest pending request that still needs this proof type.
         let input = self
             .pending
             .iter()
+            .filter(|(bn, req)| {
+                // Only consider blocks that request this proof type (or have
+                // an empty list, meaning any type is accepted).
+                let type_requested = req.requested_proof_types.is_empty()
+                    || req.requested_proof_types.contains(&(prover_type as u64));
+                if !type_requested {
+                    return false;
+                }
+                // Skip blocks that already have a stored proof of this type.
+                !self
+                    .store
+                    .get_execution_proof(**bn, &req.new_payload_request_root, prover_type as u64)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
             .min_by_key(|(bn, _)| **bn)
             .map(|(bn, req)| (*bn, req.clone()));
 
         let response: ProofData<ProgramInput> = match input {
             Some((block_number, request)) => {
-                info!(block_number, "Sending witness to prover");
+                info!(block_number, %prover_type, "Sending witness to prover");
                 ProofData::input_response(
                     block_number,
                     request.program_input,
@@ -208,7 +229,7 @@ impl L1ProofCoordinator {
                 )
             }
             None => {
-                debug!("No pending witnesses for prover");
+                debug!(%prover_type, "No pending work for this prover type");
                 ProofData::empty_input_response()
             }
         };
