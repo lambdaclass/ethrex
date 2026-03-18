@@ -301,11 +301,9 @@ mod tests {
                 b
             },
             block_hash: [6u8; 32],
-            transactions: vec![
-                vec![0xDE, 0xAD, 0xBE, 0xEF].try_into().unwrap(),
-            ]
-            .try_into()
-            .unwrap(),
+            transactions: vec![vec![0xDE, 0xAD, 0xBE, 0xEF].try_into().unwrap()]
+                .try_into()
+                .unwrap(),
             withdrawals: vec![Withdrawal {
                 index: 0,
                 validator_index: 1,
@@ -363,11 +361,26 @@ mod tests {
         let payload = sample_payload();
         let header = payload.to_header();
         // Print the roots for debugging
-        println!("transactions_root: 0x{}", hex::encode(header.transactions_root));
-        println!("withdrawals_root: 0x{}", hex::encode(header.withdrawals_root));
-        println!("deposit_requests_root: 0x{}", hex::encode(header.deposit_requests_root));
-        println!("withdrawal_requests_root: 0x{}", hex::encode(header.withdrawal_requests_root));
-        println!("consolidation_requests_root: 0x{}", hex::encode(header.consolidation_requests_root));
+        println!(
+            "transactions_root: 0x{}",
+            hex::encode(header.transactions_root)
+        );
+        println!(
+            "withdrawals_root: 0x{}",
+            hex::encode(header.withdrawals_root)
+        );
+        println!(
+            "deposit_requests_root: 0x{}",
+            hex::encode(header.deposit_requests_root)
+        );
+        println!(
+            "withdrawal_requests_root: 0x{}",
+            hex::encode(header.withdrawal_requests_root)
+        );
+        println!(
+            "consolidation_requests_root: 0x{}",
+            hex::encode(header.consolidation_requests_root)
+        );
 
         // Now with truly empty lists
         let empty_payload = ExecutionPayload {
@@ -380,11 +393,26 @@ mod tests {
         };
         let empty_header = empty_payload.to_header();
         println!("\n--- Empty lists ---");
-        println!("transactions_root: 0x{}", hex::encode(empty_header.transactions_root));
-        println!("withdrawals_root: 0x{}", hex::encode(empty_header.withdrawals_root));
-        println!("deposit_requests_root: 0x{}", hex::encode(empty_header.deposit_requests_root));
-        println!("withdrawal_requests_root: 0x{}", hex::encode(empty_header.withdrawal_requests_root));
-        println!("consolidation_requests_root: 0x{}", hex::encode(empty_header.consolidation_requests_root));
+        println!(
+            "transactions_root: 0x{}",
+            hex::encode(empty_header.transactions_root)
+        );
+        println!(
+            "withdrawals_root: 0x{}",
+            hex::encode(empty_header.withdrawals_root)
+        );
+        println!(
+            "deposit_requests_root: 0x{}",
+            hex::encode(empty_header.deposit_requests_root)
+        );
+        println!(
+            "withdrawal_requests_root: 0x{}",
+            hex::encode(empty_header.withdrawal_requests_root)
+        );
+        println!(
+            "consolidation_requests_root: 0x{}",
+            hex::encode(empty_header.consolidation_requests_root)
+        );
     }
 
     #[test]

@@ -690,7 +690,15 @@ impl Subcommand {
                 execute,
                 proof_callback_port,
             } => {
-                ethrex_repl::run(endpoint, authrpc_endpoint, authrpc_jwtsecret, history_file, execute, proof_callback_port).await;
+                ethrex_repl::run(
+                    endpoint,
+                    authrpc_endpoint,
+                    authrpc_jwtsecret,
+                    history_file,
+                    execute,
+                    proof_callback_port,
+                )
+                .await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,

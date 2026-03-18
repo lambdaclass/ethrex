@@ -3,7 +3,13 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
 /// Input for the L1 stateless validation program.
 #[derive(
-    Clone, Default, serde::Serialize, serde::Deserialize, rkyv::Deserialize, rkyv::Serialize, rkyv::Archive,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
 )]
 pub struct ProgramInput {
     /// Blocks to execute.

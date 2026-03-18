@@ -9,6 +9,8 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(feature = "stateless")]
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
@@ -16,8 +18,6 @@ use ethrex_common::{
         InvalidBlockHeaderError, block_access_list::BlockAccessList,
     },
 };
-#[cfg(feature = "stateless")]
-use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_guest_program::input::ProgramInput;
 #[cfg(feature = "sp1")]
 use ethrex_prover::Sp1Backend;
@@ -109,10 +109,11 @@ pub async fn run_ef_test(
         // instead of regenerating the witness from blockchain execution.
         #[cfg(feature = "stateless")]
         {
-            let has_fixture_witness = test
-                .blocks
-                .iter()
-                .any(|bf| bf.block().and_then(|b| b.execution_witness.as_ref()).is_some());
+            let has_fixture_witness = test.blocks.iter().any(|bf| {
+                bf.block()
+                    .and_then(|b| b.execution_witness.as_ref())
+                    .is_some()
+            });
             if has_fixture_witness {
                 run_stateless_from_fixture(test, test_key, backend).await?;
                 return Ok(());
@@ -552,14 +553,13 @@ async fn run_stateless_from_fixture(
         let block_number = block.header.number;
 
         let rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
-            .map_err(|e| format!("Failed to parse executionWitness for block {block_number}: {e}"))?;
+            .map_err(|e| {
+                format!("Failed to parse executionWitness for block {block_number}: {e}")
+            })?;
 
-        let execution_witness = execution_witness_from_rpc_chain_config(
-            rpc_witness,
-            *chain_config,
-            block_number,
-        )
-        .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+        let execution_witness =
+            execution_witness_from_rpc_chain_config(rpc_witness, *chain_config, block_number)
+                .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
 
         let program_input = ProgramInput::new(vec![block], execution_witness);
 
