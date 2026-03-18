@@ -3774,6 +3774,7 @@ dependencies = [
  "colored",
  "ethereum-types",
  "hex",
+ "jsonwebtoken",
  "reqwest",
  "rustyline",
  "serde",
