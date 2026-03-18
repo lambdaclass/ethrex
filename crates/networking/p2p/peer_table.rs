@@ -143,18 +143,21 @@ impl Contact {
             }
             // Store IPv6 address/ports so the IPv6 discovery server can use this
             // contact as a relay to bootstrap into the IPv6 portion of the network.
+            // Ignore the unspecified address (::) which indicates a misconfigured peer.
             if let Some(ip6) = pairs.ip6 {
-                tracing::debug!(
-                    node_id = %self.node.node_id(),
-                    ipv4 = ?pairs.ip,
-                    ipv6 = %ip6,
-                    tcp6 = ?pairs.tcp6_port,
-                    udp6 = ?pairs.udp6_port,
-                    "ENR contains IPv6 address"
-                );
-                self.ip6 = Some(ip6);
-                self.tcp6_port = pairs.tcp6_port;
-                self.udp6_port = pairs.udp6_port;
+                if !ip6.is_unspecified() {
+                    tracing::debug!(
+                        node_id = %self.node.node_id(),
+                        ipv4 = ?pairs.ip,
+                        ipv6 = %ip6,
+                        tcp6 = ?pairs.tcp6_port,
+                        udp6 = ?pairs.udp6_port,
+                        "ENR contains IPv6 address"
+                    );
+                    self.ip6 = Some(ip6);
+                    self.tcp6_port = pairs.tcp6_port;
+                    self.udp6_port = pairs.udp6_port;
+                }
             }
             self.record = Some(record);
         }

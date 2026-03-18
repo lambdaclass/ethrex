@@ -365,14 +365,19 @@ pub struct NodeRecordPairs {
 
 impl NodeRecordPairs {
     /// Returns the best TCP connection address for this peer, preferring IPv4
-    /// over IPv6. Returns `None` if neither `ip`+`tcp` nor `ip6`+`tcp6` are
-    /// present in the ENR.
+    /// over IPv6. Skips unspecified addresses (0.0.0.0 / ::) so a peer with a
+    /// broken/NAT IPv4 correctly falls through to their IPv6 address.
+    /// Returns `None` if no usable address is present in the ENR.
     pub fn connection_addr(&self) -> Option<(IpAddr, u16)> {
         if let (Some(ip), Some(port)) = (self.ip, self.tcp_port) {
-            return Some((IpAddr::V4(ip), port));
+            if !ip.is_unspecified() {
+                return Some((IpAddr::V4(ip), port));
+            }
         }
         if let (Some(ip6), Some(port)) = (self.ip6, self.tcp6_port) {
-            return Some((IpAddr::V6(ip6), port));
+            if !ip6.is_unspecified() {
+                return Some((IpAddr::V6(ip6), port));
+            }
         }
         None
     }
