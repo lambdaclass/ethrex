@@ -12786,7 +12786,7 @@ dependencies = [
 [[package]]
 name = "ssz"
 version = "0.1.0"
-source = "git+ssh://git@github.com/lambdaclass/libssz#8e50d55c9d4c6088ae7d506e63fac3f98eee7d1b"
+source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
 dependencies = [
  "smallvec",
 ]
@@ -12794,7 +12794,7 @@ dependencies = [
 [[package]]
 name = "ssz-derive"
 version = "0.1.0"
-source = "git+ssh://git@github.com/lambdaclass/libssz#8e50d55c9d4c6088ae7d506e63fac3f98eee7d1b"
+source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12804,7 +12804,7 @@ dependencies = [
 [[package]]
 name = "ssz-merkle"
 version = "0.1.0"
-source = "git+ssh://git@github.com/lambdaclass/libssz#8e50d55c9d4c6088ae7d506e63fac3f98eee7d1b"
+source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
 dependencies = [
  "sha2",
  "ssz",
@@ -12813,7 +12813,7 @@ dependencies = [
 [[package]]
 name = "ssz-types"
 version = "0.1.0"
-source = "git+ssh://git@github.com/lambdaclass/libssz#8e50d55c9d4c6088ae7d506e63fac3f98eee7d1b"
+source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
 dependencies = [
  "smallvec",
  "ssz",
@@ -13856,7 +13856,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.4",
+ "cfg-if 0.1.10",
  "static_assertions",
 ]
 

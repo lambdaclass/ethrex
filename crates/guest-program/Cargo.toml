@@ -21,8 +21,8 @@ ethrex-rlp = { path = "../common/rlp", default-features = false }
 ethrex-l2-common = { path = "../l2/common", default-features = false }
 
 # EIP-8025 SSZ dependencies (optional)
-ssz = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
-ssz-merkle = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
+ssz = { git = "https://github.com/lambdaclass/libssz", optional = true }
+ssz-merkle = { git = "https://github.com/lambdaclass/libssz", optional = true }
 
 # zkVM crypto dependencies (pure Rust, compile for RISC-V targets)
 k256 = { workspace = true, optional = true }
