@@ -21,7 +21,7 @@ struct TestVector {
 }
 
 fn load_vectors() -> Vec<TestVector> {
-    let json = include_str!("../test_vectors.json");
+    let json = include_str!("test_vectors.json");
     serde_json::from_str(json).expect("failed to parse test_vectors.json")
 }
 
