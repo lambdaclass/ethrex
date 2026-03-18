@@ -191,7 +191,8 @@ pub fn refund_sender(
     vm.substate.refunded_gas = refunded_gas;
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
-    if vm.env.config.fork >= Fork::Amsterdam {
+    // Polygon doesn't have EIP-7778, so skip this path for Polygon forks.
+    if vm.env.config.fork >= Fork::Amsterdam && !vm.env.config.fork.is_polygon() {
         // Block accounting uses max(pre-refund gas, calldata floor)
         // This prevents gas smuggling via refunds (EIP-7778)
         let floor = vm.get_min_gas_used()?;

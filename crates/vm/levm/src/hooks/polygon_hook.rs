@@ -7,8 +7,8 @@ use crate::{
     errors::{InternalError, VMError},
     hooks::{
         default_hook::{
-            DefaultHook, compute_gas_refunded, delete_self_destruct_accounts, refund_sender,
-            undo_value_transfer,
+            DefaultHook, compute_actual_gas_used, compute_gas_refunded,
+            delete_self_destruct_accounts, refund_sender, undo_value_transfer,
         },
         hook::Hook,
     },
@@ -35,9 +35,8 @@ const LOG_FEE_TRANSFER_TOPIC: H256 = H256([
 /// - Base fees go to burnt contract per-tx: `state.AddBalance(burntContract, gasUsed * baseFee)`
 /// - Tips (priority fees) go to BorConfig coinbase per-tx: `state.AddBalance(coinbase, gasUsed * effectiveTip)`
 ///
-/// Also uses Polygon-specific gas computation: Bor does NOT implement EIP-7623
-/// (calldata floor gas), so the gas_spent is simply gas_used minus refund,
-/// without the `max(exec_gas, floor_gas)` enforcement that Ethereum Prague adds.
+/// Also uses Polygon-specific gas computation with EIP-7623 floor gas enforcement
+/// (same as Ethereum Prague): gas_spent = max(gas_used - refund, floor_gas).
 ///
 /// Emits a `LogFeeTransfer` log after every transaction (matching Bor behavior).
 /// The fee log records only the TIP amount with synthetic before/after balances.
@@ -84,12 +83,8 @@ impl Hook for PolygonHook {
         let gas_used_pre_refund = ctx_result.gas_used;
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
 
-        // Polygon gas computation: simple subtraction without EIP-7623 floor.
-        // Bor doesn't implement EIP-7623 (calldata floor gas from Ethereum Pectra),
-        // so gas_spent = gas_used - refund, no floor enforcement.
-        let gas_spent = gas_used_pre_refund
-            .checked_sub(gas_refunded)
-            .ok_or(InternalError::Underflow)?;
+        // Polygon gas computation: same EIP-7623 floor gas as Ethereum Prague.
+        let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 
         refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
 

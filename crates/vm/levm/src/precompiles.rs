@@ -261,10 +261,9 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     if matches!(vm_type, VMType::Polygon(_)) {
-        // Polygon: only Cancun precompiles (1-10). BLS precompiles (0x0b-0x11) don't exist.
-        // KZG point evaluation (0x0a) is available post-Cancun on Polygon.
+        // Polygon: Cancun precompiles (1-10) + BLS (11-17) + P256Verify (0x100)
         let addr_low = address.to_low_u64_be();
-        return addr_low >= 1 && addr_low <= SIZE_PRECOMPILES_CANCUN;
+        return (1..=SIZE_PRECOMPILES_PRAGUE).contains(&addr_low) || *address == P256VERIFY.address;
     }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
