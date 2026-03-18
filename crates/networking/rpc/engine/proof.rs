@@ -9,10 +9,11 @@ use bytes::Bytes;
 use ethrex_blockchain::proof_coordinator::coordinator::{
     CoordCastMsg, CoordinatorHandle, ProofRequest,
 };
-use ethrex_blockchain::proof_coordinator::types::{
-    ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS,
-    NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1, ProofAttributesV1, ProofGenId,
-    ProofStatusV1, ProofValidationStatus,
+use ethrex_blockchain::proof_coordinator::types::{ExecutionProofV1, MAX_PROOF_SIZE, ProofGenId};
+
+use super::proof_types::{
+    MIN_REQUIRED_EXECUTION_PROOFS, NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1,
+    ProofAttributesV1, ProofStatusV1, ProofValidationStatus,
 };
 use ethrex_common::H256;
 use ethrex_common::types::eip8025_ssz;

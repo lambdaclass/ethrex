@@ -5,6 +5,8 @@ pub mod fork_choice;
 pub mod payload;
 #[cfg(feature = "eip-8025")]
 pub mod proof;
+#[cfg(feature = "eip-8025")]
+pub mod proof_types;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
