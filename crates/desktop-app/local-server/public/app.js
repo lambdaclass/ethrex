@@ -1631,7 +1631,7 @@ function statusLabel(phase) {
     configured: 'Configured', checking_docker: 'Checking...', building: 'Building',
     pulling: 'Pulling', l1_starting: 'Starting', deploying_contracts: 'Deploying',
     verifying_contracts: 'Verifying', l2_starting: 'Starting', starting_prover: 'Starting', starting_tools: 'Starting',
-    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Unreachable',
+    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Checking...',
   };
   return map[phase] || phase;
 }
@@ -2077,7 +2077,7 @@ function renderPhaseBadge(phase, hasError) {
     verifying_contracts: 'Verifying', l2_starting: 'Starting L2', starting_prover: 'Starting Prover',
     starting_op_node: 'Starting op-node', starting_batcher: 'Starting op-batcher', starting_proposer: 'Starting op-proposer',
     starting_tools: 'Starting Tools',
-    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Unreachable',
+    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Checking...',
   };
   const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_op_node','starting_batcher','starting_proposer','starting_tools'];
   const label = labels[phase] || phase;
@@ -2138,7 +2138,10 @@ function renderDetail() {
   const d = detailDeployment;
   if (!d) return;
   document.getElementById('detail-name').textContent = d.name;
-  document.getElementById('detail-phase').innerHTML = renderPhaseBadge(d.phase);
+  const dc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+  const isRemoteDetail = dc.cloud === 'aws' || !!d.host_id || dc.mode === 'ai-deploy';
+  const initialPhase = (isRemoteDetail && d.phase === 'running') ? 'unreachable' : d.phase;
+  document.getElementById('detail-phase').innerHTML = renderPhaseBadge(initialPhase);
 
   // Mode badge
   const config = parseDeployConfig(d);
