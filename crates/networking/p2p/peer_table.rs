@@ -1567,9 +1567,22 @@ impl GenServer for PeerTableServer {
                 request_hash,
                 record,
             } => {
+                let old_ip = self.contacts.get(&node_id).map(|c| c.node.ip);
                 self.contacts.entry(node_id).and_modify(|contact| {
                     contact.record_enr_response_received(request_hash, record);
                 });
+                // If the ENR updated the contact's IP (e.g. 0.0.0.0 → IPv6),
+                // remove it from already_tried_peers so the RLPx initiator
+                // retries with the new address rather than skipping it.
+                let new_ip = self.contacts.get(&node_id).map(|c| c.node.ip);
+                if old_ip != new_ip {
+                    tracing::debug!(
+                        ?old_ip,
+                        ?new_ip,
+                        "Contact IP updated via ENR, removing from already_tried_peers"
+                    );
+                    self.already_tried_peers.remove(&node_id);
+                }
             }
             CastMessage::SetDisposable { node_id } => {
                 self.contacts
