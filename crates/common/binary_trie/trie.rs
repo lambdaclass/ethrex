@@ -222,7 +222,8 @@ fn remove_node_at_depth(
                     return (Some(Box::new(Node::Stem(stem_node))), None);
                 }
                 let removed = stem_node.remove_value(sub_index);
-                if stem_node.is_empty() {
+                let empty = stem_node.is_empty();
+                if empty {
                     // StemNode is now empty — remove it entirely.
                     (None, removed)
                 } else {
@@ -248,13 +249,21 @@ fn remove_node_at_depth(
                     removed = r;
                 }
 
-                // Collapse InternalNode if it now has only one child.
-                // Also invalidate the cached hash — a descendant was mutated.
+                // Collapse: if one child is now None and the survivor is a
+                // StemNode, promote it.  We must NOT promote a surviving
+                // InternalNode because `get_node_at_depth` uses `depth` to
+                // select the traversal bit — promoting an InternalNode to a
+                // shallower depth would make `get` use the wrong bit, losing
+                // data on the other branch.
                 internal.cached_hash = None;
                 let updated = match (&internal.left, &internal.right) {
                     (None, None) => None,
-                    (Some(_), None) => internal.left,
-                    (None, Some(_)) => internal.right,
+                    (Some(child), None) if matches!(child.as_ref(), Node::Stem(_)) => {
+                        internal.left
+                    }
+                    (None, Some(child)) if matches!(child.as_ref(), Node::Stem(_)) => {
+                        internal.right
+                    }
                     _ => Some(Box::new(Node::Internal(internal))),
                 };
                 (updated, removed)
@@ -446,5 +455,65 @@ mod tests {
         assert_eq!(trie.get(k0), None);
         assert_eq!(trie.get(k1), Some(val(20)));
         assert!(matches!(trie.root.as_deref(), Some(Node::Stem(_))));
+    }
+
+    #[test]
+    fn remove_preserves_siblings_in_deep_tree() {
+        // Reproduce the block-7230 bug: StemNode at depth 26 loses sibling
+        // values when one sub-index is removed.
+        let mut trie = BinaryTrie::new();
+
+        // Target stem: arbitrary 31 bytes
+        let target_stem = [120u8, 51, 78, 133, 189, 220, 159, 26, 100, 76,
+                           202, 249, 180, 89, 193, 93, 1, 43, 203, 121,
+                           29, 193, 209, 111, 220, 186, 157, 182, 152, 205, 187];
+
+        // Create a "neighbor" stem that shares the first 26 bits with target
+        // but diverges at bit 26, forcing the target StemNode to depth 26.
+        // Bit 26 is in byte 3 (26/8=3), bit position 26%8=2 (counting from MSB).
+        let mut neighbor_stem = target_stem;
+        // Flip bit 26: byte 3, bit 2 from MSB
+        neighbor_stem[3] ^= 0x20; // flip bit at position 2 in byte 3
+
+        // Insert values on the target stem at sub-indices 49, 50, 52
+        let mut k49 = [0u8; 32];
+        k49[..31].copy_from_slice(&target_stem);
+        k49[31] = 49;
+        let mut k50 = [0u8; 32];
+        k50[..31].copy_from_slice(&target_stem);
+        k50[31] = 50;
+        let mut k52 = [0u8; 32];
+        k52[..31].copy_from_slice(&target_stem);
+        k52[31] = 52;
+
+        trie.insert(k52, val(52)).unwrap();
+        trie.insert(k50, val(50)).unwrap();
+        trie.insert(k49, val(49)).unwrap();
+
+        // Insert neighbor to force depth
+        let mut kn = [0u8; 32];
+        kn[..31].copy_from_slice(&neighbor_stem);
+        kn[31] = 0;
+        trie.insert(kn, val(99)).unwrap();
+
+        // Verify all values present
+        assert_eq!(trie.get(k49), Some(val(49)));
+        assert_eq!(trie.get(k50), Some(val(50)));
+        assert_eq!(trie.get(k52), Some(val(52)));
+        assert_eq!(trie.get(kn), Some(val(99)));
+
+        // Overwrite k49 then remove it (matching the production pattern)
+        trie.insert(k49, val(1)).unwrap();
+        assert_eq!(trie.get(k49), Some(val(1)));
+
+        // Remove k49
+        let removed = trie.remove(k49);
+        assert_eq!(removed, Some(val(1)));
+
+        // THE BUG: siblings on the same stem must survive
+        assert_eq!(trie.get(k49), None, "k49 should be removed");
+        assert_eq!(trie.get(k50), Some(val(50)), "k50 should survive");
+        assert_eq!(trie.get(k52), Some(val(52)), "k52 should survive");
+        assert_eq!(trie.get(kn), Some(val(99)), "neighbor should survive");
     }
 }
