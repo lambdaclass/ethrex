@@ -153,6 +153,11 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
+            eprintln!(
+                "TX_GAS tx_index={} gas_used={} gas_spent={} cumulative={}",
+                tx_idx, report.gas_used, report.gas_spent, cumulative_gas_used
+            );
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -162,6 +167,11 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+
+        eprintln!(
+            "BLOCK_GAS_TOTAL block={} block_gas_used={} expected={}",
+            block.header.number, block_gas_used, block.header.gas_used
+        );
 
         // Set BAL index for post-execution phase (requests + withdrawals, uint16)
         // Order must match geth: requests (system calls) BEFORE withdrawals.
