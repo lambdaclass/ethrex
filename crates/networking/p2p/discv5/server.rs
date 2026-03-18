@@ -36,7 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
@@ -741,9 +741,9 @@ impl DiscoveryServer {
             self.whoareyou_global_window_start = now;
         }
         if self.whoareyou_global_count >= GLOBAL_WHOAREYOU_RATE_LIMIT {
-            trace!(
+            warn!(
                 protocol = "discv5",
-                "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s)"
+                "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), possible attack"
             );
             return Ok(());
         }
