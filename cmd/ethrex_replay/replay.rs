@@ -10,6 +10,7 @@ use ethrex_blockchain::binary_trie_db::BinaryTrieVmDb;
 use ethrex_common::{
     H256,
     types::{Block, BlockNumber, ChainConfig, Genesis},
+    validation::{validate_gas_used, validate_receipts_root},
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
@@ -121,9 +122,19 @@ impl BlockReplayer {
 
         // Create the EVM and execute the block.
         let mut evm = Evm::new_for_l1(vm_db, Arc::new(NativeCrypto));
-        evm.execute_block(block).with_context(|| {
+        let (execution_result, _bal) = evm.execute_block(block).with_context(|| {
             format!("EVM execute_block failed for block {}", block.header.number)
         })?;
+
+        // Validate execution results against block header.
+        validate_gas_used(execution_result.block_gas_used, &block.header).with_context(|| {
+            format!(
+                "gas mismatch at block {}: got {}, expected {}",
+                block.header.number, execution_result.block_gas_used, block.header.gas_used
+            )
+        })?;
+        validate_receipts_root(&block.header, &execution_result.receipts)
+            .with_context(|| format!("receipts root mismatch at block {}", block.header.number))?;
 
         // Collect state changes and apply them to the binary trie.
         let account_updates = evm
