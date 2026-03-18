@@ -20,10 +20,10 @@ export default function LaunchPage() {
 }
 
 const DOWNLOAD_URLS = {
-  macOS_ARM64: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.1/Tokamak.Appchain_0.1.1_aarch64.dmg",
-  macOS_x64: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.1/Tokamak.Appchain_0.1.1_x64.dmg",
-  Windows: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.1/Tokamak.Appchain_0.1.1_x64-setup.exe",
-  allReleases: "https://github.com/tokamak-network/ethrex/releases/tag/desktop-v0.1.1",
+  macOS_ARM64: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.2/Tokamak.Appchain_0.1.2_aarch64.dmg",
+  macOS_x64: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.2/Tokamak.Appchain_0.1.2_x64.dmg",
+  Windows: "https://github.com/tokamak-network/ethrex/releases/download/desktop-v0.1.2/Tokamak.Appchain_0.1.2_x64-setup.exe",
+  allReleases: "https://github.com/tokamak-network/ethrex/releases/tag/desktop-v0.1.2",
 };
 
 function LaunchPageContent() {
