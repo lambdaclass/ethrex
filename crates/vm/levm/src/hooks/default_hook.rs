@@ -584,19 +584,9 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         let from = vm.env.origin;
         if !value.is_zero() {
-            // Polygon: emit Bor LogTransfer for native value transfers
-            if matches!(vm.vm_type, crate::vm::VMType::Polygon(_)) {
-                let sender_bal = vm.db.get_account(from)?.info.balance;
-                let recipient_bal = vm.db.get_account(to)?.info.balance;
-                let log = crate::hooks::polygon_hook::build_value_transfer_log(
-                    from,
-                    to,
-                    value,
-                    sender_bal,
-                    recipient_bal,
-                );
-                vm.substate.add_log(log);
-            }
+            // NOTE: Polygon LogTransfer for the initial value transfer is emitted
+            // AFTER push_backup() in VM::execute(), so it reverts with failed txs.
+            // See vm.rs — Bor adds this log inside evm.Call(), inside the snapshot.
 
             // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
             // Self-transfers (origin == to) should NOT emit a log per the EIP spec

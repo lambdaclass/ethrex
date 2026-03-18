@@ -567,6 +567,29 @@ impl<'a> VM<'a> {
         }
 
         self.substate.push_backup();
+
+        // Polygon: emit Bor LogTransfer for the initial tx value transfer.
+        // Must be AFTER push_backup() so the log reverts with failed transactions.
+        // In Bor, this log is emitted inside evm.Call() (inside the snapshot).
+        if matches!(self.vm_type, VMType::Polygon(_))
+            && !self.current_call_frame.is_create
+            && !self.current_call_frame.msg_value.is_zero()
+        {
+            let from = self.env.origin;
+            let to = self.current_call_frame.to;
+            let value = self.current_call_frame.msg_value;
+            let sender_bal = self.db.get_account(from)?.info.balance;
+            let recipient_bal = self.db.get_account(to)?.info.balance;
+            let log = crate::hooks::polygon_hook::build_value_transfer_log(
+                from,
+                to,
+                value,
+                sender_bal,
+                recipient_bal,
+            );
+            self.substate.add_log(log);
+        }
+
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
