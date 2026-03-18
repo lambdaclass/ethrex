@@ -68,8 +68,13 @@ impl NodeRef {
         }
     }
 
-    /// Gets a shared reference to the inner node, checking it's hash.
+    /// Gets a shared reference to the inner node, checking its hash.
     /// Returns `Ok(None)` if the hash is invalid.
+    ///
+    /// Uses `NativeCrypto` directly because this function is only reachable from
+    /// native storage/sync paths (`get_root_node`, `get_proof`, `validate`,
+    /// `verify_range`, trie iterator) — never from the guest program path, which
+    /// traverses via `Node::get()`.
     pub fn get_node_checked(
         &self,
         db: &dyn TrieDB,
