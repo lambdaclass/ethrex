@@ -30,6 +30,7 @@ tracing.workspace = true
 bytes.workspace = true
 hex.workspace = true
 rustc-hash.workspace = true
+crossbeam.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros", "io-util", "net"] }
 tokio-util.workspace = true
 

@@ -490,6 +490,12 @@ impl L1ProofSender {
 
     /// Returns the prover type whose proof is invalid based on the RPC error data
     /// (custom error selector), or `None` if the data doesn't indicate an invalid proof.
+    ///
+    /// These three selectors cover all proof-related errors:
+    /// `_verifyBatchInternal` wraps each verifier call in try/catch, so any
+    /// verifier failure becomes one of these. Other reverts (BatchNotSequential,
+    /// etc.) are ordering issues where deleting proofs would be wrong.
+    /// Aligned mode uses `AlignedProofVerificationFailed` instead (see l1_proof_verifier).
     fn invalid_proof_type_from_data(data: &str) -> Option<ProverType> {
         if data.starts_with(INVALID_TDX_PROOF_SELECTOR) {
             Some(ProverType::TDX)
@@ -503,7 +509,8 @@ impl L1ProofSender {
     }
 
     /// If the error data contains an invalid proof custom error selector,
-    /// deletes the offending proof from the store.
+    /// deletes the offending proof from the store. Unrecognized errors are
+    /// left alone — see `invalid_proof_type_from_data`.
     async fn try_delete_invalid_proof(
         &self,
         data: &str,
