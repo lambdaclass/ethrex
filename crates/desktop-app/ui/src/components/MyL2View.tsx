@@ -46,7 +46,7 @@ export interface L2Config {
   icon: string
   chainId: number
   description: string
-  status: 'running' | 'stopped' | 'starting' | 'created' | 'settingup' | 'error'
+  status: 'running' | 'stopped' | 'starting' | 'created' | 'settingup' | 'error' | 'unreachable'
   nativeToken: string
   l1Rpc: string
   rpcPort: number
