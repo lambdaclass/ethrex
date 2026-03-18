@@ -1152,6 +1152,7 @@ router.get("/:id/status", async (req, res) => {
 
     let containers = [];
     let host = null;
+    let sshFailed = false;
 
     if (isHostRemote) {
       // Remote deployment via hosts table: query containers via SSH
@@ -1176,6 +1177,7 @@ router.get("/:id/status", async (req, res) => {
           }
         } catch (e) {
           console.error(`[status] Remote SSH failed for ${deployment.id}: ${e.message}`);
+          sshFailed = true;
         } finally {
           if (conn) try { conn.end(); } catch {}
         }
@@ -1215,10 +1217,15 @@ router.get("/:id/status", async (req, res) => {
             } catch {}
           } catch (e) {
             console.error(`[status] AI-deploy SSH failed for ${deployment.id}: ${e.message}`);
+            sshFailed = true;
           } finally {
             if (conn) try { conn.end(); } catch {}
           }
+        } else {
+          sshFailed = true;
         }
+      } else {
+        sshFailed = true;
       }
     } else {
       // Local deployment: query containers via local Docker
@@ -1235,8 +1242,13 @@ router.get("/:id/status", async (req, res) => {
     const isRemote = isHostRemote || isAIDeployRemote;
     const rpcHost = (isRemote && host?.hostname) ? host.hostname : "127.0.0.1";
 
+    // If remote and SSH failed with no containers, report unreachable instead of stale DB phase
+    const effectivePhase = (isRemote && sshFailed && containers.length === 0 && deployment.phase === 'running')
+      ? 'unreachable'
+      : deployment.phase;
+
     res.json({
-      phase: deployment.phase,
+      phase: effectivePhase,
       containers,
       endpoints: {
         l1Rpc: (rpcHost && deployment.l1_port) ? `http://${rpcHost}:${deployment.l1_port}` : null,

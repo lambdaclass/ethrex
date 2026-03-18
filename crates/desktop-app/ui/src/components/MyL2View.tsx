@@ -161,6 +161,7 @@ const statusDot = (status: string) => {
   if (status === 'running') return 'bg-[var(--color-success)]'
   if (status === 'starting' || status === 'settingup' || status === 'deploying') return 'bg-[var(--color-warning)] animate-pulse'
   if (status === 'created' || status === 'configured') return 'bg-[var(--color-accent)]'
+  if (status === 'unreachable') return 'bg-[var(--color-warning)]'
   if (status === 'error' || status === 'failed') return 'bg-[var(--color-error)]'
   return 'bg-[var(--color-text-secondary)]'
 }
@@ -171,6 +172,7 @@ const statusLabel = (status: string, lang: string) => {
     stopped: { ko: '중지됨', en: 'Stopped' },
     starting: { ko: '배포 중', en: 'Deploying' },
     created: { ko: '설정됨', en: 'Configured' },
+    unreachable: { ko: '연결 불가', en: 'Unreachable' },
     error: { ko: '오류', en: 'Error' },
   }
   const l = lang === 'ko' ? 'ko' : 'en'
@@ -227,6 +229,10 @@ export default function MyL2View() {
           const containers = await invoke<{ name: string; service: string; state: string; status: string; ports: string; image: string; id: string }[]>(
             'get_docker_containers', { id: l2.id }
           )
+          // Remote deployment unreachable (SSH failed)
+          if (containers.length === 1 && containers[0].service === '__unreachable__') {
+            return { ...l2, status: 'unreachable' as const, phase: 'unreachable', description: `${l2.programSlug} · unreachable`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const, errorMessage: lang === 'ko' ? '원격 서버 연결 불가' : 'Remote server unreachable' }
+          }
           if (containers.length === 0) {
             if (l2.status === 'running' || l2.status === 'error' || (l2.status === 'created' && l2.dockerProject) || l2.everRunning) {
               return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
@@ -354,7 +360,7 @@ export default function MyL2View() {
     const matchesStatus = statusFilter === 'all' ||
       (statusFilter === 'running' && l2.status === 'running') ||
       (statusFilter === 'stopped' && (l2.status === 'stopped' || l2.status === 'created')) ||
-      (statusFilter === 'error' && (l2.status === 'error'))
+      (statusFilter === 'error' && (l2.status === 'error' || l2.status === 'unreachable'))
     return matchesSearch && matchesStatus
   })
 

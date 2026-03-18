@@ -63,6 +63,8 @@ pub struct ContainerInfo {
 #[derive(Debug, Deserialize)]
 struct DeploymentStatus {
     containers: Vec<ContainerInfo>,
+    #[serde(default)]
+    phase: String,
 }
 
 fn db_path() -> PathBuf {
@@ -235,6 +237,17 @@ impl DeploymentProxy {
             .await
             .map_err(|e| format!("Failed to parse status: {e}"))?;
 
+        if status.phase == "unreachable" {
+            return Ok(vec![ContainerInfo {
+                name: String::new(),
+                service: "__unreachable__".into(),
+                state: "unreachable".into(),
+                status: "SSH connection failed".into(),
+                ports: String::new(),
+                image: String::new(),
+                id: String::new(),
+            }]);
+        }
         Ok(status.containers)
     }
 
