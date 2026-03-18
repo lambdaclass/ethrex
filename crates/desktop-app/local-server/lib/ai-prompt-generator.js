@@ -774,22 +774,30 @@ else
   echo "VPC: $VPC_ID"
 
   # Find a public subnet (with IGW route, not NAT)
-  # Step 1: Find route table with IGW default route
-  IGW_RT=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \\
-    --query "RouteTables[*].[RouteTableId,Routes[?GatewayId && GatewayId!=\`local\`].GatewayId|[0],Associations[*].SubnetId]" \\
-    --output json --region ${region} 2>/dev/null | \\
-    python3 -c "
-import json,sys
-rts = json.load(sys.stdin)
-for rt_id, gw, subnets in rts:
-    if gw and gw.startswith('igw-') and subnets:
-        for s in subnets:
-            if s: print(s); break
-        break
-" 2>/dev/null)
-  SUBNET_ID=\${IGW_RT:-""}
-  if [ -z "$SUBNET_ID" ]; then
-    # Fallback: use default VPC's first subnet (default VPCs have public subnets)
+  # Step 1: Find subnet explicitly associated with an IGW route table
+  SUBNET_ID=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \\
+    --query "RouteTables[?Routes[?GatewayId && starts_with(GatewayId,'igw-')]].Associations[].SubnetId | [0]" \\
+    --output text --region ${region} 2>/dev/null)
+
+  # Step 2: If no explicit subnet, check if main RT has IGW (subnets without explicit RT inherit main)
+  if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
+    MAIN_HAS_IGW=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" "Name=association.main,Values=true" \\
+      --query "RouteTables[?Routes[?GatewayId && starts_with(GatewayId,'igw-')]].RouteTableId | [0]" \\
+      --output text --region ${region} 2>/dev/null)
+    if [ -n "$MAIN_HAS_IGW" ] && [ "$MAIN_HAS_IGW" != "None" ]; then
+      # Find subnets NOT explicitly associated with any RT (they inherit main with IGW)
+      EXPLICIT_SUBNETS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \\
+        --query "RouteTables[*].Associations[?SubnetId].SubnetId[]" --output text --region ${region} 2>/dev/null)
+      SUBNET_ID=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \\
+        --query "Subnets[*].SubnetId" --output text --region ${region} 2>/dev/null | \\
+        tr '\\t' '\\n' | while read s; do
+          echo "$EXPLICIT_SUBNETS" | tr '\\t' '\\n' | grep -q "^$s$" || { echo "$s"; break; }
+        done)
+    fi
+  fi
+
+  # Step 3: Last fallback — default subnet (may not be public if VPC is customized)
+  if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
     SUBNET_ID=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \\
       --query "Subnets[0].SubnetId" --output text --region ${region} 2>/dev/null)
   fi
