@@ -197,27 +197,27 @@ impl L1ProofCoordinator {
         debug!(%prover_type, "Input request received from prover");
 
         // Find the oldest pending request that still needs this proof type.
-        let input = self
-            .pending
-            .iter()
-            .filter(|(bn, req)| {
-                // Only consider blocks that request this proof type (or have
-                // an empty list, meaning any type is accepted).
-                let type_requested = req.requested_proof_types.is_empty()
-                    || req.requested_proof_types.contains(&(prover_type as u64));
-                if !type_requested {
-                    return false;
-                }
-                // Skip blocks that already have a stored proof of this type.
-                !self
-                    .store
-                    .get_execution_proof(**bn, &req.new_payload_request_root, prover_type as u64)
-                    .ok()
-                    .flatten()
-                    .is_some()
-            })
-            .min_by_key(|(bn, _)| **bn)
-            .map(|(bn, req)| (*bn, req.clone()));
+        // Sort by block number and return the first match to avoid unnecessary DB lookups.
+        let mut candidates: Vec<_> = self.pending.iter().collect();
+        candidates.sort_by_key(|(bn, _)| **bn);
+
+        let input = candidates.into_iter().find_map(|(&bn, req)| {
+            let type_requested = req.requested_proof_types.is_empty()
+                || req.requested_proof_types.contains(&(prover_type as u64));
+            if !type_requested {
+                return None;
+            }
+            let already_proved = self
+                .store
+                .get_execution_proof(bn, &req.new_payload_request_root, prover_type as u64)
+                .ok()
+                .flatten()
+                .is_some();
+            if already_proved {
+                return None;
+            }
+            Some((bn, req.clone()))
+        });
 
         let response: ProofData<ProgramInput> = match input {
             Some((block_number, request)) => {
