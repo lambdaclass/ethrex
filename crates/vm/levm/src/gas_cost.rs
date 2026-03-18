@@ -804,6 +804,7 @@ pub fn modexp(
     exponent_size: usize,
     modulus_size: usize,
     fork: Fork,
+    eip7883: bool,
 ) -> Result<u64, VMError> {
     let base_size: u64 = base_size
         .try_into()
@@ -821,7 +822,7 @@ pub fn modexp(
 
     let words = (max_length.checked_add(7).ok_or(OutOfGas)?) / 8;
 
-    let multiplication_complexity = if fork >= Fork::Osaka {
+    let multiplication_complexity = if eip7883 || fork >= Fork::Osaka {
         if max_length > 32 {
             2_u64
                 .checked_mul(words.checked_pow(2).ok_or(OutOfGas)?)
@@ -833,7 +834,7 @@ pub fn modexp(
         words.checked_pow(2).ok_or(OutOfGas)?
     };
 
-    let modexp_exponent_factor = if fork >= Fork::Osaka {
+    let modexp_exponent_factor = if eip7883 || fork >= Fork::Osaka {
         MODEXP_EXPONENT_FACTOR_OSAKA
     } else {
         MODEXP_EXPONENT_FACTOR
@@ -861,13 +862,13 @@ pub fn modexp(
         }
         .max(1);
 
-    let modexp_static_cost = if fork >= Fork::Osaka {
+    let modexp_static_cost = if eip7883 || fork >= Fork::Osaka {
         MODEXP_STATIC_COST_OSAKA
     } else {
         MODEXP_STATIC_COST
     };
 
-    let modexp_dynamic_quotient = if fork >= Fork::Osaka {
+    let modexp_dynamic_quotient = if eip7883 || fork >= Fork::Osaka {
         MODEXP_DYNAMIC_QUOTIENT_OSAKA
     } else {
         MODEXP_DYNAMIC_QUOTIENT

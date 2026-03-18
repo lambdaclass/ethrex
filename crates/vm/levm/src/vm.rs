@@ -591,6 +591,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.env.config.eip7883,
                 self.db.store.precompile_cache(),
                 self.crypto,
             );
@@ -648,6 +649,7 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        eip7883: bool,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
@@ -657,6 +659,7 @@ impl<'a> VM<'a> {
                 calldata,
                 gas_remaining,
                 fork,
+                eip7883,
                 cache,
                 crypto,
             ),

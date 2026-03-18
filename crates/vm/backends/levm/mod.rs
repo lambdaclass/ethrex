@@ -1372,7 +1372,12 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let mut config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        // Polygon: Bor activates EIP-7883 (MODEXP gas increase) at Lisovo fork,
+        // which doesn't map to our L1 fork enum. Force-enable it.
+        if matches!(vm_type, VMType::Polygon(_)) {
+            config.eip7883 = true;
+        }
         // EVM coinbase: used for COINBASE opcode and EIP-3651 warm set.
         // On Polygon, header.coinbase is always 0x0. Bor sets Context.Coinbase to the
         // block author (recovered from the header seal signature via ecrecover).

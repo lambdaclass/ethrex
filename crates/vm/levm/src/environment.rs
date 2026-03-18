@@ -58,6 +58,9 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    /// EIP-7883 MODEXP gas increase (activated at Osaka on L1, Lisovo on Polygon).
+    /// Polygon activates this at a different fork than L1, so we can't rely on the fork enum.
+    pub eip7883: bool,
 }
 
 impl EVMConfig {
@@ -65,6 +68,7 @@ impl EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            eip7883: fork >= Fork::Osaka,
         }
     }
 
@@ -128,6 +132,7 @@ impl Default for EVMConfig {
         EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
+            eip7883: fork >= Fork::Osaka,
         }
     }
 }
