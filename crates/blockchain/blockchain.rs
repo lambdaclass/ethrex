@@ -42,7 +42,6 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
-#[cfg(feature = "binary-trie")]
 pub mod binary_trie_db;
 pub mod constants;
 pub mod error;
