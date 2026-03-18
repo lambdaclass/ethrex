@@ -6,5 +6,4 @@ pub mod node;
 pub mod trie;
 
 pub use error::BinaryTrieError;
-pub use hash::{Blake3Hasher, TreeHasher};
 pub use trie::BinaryTrie;

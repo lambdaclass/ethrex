@@ -392,4 +392,55 @@ mod tests {
         // Query a different stem that is not in the trie.
         assert_eq!(trie.get(key(0xBB, 0)), None);
     }
+
+    #[test]
+    fn remove_deep_collapse() {
+        // 0x00... and 0x01... share 7 prefix bits (both start 0000000...),
+        // diverging at bit 7. Inserting both creates 7 nested InternalNodes.
+        // 0x80... diverges at bit 0.
+        // After removing 0x01..., the 7-level chain should collapse back to
+        // a single InternalNode with 0x00... left and 0x80... right.
+        let mut trie = BinaryTrie::new();
+        let k_00 = key(0x00, 0);
+        let k_01 = key(0x01, 0);
+        let k_80 = key(0x80, 0);
+
+        trie.insert(k_00, val(1)).unwrap();
+        trie.insert(k_01, val(2)).unwrap();
+        trie.insert(k_80, val(3)).unwrap();
+
+        trie.remove(k_01);
+
+        // 0x00 and 0x80 should still be present.
+        assert_eq!(trie.get(k_00), Some(val(1)));
+        assert_eq!(trie.get(k_80), Some(val(3)));
+        assert_eq!(trie.get(k_01), None);
+
+        // Root hash should match a fresh trie with only 0x00 and 0x80.
+        let mut fresh = BinaryTrie::new();
+        fresh.insert(k_00, val(1)).unwrap();
+        fresh.insert(k_80, val(3)).unwrap();
+
+        assert_eq!(
+            crate::merkle::merkelize(trie.root.as_deref()),
+            crate::merkle::merkelize(fresh.root.as_deref())
+        );
+    }
+
+    #[test]
+    fn remove_preserves_sibling_sub_index() {
+        // Insert two values on the same stem at different sub-indices.
+        // Remove one; the other should remain and the StemNode should stay.
+        let mut trie = BinaryTrie::new();
+        let k0 = key(0xAA, 0);
+        let k1 = key(0xAA, 1);
+        trie.insert(k0, val(10)).unwrap();
+        trie.insert(k1, val(20)).unwrap();
+
+        let removed = trie.remove(k0);
+        assert_eq!(removed, Some(val(10)));
+        assert_eq!(trie.get(k0), None);
+        assert_eq!(trie.get(k1), Some(val(20)));
+        assert!(matches!(trie.root.as_deref(), Some(Node::Stem(_))));
+    }
 }
