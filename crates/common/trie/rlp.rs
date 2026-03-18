@@ -15,6 +15,14 @@ use ethrex_crypto::NativeCrypto;
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
 use crate::{Nibbles, NodeHash};
 
+// SAFETY: `NativeCrypto` is used here instead of a `&dyn Crypto` parameter because
+// `RLPEncode` is a fixed trait signature that cannot accept extra parameters.
+// This is safe in the `commit()` path: `NodeRef::commit()` recursively populates
+// child `OnceLock` hashes before calling `encode()`, so `compute_hash_ref` returns
+// cached values without invoking keccak. If `encode()` were called on uncommitted
+// nodes (e.g. from `put_batch_no_alloc`), `NativeCrypto` would be used and the
+// result stored in the `OnceLock` — but this only happens in native storage paths
+// where `NativeCrypto` is the correct provider.
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let value_len = <[u8] as RLPEncode>::length(&self.value);
