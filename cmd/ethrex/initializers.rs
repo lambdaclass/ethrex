@@ -186,8 +186,8 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    #[cfg(feature = "eip-8025")] proof_request_queue: Option<
-        ethrex_blockchain::proof_engine::coordinator::ProofRequestQueue,
+    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
+        ethrex_blockchain::proof_engine::coordinator::CoordinatorHandle,
     >,
 ) {
     if !is_memory_datadir(datadir) {
@@ -233,7 +233,7 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         #[cfg(feature = "eip-8025")]
-        proof_request_queue,
+        proof_coordinator,
     );
 
     tracker.spawn(rpc_api);
@@ -523,7 +523,7 @@ pub async fn init_l1(
 
     // Initialize EIP-8025 proof coordinator when the feature is enabled.
     #[cfg(feature = "eip-8025")]
-    let proof_request_queue = {
+    let proof_coordinator = {
         use ethrex_blockchain::proof_engine::{
             config::ProofEngineConfig, coordinator::start_proof_coordinator,
         };
@@ -533,9 +533,9 @@ pub async fn init_l1(
             coordinator_port: opts.proof_coordinator_port,
         };
         match start_proof_coordinator(store.clone(), proof_config).await {
-            Ok(pending_map) => {
+            Ok(handle) => {
                 info!("EIP-8025 proof coordinator started");
-                Some(pending_map)
+                Some(handle)
             }
             Err(e) => {
                 warn!(
@@ -558,7 +558,7 @@ pub async fn init_l1(
         tracker.clone(),
         log_filter_handler,
         #[cfg(feature = "eip-8025")]
-        proof_request_queue,
+        proof_coordinator,
     )
     .await;
 

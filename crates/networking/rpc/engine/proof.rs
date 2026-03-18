@@ -6,7 +6,7 @@
 //! - `engine_verifyNewPayloadRequestHeaderV1`: Verify a headerized new-payload request.
 
 use bytes::Bytes;
-use ethrex_blockchain::proof_engine::coordinator::{PendingInput, ProofRequestQueue};
+use ethrex_blockchain::proof_engine::coordinator::{CoordCastMsg, CoordinatorHandle, ProofRequest};
 use ethrex_blockchain::proof_engine::types::{
     ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS,
     NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1, ProofAttributesV1, ProofGenId,
@@ -19,7 +19,7 @@ use ethrex_guest_program::input::ProgramInput;
 use serde_json::Value;
 use ssz_merkle::HashTreeRoot;
 use ssz_types::SszList;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::ExecutionPayload;
@@ -36,10 +36,10 @@ fn make_proof_gen_id(block_number: u64, root: &H256) -> ProofGenId {
     id
 }
 
-/// Extract the pending input map from context, returning an RPC error if unavailable.
-fn get_pending_inputs(context: &RpcApiContext) -> Result<&ProofRequestQueue, RpcErr> {
+/// Get the coordinator handle from context, returning an RPC error if unavailable.
+fn get_coordinator(context: &RpcApiContext) -> Result<&CoordinatorHandle, RpcErr> {
     context
-        .proof_request_queue
+        .proof_coordinator
         .as_ref()
         .ok_or(RpcErr::ProofGenerationUnavailable(
             "Proof coordinator not configured".to_owned(),
@@ -99,7 +99,7 @@ impl RpcHandler for RequestProofsV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let pending = get_pending_inputs(&context)?;
+        let mut coordinator = get_coordinator(&context)?.clone();
 
         let block_number = self.payload.block_number;
         info!(
@@ -155,30 +155,23 @@ impl RpcHandler for RequestProofsV1 {
         // Generate a ProofGenId from (block_number, root).
         let proof_gen_id = make_proof_gen_id(block_number, &new_payload_request_root);
 
-        // Insert into the shared pending map (accessible by the coordinator's accept loop).
-        match pending.lock() {
-            Ok(mut map) => {
-                map.insert(
-                    block_number,
-                    PendingInput {
-                        proof_gen_id,
-                        new_payload_request_root,
-                        program_input,
-                        requested_proof_types: self.proof_attributes.proof_types.clone(),
-                    },
-                );
-                debug!(
-                    block_number,
-                    "Input added to pending map for proof generation"
-                );
-            }
-            Err(e) => {
-                error!("Failed to lock pending map: {e}");
-                return Err(RpcErr::ProofGenerationUnavailable(
-                    "Coordinator unavailable".to_owned(),
-                ));
-            }
-        }
+        // Send the proof request to the coordinator via GenServer message.
+        coordinator
+            .cast(CoordCastMsg::AddRequest {
+                block_number,
+                request: Box::new(ProofRequest {
+                    proof_gen_id,
+                    new_payload_request_root,
+                    program_input,
+                    requested_proof_types: self.proof_attributes.proof_types.clone(),
+                }),
+            })
+            .await
+            .map_err(|e| {
+                RpcErr::ProofGenerationUnavailable(format!("Coordinator unavailable: {e}"))
+            })?;
+
+        debug!(block_number, "Proof request sent to coordinator");
 
         // Return ProofGenId as hex-encoded DATA (8 bytes).
         let hex_id = format!("0x{}", hex::encode(proof_gen_id));

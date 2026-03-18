@@ -211,10 +211,9 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
-    /// EIP-8025 shared proof request queue for proof generation.
+    /// EIP-8025 proof coordinator handle for sending proof requests.
     #[cfg(feature = "eip-8025")]
-    pub proof_request_queue:
-        Option<ethrex_blockchain::proof_engine::coordinator::ProofRequestQueue>,
+    pub proof_coordinator: Option<ethrex_blockchain::proof_engine::coordinator::CoordinatorHandle>,
 }
 
 impl std::fmt::Debug for RpcApiContext {
@@ -227,11 +226,8 @@ impl std::fmt::Debug for RpcApiContext {
             .field("gas_ceil", &self.gas_ceil);
         #[cfg(feature = "eip-8025")]
         s.field(
-            "proof_request_queue",
-            &self
-                .proof_request_queue
-                .as_ref()
-                .map(|_| "ProofRequestQueue"),
+            "proof_coordinator",
+            &self.proof_coordinator.as_ref().map(|_| "CoordinatorHandle"),
         );
         s.finish()
     }
@@ -502,8 +498,8 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
-    #[cfg(feature = "eip-8025")] proof_request_queue: Option<
-        ethrex_blockchain::proof_engine::coordinator::ProofRequestQueue,
+    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
+        ethrex_blockchain::proof_engine::coordinator::CoordinatorHandle,
     >,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
@@ -528,7 +524,7 @@ pub async fn start_api(
         gas_ceil,
         block_worker_channel,
         #[cfg(feature = "eip-8025")]
-        proof_request_queue,
+        proof_coordinator,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

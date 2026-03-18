@@ -7,6 +7,12 @@
 //! - Accepts TCP connections from prover workers
 //! - Serves `ProgramInput` for pending blocks
 //! - Receives completed proofs, stores them, and delivers via callback
+//!
+//! # Future direction
+//!
+//! Currently the coordinator passively waits for provers to connect and request
+//! work. A future refactor may invert this so the coordinator actively pushes
+//! requests to registered provers instead.
 
 use bytes::Bytes;
 use ethrex_common::H256;
@@ -15,10 +21,11 @@ use ethrex_l2_common::prover::{BatchProof, ProofFormat};
 use ethrex_prover::ProofData;
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
+use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -27,6 +34,9 @@ use tracing::{debug, error, info, warn};
 
 use super::config::ProofEngineConfig;
 use super::types::{ExecutionProofV1, GeneratedProof, MAX_PROOF_SIZE, ProofGenId, PublicInputV1};
+
+/// How long to wait for a prover connection before re-checking the message queue.
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Error type for L1 proof coordinator operations.
 #[derive(Debug, thiserror::Error)]
@@ -43,9 +53,10 @@ pub enum L1CoordinatorError {
     Internal(String),
 }
 
-/// Pending proof generation input.
+/// A proof generation request created by `engine_requestProofsV1` and
+/// consumed by prover workers via the coordinator.
 #[derive(Clone)]
-pub struct PendingInput {
+pub struct ProofRequest {
     pub proof_gen_id: ProofGenId,
     pub new_payload_request_root: H256,
     pub program_input: ProgramInput,
@@ -56,8 +67,13 @@ pub struct PendingInput {
 /// Cast messages for the L1ProofCoordinator.
 #[derive(Clone)]
 pub enum CoordCastMsg {
-    /// Start accepting TCP connections.
-    Listen { listener: Arc<TcpListener> },
+    /// Try to accept the next prover connection, then re-enqueue via `send_after`.
+    AcceptNext,
+    /// Enqueue a new proof request from the RPC handler.
+    AddRequest {
+        block_number: u64,
+        request: Box<ProofRequest>,
+    },
 }
 
 /// Output message (unused — coordinator runs indefinitely).
@@ -66,21 +82,31 @@ pub enum CoordOutMsg {
     Done,
 }
 
-/// Shared pending input map, accessible from both the coordinator accept loop
-/// and the RPC handlers (which insert new inputs).
-pub type ProofRequestQueue = Arc<std::sync::Mutex<HashMap<u64, PendingInput>>>;
+/// Handle to send messages to the L1ProofCoordinator GenServer.
+pub type CoordinatorHandle = GenServerHandle<L1ProofCoordinator>;
 
 /// L1 Proof Coordinator GenServer.
 ///
-/// Manages a map of pending proof inputs keyed by block number, accepts
+/// Manages a map of pending proof requests keyed by block number, accepts
 /// prover TCP connections, and dispatches work using the `ProofData<ProgramInput>`
 /// protocol.
+///
+/// Instead of blocking in an accept loop, the coordinator uses a self-rescheduling
+/// `AcceptNext` message: each iteration attempts to accept a connection (with a
+/// short timeout), handles it, then enqueues the next `AcceptNext` via `send_after`.
+/// This allows `AddRequest` messages from the RPC handlers to be interleaved
+/// between accept iterations.
+// TODO: For production, consider persisting pending requests in the DB instead
+// of holding them in memory. Currently if the node restarts, pending requests
+// are lost.
 #[derive(Clone)]
 pub struct L1ProofCoordinator {
     store: Store,
     config: ProofEngineConfig,
-    /// Pending inputs awaiting proof generation: block_number → input.
-    pending: ProofRequestQueue,
+    /// TCP listener for prover connections.
+    listener: Option<Arc<TcpListener>>,
+    /// Pending requests awaiting proof generation: block_number → request.
+    pending: HashMap<u64, ProofRequest>,
     /// HTTP client for callback delivery.
     http_client: reqwest::Client,
 }
@@ -91,37 +117,75 @@ impl L1ProofCoordinator {
         Self {
             store,
             config,
-            pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            listener: None,
+            pending: HashMap::new(),
             http_client: reqwest::Client::new(),
         }
     }
 
-    /// Get a reference to the shared pending input map.
-    /// This allows the RPC handlers to insert new inputs directly
-    /// without going through the GenServer (which is blocked in the accept loop).
-    pub fn pending_map(&self) -> ProofRequestQueue {
-        Arc::clone(&self.pending)
+    /// Try to accept one prover connection with a short timeout.
+    /// Returns `None` if no connection arrived within the timeout.
+    async fn try_accept(&self) -> Option<(TcpStream, SocketAddr)> {
+        let listener = self.listener.as_ref()?;
+        match tokio::time::timeout(ACCEPT_POLL_INTERVAL, listener.accept()).await {
+            Ok(Ok(conn)) => Some(conn),
+            Ok(Err(e)) => {
+                error!("Failed to accept prover connection: {e}");
+                None
+            }
+            Err(_) => None, // Timeout — no connection pending.
+        }
     }
 
-    /// Accept loop — runs forever accepting TCP connections from provers.
-    async fn handle_listens(&self, listener: Arc<TcpListener>) {
-        let addr = self.config.coordinator_addr.clone();
-        let port = self.config.coordinator_port;
-        info!("L1 ProofCoordinator TCP server listening on {addr}:{port}");
+    /// Handle one accept iteration: check for a connection, handle it,
+    /// then reschedule.
+    async fn handle_accept_next(&mut self, handle: &GenServerHandle<Self>) {
+        if let Some((stream, peer_addr)) = self.try_accept().await {
+            debug!("Prover connected from {peer_addr}");
+            self.handle_connection(stream).await;
+        }
 
-        loop {
-            match listener.accept().await {
-                Ok((stream, peer_addr)) => {
-                    debug!("Prover connected from {peer_addr}");
-                    let _ = L1ConnectionHandler::spawn(self.clone(), stream, peer_addr)
+        // Reschedule: the next AcceptNext will be processed after any
+        // AddRequest messages already in the queue.
+        send_after(Duration::ZERO, handle.clone(), CoordCastMsg::AcceptNext);
+    }
+
+    /// Handle a single prover connection synchronously.
+    async fn handle_connection(&mut self, mut stream: TcpStream) {
+        let mut buffer = Vec::new();
+        if let Err(e) = stream.read_to_end(&mut buffer).await {
+            error!("Failed to read from prover: {e}");
+            return;
+        }
+
+        let msg: Result<ProofData<ProgramInput>, _> = serde_json::from_slice(&buffer);
+        match msg {
+            Ok(proof_data) => match proof_data {
+                ProofData::BatchRequest { .. } => {
+                    if let Err(e) = self.handle_request(&mut stream).await {
+                        error!("Failed to handle batch request: {e}");
+                    }
+                }
+                ProofData::ProofSubmit {
+                    batch_number,
+                    batch_proof,
+                } => {
+                    if let Err(e) = self
+                        .handle_submit(&mut stream, batch_number, &batch_proof)
                         .await
-                        .inspect_err(|err| {
-                            error!("Error starting L1ConnectionHandler: {err}");
-                        });
+                    {
+                        error!("Failed to handle proof submit: {e}");
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to accept prover connection: {e}");
+                other => {
+                    warn!(
+                        "Unexpected ProofData variant from prover: {}",
+                        std::any::type_name_of_val(&other)
+                    );
                 }
+            },
+            Err(e) => {
+                warn!("Failed to parse prover message as ProofData: {e}");
             }
         }
     }
@@ -130,24 +194,19 @@ impl L1ProofCoordinator {
     async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), L1CoordinatorError> {
         debug!("Witness request received from prover");
 
-        // Find the oldest pending input.
-        let input = {
-            let pending = self
-                .pending
-                .lock()
-                .map_err(|_| L1CoordinatorError::Internal("Pending lock poisoned".to_string()))?;
-            pending
-                .iter()
-                .min_by_key(|(bn, _)| **bn)
-                .map(|(bn, input)| (*bn, input.clone()))
-        };
+        // Find the oldest pending request.
+        let input = self
+            .pending
+            .iter()
+            .min_by_key(|(bn, _)| **bn)
+            .map(|(bn, req)| (*bn, req.clone()));
 
         let response: ProofData<ProgramInput> = match input {
-            Some((block_number, pending_input)) => {
+            Some((block_number, request)) => {
                 info!(block_number, "Sending witness to prover");
                 ProofData::batch_response(
                     block_number,
-                    pending_input.program_input,
+                    request.program_input,
                     ProofFormat::Compressed,
                 )
             }
@@ -163,7 +222,7 @@ impl L1ProofCoordinator {
 
     /// Handle a proof submission from a prover: store and ACK.
     async fn handle_submit(
-        &self,
+        &mut self,
         stream: &mut TcpStream,
         batch_number: u64,
         batch_proof: &BatchProof,
@@ -194,30 +253,24 @@ impl L1ProofCoordinator {
             return Ok(());
         }
 
-        // Look up the root, proof_gen_id and requested proof types from the pending map.
-        let (root, proof_type, proof_gen_id) = {
-            let pending = self
-                .pending
-                .lock()
-                .map_err(|_| L1CoordinatorError::Internal("Pending lock poisoned".to_string()))?;
-            match pending.get(&batch_number) {
-                Some(p) => {
-                    // Use the first requested proof type from the beacon's request.
-                    // Fall back to the prover's self-reported type if none was requested.
-                    let pt = p
-                        .requested_proof_types
-                        .first()
-                        .copied()
-                        .unwrap_or(prover_reported_type);
-                    (p.new_payload_request_root, pt, p.proof_gen_id)
-                }
-                None => {
-                    warn!(
-                        block_number = batch_number,
-                        "No pending input found for proof; using defaults"
-                    );
-                    (H256::default(), prover_reported_type, [0u8; 8])
-                }
+        // Look up the root, proof_gen_id and requested proof types from pending.
+        let (root, proof_type, proof_gen_id) = match self.pending.get(&batch_number) {
+            Some(p) => {
+                // Use the first requested proof type from the beacon's request.
+                // Fall back to the prover's self-reported type if none was requested.
+                let pt = p
+                    .requested_proof_types
+                    .first()
+                    .copied()
+                    .unwrap_or(prover_reported_type);
+                (p.new_payload_request_root, pt, p.proof_gen_id)
+            }
+            None => {
+                warn!(
+                    block_number = batch_number,
+                    "No pending request found for proof; using defaults"
+                );
+                (H256::default(), prover_reported_type, [0u8; 8])
             }
         };
 
@@ -231,14 +284,7 @@ impl L1ProofCoordinator {
         );
 
         // Remove from pending.
-        match self.pending.lock() {
-            Ok(mut pending) => {
-                pending.remove(&batch_number);
-            }
-            Err(e) => {
-                error!(block_number = batch_number, error = %e, "Pending lock poisoned on remove");
-            }
-        }
+        self.pending.remove(&batch_number);
 
         // Deliver via callback if configured.
         if let Some(callback_url) = &self.config.callback_url {
@@ -297,131 +343,21 @@ impl GenServer for L1ProofCoordinator {
     async fn handle_cast(
         &mut self,
         message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
+        handle: &GenServerHandle<Self>,
     ) -> CastResponse {
         match message {
-            CoordCastMsg::Listen { listener } => {
-                self.handle_listens(listener).await;
+            CoordCastMsg::AcceptNext => {
+                self.handle_accept_next(handle).await;
+            }
+            CoordCastMsg::AddRequest {
+                block_number,
+                request,
+            } => {
+                self.pending.insert(block_number, *request);
+                debug!(block_number, "Proof request added to queue");
             }
         }
-        CastResponse::Stop
-    }
-}
-
-// ── L1ConnectionHandler ──────────────────────────────────────────────
-
-/// Per-connection handler for prover TCP connections.
-#[derive(Clone)]
-struct L1ConnectionHandler {
-    coordinator: L1ProofCoordinator,
-}
-
-/// Cast messages for the connection handler.
-#[derive(Clone)]
-enum ConnCastMsg {
-    Connection {
-        stream: Arc<TcpStream>,
-        addr: SocketAddr,
-    },
-}
-
-/// Output message (unused — required by GenServer trait).
-#[derive(Clone, PartialEq)]
-#[allow(dead_code)]
-enum ConnOutMsg {
-    Done,
-}
-
-impl L1ConnectionHandler {
-    fn new(coordinator: L1ProofCoordinator) -> Self {
-        Self { coordinator }
-    }
-
-    async fn spawn(
-        coordinator: L1ProofCoordinator,
-        stream: TcpStream,
-        addr: SocketAddr,
-    ) -> Result<(), L1CoordinatorError> {
-        let mut handler = Self::new(coordinator).start();
-        handler
-            .cast(ConnCastMsg::Connection {
-                stream: Arc::new(stream),
-                addr,
-            })
-            .await
-            .map_err(|e| L1CoordinatorError::Internal(e.to_string()))
-    }
-
-    async fn handle_connection(
-        &mut self,
-        stream: Arc<TcpStream>,
-    ) -> Result<(), L1CoordinatorError> {
-        let mut buffer = Vec::new();
-
-        if let Some(mut stream) = Arc::into_inner(stream) {
-            stream.read_to_end(&mut buffer).await?;
-
-            // Parse as ProofData<ProgramInput>.
-            let msg: Result<ProofData<ProgramInput>, _> = serde_json::from_slice(&buffer);
-            match msg {
-                Ok(proof_data) => match proof_data {
-                    ProofData::BatchRequest { .. } => {
-                        if let Err(e) = self.coordinator.handle_request(&mut stream).await {
-                            error!("Failed to handle batch request: {e}");
-                        }
-                    }
-                    ProofData::ProofSubmit {
-                        batch_number,
-                        batch_proof,
-                    } => {
-                        if let Err(e) = self
-                            .coordinator
-                            .handle_submit(&mut stream, batch_number, &batch_proof)
-                            .await
-                        {
-                            error!("Failed to handle proof submit: {e}");
-                        }
-                    }
-                    other => {
-                        warn!(
-                            "Unexpected ProofData variant from prover: {}",
-                            std::any::type_name_of_val(&other)
-                        );
-                    }
-                },
-                Err(e) => {
-                    warn!("Failed to parse prover message as ProofData: {e}");
-                }
-            }
-        } else {
-            error!("Unable to use TCP stream");
-        }
-
-        Ok(())
-    }
-}
-
-impl GenServer for L1ConnectionHandler {
-    type CallMsg = Unused;
-    type CastMsg = ConnCastMsg;
-    type OutMsg = ConnOutMsg;
-    type Error = L1CoordinatorError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            ConnCastMsg::Connection { stream, addr } => {
-                if let Err(err) = self.handle_connection(stream).await {
-                    error!("Error handling prover connection from {addr}: {err}");
-                } else {
-                    debug!("Prover connection from {addr} handled successfully");
-                }
-            }
-        }
-        CastResponse::Stop
+        CastResponse::NoReply
     }
 }
 
@@ -435,32 +371,30 @@ async fn send_proof_data<I: serde::Serialize>(
     Ok(())
 }
 
-/// Start the proof coordinator and return the shared pending input map.
+/// Start the proof coordinator and return a handle for sending messages to it.
 ///
 /// Call this during node startup when the `eip-8025` feature is enabled.
-/// The returned `ProofRequestQueue` is shared with the RPC handlers so they
-/// can insert new proof generation inputs directly.
+/// The returned `CoordinatorHandle` is used by RPC handlers to enqueue
+/// new proof requests via `CoordCastMsg::AddRequest`.
 pub async fn start_proof_coordinator(
     store: Store,
     config: ProofEngineConfig,
-) -> Result<ProofRequestQueue, L1CoordinatorError> {
-    let coordinator = L1ProofCoordinator::new(store, config.clone());
-
-    // Get the shared pending map before moving the coordinator into the GenServer.
-    let pending_map = coordinator.pending_map();
-
-    let mut coord_handle = coordinator.start();
-
-    // Bind the TCP listener.
+) -> Result<CoordinatorHandle, L1CoordinatorError> {
+    // Bind the TCP listener before starting the GenServer.
     let bind_addr = format!("{}:{}", config.coordinator_addr, config.coordinator_port);
     let listener = Arc::new(TcpListener::bind(&bind_addr).await?);
     info!("L1 ProofCoordinator bound to {bind_addr}");
 
-    // Tell the coordinator to start accepting connections.
+    let mut coordinator = L1ProofCoordinator::new(store, config);
+    coordinator.listener = Some(listener);
+
+    let mut coord_handle = coordinator.start();
+
+    // Kick off the accept cycle.
     coord_handle
-        .cast(CoordCastMsg::Listen { listener })
+        .cast(CoordCastMsg::AcceptNext)
         .await
         .map_err(|e| L1CoordinatorError::Internal(e.to_string()))?;
 
-    Ok(pending_map)
+    Ok(coord_handle)
 }
