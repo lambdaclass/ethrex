@@ -32,6 +32,10 @@ const db = require("../db/db");
 const path = require("path");
 const fs = require("fs");
 
+// GUI apps (Tauri .app) have limited PATH — add common CLI locations
+const GUI_EXTRA_PATHS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/local/share/google-cloud-sdk/bin", "/opt/homebrew/share/google-cloud-sdk/bin"];
+const GUI_ENV = { ...process.env, PATH: `${GUI_EXTRA_PATHS.join(":")}:${process.env.PATH}` };
+
 // ==========================================
 // CRUD (local — no auth required)
 // ==========================================
@@ -97,10 +101,7 @@ router.get("/ai-deploy/check-cli", async (req, res) => {
   const { execSync, execFileSync } = require("child_process");
   const result = { cloud, cli: { installed: false, name: "" }, auth: { authenticated: false, account: "" } };
 
-  // Add known SDK paths to PATH for detection
-  const extraPaths = ["/usr/local/share/google-cloud-sdk/bin", "/opt/homebrew/share/google-cloud-sdk/bin"];
-  const envPATH = `${extraPaths.join(":")}:${process.env.PATH}`;
-  const execOpts = { timeout: 5000, env: { ...process.env, PATH: envPATH } };
+  const execOpts = { timeout: 5000, env: GUI_ENV };
 
   if (cloud === "vultr") {
     result.cli.name = "vultr";
@@ -148,14 +149,14 @@ router.get("/ai-deploy/check-cli", async (req, res) => {
     } else if (cloud === "aws") {
       result.cli.name = "aws";
       try {
-        const ver = execSync("aws --version 2>&1", { timeout: 5000 }).toString().trim();
+        const ver = execSync("aws --version 2>&1", execOpts).toString().trim();
         result.cli.installed = true;
         result.cli.version = ver.split(" ")[0]?.replace("aws-cli/", "") || "unknown";
       } catch {
         return res.json(result);
       }
       try {
-        const identity = execSync("aws sts get-caller-identity --output json 2>/dev/null", { timeout: 5000 }).toString();
+        const identity = execSync("aws sts get-caller-identity --output json 2>/dev/null", execOpts).toString();
         const parsed = JSON.parse(identity);
         result.auth.authenticated = true;
         result.auth.account = parsed.Arn || parsed.Account || "";
@@ -163,7 +164,7 @@ router.get("/ai-deploy/check-cli", async (req, res) => {
       // List SSH key pairs
       try {
         const awsRegion = (req.query.region || "ap-northeast-2").replace(/[^a-z0-9-]/g, "");
-        const kpJson = execFileSync("aws", ["ec2", "describe-key-pairs", "--query", "KeyPairs[*].[KeyName,KeyPairId]", "--output", "json", "--region", awsRegion], { timeout: 5000, stdio: "pipe" }).toString();
+        const kpJson = execFileSync("aws", ["ec2", "describe-key-pairs", "--query", "KeyPairs[*].[KeyName,KeyPairId]", "--output", "json", "--region", awsRegion], { ...execOpts, stdio: "pipe" }).toString();
         result.keyPairs = JSON.parse(kpJson).map(([name, id]) => ({ name, id }));
       } catch {
         result.keyPairs = [];
@@ -214,7 +215,7 @@ router.post("/ai-deploy/monitor", async (req, res) => {
       "ec2", "describe-instances",
       "--filters", `Name=tag:Name,Values=${vmName}`, "Name=instance-state-name,Values=pending,running,stopping,stopped",
       "--query", jmesQuery, "--output", "json", "--region", awsRegion,
-    ], { timeout: 10000, stdio: "pipe" }).toString().trim();
+    ], { timeout: 10000, stdio: "pipe", env: GUI_ENV }).toString().trim();
     let parsed = JSON.parse(ec2Json);
     // Fallback: search all tokamak-* instances
     if (!parsed) {
@@ -222,7 +223,7 @@ router.post("/ai-deploy/monitor", async (req, res) => {
         "ec2", "describe-instances",
         "--filters", "Name=tag:Name,Values=tokamak-*", "Name=instance-state-name,Values=pending,running,stopping,stopped",
         "--query", jmesQuery, "--output", "json", "--region", awsRegion,
-      ], { timeout: 10000, stdio: "pipe" }).toString().trim();
+      ], { timeout: 10000, stdio: "pipe", env: GUI_ENV }).toString().trim();
       parsed = JSON.parse(ec2Json);
     }
     result.ec2 = parsed || { State: "not_found" };
@@ -346,7 +347,7 @@ router.post("/ai-deploy/create-key-pair", (req, res) => {
     const result = execFileSync("aws", [
       "ec2", "create-key-pair", "--key-name", keyName,
       "--query", "KeyMaterial", "--output", "text", "--region", awsRegion,
-    ], { timeout: 10000, stdio: "pipe" }).toString();
+    ], { timeout: 10000, stdio: "pipe", env: GUI_ENV }).toString();
     // Save the private key to ~/.ssh/
     const fs = require("fs");
     const path = require("path");

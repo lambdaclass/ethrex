@@ -656,4 +656,5 @@ module.exports = {
   stopTools,
   getToolsStatus,
   ETHREX_ROOT,
+  DOCKER_BIN,
 };

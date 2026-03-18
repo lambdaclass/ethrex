@@ -495,8 +495,8 @@ async function provision(deployment) {
     let hasL2Image = false;
     if (!forceRebuild) {
       existingImage = docker.findImage(programSlug);
-      try { execSync(`docker image inspect "${l1Tag}" --format "{{.Id}}"`, { stdio: "pipe" }); hasL1Image = true; } catch {}
-      try { execSync(`docker image inspect "${l2Tag}" --format "{{.Id}}"`, { stdio: "pipe" }); hasL2Image = true; } catch {}
+      try { execSync(`${docker.DOCKER_BIN} image inspect "${l1Tag}" --format "{{.Id}}"`, { stdio: "pipe" }); hasL1Image = true; } catch {}
+      try { execSync(`${docker.DOCKER_BIN} image inspect "${l2Tag}" --format "{{.Id}}"`, { stdio: "pipe" }); hasL2Image = true; } catch {}
     }
     if (!forceRebuild && hasL1Image && hasL2Image) {
       // Both project-specific images exist — skip build entirely
@@ -506,16 +506,16 @@ async function provision(deployment) {
       // Shared image exists but project tags missing — tag and skip build
       emit(id, "phase", { phase: "building", message: `Docker image found (${existingImage}) — skipping build`, imageFound: existingImage });
       emit(id, "log", { message: `Reusing existing image: ${existingImage}` });
-      try { execSync(`docker tag "${existingImage}" "${l1Tag}"`, { stdio: "pipe" }); } catch {}
-      try { execSync(`docker tag "${existingImage}" "${l2Tag}"`, { stdio: "pipe" }); } catch {}
+      try { execSync(`${docker.DOCKER_BIN} tag "${existingImage}" "${l1Tag}"`, { stdio: "pipe" }); } catch {}
+      try { execSync(`${docker.DOCKER_BIN} tag "${existingImage}" "${l2Tag}"`, { stdio: "pipe" }); } catch {}
       emit(id, "log", { message: `Tagged as ${l1Tag} and ${l2Tag}` });
     } else {
       emit(id, "phase", { phase: "building", message: forceRebuild
         ? "Force rebuilding Docker images..."
         : "Building Docker images... (this may take several minutes on first run)" });
       // Remove partial project-specific images to prevent "already exists" BuildKit error
-      try { execSync(`docker rmi "${l1Tag}" 2>/dev/null`, { stdio: "pipe" }); } catch {}
-      try { execSync(`docker rmi "${l2Tag}" 2>/dev/null`, { stdio: "pipe" }); } catch {}
+      try { execSync(`${docker.DOCKER_BIN} rmi "${l1Tag}" 2>/dev/null`, { stdio: "pipe" }); } catch {}
+      try { execSync(`${docker.DOCKER_BIN} rmi "${l2Tag}" 2>/dev/null`, { stdio: "pipe" }); } catch {}
       await trackedDockerRun(provisionInfo, () =>
         docker.buildImages(projectName, composeFile, { DOCKER_ETHREX_WORKDIR: "/usr/local/bin" }, (chunk) => {
           const lines = chunk.split("\n").filter(Boolean);
@@ -1174,9 +1174,9 @@ async function provisionTestnet(deployment) {
       // Tag existing image for this project's compose references
       const { execSync } = require("child_process");
       const l2Tag = `tokamak-appchain:${programSlug}-${projectName}`;
-      try { execSync(`docker tag "${existingImage}" "${l2Tag}"`, { stdio: "pipe" }); } catch {}
+      try { execSync(`${docker.DOCKER_BIN} tag "${existingImage}" "${l2Tag}"`, { stdio: "pipe" }); } catch {}
       if (existingImage !== sharedImage) {
-        try { execSync(`docker tag "${existingImage}" "${sharedImage}"`, { stdio: "pipe" }); } catch {}
+        try { execSync(`${docker.DOCKER_BIN} tag "${existingImage}" "${sharedImage}"`, { stdio: "pipe" }); } catch {}
       }
       emit(id, "log", { message: `Tagged as ${l2Tag}` });
     } else {
@@ -1961,7 +1961,7 @@ async function destroyDeployment(deployment) {
       console.log(`[destroy] ${remaining.length} container(s) still present after destroy, force removing...`);
       for (const c of remaining) {
         try {
-          require("child_process").execSync(`docker rm -f ${c.ID || c.Name}`, { stdio: "pipe" });
+          require("child_process").execSync(`${docker.DOCKER_BIN} rm -f ${c.ID || c.Name}`, { stdio: "pipe" });
         } catch { /* ignore */ }
       }
     }
