@@ -111,7 +111,7 @@ pub async fn start_api(
             gas_ceil,
             block_worker_channel,
             #[cfg(feature = "eip-8025")]
-            pending_proof_inputs: None,
+            proof_request_queue: None,
         },
         valid_delegation_addresses,
         sponsor_pk,

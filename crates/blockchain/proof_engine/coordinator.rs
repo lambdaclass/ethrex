@@ -68,7 +68,7 @@ pub enum CoordOutMsg {
 
 /// Shared pending input map, accessible from both the coordinator accept loop
 /// and the RPC handlers (which insert new inputs).
-pub type PendingInputMap = Arc<std::sync::Mutex<HashMap<u64, PendingInput>>>;
+pub type ProofRequestQueue = Arc<std::sync::Mutex<HashMap<u64, PendingInput>>>;
 
 /// L1 Proof Coordinator GenServer.
 ///
@@ -80,7 +80,7 @@ pub struct L1ProofCoordinator {
     store: Store,
     config: ProofEngineConfig,
     /// Pending inputs awaiting proof generation: block_number → input.
-    pending: PendingInputMap,
+    pending: ProofRequestQueue,
     /// HTTP client for callback delivery.
     http_client: reqwest::Client,
 }
@@ -99,7 +99,7 @@ impl L1ProofCoordinator {
     /// Get a reference to the shared pending input map.
     /// This allows the RPC handlers to insert new inputs directly
     /// without going through the GenServer (which is blocked in the accept loop).
-    pub fn pending_map(&self) -> PendingInputMap {
+    pub fn pending_map(&self) -> ProofRequestQueue {
         Arc::clone(&self.pending)
     }
 
@@ -438,12 +438,12 @@ async fn send_proof_data<I: serde::Serialize>(
 /// Start the proof coordinator and return the shared pending input map.
 ///
 /// Call this during node startup when the `eip-8025` feature is enabled.
-/// The returned `PendingInputMap` is shared with the RPC handlers so they
+/// The returned `ProofRequestQueue` is shared with the RPC handlers so they
 /// can insert new proof generation inputs directly.
 pub async fn start_proof_coordinator(
     store: Store,
     config: ProofEngineConfig,
-) -> Result<PendingInputMap, L1CoordinatorError> {
+) -> Result<ProofRequestQueue, L1CoordinatorError> {
     let coordinator = L1ProofCoordinator::new(store, config.clone());
 
     // Get the shared pending map before moving the coordinator into the GenServer.

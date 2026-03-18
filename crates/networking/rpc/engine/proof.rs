@@ -6,7 +6,7 @@
 //! - `engine_verifyNewPayloadRequestHeaderV1`: Verify a headerized new-payload request.
 
 use bytes::Bytes;
-use ethrex_blockchain::proof_engine::coordinator::{PendingInput, PendingInputMap};
+use ethrex_blockchain::proof_engine::coordinator::{PendingInput, ProofRequestQueue};
 use ethrex_blockchain::proof_engine::types::{
     ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS,
     NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1, ProofAttributesV1, ProofGenId,
@@ -37,9 +37,9 @@ fn make_proof_gen_id(block_number: u64, root: &H256) -> ProofGenId {
 }
 
 /// Extract the pending input map from context, returning an RPC error if unavailable.
-fn get_pending_inputs(context: &RpcApiContext) -> Result<&PendingInputMap, RpcErr> {
+fn get_pending_inputs(context: &RpcApiContext) -> Result<&ProofRequestQueue, RpcErr> {
     context
-        .pending_proof_inputs
+        .proof_request_queue
         .as_ref()
         .ok_or(RpcErr::ProofGenerationUnavailable(
             "Proof coordinator not configured".to_owned(),
