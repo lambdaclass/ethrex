@@ -54,6 +54,7 @@ rand = "0.8.5"
 # discv5
 aes-gcm = "0.10.3"
 hkdf = "0.12.4"
+lru.workspace = true
 
 rayon = "1.10.0"
 crossbeam.workspace = true

@@ -18,6 +18,7 @@ use crate::{
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
+use lru::LruCache;
 use rand::{Rng, RngCore, rngs::OsRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
@@ -30,6 +31,7 @@ use spawned_concurrency::{
 };
 use std::{
     net::{IpAddr, SocketAddr},
+    num::NonZero,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -56,6 +58,12 @@ const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Minimum interval between WHOAREYOU packets to the same IP address.
 /// Prevents amplification attacks where attackers spoof source IPs.
 const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
+/// Maximum number of entries in the per-IP WHOAREYOU rate limit cache.
+/// Bounded via LRU to prevent memory exhaustion from spoofed source IPs.
+const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
+/// Maximum number of WHOAREYOU packets sent globally per second.
+/// Caps total outgoing WHOAREYOU bandwidth regardless of source IP.
+const GLOBAL_WHOAREYOU_RATE_LIMIT: u32 = 100;
 /// Time window for collecting IP votes from PONG recipient_addr.
 /// Votes older than this are discarded. Reference: nim-eth uses 5 minutes.
 const IP_VOTE_WINDOW: Duration = Duration::from_secs(300);
@@ -117,7 +125,12 @@ pub struct DiscoveryServer {
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
     pub pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
     /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
-    pub whoareyou_rate_limit: FxHashMap<IpAddr, Instant>,
+    /// Bounded via LRU cache to prevent memory exhaustion from spoofed IPs.
+    pub whoareyou_rate_limit: LruCache<IpAddr, Instant>,
+    /// Global WHOAREYOU rate limit: count of packets sent in the current second.
+    pub whoareyou_global_count: u32,
+    /// Start of the current global rate limit window.
+    pub whoareyou_global_window_start: Instant,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
     /// Key: reported IP, Value: set of voter node_ids (each peer votes once per round).
     pub ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
@@ -161,7 +174,12 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -196,7 +214,12 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -709,10 +732,24 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        // Rate limit: prevent amplification attacks by limiting WHOAREYOU per IP
-        let ip = addr.ip();
         let now = Instant::now();
 
+        // Global rate limit: cap total outgoing WHOAREYOU bandwidth
+        if now.duration_since(self.whoareyou_global_window_start) >= Duration::from_secs(1) {
+            // Reset window
+            self.whoareyou_global_count = 0;
+            self.whoareyou_global_window_start = now;
+        }
+        if self.whoareyou_global_count >= GLOBAL_WHOAREYOU_RATE_LIMIT {
+            trace!(
+                protocol = "discv5",
+                "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s)"
+            );
+            return Ok(());
+        }
+
+        // Per-IP rate limit: prevent amplification attacks to a single victim
+        let ip = addr.ip();
         if let Some(last_sent) = self.whoareyou_rate_limit.get(&ip)
             && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
         {
@@ -724,8 +761,9 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        // Update rate limit tracker
-        self.whoareyou_rate_limit.insert(ip, now);
+        // Update rate limit trackers
+        self.whoareyou_rate_limit.push(ip, now);
+        self.whoareyou_global_count += 1;
 
         let mut rng = OsRng;
 
@@ -788,6 +826,8 @@ impl DiscoveryServer {
 
     /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
+    /// Note: whoareyou_rate_limit is an LRU cache with bounded capacity,
+    /// so it doesn't need periodic cleanup.
     pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
@@ -807,12 +847,6 @@ impl DiscoveryServer {
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
 
-        // Clean stale WHOAREYOU rate limit entries
-        let before_rate_limits = self.whoareyou_rate_limit.len();
-        self.whoareyou_rate_limit
-            .retain(|_ip, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
-        let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
-
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW
@@ -820,15 +854,14 @@ impl DiscoveryServer {
             self.finalize_ip_vote_round();
         }
 
-        let total_removed = removed_messages + removed_challenges + removed_rate_limits;
+        let total_removed = removed_messages + removed_challenges;
         if total_removed > 0 {
             trace!(
                 protocol = "discv5",
-                "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
+                "Cleaned up {} stale entries ({} messages, {} challenges)",
                 total_removed,
                 removed_messages,
                 removed_challenges,
-                removed_rate_limits
             );
         }
     }
