@@ -86,7 +86,8 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 /// This value is taken from geth. Higher values may cause peer disconnections.
 /// See:
 /// <https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43>
-pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
+// TEMPORARY: set to 1 for Polygon state root debugging
+pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 1;
 
 /// Maximum attempts before giving up on header downloads during syncing.
 pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
