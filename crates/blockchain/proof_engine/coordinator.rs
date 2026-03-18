@@ -25,8 +25,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::Blockchain;
-
 use super::config::ProofEngineConfig;
 use super::types::{ExecutionProofV1, GeneratedProof, MAX_PROOF_SIZE, ProofGenId, PublicInputV1};
 
@@ -69,7 +67,7 @@ pub enum CoordOutMsg {
 }
 
 /// Shared pending input map, accessible from both the coordinator accept loop
-/// and the ProofEngine (which inserts new inputs).
+/// and the RPC handlers (which insert new inputs).
 pub type PendingInputMap = Arc<std::sync::Mutex<HashMap<u64, PendingInput>>>;
 
 /// L1 Proof Coordinator GenServer.
@@ -99,7 +97,7 @@ impl L1ProofCoordinator {
     }
 
     /// Get a reference to the shared pending input map.
-    /// This allows the ProofEngine to insert new inputs directly
+    /// This allows the RPC handlers to insert new inputs directly
     /// without going through the GenServer (which is blocked in the accept loop).
     pub fn pending_map(&self) -> PendingInputMap {
         Arc::clone(&self.pending)
@@ -437,22 +435,19 @@ async fn send_proof_data<I: serde::Serialize>(
     Ok(())
 }
 
-/// Initialize and start the proof engine and coordinator.
+/// Start the proof coordinator and return the shared pending input map.
 ///
 /// Call this during node startup when the `eip-8025` feature is enabled.
-pub async fn init_proof_engine(
-    blockchain: Arc<Blockchain>,
+/// The returned `PendingInputMap` is shared with the RPC handlers so they
+/// can insert new proof generation inputs directly.
+pub async fn start_proof_coordinator(
     store: Store,
     config: ProofEngineConfig,
-) -> Result<super::engine::ProofEngine, L1CoordinatorError> {
-    let mut engine = super::engine::ProofEngine::new(blockchain, store.clone(), config.clone());
-
-    // Start the coordinator.
+) -> Result<PendingInputMap, L1CoordinatorError> {
     let coordinator = L1ProofCoordinator::new(store, config.clone());
 
-    // Share the pending map with the engine (engine inserts, coordinator reads).
+    // Get the shared pending map before moving the coordinator into the GenServer.
     let pending_map = coordinator.pending_map();
-    engine.set_pending_map(pending_map);
 
     let mut coord_handle = coordinator.start();
 
@@ -467,5 +462,5 @@ pub async fn init_proof_engine(
         .await
         .map_err(|e| L1CoordinatorError::Internal(e.to_string()))?;
 
-    Ok(engine)
+    Ok(pending_map)
 }

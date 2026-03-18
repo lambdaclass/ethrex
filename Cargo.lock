@@ -4383,6 +4383,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-guest-program",
  "ethrex-l2-common",
  "ethrex-metrics",
  "ethrex-p2p",

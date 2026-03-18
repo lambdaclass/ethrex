@@ -6,40 +6,44 @@
 //! - `engine_verifyNewPayloadRequestHeaderV1`: Verify a headerized new-payload request.
 
 use bytes::Bytes;
-use ethrex_blockchain::proof_engine::engine::ProofEngineError;
+use ethrex_blockchain::proof_engine::coordinator::{PendingInput, PendingInputMap};
 use ethrex_blockchain::proof_engine::types::{
-    ExecutionProofV1, MAX_PROOF_SIZE, NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1,
-    ProofAttributesV1,
+    ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS,
+    NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1, ProofAttributesV1, ProofGenId,
+    ProofStatusV1, ProofValidationStatus,
 };
 use ethrex_common::H256;
 use ethrex_common::types::eip8025_ssz;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
+use ethrex_guest_program::input::ProgramInput;
 use serde_json::Value;
 use ssz_merkle::HashTreeRoot;
 use ssz_types::SszList;
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::ExecutionPayload;
 use crate::utils::RpcErr;
 
-// ── ProofEngineError -> RpcErr conversion ───────────────────────────
+// ── Helper functions ────────────────────────────────────────────────
 
-impl From<ProofEngineError> for RpcErr {
-    fn from(err: ProofEngineError) -> Self {
-        match err {
-            ProofEngineError::ProofTooLarge { size } => {
-                RpcErr::InvalidProofFormat(format!("Proof size {size} exceeds maximum"))
-            }
-            ProofEngineError::InvalidProof(msg) => RpcErr::InvalidProofFormat(msg),
-            ProofEngineError::CoordinatorUnavailable => {
-                RpcErr::ProofGenerationUnavailable("Coordinator unavailable".to_owned())
-            }
-            ProofEngineError::Store(e) => RpcErr::Internal(e.to_string()),
-            ProofEngineError::Chain(e) => RpcErr::InvalidPayload(e.to_string()),
-            ProofEngineError::Internal(e) => RpcErr::Internal(e),
-        }
-    }
+/// Build a ProofGenId from block number and root.
+/// Uses the lower 4 bytes of block_number and the first 4 bytes of root.
+fn make_proof_gen_id(block_number: u64, root: &H256) -> ProofGenId {
+    let mut id = [0u8; 8];
+    id[..4].copy_from_slice(&block_number.to_be_bytes()[4..]);
+    id[4..].copy_from_slice(&root.as_bytes()[..4]);
+    id
+}
+
+/// Extract the pending input map from context, returning an RPC error if unavailable.
+fn get_pending_inputs(context: &RpcApiContext) -> Result<&PendingInputMap, RpcErr> {
+    context
+        .pending_proof_inputs
+        .as_ref()
+        .ok_or(RpcErr::ProofGenerationUnavailable(
+            "Proof coordinator not configured".to_owned(),
+        ))
 }
 
 // ── engine_requestProofsV1 ──────────────────────────────────────────
@@ -95,17 +99,12 @@ impl RpcHandler for RequestProofsV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let proof_engine =
-            context
-                .proof_engine
-                .as_ref()
-                .ok_or(RpcErr::ProofGenerationUnavailable(
-                    "Proof engine not configured".to_owned(),
-                ))?;
+        let pending = get_pending_inputs(&context)?;
 
+        let block_number = self.payload.block_number;
         info!(
             "engine_requestProofsV1: block_number={}, proof_types={:?}",
-            self.payload.block_number, self.proof_attributes.proof_types
+            block_number, self.proof_attributes.proof_types
         );
 
         // Convert execution payload to Block.
@@ -135,13 +134,51 @@ impl RpcHandler for RequestProofsV1 {
         )
         .map_err(RpcErr::InvalidPayload)?;
 
-        let proof_gen_id = proof_engine
-            .request_proofs(
-                block,
-                H256::from_slice(&ssz_root),
-                self.proof_attributes.proof_types.clone(),
-            )
-            .await?;
+        let new_payload_request_root = H256::from_slice(&ssz_root);
+
+        // Generate execution witness for this block.
+        let witness = context
+            .blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(&block))
+            .await
+            .map_err(|e| RpcErr::InvalidPayload(e.to_string()))?;
+
+        // Build ProgramInput with the block and witness.
+        let program_input = ProgramInput::new(vec![block], witness);
+
+        // Persist root → block_number mapping in the DB.
+        context
+            .storage
+            .store_root_to_block(new_payload_request_root, block_number)
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+        // Generate a ProofGenId from (block_number, root).
+        let proof_gen_id = make_proof_gen_id(block_number, &new_payload_request_root);
+
+        // Insert into the shared pending map (accessible by the coordinator's accept loop).
+        match pending.lock() {
+            Ok(mut map) => {
+                map.insert(
+                    block_number,
+                    PendingInput {
+                        proof_gen_id,
+                        new_payload_request_root,
+                        program_input,
+                        requested_proof_types: self.proof_attributes.proof_types.clone(),
+                    },
+                );
+                debug!(
+                    block_number,
+                    "Input added to pending map for proof generation"
+                );
+            }
+            Err(e) => {
+                error!("Failed to lock pending map: {e}");
+                return Err(RpcErr::ProofGenerationUnavailable(
+                    "Coordinator unavailable".to_owned(),
+                ));
+            }
+        }
 
         // Return ProofGenId as hex-encoded DATA (8 bytes).
         let hex_id = format!("0x{}", hex::encode(proof_gen_id));
@@ -188,20 +225,47 @@ impl RpcHandler for VerifyExecutionProofV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let proof_engine =
-            context
-                .proof_engine
-                .as_ref()
-                .ok_or(RpcErr::ProofGenerationUnavailable(
-                    "Proof engine not configured".to_owned(),
-                ))?;
-
         info!(
             "engine_verifyExecutionProofV1: proof_type={}",
             self.proof.proof_type
         );
 
-        let status = proof_engine.verify_proof(&self.proof)?;
+        let root = self.proof.public_input.new_payload_request_root;
+
+        // Look up block_number from the persisted root→block mapping.
+        let block_number = context
+            .storage
+            .get_block_number_by_root(&root)
+            .map_err(|e| RpcErr::Internal(e.to_string()))?
+            .unwrap_or_else(|| {
+                warn!(
+                    root = %root,
+                    "Unknown root in verify_proof; storing with block_number=0"
+                );
+                0
+            });
+
+        // Store the proof.
+        context
+            .storage
+            .store_execution_proof(
+                block_number,
+                root,
+                self.proof.proof_type,
+                self.proof.proof_data.to_vec(),
+            )
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+        info!(
+            block_number,
+            proof_type = self.proof.proof_type,
+            "Execution proof stored"
+        );
+
+        let status = ProofStatusV1 {
+            status: ProofValidationStatus::Valid,
+            error: None,
+        };
         serde_json::to_value(status).map_err(|e| RpcErr::Internal(e.to_string()))
     }
 }
@@ -235,14 +299,6 @@ impl RpcHandler for VerifyNewPayloadRequestHeaderV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let proof_engine =
-            context
-                .proof_engine
-                .as_ref()
-                .ok_or(RpcErr::ProofGenerationUnavailable(
-                    "Proof engine not configured".to_owned(),
-                ))?;
-
         let block_number = self.header.execution_payload_header.block_number;
         info!(
             "engine_verifyNewPayloadRequestHeaderV1: block_number={block_number}, block_hash={}",
@@ -253,7 +309,33 @@ impl RpcHandler for VerifyNewPayloadRequestHeaderV1 {
         let ssz_root =
             json_header_to_ssz_root(&self.header).map_err(RpcErr::InvalidHeaderFormat)?;
 
-        let status = proof_engine.verify_header(block_number, &H256::from_slice(&ssz_root))?;
+        let new_payload_request_root = H256::from_slice(&ssz_root);
+
+        let proofs = context
+            .storage
+            .get_execution_proofs(block_number, &new_payload_request_root)
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+        let count = proofs.len();
+        debug!(
+            block_number,
+            root = %new_payload_request_root,
+            count,
+            "Header verification"
+        );
+
+        let status = if count >= MIN_REQUIRED_EXECUTION_PROOFS {
+            ProofStatusV1 {
+                status: ProofValidationStatus::Valid,
+                error: None,
+            }
+        } else {
+            ProofStatusV1 {
+                status: ProofValidationStatus::Syncing,
+                error: None,
+            }
+        };
+
         serde_json::to_value(status).map_err(|e| RpcErr::Internal(e.to_string()))
     }
 }

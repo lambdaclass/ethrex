@@ -43,7 +43,8 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
-# EIP-8025 SSZ dependencies (optional)
+# EIP-8025 dependencies (optional)
+ethrex-guest-program = { workspace = true, optional = true, default-features = false }
 ssz-merkle = { git = "https://github.com/lambdaclass/libssz", optional = true }
 ssz-types = { git = "https://github.com/lambdaclass/libssz", optional = true }
 
@@ -66,4 +67,4 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
-eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025", "dep:ssz-merkle", "dep:ssz-types"]
+eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025", "dep:ethrex-guest-program", "ethrex-guest-program/eip-8025", "dep:ssz-merkle", "dep:ssz-types"]

@@ -297,7 +297,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
         #[cfg(feature = "eip-8025")]
-        proof_engine: None,
+        pending_proof_inputs: None,
     }
 }
 

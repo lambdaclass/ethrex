@@ -2067,6 +2067,33 @@ impl Store {
         key
     }
 
+    /// Store a mapping from new_payload_request_root to block_number (EIP-8025).
+    /// Persists the root→block association so it survives node restarts.
+    pub fn store_root_to_block(&self, root: H256, block_number: u64) -> Result<(), StoreError> {
+        let mut key = Vec::with_capacity(35);
+        key.extend_from_slice(b"rtb:");
+        key.extend_from_slice(root.as_bytes());
+        // NOTE: we're not using apply_prefix here — key is already unique.
+        self.write(EXECUTION_PROOFS, key, block_number.to_be_bytes().to_vec())
+    }
+
+    /// Look up the block number for a given new_payload_request_root (EIP-8025).
+    pub fn get_block_number_by_root(&self, root: &H256) -> Result<Option<u64>, StoreError> {
+        let mut key = Vec::with_capacity(35);
+        key.extend_from_slice(b"rtb:");
+        key.extend_from_slice(root.as_bytes());
+        let data: Option<Vec<u8>> = self.read(EXECUTION_PROOFS, key)?;
+        Ok(data.and_then(|bytes| {
+            if bytes.len() == 8 {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&bytes);
+                Some(u64::from_be_bytes(buf))
+            } else {
+                None
+            }
+        }))
+    }
+
     /// Store a verified execution proof for a block (EIP-8025).
     pub fn store_execution_proof(
         &self,
