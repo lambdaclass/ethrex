@@ -185,16 +185,6 @@ type BlockWorkerMessage = (
     Option<BlockAccessList>,
 );
 
-/// Optional extensions for the RPC API context.
-///
-/// Holds feature-gated dependencies that not all callers need to provide.
-/// Use `Default::default()` when no extensions are needed.
-#[derive(Default, Clone)]
-pub struct RpcApiExtensions {
-    #[cfg(feature = "eip-8025")]
-    pub proof_engine: Option<Arc<ethrex_blockchain::proof_engine::engine::ProofEngine>>,
-}
-
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -508,7 +498,9 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
-    #[allow(unused_variables)] extensions: RpcApiExtensions,
+    #[cfg(feature = "eip-8025")] proof_engine: Option<
+        Arc<ethrex_blockchain::proof_engine::engine::ProofEngine>,
+    >,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -532,7 +524,7 @@ pub async fn start_api(
         gas_ceil,
         block_worker_channel,
         #[cfg(feature = "eip-8025")]
-        proof_engine: extensions.proof_engine,
+        proof_engine,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

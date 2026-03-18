@@ -186,7 +186,9 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    extensions: ethrex_rpc::RpcApiExtensions,
+    #[cfg(feature = "eip-8025")] proof_engine: Option<
+        Arc<ethrex_blockchain::proof_engine::engine::ProofEngine>,
+    >,
 ) {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -230,7 +232,8 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
-        extensions,
+        #[cfg(feature = "eip-8025")]
+        proof_engine,
     );
 
     tracker.spawn(rpc_api);
@@ -518,33 +521,29 @@ pub async fn init_l1(
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
-    // Build RPC extensions (proof engine when eip-8025 is enabled).
-    let rpc_extensions = {
-        #[allow(unused_mut)]
-        let mut ext = ethrex_rpc::RpcApiExtensions::default();
-        #[cfg(feature = "eip-8025")]
-        {
-            use ethrex_blockchain::proof_engine::{
-                config::ProofEngineConfig, coordinator::init_proof_engine,
-            };
-            let proof_config = ProofEngineConfig {
-                callback_url: opts.proof_callback_url.clone(),
-                coordinator_addr: opts.proof_coordinator_addr.clone(),
-                coordinator_port: opts.proof_coordinator_port,
-            };
-            match init_proof_engine(blockchain.clone(), store.clone(), proof_config).await {
-                Ok(engine) => {
-                    ext.proof_engine = Some(Arc::new(engine));
-                    info!("EIP-8025 proof engine initialized");
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to initialize proof engine: {e}. Proof endpoints will be unavailable."
-                    );
-                }
+    // Initialize EIP-8025 proof engine when the feature is enabled.
+    #[cfg(feature = "eip-8025")]
+    let proof_engine = {
+        use ethrex_blockchain::proof_engine::{
+            config::ProofEngineConfig, coordinator::init_proof_engine,
+        };
+        let proof_config = ProofEngineConfig {
+            callback_url: opts.proof_callback_url.clone(),
+            coordinator_addr: opts.proof_coordinator_addr.clone(),
+            coordinator_port: opts.proof_coordinator_port,
+        };
+        match init_proof_engine(blockchain.clone(), store.clone(), proof_config).await {
+            Ok(engine) => {
+                info!("EIP-8025 proof engine initialized");
+                Some(Arc::new(engine))
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to initialize proof engine: {e}. Proof endpoints will be unavailable."
+                );
+                None
             }
         }
-        ext
     };
 
     init_rpc_api(
@@ -558,7 +557,8 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
-        rpc_extensions,
+        #[cfg(feature = "eip-8025")]
+        proof_engine,
     )
     .await;
 
