@@ -1468,7 +1468,10 @@ async function loadDeployments() {
     await Promise.all(list.map(async (d) => {
       if (!d.docker_project || isDeploying(d.phase)) return;
       try {
-        const statusRes = await fetch(`${API}/deployments/${d.id}/status`);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        const statusRes = await fetch(`${API}/deployments/${d.id}/status`, { signal: ctrl.signal });
+        clearTimeout(timer);
         const statusData = await statusRes.json();
         const containers = statusData.containers || [];
         // Server reports unreachable (remote SSH failed)
@@ -1487,7 +1490,13 @@ async function loadDeployments() {
             d.phase = 'stopped'; d.status = 'configured';
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        // Fetch timeout or server error — remote deployments show unreachable
+        const rc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+        if ((rc.cloud === 'aws' || d.host_id) && d.phase === 'running') {
+          d.phase = 'unreachable'; d.status = 'unreachable';
+        }
+      }
     }));
 
     container.innerHTML = `
