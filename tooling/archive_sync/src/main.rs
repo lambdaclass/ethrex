@@ -147,7 +147,10 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
             store
-                .add_account_code(Code::from_bytecode(dump_account.code.clone(), &ethrex_crypto::NativeCrypto))
+                .add_account_code(Code::from_bytecode(
+                    dump_account.code.clone(),
+                    &ethrex_crypto::NativeCrypto,
+                ))
                 .await?;
         }
         // Process storage trie if it is not empty
