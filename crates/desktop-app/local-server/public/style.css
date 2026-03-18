@@ -698,6 +698,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
 .phase-running { background: var(--green-100); color: var(--green-600); }
 .phase-ai-deploy { background: #dbeafe; color: #2563eb; }
 .phase-stopped { background: var(--orange-100); color: var(--orange-600); }
+.phase-unreachable { background: var(--yellow-100); color: var(--yellow-700); }
 .phase-error { background: var(--red-100); color: var(--red-600); }
 
 .mode-badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }

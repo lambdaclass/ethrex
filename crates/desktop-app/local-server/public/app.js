@@ -1471,14 +1471,21 @@ async function loadDeployments() {
         const statusRes = await fetch(`${API}/deployments/${d.id}/status`);
         const statusData = await statusRes.json();
         const containers = statusData.containers || [];
-        // Only check core services (L1/L2/Prover), not shared tools containers
-        const coreServices = ['tokamak-app-l1', 'tokamak-app-l2', 'tokamak-app-prover'];
-        const coreContainers = containers.filter(c => coreServices.includes(c.Service));
-        const anyRunning = coreContainers.some(c => (c.State || c.state) === 'running');
-        if (d.phase === 'stopped' && anyRunning) {
-          d.phase = 'running'; d.status = 'active';
-        } else if (d.phase === 'running' && containers.length > 0 && !anyRunning) {
-          d.phase = 'stopped'; d.status = 'configured';
+        // Server reports unreachable (remote SSH failed)
+        if (statusData.phase === 'unreachable') {
+          d.phase = 'unreachable'; d.status = 'unreachable';
+        } else {
+          // Only check core services (L1/L2/Prover), not shared tools containers
+          const coreServices = ['tokamak-app-l1', 'tokamak-app-l2', 'tokamak-app-prover'];
+          const coreContainers = containers.filter(c => coreServices.includes(c.Service));
+          const anyRunning = coreContainers.some(c => (c.State || c.state) === 'running');
+          if (d.phase === 'stopped' && anyRunning) {
+            d.phase = 'running'; d.status = 'active';
+          } else if (d.phase === 'running' && containers.length > 0 && !anyRunning) {
+            d.phase = 'stopped'; d.status = 'configured';
+          } else if (d.phase === 'running' && containers.length === 0) {
+            d.phase = 'stopped'; d.status = 'configured';
+          }
         }
       } catch { /* ignore */ }
     }));
@@ -1508,6 +1515,7 @@ function renderDeploymentRow(d) {
   const isExpanded = expandedDeploymentId === d.id;
   const hasError = !!d.error_message;
   const statusClass = hasError ? 'error' : d.phase === 'running' ? 'running'
+    : d.phase === 'unreachable' ? 'building'
     : d.phase === 'configured' ? 'configured'
     : ['building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools','checking_docker'].includes(d.phase) ? 'building' : 'stopped';
   const rowConfig = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
@@ -1605,7 +1613,7 @@ function statusLabel(phase) {
     configured: 'Configured', checking_docker: 'Checking...', building: 'Building',
     pulling: 'Pulling', l1_starting: 'Starting', deploying_contracts: 'Deploying',
     verifying_contracts: 'Verifying', l2_starting: 'Starting', starting_prover: 'Starting', starting_tools: 'Starting',
-    running: 'Running', stopped: 'Stopped', error: 'Error',
+    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Unreachable',
   };
   return map[phase] || phase;
 }
@@ -2051,7 +2059,7 @@ function renderPhaseBadge(phase, hasError) {
     verifying_contracts: 'Verifying', l2_starting: 'Starting L2', starting_prover: 'Starting Prover',
     starting_op_node: 'Starting op-node', starting_batcher: 'Starting op-batcher', starting_proposer: 'Starting op-proposer',
     starting_tools: 'Starting Tools',
-    running: 'Running', stopped: 'Stopped', error: 'Error',
+    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Unreachable',
   };
   const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_op_node','starting_batcher','starting_proposer','starting_tools'];
   const label = labels[phase] || phase;
