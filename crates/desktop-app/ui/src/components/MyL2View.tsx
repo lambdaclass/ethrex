@@ -216,8 +216,14 @@ export default function MyL2View() {
       const rows = await invoke<DeploymentFromDB[]>('list_docker_deployments')
       const configs = rows.map(deploymentToL2Config)
 
-      // Phase 1: Show DB data immediately
-      setL2s(configs)
+      // Phase 1: Show DB data immediately (remote deployments shown as unreachable until verified)
+      const initialConfigs = configs.map(l2 => {
+        if ((l2.hostId || l2.networkMode === 'aws') && (l2.status === 'running')) {
+          return { ...l2, status: 'unreachable' as const, phase: 'unreachable', errorMessage: lang === 'ko' ? '상태 확인 중...' : 'Checking status...' }
+        }
+        return l2
+      })
+      setL2s(initialConfigs)
 
       // Phase 2: Reconcile live status in background (non-blocking)
       const updated = await Promise.all(configs.map(async (l2) => {
