@@ -1663,8 +1663,16 @@ impl LEVM {
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
 
-        // TODO: I don't like deciding the behavior based on the VMType here.
-        if matches!(vm_type, VMType::L2(_) | VMType::Polygon(_)) {
+        // L2 doesn't run pre-block system calls
+        if matches!(vm_type, VMType::L2(_)) {
+            return Ok(());
+        }
+
+        // Polygon: skip beacon root (no beacon chain) but run EIP-2935
+        if matches!(vm_type, VMType::Polygon(_)) {
+            if fork >= Fork::Prague {
+                Self::process_block_hash_history(block_header, db, vm_type, crypto)?;
+            }
             return Ok(());
         }
 
