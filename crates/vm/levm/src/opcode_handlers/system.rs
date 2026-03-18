@@ -1124,18 +1124,6 @@ impl<'a> VM<'a> {
             .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
 
-        // DEBUG: Log gas for subcalls up to depth 3
-        if self.call_frames.len() <= 3 {
-            eprintln!(
-                "CALL_RETURN depth={} to={:?} gas_limit={} gas_used={} success={}",
-                self.call_frames.len() + 1,
-                executed_call_frame.to,
-                gas_limit,
-                ctx_result.gas_used,
-                ctx_result.is_success(),
-            );
-        }
-
         parent_call_frame.gas_remaining = parent_call_frame
             .gas_remaining
             .checked_add(child_unused_gas as i64)

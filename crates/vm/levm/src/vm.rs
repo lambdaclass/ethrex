@@ -303,14 +303,7 @@ impl Substate {
         // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
         //   expression if not necessary.
         #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
-        let is_cold = !(is_present || !self.accessed_addresses.insert(address));
-
-        // DEBUG: Log cold address accesses
-        if is_cold {
-            eprintln!("COLD_ACCESS addr={:?}", address);
-        }
-
-        is_cold
+        !(is_present || !self.accessed_addresses.insert(address))
     }
 
     /// Return whether an address has already been accessed.
@@ -468,6 +461,15 @@ impl<'a> VM<'a> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
         let mut substate = Substate::initialize(&env, tx)?;
+
+        // Polygon: add P256Verify (0x100) to warm set.
+        // Note: env.config.fork is Prague (not a Polygon-specific fork), so
+        // fork.is_polygon() returns false. We must use vm_type to detect Polygon.
+        if matches!(vm_type, VMType::Polygon(_)) {
+            substate
+                .accessed_addresses
+                .insert(Address::from_low_u64_be(0x100));
+        }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
@@ -748,9 +750,10 @@ impl Substate {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
         }
 
-        // Add P256Verify (0x100) to warm set for Polygon (active since Madhugiri)
-        // and for L1 post-Osaka.
-        if env.config.fork.is_polygon() || env.config.fork >= Fork::Osaka {
+        // Add P256Verify (0x100) to warm set for L1 post-Osaka.
+        // For Polygon, this is handled in VM::new using vm_type (since
+        // env.config.fork resolves to Prague, not a Polygon-specific fork).
+        if env.config.fork >= Fork::Osaka {
             initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }
 
