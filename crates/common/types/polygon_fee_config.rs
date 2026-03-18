@@ -17,4 +17,8 @@ pub struct PolygonFeeConfig {
     /// Pre-Rio: zero address (tips effectively burned).
     /// Post-Rio: governance address.
     pub coinbase: Address,
+    /// Block author (validator) recovered from the header seal signature via ecrecover.
+    /// Used as the EVM coinbase (COINBASE opcode) instead of header.coinbase (which is 0x0 on Polygon).
+    /// Bor sets `Context.Coinbase = Author(header)` — we must match this for correct execution.
+    pub author: Address,
 }
