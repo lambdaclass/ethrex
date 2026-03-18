@@ -1720,6 +1720,8 @@ impl Store {
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
         state_root: H256,
     ) -> Result<AccountUpdatesList, StoreError> {
+        // Establish baseline hash so collect_changes_since_last_hash can detect modifications
+        let _baseline = state_trie.hash_no_commit();
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
         for update in account_updates {
@@ -1803,6 +1805,8 @@ impl Store {
         mut storage_tries: StorageTries,
         state_root: H256,
     ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
+        // Establish baseline hash so collect_changes_since_last_hash can detect modifications
+        let _baseline = state_trie.hash_no_commit();
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
