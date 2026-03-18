@@ -303,7 +303,14 @@ impl Substate {
         // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
         //   expression if not necessary.
         #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
-        !(is_present || !self.accessed_addresses.insert(address))
+        let is_cold = !(is_present || !self.accessed_addresses.insert(address));
+
+        // DEBUG: Log cold address accesses
+        if is_cold {
+            eprintln!("COLD_ACCESS addr={:?}", address);
+        }
+
+        is_cold
     }
 
     /// Return whether an address has already been accessed.
