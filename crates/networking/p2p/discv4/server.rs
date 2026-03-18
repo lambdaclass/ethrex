@@ -262,7 +262,7 @@ impl DiscoveryServer {
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self
             .peer_table
-            .get_contact_for_lookup(DiscoveryProtocol::Discv4)
+            .get_contact_for_lookup(DiscoveryProtocol::Discv4, self.local_node.ip.is_ipv6())
             .await?
         {
             // Only contact peers whose address family matches this socket.

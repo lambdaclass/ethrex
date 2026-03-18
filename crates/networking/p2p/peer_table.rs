@@ -27,7 +27,7 @@ use spawned_concurrency::{
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
 };
 use std::{
-    net::IpAddr,
+    net::{IpAddr, Ipv6Addr},
     time::{Duration, Instant},
 };
 use thiserror::Error;
@@ -98,6 +98,13 @@ pub struct Contact {
     pub unwanted: bool,
     /// Whether the last known fork ID is valid, None if unknown.
     pub is_fork_id_valid: Option<bool>,
+    /// IPv6 address from the peer's ENR (`ip6` key), if present.
+    /// Used to seed the IPv6 discovery server with peers that have both IPv4 and IPv6 addresses.
+    pub ip6: Option<Ipv6Addr>,
+    /// TCP port for IPv6 RLPx connections from the peer's ENR (`tcp6` key).
+    pub tcp6_port: Option<u16>,
+    /// UDP port for IPv6 discovery from the peer's ENR (`udp6` key).
+    pub udp6_port: Option<u16>,
     /// Session information for discv5 (None for discv4 contacts)
     session: Option<Session>,
 }
@@ -129,9 +136,25 @@ impl Contact {
             .take_if(|h| *h == request_hash)
             .is_some()
         {
-            if let Some((ip, tcp_port)) = record.decode_pairs().connection_addr() {
+            let pairs = record.decode_pairs();
+            if let Some((ip, tcp_port)) = pairs.connection_addr() {
                 self.node.ip = ip;
                 self.node.tcp_port = tcp_port;
+            }
+            // Store IPv6 address/ports so the IPv6 discovery server can use this
+            // contact as a relay to bootstrap into the IPv6 portion of the network.
+            if let Some(ip6) = pairs.ip6 {
+                tracing::debug!(
+                    node_id = %self.node.node_id(),
+                    ipv4 = ?pairs.ip,
+                    ipv6 = %ip6,
+                    tcp6 = ?pairs.tcp6_port,
+                    udp6 = ?pairs.udp6_port,
+                    "ENR contains IPv6 address"
+                );
+                self.ip6 = Some(ip6);
+                self.tcp6_port = pairs.tcp6_port;
+                self.udp6_port = pairs.udp6_port;
             }
             self.record = Some(record);
         }
@@ -157,6 +180,9 @@ impl Contact {
             knows_us: true,
             unwanted: false,
             is_fork_id_valid: None,
+            ip6: None,
+            tcp6_port: None,
+            udp6_port: None,
             session: None,
         }
     }
@@ -514,13 +540,16 @@ impl PeerTable {
 
     /// Provide a contact to perform Discovery lookup for a specific protocol.
     /// Only returns contacts discovered via that protocol.
+    /// If `ipv6` is true, only contacts with a known IPv6 address (from their ENR)
+    /// are returned, with `node.ip` rewritten to that IPv6 address.
     pub async fn get_contact_for_lookup(
         &mut self,
         protocol: DiscoveryProtocol,
+        ipv6: bool,
     ) -> Result<Option<Contact>, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::GetContactForLookup { protocol })
+            .call(CallMessage::GetContactForLookup { protocol, ipv6 })
             .await?
         {
             OutMessage::Contact(contact) => Ok(Some(*contact)),
@@ -846,18 +875,30 @@ impl PeerTableServer {
         None
     }
 
-    fn get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
+    fn get_contact_for_lookup(&self, protocol: DiscoveryProtocol, ipv6: bool) -> Option<Contact> {
         self.contacts
             .values()
             .filter(|c| {
                 c.supports_protocol(protocol)
                     && c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
                     && !c.disposable
+                    && (!ipv6 || c.ip6.is_some())
             })
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
             .cloned()
+            .map(|mut contact| {
+                if ipv6 {
+                    if let Some(ip6) = contact.ip6 {
+                        contact.node.ip = IpAddr::V6(ip6);
+                        if let Some(udp6) = contact.udp6_port {
+                            contact.node.udp_port = udp6;
+                        }
+                    }
+                }
+                contact
+            })
     }
 
     /// Get contact for ENR lookup (discv4 only)
@@ -1190,6 +1231,10 @@ enum CallMessage {
     GetContactToInitiate,
     GetContactForLookup {
         protocol: DiscoveryProtocol,
+        /// When true, only return contacts that have an IPv6 address in their ENR,
+        /// and return the contact with node.ip rewritten to that IPv6 address so
+        /// the caller can send directly to it.
+        ipv6: bool,
     },
     GetContactForEnrLookup,
     GetContact {
@@ -1302,8 +1347,8 @@ impl GenServer for PeerTableServer {
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),
-            CallMessage::GetContactForLookup { protocol } => CallResponse::Reply(
-                self.get_contact_for_lookup(protocol)
+            CallMessage::GetContactForLookup { protocol, ipv6 } => CallResponse::Reply(
+                self.get_contact_for_lookup(protocol, ipv6)
                     .map(Box::new)
                     .map_or(Self::OutMsg::NotFound, Self::OutMsg::Contact),
             ),

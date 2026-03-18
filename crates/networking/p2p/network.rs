@@ -263,17 +263,24 @@ fn udp_socket(bind_addr: SocketAddr) -> Result<UdpSocket, io::Error> {
 }
 
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
-    let tcp_socket = match tcp_addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4(),
-        SocketAddr::V6(_) => TcpSocket::new_v6(),
-    }?;
+    // IPv6 TCP listeners need IPV6_V6ONLY=true so that binding [::]:port does
+    // not also claim 0.0.0.0:port on systems where net.ipv6.bindv6only=0.
+    // TcpSocket (Tokio) has no set_only_v6, so we use socket2 for IPv6.
+    if tcp_addr.is_ipv6() {
+        let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+        socket.set_reuse_address(true).ok();
+        #[cfg(unix)]
+        socket.set_reuse_port(true).ok();
+        socket.set_only_v6(true)?;
+        socket.bind(&tcp_addr.into())?;
+        socket.listen(50)?;
+        socket.set_nonblocking(true)?;
+        return TcpListener::from_std(socket.into());
+    }
+    let tcp_socket = TcpSocket::new_v4()?;
     tcp_socket.set_reuseport(true).ok();
     tcp_socket.set_reuseaddr(true).ok();
-    if tcp_addr.is_ipv6() {
-        tcp_socket.set_only_v6(true)?;
-    }
     tcp_socket.bind(tcp_addr)?;
-
     tcp_socket.listen(50)
 }
 

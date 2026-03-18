@@ -440,7 +440,7 @@ impl DiscoveryServer {
     async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self
             .peer_table
-            .get_contact_for_lookup(DiscoveryProtocol::Discv5)
+            .get_contact_for_lookup(DiscoveryProtocol::Discv5, self.local_node.ip.is_ipv6())
             .await?
         {
             let find_node_msg = self.get_random_find_node_message(&contact.node);
