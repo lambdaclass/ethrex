@@ -234,7 +234,7 @@ impl L1ProofCoordinator {
             }
         };
 
-        send_proof_data(stream, &response).await?;
+        send_response(stream, &response).await?;
         Ok(())
     }
 
@@ -268,7 +268,7 @@ impl L1ProofCoordinator {
                 "Proof exceeds MAX_PROOF_SIZE, rejecting"
             );
             let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(block_number);
-            send_proof_data(stream, &ack).await?;
+            send_response(stream, &ack).await?;
             return Ok(());
         }
 
@@ -283,8 +283,11 @@ impl L1ProofCoordinator {
                         block_number,
                         prover_reported_type,
                         requested = ?p.requested_proof_types,
-                        "Prover reported a type not in the requested set; accepting anyway"
+                        "Prover reported a type not in the requested set; rejecting"
                     );
+                    let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(block_number);
+                    send_response(stream, &ack).await?;
+                    return Ok(());
                 }
                 (p.new_payload_request_root, p.proof_gen_id)
             }
@@ -369,7 +372,7 @@ impl L1ProofCoordinator {
 
         // ACK.
         let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(block_number);
-        send_proof_data(stream, &ack).await?;
+        send_response(stream, &ack).await?;
         info!(block_number, "Proof ACK sent to prover");
 
         Ok(())
@@ -404,7 +407,7 @@ impl GenServer for L1ProofCoordinator {
 }
 
 /// Helper: serialize and send a `ProofData` response over TCP.
-async fn send_proof_data<I: serde::Serialize>(
+async fn send_response<I: serde::Serialize>(
     stream: &mut TcpStream,
     response: &ProofData<I>,
 ) -> Result<(), L1CoordinatorError> {
