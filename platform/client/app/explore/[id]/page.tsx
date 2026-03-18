@@ -60,8 +60,8 @@ function ipfsToHttp(uri: string): string {
   return uri;
 }
 
-function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString();
+function formatDate(ms: number | string): string {
+  return new Date(Number(ms)).toLocaleDateString();
 }
 
 function StarIcon({ filled, size = 14 }: { filled: boolean; size?: number }) {
