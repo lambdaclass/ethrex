@@ -307,7 +307,7 @@ async fn test_whitespace_input() {
 #[tokio::test]
 async fn test_multiple_sequential_commands() {
     let server = MockServer::start().await;
-    let mut repl = server.repl();
+    let repl = server.repl();
 
     let r1 = repl.execute_command("eth.blockNumber").await;
     assert!(r1.contains("68943"), "first command failed: {r1}");
