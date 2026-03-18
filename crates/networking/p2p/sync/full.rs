@@ -424,6 +424,28 @@ async fn request_forward_headers(
                     first.number,
                     last.number,
                 );
+                // Verify the first header chains to our local canonical head
+                let parent_number = first.number.saturating_sub(1);
+                if let Some(local_hash) = store.get_canonical_block_hash(parent_number).await? {
+                    if first.parent_hash != local_hash {
+                        warn!(
+                            block_number = first.number,
+                            expected_parent = ?local_hash,
+                            actual_parent = ?first.parent_hash,
+                            "Forward sync: headers from a different fork, retrying"
+                        );
+                        failures += 1;
+                        if failures >= MAX_FORWARD_SYNC_FAILURES {
+                            warn!(
+                                failures,
+                                "Forward sync: too many fork mismatches, giving up"
+                            );
+                            return Ok(false);
+                        }
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
+                }
                 *start_block_number = first.number;
                 *end_block_number = last.number;
                 *headers = forward_headers;
