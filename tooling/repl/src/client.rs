@@ -51,10 +51,6 @@ impl RpcClient {
         &self.endpoint
     }
 
-    pub fn set_endpoint(&mut self, endpoint: String) {
-        self.endpoint = endpoint;
-    }
-
     pub async fn send_request(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
         let id = self.request_id.fetch_add(1, Ordering::Relaxed);
 

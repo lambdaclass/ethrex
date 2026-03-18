@@ -248,6 +248,7 @@ impl CommandRegistry {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn all_commands(&self) -> &[CommandDef] {
         &self.commands
     }

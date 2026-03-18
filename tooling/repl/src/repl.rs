@@ -264,52 +264,19 @@ impl Repl {
                 method,
                 args,
             } => {
-                // Use execute_rpc (which is &self), then store the raw result.
-                // We call send_request directly to get the raw Value before formatting.
-                let use_authrpc = namespace == "engine";
-                if use_authrpc && self.authrpc_client.is_none() {
-                    return formatter::format_error(
-                        "engine namespace requires --authrpc.jwtsecret",
-                    );
-                }
                 let resolved = match self.resolve_var_args(args) {
                     Ok(r) => r,
                     Err(e) => return formatter::format_error(&e),
                 };
-                let cmd = match self.registry.find(namespace, method) {
-                    Some(c) => c,
-                    None => {
-                        return formatter::format_error(&format!(
-                            "unknown command: {namespace}.{method}"
-                        ));
-                    }
-                };
-                let resolved_ens = match self.resolve_ens_in_args(cmd, &resolved).await {
-                    Ok(a) => a,
-                    Err(e) => return formatter::format_error(&e),
-                };
-                let params = match cmd.build_params(&resolved_ens) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return formatter::format_error(&format!(
-                            "{e}\nUsage: {}",
-                            formatter::command_usage(cmd)
-                        ));
-                    }
-                };
-                let client = if use_authrpc {
-                    self.authrpc_client.as_ref().unwrap()
-                } else {
-                    &self.client
-                };
-                match client.send_request(cmd.rpc_method, params).await {
-                    Ok(result) => {
+                match self.call_rpc_raw(namespace, method, &resolved).await {
+                    Ok((result, cmd)) => {
                         let formatted = formatter::format_value(&result);
+                        let is_request_proofs = cmd.rpc_method == "engine_requestProofsV1";
                         self.variables.insert(var_name.to_string(), result);
 
                         // After a successful requestProofsV1, spawn a one-shot
                         // HTTP listener to receive the GeneratedProof callback.
-                        if cmd.rpc_method == "engine_requestProofsV1" {
+                        if is_request_proofs {
                             let port = self.proof_callback_port;
                             crate::proof_callback::spawn_listener(port, self.variables.clone());
                             format!("{formatted}\nListening for proof callback on port {port}...")
@@ -317,7 +284,7 @@ impl Repl {
                             formatted
                         }
                     }
-                    Err(e) => formatter::format_error(&e.to_string()),
+                    Err(e) => formatter::format_error(&e),
                 }
             }
             ParsedCommand::UtilityCall { name, args } => {
@@ -364,37 +331,41 @@ impl Repl {
         }
     }
 
+    /// Send an RPC request and return the raw result together with the resolved
+    /// `CommandDef`.  Both `execute_rpc` and `execute_assignment` use this so
+    /// that the shared plumbing (client selection, registry lookup, ENS
+    /// resolution, param building, network call) lives in one place.
+    async fn call_rpc_raw<'a>(
+        &'a self,
+        namespace: &str,
+        method: &str,
+        args: &[Value],
+    ) -> Result<(Value, &'a CommandDef), String> {
+        let client = self.client_for_namespace(namespace)?;
+
+        let cmd = self
+            .registry
+            .find(namespace, method)
+            .ok_or_else(|| format!("unknown command: {namespace}.{method}"))?;
+
+        let resolved_args = self.resolve_ens_in_args(cmd, args).await?;
+
+        let params = cmd
+            .build_params(&resolved_args)
+            .map_err(|e| format!("{e}\nUsage: {}", formatter::command_usage(cmd)))?;
+
+        let result = client
+            .send_request(cmd.rpc_method, params)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok((result, cmd))
+    }
+
     async fn execute_rpc(&self, namespace: &str, method: &str, args: &[Value]) -> String {
-        let client = match self.client_for_namespace(namespace) {
-            Ok(c) => c,
-            Err(e) => return formatter::format_error(&e),
-        };
-
-        let cmd = match self.registry.find(namespace, method) {
-            Some(c) => c,
-            None => {
-                return formatter::format_error(&format!("unknown command: {namespace}.{method}"));
-            }
-        };
-
-        let resolved_args = match self.resolve_ens_in_args(cmd, args).await {
-            Ok(a) => a,
-            Err(e) => return formatter::format_error(&e),
-        };
-
-        let params = match cmd.build_params(&resolved_args) {
-            Ok(p) => p,
-            Err(e) => {
-                return formatter::format_error(&format!(
-                    "{e}\nUsage: {}",
-                    formatter::command_usage(cmd)
-                ));
-            }
-        };
-
-        match client.send_request(cmd.rpc_method, params).await {
-            Ok(result) => formatter::format_value(&result),
-            Err(e) => formatter::format_error(&e.to_string()),
+        match self.call_rpc_raw(namespace, method, args).await {
+            Ok((result, _cmd)) => formatter::format_value(&result),
+            Err(e) => formatter::format_error(&e),
         }
     }
 

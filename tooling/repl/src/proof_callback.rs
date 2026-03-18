@@ -31,7 +31,7 @@ pub fn spawn_listener(port: u16, variables: VariableStore) {
 }
 
 async fn run_listener(port: u16, variables: VariableStore) -> Result<(), String> {
-    let addr: std::net::SocketAddr = ([0, 0, 0, 0], port).into();
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
 
     let socket = TcpSocket::new_v4().map_err(|e| format!("Failed to create socket: {e}"))?;
     socket
@@ -90,7 +90,15 @@ async fn run_listener(port: u16, variables: VariableStore) -> Result<(), String>
             buf.extend_from_slice(&tmp[..n]);
         }
 
-        break buf[body_start..body_start + content_length].to_vec();
+        let end = body_start + content_length;
+        if buf.len() < end {
+            return Err(format!(
+                "Incomplete body: expected {} bytes, got {}",
+                content_length,
+                buf.len().saturating_sub(body_start)
+            ));
+        }
+        break buf[body_start..end].to_vec();
     };
 
     // Parse the JSON body as a GeneratedProof.

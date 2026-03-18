@@ -17,7 +17,7 @@ use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use serde_json::Value;
 use ssz_merkle::HashTreeRoot;
 use ssz_types::SszList;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::ExecutionPayload;
@@ -37,7 +37,6 @@ impl From<ProofEngineError> for RpcErr {
             }
             ProofEngineError::Store(e) => RpcErr::Internal(e.to_string()),
             ProofEngineError::Chain(e) => RpcErr::InvalidPayload(e.to_string()),
-            ProofEngineError::CallbackFailed(e) => RpcErr::Internal(e),
             ProofEngineError::Internal(e) => RpcErr::Internal(e),
         }
     }
@@ -301,10 +300,10 @@ fn compute_new_payload_request_root(
     };
 
     let root = ssz_request.hash_tree_root();
-    // Also compute via header path for comparison
+    // Also compute via header path for comparison (diagnostic; logged at debug level only).
     let header = ssz_request.to_header();
     let header_root = header.hash_tree_root();
-    info!(
+    debug!(
         "SSZ root (full): 0x{}, (header): 0x{}, match: {}",
         hex::encode(root),
         hex::encode(header_root),
@@ -365,15 +364,12 @@ fn rpc_payload_to_ssz(payload: &ExecutionPayload) -> Result<eip8025_ssz::Executi
         .map_err(|_| "extra_data too large".to_string())?;
 
     // Deposit/withdrawal/consolidation requests: empty (not in Engine API payload)
-    let ssz_deposit_requests: SszList<eip8025_ssz::DepositRequest, 8192> = vec![]
-        .try_into()
-        .expect("empty list should always convert");
-    let ssz_withdrawal_requests: SszList<eip8025_ssz::WithdrawalRequest, 16> = vec![]
-        .try_into()
-        .expect("empty list should always convert");
-    let ssz_consolidation_requests: SszList<eip8025_ssz::ConsolidationRequest, 1> = vec![]
-        .try_into()
-        .expect("empty list should always convert");
+    let ssz_deposit_requests: SszList<eip8025_ssz::DepositRequest, 8192> =
+        vec![].try_into().expect("empty list should always convert");
+    let ssz_withdrawal_requests: SszList<eip8025_ssz::WithdrawalRequest, 16> =
+        vec![].try_into().expect("empty list should always convert");
+    let ssz_consolidation_requests: SszList<eip8025_ssz::ConsolidationRequest, 1> =
+        vec![].try_into().expect("empty list should always convert");
 
     Ok(eip8025_ssz::ExecutionPayload {
         parent_hash: payload.parent_hash().0,

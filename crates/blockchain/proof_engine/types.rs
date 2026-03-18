@@ -72,7 +72,7 @@ pub struct GeneratedProof {
     pub execution_proof: ExecutionProofV1,
 }
 
-/// Headerized execution payload for JSON-RPC transport (17 fields matching
+/// Headerized execution payload for JSON-RPC transport (20 fields matching
 /// CL `ExecutionPayloadHeader`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

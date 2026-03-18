@@ -60,14 +60,6 @@ pub struct PendingInput {
 pub enum CoordCastMsg {
     /// Start accepting TCP connections.
     Listen { listener: Arc<TcpListener> },
-    /// A new block needs proof generation.
-    NewInput {
-        block_number: u64,
-        proof_gen_id: ProofGenId,
-        new_payload_request_root: H256,
-        program_input: Box<ProgramInput>,
-        requested_proof_types: Vec<u64>,
-    },
 }
 
 /// Output message (unused — coordinator runs indefinitely).
@@ -204,8 +196,8 @@ impl L1ProofCoordinator {
             return Ok(());
         }
 
-        // Look up the root and requested proof types from the pending map.
-        let (root, proof_type) = {
+        // Look up the root, proof_gen_id and requested proof types from the pending map.
+        let (root, proof_type, proof_gen_id) = {
             let pending = self
                 .pending
                 .lock()
@@ -219,9 +211,15 @@ impl L1ProofCoordinator {
                         .first()
                         .copied()
                         .unwrap_or(prover_reported_type);
-                    (p.new_payload_request_root, pt)
+                    (p.new_payload_request_root, pt, p.proof_gen_id)
                 }
-                None => (H256::default(), prover_reported_type),
+                None => {
+                    warn!(
+                        block_number = batch_number,
+                        "No pending input found for proof; using defaults"
+                    );
+                    (H256::default(), prover_reported_type, [0u8; 8])
+                }
             }
         };
 
@@ -235,21 +233,19 @@ impl L1ProofCoordinator {
         );
 
         // Remove from pending.
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.remove(&batch_number);
+        match self.pending.lock() {
+            Ok(mut pending) => {
+                pending.remove(&batch_number);
+            }
+            Err(e) => {
+                error!(block_number = batch_number, error = %e, "Pending lock poisoned on remove");
+            }
         }
 
         // Deliver via callback if configured.
         if let Some(callback_url) = &self.config.callback_url {
-            let proof_gen_id_bytes = {
-                let mut id = [0u8; 8];
-                id[..4].copy_from_slice(&batch_number.to_be_bytes()[4..]);
-                id[4..].copy_from_slice(&root.as_bytes()[..4]);
-                id
-            };
-
             let generated_proof = GeneratedProof {
-                proof_gen_id: Bytes::copy_from_slice(&proof_gen_id_bytes),
+                proof_gen_id: Bytes::copy_from_slice(&proof_gen_id),
                 execution_proof: ExecutionProofV1 {
                     proof_data: Bytes::from(proof_data),
                     proof_type,
@@ -308,27 +304,6 @@ impl GenServer for L1ProofCoordinator {
         match message {
             CoordCastMsg::Listen { listener } => {
                 self.handle_listens(listener).await;
-            }
-            CoordCastMsg::NewInput {
-                block_number,
-                proof_gen_id,
-                new_payload_request_root,
-                program_input,
-                requested_proof_types,
-            } => {
-                if let Ok(mut pending) = self.pending.lock() {
-                    pending.insert(
-                        block_number,
-                        PendingInput {
-                            proof_gen_id,
-                            new_payload_request_root,
-                            program_input: *program_input,
-                            requested_proof_types,
-                        },
-                    );
-                    debug!(block_number, "Added pending input for proof generation");
-                }
-                return CastResponse::NoReply;
             }
         }
         CastResponse::Stop

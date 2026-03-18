@@ -3,7 +3,6 @@
 //! The `ProofEngine` orchestrates proof generation requests, verification, and
 //! header validation for Execution Layer Triggerable Proofs.
 
-use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::types::Block;
 use ethrex_guest_program::input::ProgramInput;
@@ -34,8 +33,6 @@ pub enum ProofEngineError {
     InvalidProof(String),
     #[error("Coordinator not available")]
     CoordinatorUnavailable,
-    #[error("Callback delivery failed: {0}")]
-    CallbackFailed(String),
     #[error("{0}")]
     Internal(String),
 }
@@ -53,8 +50,6 @@ pub struct ProofEngine {
     config: ProofEngineConfig,
     /// Shared pending input map for the coordinator (insert directly, bypassing GenServer).
     pending: Option<PendingInputMap>,
-    /// HTTP client for callback delivery.
-    http_client: reqwest::Client,
     /// Mapping from new_payload_request_root to block_number, populated by request_proofs().
     root_to_block: Mutex<HashMap<H256, u64>>,
 }
@@ -67,7 +62,6 @@ impl ProofEngine {
             store,
             config,
             pending: None,
-            http_client: reqwest::Client::new(),
             root_to_block: Mutex::new(HashMap::new()),
         }
     }
@@ -101,8 +95,13 @@ impl ProofEngine {
         let program_input = ProgramInput::new(vec![block], witness);
 
         // Record root → block_number mapping for later lookup.
-        if let Ok(mut map) = self.root_to_block.lock() {
-            map.insert(new_payload_request_root, block_number);
+        match self.root_to_block.lock() {
+            Ok(mut map) => {
+                map.insert(new_payload_request_root, block_number);
+            }
+            Err(e) => {
+                error!(block_number, error = %e, "root_to_block lock poisoned on insert");
+            }
         }
 
         // Generate a ProofGenId from (block_number, root).
@@ -160,6 +159,10 @@ impl ProofEngine {
         let root = proof.public_input.new_payload_request_root;
 
         // Look up block_number from root mapping (populated by request_proofs).
+        // NOTE: This is an in-memory mapping only and will be lost on node restart.
+        // As a PoC limitation, if the node restarts between request_proofs() and
+        // verify_proof(), the root will not be found and the proof is stored under
+        // block_number=0 as a fallback.
         let block_number = self
             .root_to_block
             .lock()
@@ -212,7 +215,7 @@ impl ProofEngine {
             block_number,
             root = %new_payload_request_root,
             count,
-            "Header verification: found {count} proofs"
+            "Header verification"
         );
 
         if count >= MIN_REQUIRED_EXECUTION_PROOFS {
@@ -230,43 +233,8 @@ impl ProofEngine {
         }
     }
 
-    /// Deliver a generated proof to the configured callback URL.
-    pub async fn deliver_proof(
-        &self,
-        proof_gen_id: ProofGenId,
-        proof: ExecutionProofV1,
-    ) -> Result<(), ProofEngineError> {
-        let Some(callback_url) = &self.config.callback_url else {
-            debug!("No callback URL configured; skipping proof delivery");
-            return Ok(());
-        };
-
-        let body = super::types::GeneratedProof {
-            proof_gen_id: Bytes::copy_from_slice(&proof_gen_id),
-            execution_proof: proof,
-        };
-
-        let resp = self
-            .http_client
-            .post(callback_url.as_str())
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProofEngineError::CallbackFailed(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            return Err(ProofEngineError::CallbackFailed(format!(
-                "HTTP {}",
-                resp.status()
-            )));
-        }
-
-        info!("Proof delivered to callback URL");
-        Ok(())
-    }
-
     /// Build a ProofGenId from block number and root.
-    /// Uses the first 4 bytes of block_number and first 4 bytes of root.
+    /// Uses the lower 4 bytes of block_number and the first 4 bytes of root.
     fn make_proof_gen_id(block_number: u64, root: &H256) -> ProofGenId {
         let mut id = [0u8; 8];
         id[..4].copy_from_slice(&block_number.to_be_bytes()[4..]);

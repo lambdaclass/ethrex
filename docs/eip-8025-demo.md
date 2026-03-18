@@ -12,7 +12,7 @@ Build ethrex with the `eip-8025` feature and the L1 prover binary:
 
 ```bash
 cargo build --release --features eip-8025,dev --bin ethrex
-cargo build --features "eip-8025,l1-prover-bin" -p ethrex-prover --bin l1_prover
+cargo build --release --features "eip-8025,l1-prover-bin" -p ethrex-prover --bin l1_prover
 ```
 
 Ensure `jwt.hex` exists in the repo root (generated automatically by the node on first run if missing).
@@ -54,12 +54,12 @@ L1 ProofCoordinator TCP server listening on 127.0.0.1:9100
 ### Terminal 2: Start the Prover
 
 ```bash
-RUST_LOG=info ./target/debug/l1_prover \
+RUST_LOG=info ./target/release/l1_prover \
   --coordinator http://localhost:9100 \
   --poll-interval-ms 2000
 ```
 
-The prover polls the coordinator every 2 seconds. It reports `"No batches to prove"` until a proof is requested.
+The prover polls the coordinator every 2 seconds. When there is no pending work it logs nothing visible at `info` level (the idle message is `debug!`-level and suppressed). The first visible output appears when a proof is requested.
 
 ### Terminal 3: Start the REPL
 
@@ -172,10 +172,37 @@ This validates the proof and stores it in `EXECUTION_PROOFS`.
 
 Build the headerized version of the payload. The header replaces variable-length list fields (transactions, withdrawals, requests) with their SSZ `hash_tree_root` values.
 
-For empty-block payloads (no transactions, no withdrawals), use the precomputed roots from the [reference table](#reference-ssz-empty-list-roots) below.
+Most fields are taken directly from the payload via variable references. The list root fields (`transactionsRoot`, `withdrawalsRoot`, and the three request roots) cannot be templated — they are SSZ `hash_tree_root` values computed over the list contents, not fields present in the payload object. For an empty block use the precomputed values from the [reference table](#reference-ssz-empty-list-roots) below.
 
 ```
-engine.verifyNewPayloadRequestHeaderV1 {"executionPayloadHeader":{"parentHash":"$payload.executionPayload.parentHash","feeRecipient":"$payload.executionPayload.feeRecipient","stateRoot":"$payload.executionPayload.stateRoot","receiptsRoot":"$payload.executionPayload.receiptsRoot","logsBloom":"$payload.executionPayload.logsBloom","prevRandao":"$payload.executionPayload.prevRandao","blockNumber":"$payload.executionPayload.blockNumber","gasLimit":"$payload.executionPayload.gasLimit","gasUsed":"$payload.executionPayload.gasUsed","timestamp":"$payload.executionPayload.timestamp","extraData":"$payload.executionPayload.extraData","baseFeePerGas":"$payload.executionPayload.baseFeePerGas","blockHash":"$payload.executionPayload.blockHash","transactionsRoot":"0x7ffe241ea60187fdb0187bfa22de35d1f9bed7ab061d9401fd47e34a54fbede1","withdrawalsRoot":"0x792930bbd5baac43bcc798ee49aa8185ef76bb3b44ba62b91d86ae569e4bb535","blobGasUsed":"0x0","excessBlobGas":"0x0","depositRequestsRoot":"0x4a8c3a07c8d23adc5bac61157555c3c784d53d9bc110c1370809bd23cd93777d","withdrawalRequestsRoot":"0x792930bbd5baac43bcc798ee49aa8185ef76bb3b44ba62b91d86ae569e4bb535","consolidationRequestsRoot":"0xf5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"},"versionedHashes":[],"parentBeaconBlockRoot":"0x0000000000000000000000000000000000000000000000000000000000000000","executionRequests":[]}
+engine.verifyNewPayloadRequestHeaderV1 {
+  "executionPayloadHeader": {
+    "parentHash":    "$payload.executionPayload.parentHash",
+    "feeRecipient":  "$payload.executionPayload.feeRecipient",
+    "stateRoot":     "$payload.executionPayload.stateRoot",
+    "receiptsRoot":  "$payload.executionPayload.receiptsRoot",
+    "logsBloom":     "$payload.executionPayload.logsBloom",
+    "prevRandao":    "$payload.executionPayload.prevRandao",
+    "blockNumber":   "$payload.executionPayload.blockNumber",
+    "gasLimit":      "$payload.executionPayload.gasLimit",
+    "gasUsed":       "$payload.executionPayload.gasUsed",
+    "timestamp":     "$payload.executionPayload.timestamp",
+    "extraData":     "$payload.executionPayload.extraData",
+    "baseFeePerGas": "$payload.executionPayload.baseFeePerGas",
+    "blockHash":     "$payload.executionPayload.blockHash",
+    "blobGasUsed":   "$payload.executionPayload.blobGasUsed",
+    "excessBlobGas": "$payload.executionPayload.excessBlobGas",
+
+    "transactionsRoot":        "0x7ffe241ea60187fdb0187bfa22de35d1f9bed7ab061d9401fd47e34a54fbede1",
+    "withdrawalsRoot":         "0x792930bbd5baac43bcc798ee49aa8185ef76bb3b44ba62b91d86ae569e4bb535",
+    "depositRequestsRoot":     "0x4a8c3a07c8d23adc5bac61157555c3c784d53d9bc110c1370809bd23cd93777d",
+    "withdrawalRequestsRoot":  "0x792930bbd5baac43bcc798ee49aa8185ef76bb3b44ba62b91d86ae569e4bb535",
+    "consolidationRequestsRoot":"0xf5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+  },
+  "versionedHashes": [],
+  "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "executionRequests": []
+}
 ```
 
 **Expected: `status = VALID`**
@@ -251,5 +278,5 @@ For blocks with no transactions, withdrawals, or execution requests, use these S
 | `forkchoiceUpdatedV3` returns `SYNCING` | Default sync mode is `snap` | Start with `--syncmode full` |
 | `requestProofsV1` returns "World State Root does not match" | Payload has incorrect `stateRoot` | Use the payload from `getPayloadV5`, not a manually constructed one |
 | `verifyNewPayloadRequestHeaderV1` returns `SYNCING` | No proof stored yet | Wait for the prover to submit, or check prover logs for errors |
-| Prover says "No batches to prove" | Proof was already consumed, or not yet requested | Call `requestProofsV1` first, then wait for the prover's next poll cycle |
+| Prover shows no output after starting | Idle message is `debug!`-level and suppressed at `RUST_LOG=info` — this is normal | The first visible log appears only when a proof is requested |
 | Port 9100 "Address already in use" | Previous node process still running | Kill stale processes: `pkill -9 -f ethrex` and wait a few seconds |
