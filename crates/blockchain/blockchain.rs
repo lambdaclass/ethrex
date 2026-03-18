@@ -3160,10 +3160,11 @@ pub fn validate_state_root(
             block_number = block_header.number,
             expected = ?block_header.state_root,
             computed = ?new_state_root,
-            "State root mismatch (CONTINUING — diagnostic mode)"
+            "State root mismatch"
         );
-        // TEMPORARY: skip state root validation to test if subsequent blocks also fail
-        Ok(())
+        Err(ChainError::InvalidBlock(
+            InvalidBlockError::StateRootMismatch,
+        ))
     }
 }
 
