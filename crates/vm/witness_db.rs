@@ -41,9 +41,7 @@ impl GuestProgramStateWrapper {
         self.lock_mutex()?.state_trie_root(self.crypto.as_ref())
     }
 
-    pub fn get_first_invalid_block_hash(
-        &self,
-    ) -> Result<Option<u64>, GuestProgramStateError> {
+    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
         self.lock_mutex()?
             .get_first_invalid_block_hash(self.crypto.as_ref())
     }

@@ -818,7 +818,9 @@ fn compute_storage_roots(
 
     let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?.compute_hash(&ethrex_crypto::NativeCrypto).finalize(&ethrex_crypto::NativeCrypto),
+        Some(noderlp) => Node::decode(&noderlp)?
+            .compute_hash(&ethrex_crypto::NativeCrypto)
+            .finalize(&ethrex_crypto::NativeCrypto),
         None => *EMPTY_TRIE_HASH,
     };
     let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;

@@ -43,8 +43,13 @@ impl ExtensionNode {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                        extension_node_hash: self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -82,8 +87,13 @@ impl ExtensionNode {
             let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                        extension_node_hash: self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -112,8 +122,12 @@ impl ExtensionNode {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::ExtensionNodeChildDiffers(
                                 ExtensionNodeErrorData {
-                                    node_hash: new_node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                                    extension_node_hash: self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                                    node_hash: new_node
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
+                                    extension_node_hash: self
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
                                     node_path: path.current(),
                                 },
@@ -124,8 +138,12 @@ impl ExtensionNode {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::ExtensionNodeChildNotFound(
                                 ExtensionNodeErrorData {
-                                    node_hash: new_node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                                    extension_node_hash: self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                                    node_hash: new_node
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
+                                    extension_node_hash: self
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
                                     node_path: path.current(),
                                 },
@@ -169,8 +187,13 @@ impl ExtensionNode {
             let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                        extension_node_hash: self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -247,8 +270,14 @@ impl ExtensionNode {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.clone().compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                        extension_node_hash: self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                        node_hash: self
+                            .child
+                            .clone()
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),

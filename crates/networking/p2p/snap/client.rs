@@ -24,11 +24,11 @@ use crate::{
     },
 };
 use bytes::Bytes;
-use ethrex_crypto::NativeCrypto;
 use ethrex_common::{
     BigEndianHash, H256, U256,
     types::{AccountState, BlockHeader},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;

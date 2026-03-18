@@ -333,10 +333,7 @@ impl BlockBody {
     }
 }
 
-pub fn compute_transactions_root(
-    transactions: &[Transaction],
-    crypto: &dyn Crypto,
-) -> H256 {
+pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
     let iter = transactions.iter().enumerate().map(|(idx, tx)| {
         // Key: RLP(tx_index)
         // Value: tx_type || RLP(tx)  if tx_type != 0
@@ -398,7 +395,9 @@ impl BlockHeader {
     }
 
     pub fn hash(&self) -> H256 {
-        *self.hash.get_or_init(|| self.compute_block_hash(&NativeCrypto))
+        *self
+            .hash
+            .get_or_init(|| self.compute_block_hash(&NativeCrypto))
     }
 }
 
@@ -992,7 +991,8 @@ mod test {
                     .unwrap()
             })
             .collect();
-        let transactions_root = compute_transactions_root(&transactions, &ethrex_crypto::NativeCrypto);
+        let transactions_root =
+            compute_transactions_root(&transactions, &ethrex_crypto::NativeCrypto);
         let expected_root = H256::from_slice(
             &hex::decode("adf0387d2303fe80aeca23bf6828c979b44d8a8fe4a1ba1d3511bc1567ca80de")
                 .unwrap(),

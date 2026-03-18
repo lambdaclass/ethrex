@@ -453,7 +453,10 @@ pub fn node_pending_children(
             pending_children_count += 1;
 
             paths.extend(vec![RequestMetadata {
-                hash: node.child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                hash: node
+                    .child
+                    .compute_hash(&NativeCrypto)
+                    .finalize(&NativeCrypto),
                 path: child_path,
                 parent_path: path.clone(),
             }]);

@@ -124,7 +124,9 @@ fn collect_accounts_from_node(
             for (i, child) in branch.choices.iter().enumerate() {
                 let child_node: Option<&Node> = match child {
                     NodeRef::Node(n, _) => Some(n),
-                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
+                    NodeRef::Hash(hash) if hash.is_valid() => {
+                        nodes.get(&hash.finalize(&NativeCrypto))
+                    }
                     _ => None,
                 };
                 if let Some(child_node) = child_node {

@@ -85,15 +85,16 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => (node.compute_hash(&NativeCrypto) == *hash)
-                        .then_some(Ok(Arc::new(node))),
-                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                })
-                .transpose(),
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                db.get(path)?
+                    .filter(|rlp| !rlp.is_empty())
+                    .and_then(|rlp| match Node::decode(&rlp) {
+                        Ok(node) => (node.compute_hash(&NativeCrypto) == *hash)
+                            .then_some(Ok(Arc::new(node))),
+                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                    })
+                    .transpose()
+            }
         }
     }
 

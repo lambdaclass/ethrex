@@ -376,7 +376,10 @@ impl<'a> VM<'a> {
             } else {
                 Bytes::new()
             };
-            self.update_account_bytecode(authority_address, Code::from_bytecode(code, self.crypto))?;
+            self.update_account_bytecode(
+                authority_address,
+                Code::from_bytecode(code, self.crypto),
+            )?;
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)

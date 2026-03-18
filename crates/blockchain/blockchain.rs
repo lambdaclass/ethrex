@@ -487,7 +487,11 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+                        validate_receipts_root(
+                            &block.header,
+                            &execution_result.receipts,
+                            &NativeCrypto,
+                        )?;
                         validate_requests_hash(
                             &block.header,
                             &chain_config,
@@ -1424,7 +1428,12 @@ impl Blockchain {
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
-            .map(|node| (node.compute_hash(&NativeCrypto).finalize(&NativeCrypto), node))
+            .map(|node| {
+                (
+                    node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                    node,
+                )
+            })
             .collect();
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
             Trie::get_embedded_root(&nodes, initial_state_root)?
@@ -1653,7 +1662,12 @@ impl Blockchain {
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
             .into_iter()
-            .map(|node| (node.compute_hash(&NativeCrypto).finalize(&NativeCrypto), node))
+            .map(|node| {
+                (
+                    node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                    node,
+                )
+            })
             .collect();
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
             Trie::get_embedded_root(&nodes, initial_state_root)?
@@ -2968,7 +2982,8 @@ fn handle_subtrie(
                             collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?;
                         if let Some(root) = collapsed {
                             let mut root = NodeRef::from(root);
-                            let hash = root.commit(Nibbles::default(), &mut state.nodes, &NativeCrypto);
+                            let hash =
+                                root.commit(Nibbles::default(), &mut state.nodes, &NativeCrypto);
                             let _ = DROP_SENDER.send(Box::new(root));
                             hash.finalize(&NativeCrypto)
                         } else {

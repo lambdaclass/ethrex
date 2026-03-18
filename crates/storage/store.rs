@@ -1763,7 +1763,8 @@ impl Store {
                 account_state.encode_to_vec(),
             )?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash(&NativeCrypto);
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -1856,7 +1857,8 @@ impl Store {
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash(&NativeCrypto);
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         let account_updates_list = AccountUpdatesList {
             state_trie_hash,
@@ -1894,7 +1896,8 @@ impl Store {
                 }
             }
 
-            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash(&NativeCrypto);
+            let (storage_root, storage_nodes) =
+                storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
             storage_trie_nodes.extend(
                 storage_nodes
@@ -1912,7 +1915,8 @@ impl Store {
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
+        let (state_root, account_trie_nodes) =
+            genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
         let account_trie_nodes = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
@@ -2698,7 +2702,9 @@ impl Store {
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
-        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash(&NativeCrypto).finalize(&NativeCrypto);
+        let root_hash = ethrex_trie::Node::decode(&root)?
+            .compute_hash(&NativeCrypto)
+            .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
     }
 

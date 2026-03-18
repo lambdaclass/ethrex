@@ -63,7 +63,9 @@ impl BranchNode {
                 let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                            child_ref
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
                             self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             path.current(),
                         ),
@@ -100,7 +102,9 @@ impl BranchNode {
                     let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                choice_ref.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                                choice_ref
+                                    .compute_hash(&NativeCrypto)
+                                    .finalize(&NativeCrypto),
                                 self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                                 path.current(),
                             ),
@@ -122,7 +126,9 @@ impl BranchNode {
                         let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
                             return Err(TrieError::InconsistentTree(Box::new(
                                 InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                    choice_ref.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                                    choice_ref
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
                                     self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                                     path.current(),
                                 ),
@@ -180,7 +186,9 @@ impl BranchNode {
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            self.choices[choice_index].compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                            self.choices[choice_index]
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
                             self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             path.current(),
                         ),
@@ -227,7 +235,9 @@ impl BranchNode {
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                            child_ref
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
                             self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             base_path.current(),
                         ),
@@ -297,7 +307,9 @@ impl BranchNode {
                 let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                            child_ref
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
                             self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             path.current(),
                         ),

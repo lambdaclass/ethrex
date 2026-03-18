@@ -127,7 +127,10 @@ impl ExecutionPayload {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto),
+            transactions_root: compute_transactions_root(
+                &body.transactions,
+                &ethrex_crypto::NativeCrypto,
+            ),
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),

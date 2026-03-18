@@ -137,8 +137,9 @@ fn add_current_to_parent_and_write_queue(
             .into(),
         ),
     };
-    parent_element.element.choices[index as usize] =
-        node.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).into();
+    parent_element.element.choices[index as usize] = node
+        .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+        .into();
     nodes_to_write.push((target_path, node));
     Ok(())
 }

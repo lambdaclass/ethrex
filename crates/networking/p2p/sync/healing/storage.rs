@@ -686,7 +686,10 @@ pub fn determine_pending_children(
                 acc_path: node_response.node_request.acc_path.clone(),
                 storage_path: child_path,
                 parent: node_response.node_request.storage_path.clone(),
-                hash: node.child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                hash: node
+                    .child
+                    .compute_hash(&NativeCrypto)
+                    .finalize(&NativeCrypto),
             }]);
         }
         _ => {}

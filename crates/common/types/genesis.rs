@@ -897,8 +897,14 @@ mod tests {
             H256::from_str("0x2dab6a1d6d638955507777aecea699e6728825524facbd446bd4e86d44fa5ecd")
                 .unwrap()
         );
-        assert_eq!(header.transactions_root, compute_transactions_root(&[], &NativeCrypto));
-        assert_eq!(header.receipts_root, compute_receipts_root(&[], &NativeCrypto));
+        assert_eq!(
+            header.transactions_root,
+            compute_transactions_root(&[], &NativeCrypto)
+        );
+        assert_eq!(
+            header.receipts_root,
+            compute_receipts_root(&[], &NativeCrypto)
+        );
         assert_eq!(header.logs_bloom, Bloom::default());
         assert_eq!(header.difficulty, U256::from(1));
         assert_eq!(header.gas_limit, 25_000_000);
@@ -911,7 +917,10 @@ mod tests {
             header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
             INITIAL_BASE_FEE
         );
-        assert_eq!(header.withdrawals_root, Some(compute_withdrawals_root(&[], &NativeCrypto)));
+        assert_eq!(
+            header.withdrawals_root,
+            Some(compute_withdrawals_root(&[], &NativeCrypto))
+        );
         assert_eq!(header.blob_gas_used, Some(0));
         assert_eq!(header.excess_blob_gas, Some(0));
         assert_eq!(header.parent_beacon_block_root, Some(H256::zero()));

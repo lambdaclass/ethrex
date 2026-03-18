@@ -523,7 +523,9 @@ impl GuestProgramState {
         if is_storage_verified {
             Ok(self.storage_tries.get(&hashed_address))
         } else {
-            let Some(storage_root) = self.get_account_state(address, crypto)?.map(|a| a.storage_root)
+            let Some(storage_root) = self
+                .get_account_state(address, crypto)?
+                .map(|a| a.storage_root)
             else {
                 // empty account
                 return Ok(None);

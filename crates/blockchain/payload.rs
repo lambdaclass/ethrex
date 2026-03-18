@@ -773,7 +773,8 @@ impl Blockchain {
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
-        context.payload.header.receipts_root = compute_receipts_root(&context.receipts, &NativeCrypto);
+        context.payload.header.receipts_root =
+            compute_receipts_root(&context.receipts, &NativeCrypto);
         context.payload.header.requests_hash = context
             .requests
             .as_ref()

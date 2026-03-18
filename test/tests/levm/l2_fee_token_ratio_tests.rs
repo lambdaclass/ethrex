@@ -119,7 +119,12 @@ fn eoa(balance: U256) -> Account {
 }
 
 fn contract_with_storage(code: Bytes, storage: FxHashMap<H256, U256>) -> Account {
-    Account::new(U256::zero(), Code::from_bytecode(code, &NativeCrypto), 0, storage)
+    Account::new(
+        U256::zero(),
+        Code::from_bytecode(code, &NativeCrypto),
+        0,
+        storage,
+    )
 }
 
 fn contract(code: Bytes) -> Account {

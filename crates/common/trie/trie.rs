@@ -205,7 +205,9 @@ impl Trie {
             .get_node_checked(self.db.as_ref(), path)?
             .ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                    self.root.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                    self.root
+                        .compute_hash(&NativeCrypto)
+                        .finalize(&NativeCrypto),
                 )))
             })
     }
@@ -453,8 +455,12 @@ impl Trie {
                                 .ok_or_else(|| {
                                     TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                            child_ref.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                                            branch_node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                                            child_ref
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
+                                            branch_node
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             child_path.clone(),
                                         ),
                                     ))

@@ -106,7 +106,10 @@ fn eoa(balance: U256) -> Account {
 fn reverting_contract() -> Account {
     Account::new(
         U256::zero(),
-        Code::from_bytecode(Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xfd])),
+        Code::from_bytecode(
+            Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xfd]),
+            &NativeCrypto,
+        ),
         1,
         FxHashMap::default(),
     )
@@ -118,9 +121,12 @@ fn reverting_contract() -> Account {
 fn returns_one_contract() -> Account {
     Account::new(
         U256::zero(),
-        Code::from_bytecode(Bytes::from(vec![
-            0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
-        ])),
+        Code::from_bytecode(
+            Bytes::from(vec![
+                0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+            ]),
+            &NativeCrypto,
+        ),
         1,
         FxHashMap::default(),
     )
