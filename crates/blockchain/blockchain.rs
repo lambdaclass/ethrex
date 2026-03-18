@@ -48,7 +48,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 #[cfg(feature = "eip-8025")]
-pub mod proof_engine;
+pub mod proof_coordinator;
 pub mod tracing;
 pub mod vm;
 

@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-/// Configuration for the EIP-8025 ProofEngine.
+/// Configuration for the EIP-8025 proof coordinator.
 ///
 /// Provides the callback URL for delivering generated proofs to the Beacon API,
 /// and the bind address/port for the ProofCoordinator's TCP server where
 /// prover workers connect.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProofEngineConfig {
+pub struct ProofCoordinatorConfig {
     /// URL to POST `GeneratedProof` payloads to (Beacon API endpoint).
     /// Example: `http://beacon:5052/eth/v1/prover/execution_proofs`
     /// `None` means no callback delivery — proofs are stored but not pushed.
@@ -18,7 +18,7 @@ pub struct ProofEngineConfig {
     pub coordinator_port: u16,
 }
 
-impl Default for ProofEngineConfig {
+impl Default for ProofCoordinatorConfig {
     fn default() -> Self {
         Self {
             callback_url: None,

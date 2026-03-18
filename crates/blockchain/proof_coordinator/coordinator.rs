@@ -32,7 +32,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::config::ProofEngineConfig;
+use super::config::ProofCoordinatorConfig;
 use super::types::{ExecutionProofV1, GeneratedProof, MAX_PROOF_SIZE, ProofGenId, PublicInputV1};
 
 /// How long to wait for a prover connection before re-checking the message queue.
@@ -102,7 +102,7 @@ pub type CoordinatorHandle = GenServerHandle<L1ProofCoordinator>;
 #[derive(Clone)]
 pub struct L1ProofCoordinator {
     store: Store,
-    config: ProofEngineConfig,
+    config: ProofCoordinatorConfig,
     /// TCP listener for prover connections.
     listener: Option<Arc<TcpListener>>,
     /// Pending requests awaiting proof generation: block_number → request.
@@ -113,7 +113,7 @@ pub struct L1ProofCoordinator {
 
 impl L1ProofCoordinator {
     /// Create a new L1ProofCoordinator.
-    pub fn new(store: Store, config: ProofEngineConfig) -> Self {
+    pub fn new(store: Store, config: ProofCoordinatorConfig) -> Self {
         Self {
             store,
             config,
@@ -378,7 +378,7 @@ async fn send_proof_data<I: serde::Serialize>(
 /// new proof requests via `CoordCastMsg::AddRequest`.
 pub async fn start_proof_coordinator(
     store: Store,
-    config: ProofEngineConfig,
+    config: ProofCoordinatorConfig,
 ) -> Result<CoordinatorHandle, L1CoordinatorError> {
     // Bind the TCP listener before starting the GenServer.
     let bind_addr = format!("{}:{}", config.coordinator_addr, config.coordinator_port);

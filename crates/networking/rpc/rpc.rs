@@ -213,7 +213,8 @@ pub struct RpcApiContext {
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
     /// EIP-8025 proof coordinator handle for sending proof requests.
     #[cfg(feature = "eip-8025")]
-    pub proof_coordinator: Option<ethrex_blockchain::proof_engine::coordinator::CoordinatorHandle>,
+    pub proof_coordinator:
+        Option<ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle>,
 }
 
 impl std::fmt::Debug for RpcApiContext {
@@ -499,7 +500,7 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     #[cfg(feature = "eip-8025")] proof_coordinator: Option<
-        ethrex_blockchain::proof_engine::coordinator::CoordinatorHandle,
+        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
     >,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,

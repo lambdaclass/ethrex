@@ -6,8 +6,10 @@
 //! - `engine_verifyNewPayloadRequestHeaderV1`: Verify a headerized new-payload request.
 
 use bytes::Bytes;
-use ethrex_blockchain::proof_engine::coordinator::{CoordCastMsg, CoordinatorHandle, ProofRequest};
-use ethrex_blockchain::proof_engine::types::{
+use ethrex_blockchain::proof_coordinator::coordinator::{
+    CoordCastMsg, CoordinatorHandle, ProofRequest,
+};
+use ethrex_blockchain::proof_coordinator::types::{
     ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS,
     NewPayloadRequestHeaderV1 as EngineNewPayloadRequestHeaderV1, ProofAttributesV1, ProofGenId,
     ProofStatusV1, ProofValidationStatus,

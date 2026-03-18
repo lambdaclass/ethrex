@@ -187,7 +187,7 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     #[cfg(feature = "eip-8025")] proof_coordinator: Option<
-        ethrex_blockchain::proof_engine::coordinator::CoordinatorHandle,
+        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
     >,
 ) {
     if !is_memory_datadir(datadir) {
@@ -524,10 +524,10 @@ pub async fn init_l1(
     // Initialize EIP-8025 proof coordinator when the feature is enabled.
     #[cfg(feature = "eip-8025")]
     let proof_coordinator = {
-        use ethrex_blockchain::proof_engine::{
-            config::ProofEngineConfig, coordinator::start_proof_coordinator,
+        use ethrex_blockchain::proof_coordinator::{
+            config::ProofCoordinatorConfig, coordinator::start_proof_coordinator,
         };
-        let proof_config = ProofEngineConfig {
+        let proof_config = ProofCoordinatorConfig {
             callback_url: opts.proof_callback_url.clone(),
             coordinator_addr: opts.proof_coordinator_addr.clone(),
             coordinator_port: opts.proof_coordinator_port,
