@@ -1124,10 +1124,11 @@ impl<'a> VM<'a> {
             .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
 
-        // DEBUG: Log gas for top-level subcalls (depth 1 = parent is depth 0)
-        if self.call_frames.len() <= 1 {
+        // DEBUG: Log gas for subcalls up to depth 3
+        if self.call_frames.len() <= 3 {
             eprintln!(
-                "CALL_RETURN to={:?} gas_limit={} gas_used={} success={}",
+                "CALL_RETURN depth={} to={:?} gas_limit={} gas_used={} success={}",
+                self.call_frames.len() + 1,
                 executed_call_frame.to,
                 gas_limit,
                 ctx_result.gas_used,
