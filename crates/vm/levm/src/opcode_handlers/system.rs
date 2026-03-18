@@ -673,7 +673,7 @@ impl<'a> VM<'a> {
     ) -> Result<OpcodeResult, VMError> {
         // Validations that can cause out of gas.
         // 1. [EIP-3860] - Cant exceed init code max size
-        let max_init_code_size = if self.env.config.fork.is_polygon() {
+        let max_init_code_size = if matches!(self.vm_type, VMType::Polygon(_)) {
             POLYGON_INIT_CODE_MAX_SIZE
         } else {
             INIT_CODE_MAX_SIZE

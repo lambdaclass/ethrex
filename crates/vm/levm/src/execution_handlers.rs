@@ -192,7 +192,7 @@ impl<'a> VM<'a> {
         }
 
         // 2. If the code_length > MAX_CODE_SIZE
-        let max_code_size = if self.env.config.fork.is_polygon() {
+        let max_code_size = if matches!(self.vm_type, VMType::Polygon(_)) {
             POLYGON_MAX_CODE_SIZE
         } else {
             MAX_CODE_SIZE

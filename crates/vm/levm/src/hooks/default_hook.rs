@@ -5,7 +5,7 @@ use crate::{
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
@@ -31,7 +31,7 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
-        if vm.env.config.fork.is_polygon() {
+        if matches!(vm.vm_type, VMType::Polygon(_)) {
             // Polygon PoS: enforce 2^25 max transaction gas limit
             if vm.tx.gas_limit() > POLYGON_MAX_TX_GAS {
                 return Err(VMError::TxValidation(
@@ -192,7 +192,7 @@ pub fn refund_sender(
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
     // Polygon doesn't have EIP-7778, so skip this path for Polygon forks.
-    if vm.env.config.fork >= Fork::Amsterdam && !vm.env.config.fork.is_polygon() {
+    if vm.env.config.fork >= Fork::Amsterdam && !matches!(vm.vm_type, VMType::Polygon(_)) {
         // Block accounting uses max(pre-refund gas, calldata floor)
         // This prevents gas smuggling via refunds (EIP-7778)
         let floor = vm.get_min_gas_used()?;
@@ -371,7 +371,7 @@ pub fn validate_max_fee_per_blob_gas(
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
     let code_size = vm.current_call_frame.calldata.len();
-    let max_init_code_size = if vm.env.config.fork.is_polygon() {
+    let max_init_code_size = if matches!(vm.vm_type, VMType::Polygon(_)) {
         POLYGON_INIT_CODE_MAX_SIZE
     } else {
         INIT_CODE_MAX_SIZE
