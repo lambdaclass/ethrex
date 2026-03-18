@@ -132,10 +132,10 @@ Internally, the proof engine:
 Watch Terminal 2. Within a few seconds:
 
 ```
-INFO Received input #1
+INFO Received payload #1
 WARN "exec" prover backend generates no proof, only executes
-INFO Proved input #1
-INFO Proof for input #1 accepted
+INFO Proved payload #1
+INFO Proof for payload #1 accepted
 ```
 
 The prover pulled the `ProgramInput` from the coordinator via the `ProofData<ProgramInput>` TCP protocol, executed the block statelessly with `ExecBackend`, and submitted the result. The coordinator stored the proof in the `EXECUTION_PROOFS` table.

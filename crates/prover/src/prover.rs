@@ -109,7 +109,7 @@ where
                             proving_time_s = elapsed.as_secs(),
                             proving_time_ms =
                                 u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-                            "Proved input #{} in {:.2?}",
+                            "Proved payload #{} in {:.2?}",
                             prover_data.batch_number,
                             elapsed
                         );
@@ -121,7 +121,7 @@ where
                     .and_then(|output| {
                         info!(
                             id = prover_data.batch_number,
-                            "Proved input #{}", prover_data.batch_number
+                            "Proved payload #{}", prover_data.batch_number
                         );
                         self.backend.to_batch_proof(output, prover_data.format)
                     })
@@ -173,7 +173,7 @@ where
             return Ok(InputRequest::RetryLater);
         };
 
-        info!(%endpoint, "Received input #{batch_number}");
+        info!(%endpoint, "Received payload #{batch_number}");
         let input: ProgramInput = input.into();
         Ok(InputRequest::Batch(Box::new(ProverData {
             batch_number,
@@ -198,7 +198,7 @@ where
             return Err("Expecting ProofData::SubmitAck".to_owned());
         };
 
-        info!(%endpoint, "Proof for input #{batch_number} accepted");
+        info!(%endpoint, "Proof for payload #{batch_number} accepted");
         Ok(())
     }
 }
