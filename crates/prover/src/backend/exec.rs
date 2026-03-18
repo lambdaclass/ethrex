@@ -3,11 +3,12 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
+use ethrex_common::types::prover::{ProofFormat, ProverType};
 use ethrex_guest_program::crypto::NativeCrypto;
 use ethrex_guest_program::{input::ProgramInput, output::ProgramOutput};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofCalldata, ProofFormat, ProverType},
+    prover::{BatchProof, ProofCalldata},
 };
 
 use crate::backend::{BackendError, ProverBackend};

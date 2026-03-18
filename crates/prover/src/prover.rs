@@ -2,8 +2,9 @@ use crate::{
     backend::{BackendType, ExecBackend, ProverBackend},
     protocol::ProofData,
 };
+use ethrex_common::types::prover::{ProofFormat, ProverType};
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
+use ethrex_l2_common::prover::BatchProof;
 use serde::{Serialize, de::DeserializeOwned};
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};

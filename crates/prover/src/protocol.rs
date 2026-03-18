@@ -1,5 +1,6 @@
 use bytes::Bytes;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofFormat, ProverType};
+use ethrex_l2_common::prover::BatchProof;
 use serde::{Deserialize, Serialize};
 
 /// Generic enum for the ProverServer <--> ProverClient Communication Protocol.

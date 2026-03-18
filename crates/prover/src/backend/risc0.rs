@@ -1,12 +1,13 @@
 use std::time::{Duration, Instant};
 
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
 use ethrex_guest_program::{
     input::ProgramInput,
     methods::{ETHREX_GUEST_RISC0_ELF, ETHREX_GUEST_RISC0_ID},
 };
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
+    prover::{BatchProof, ProofCalldata},
 };
 use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,

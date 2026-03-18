@@ -12,7 +12,7 @@ use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProverType},
+    prover::{BatchProof, ProverType, ProverTypeL2Ext},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};

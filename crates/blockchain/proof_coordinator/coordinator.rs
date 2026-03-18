@@ -17,8 +17,8 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use ethrex_prover::ProofData;
+use ethrex_prover::{BatchProof, ProofFormat, ProverType};
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};

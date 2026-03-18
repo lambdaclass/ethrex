@@ -1,7 +1,8 @@
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
 use ethrex_guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
+    prover::{BatchProof, ProofCalldata},
 };
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;

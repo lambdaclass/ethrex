@@ -3900,7 +3900,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-guest-program",
- "ethrex-l2-common",
  "ethrex-metrics",
  "ethrex-prover",
  "ethrex-rlp",

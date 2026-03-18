@@ -1,7 +1,8 @@
 use std::time::{Duration, Instant};
 
+use ethrex_common::types::prover::{ProofFormat, ProverType};
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
+use ethrex_l2_common::prover::BatchProof;
 use openvm_continuations::verifier::internal::types::VmStarkProof;
 use openvm_sdk::{Sdk, StdIn, types::EvmProof};
 use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2Config;
