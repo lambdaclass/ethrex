@@ -1464,41 +1464,12 @@ async function loadDeployments() {
       return;
     }
 
-    // Reconcile: check live Docker status for deployments with docker_project
-    await Promise.all(list.map(async (d) => {
+    // Phase 1: Render immediately with DB data (remote running → show as "checking")
+    list.forEach(d => {
       const dc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
       const isRemote = dc.cloud === 'aws' || !!d.host_id || dc.mode === 'ai-deploy';
-      if ((!d.docker_project && !isRemote) || isDeploying(d.phase)) return;
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 15000);
-        const statusRes = await fetch(`${API}/deployments/${d.id}/status`, { signal: ctrl.signal });
-        clearTimeout(timer);
-        const statusData = await statusRes.json();
-        const containers = statusData.containers || [];
-        // Server reports unreachable (remote SSH failed)
-        if (statusData.phase === 'unreachable') {
-          d.phase = 'unreachable'; d.status = 'unreachable';
-        } else {
-          // Only check core services (L1/L2/Prover), not shared tools containers
-          const coreServices = ['tokamak-app-l1', 'tokamak-app-l2', 'tokamak-app-prover'];
-          const coreContainers = containers.filter(c => coreServices.includes(c.Service));
-          const anyRunning = coreContainers.some(c => (c.State || c.state) === 'running');
-          if (d.phase === 'stopped' && anyRunning) {
-            d.phase = 'running'; d.status = 'active';
-          } else if (d.phase === 'running' && containers.length > 0 && !anyRunning) {
-            d.phase = 'stopped'; d.status = 'configured';
-          } else if (d.phase === 'running' && containers.length === 0) {
-            d.phase = 'stopped'; d.status = 'configured';
-          }
-        }
-      } catch {
-        // Fetch timeout or server error — remote deployments show unreachable
-        if (isRemote && d.phase === 'running') {
-          d.phase = 'unreachable'; d.status = 'unreachable';
-        }
-      }
-    }));
+      if (isRemote && d.phase === 'running') { d.phase = 'unreachable'; d.status = 'unreachable'; }
+    });
 
     container.innerHTML = `
       <table class="data-table">
@@ -1516,6 +1487,43 @@ async function loadDeployments() {
           ${list.map(d => renderDeploymentRow(d)).join('')}
         </tbody>
       </table>`;
+
+    // Phase 2: Background status reconciliation (non-blocking)
+    Promise.all(list.map(async (d) => {
+      const dc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+      const isRemote = dc.cloud === 'aws' || !!d.host_id || dc.mode === 'ai-deploy';
+      if ((!d.docker_project && !isRemote) || isDeploying(d.phase)) return;
+      let changed = false;
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15000);
+        const statusRes = await fetch(`${API}/deployments/${d.id}/status`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        const statusData = await statusRes.json();
+        const containers = statusData.containers || [];
+        if (statusData.phase === 'unreachable') {
+          if (d.phase !== 'unreachable') { d.phase = 'unreachable'; d.status = 'unreachable'; changed = true; }
+        } else {
+          const coreServices = ['tokamak-app-l1', 'tokamak-app-l2', 'tokamak-app-prover'];
+          const coreContainers = containers.filter(c => coreServices.includes(c.Service));
+          const anyRunning = coreContainers.some(c => (c.State || c.state) === 'running');
+          if (anyRunning && d.phase !== 'running') {
+            d.phase = 'running'; d.status = 'active'; changed = true;
+          } else if (!anyRunning && containers.length > 0 && d.phase !== 'stopped') {
+            d.phase = 'stopped'; d.status = 'configured'; changed = true;
+          }
+        }
+      } catch {
+        if (isRemote && d.phase !== 'unreachable') {
+          d.phase = 'unreachable'; d.status = 'unreachable'; changed = true;
+        }
+      }
+      // Update just this row if status changed
+      if (changed) {
+        const row = document.querySelector(`tr.deploy-row[data-id="${d.id}"]`);
+        if (row) row.outerHTML = renderDeploymentRow(d);
+      }
+    }));
   } catch {
     document.getElementById('deployments-list').innerHTML = '<p class="empty-state">Failed to load deployments</p>';
   }
