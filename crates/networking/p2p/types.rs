@@ -323,12 +323,12 @@ impl NodeRecordPairs {
     pub fn encode_pairs(&self) -> Vec<(Bytes, Bytes)> {
         // The key/value pairs must be sorted by key and must be unique
         let mut pairs = vec![];
-        if let Some(eth) = self.eth.clone() {
+        if let Some(eth) = &self.eth {
             // Without the Vec wrapper, RLP encoding fork_id directly would produce:
             // [forkHash, forkNext]
             // But the spec requires nested lists:
             // [[forkHash, forkNext]]
-            let eth = vec![eth];
+            let eth = vec![eth.clone()];
             pairs.push(("eth".into(), eth.encode_to_vec().into()));
         }
         if let Some(id) = self.id.as_ref() {
