@@ -105,11 +105,11 @@ where
                     .prove_timed(prover_data.input, prover_data.format)
                     .and_then(|(output, elapsed)| {
                         info!(
-                            batch = prover_data.batch_number,
+                            id = prover_data.batch_number,
                             proving_time_s = elapsed.as_secs(),
                             proving_time_ms =
                                 u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-                            "Proved batch {} in {:.2?}",
+                            "Proved input #{} in {:.2?}",
                             prover_data.batch_number,
                             elapsed
                         );
@@ -120,8 +120,8 @@ where
                     .prove(prover_data.input, prover_data.format)
                     .and_then(|output| {
                         info!(
-                            batch = prover_data.batch_number,
-                            "Proved batch {}", prover_data.batch_number
+                            id = prover_data.batch_number,
+                            "Proved input #{}", prover_data.batch_number
                         );
                         self.backend.to_batch_proof(output, prover_data.format)
                     })
@@ -168,12 +168,12 @@ where
         let (Some(batch_number), Some(input), Some(format)) = (batch_number, input, format) else {
             debug!(
                 %endpoint,
-                "No batches to prove right now, the prover may be ahead of the proposer"
+                "No pending work, the prover may be ahead of the proposer"
             );
             return Ok(InputRequest::RetryLater);
         };
 
-        info!(%endpoint, "Received Response for batch_number: {batch_number}");
+        info!(%endpoint, "Received input #{batch_number}");
         let input: ProgramInput = input.into();
         Ok(InputRequest::Batch(Box::new(ProverData {
             batch_number,
@@ -198,7 +198,7 @@ where
             return Err("Expecting ProofData::SubmitAck".to_owned());
         };
 
-        info!(%endpoint, "Received submit ack for batch_number: {batch_number}");
+        info!(%endpoint, "Proof for input #{batch_number} accepted");
         Ok(())
     }
 }

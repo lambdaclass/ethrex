@@ -94,6 +94,9 @@ pub struct ExecutionPayloadHeaderV1 {
     pub timestamp: u64,
     #[serde(with = "ethrex_common::serde_utils::bytes")]
     pub extra_data: Bytes,
+    /// Accepts both u64 QUANTITY hex (e.g. `"0x342770c0"`) and full
+    /// 32-byte big-endian hex (e.g. `"0x00...342770c0"`).
+    #[serde(deserialize_with = "base_fee_h256_or_quantity")]
     pub base_fee_per_gas: H256,
     pub block_hash: H256,
     pub transactions_root: H256,
@@ -105,6 +108,34 @@ pub struct ExecutionPayloadHeaderV1 {
     pub deposit_requests_root: H256,
     pub withdrawal_requests_root: H256,
     pub consolidation_requests_root: H256,
+}
+
+/// Deserialize `baseFeePerGas` from either a short QUANTITY hex string
+/// (e.g. `"0x342770c0"`) or a full 32-byte big-endian hex string.
+/// This allows reusing the value directly from `ExecutionPayload.baseFeePerGas`
+/// without manual conversion.
+fn base_fee_h256_or_quantity<'de, D>(deserializer: D) -> Result<H256, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let hex_str = s.trim_start_matches("0x");
+
+    if hex_str.len() > 64 {
+        return Err(serde::de::Error::custom(format!(
+            "baseFeePerGas hex too long: {} chars (max 64)",
+            hex_str.len()
+        )));
+    }
+
+    // Zero-pad to 64 hex chars (32 bytes, big-endian).
+    let padded = format!("{:0>64}", hex_str);
+    let mut bytes = [0u8; 32];
+    for (i, chunk) in padded.as_bytes().chunks(2).enumerate() {
+        let pair = std::str::from_utf8(chunk).map_err(serde::de::Error::custom)?;
+        bytes[i] = u8::from_str_radix(pair, 16).map_err(serde::de::Error::custom)?;
+    }
+    Ok(H256(bytes))
 }
 
 /// Headerized new-payload request for JSON-RPC transport.

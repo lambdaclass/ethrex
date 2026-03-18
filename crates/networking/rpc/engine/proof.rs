@@ -37,7 +37,7 @@ impl From<ProofEngineError> for RpcErr {
             }
             ProofEngineError::Store(e) => RpcErr::Internal(e.to_string()),
             ProofEngineError::Chain(e) => RpcErr::InvalidPayload(e.to_string()),
-            ProofEngineError::CallbackFailed(e) => RpcErr::Internal(e.to_string()),
+            ProofEngineError::CallbackFailed(e) => RpcErr::Internal(e),
             ProofEngineError::Internal(e) => RpcErr::Internal(e),
         }
     }
@@ -134,10 +134,14 @@ impl RpcHandler for RequestProofsV1 {
             self.parent_beacon_block_root,
             &self.execution_requests,
         )
-        .map_err(|e| RpcErr::InvalidPayload(e))?;
+        .map_err(RpcErr::InvalidPayload)?;
 
         let proof_gen_id = proof_engine
-            .request_proofs(block, H256::from_slice(&ssz_root))
+            .request_proofs(
+                block,
+                H256::from_slice(&ssz_root),
+                self.proof_attributes.proof_types.clone(),
+            )
             .await?;
 
         // Return ProofGenId as hex-encoded DATA (8 bytes).
@@ -198,11 +202,7 @@ impl RpcHandler for VerifyExecutionProofV1 {
             self.proof.proof_type
         );
 
-        // The proof engine needs a block_number for storage. We don't have it
-        // directly from the proof, so we use 0 as a sentinel -- the engine will
-        // index by root. This will be refined when the full proof lifecycle is
-        // integrated.
-        let status = proof_engine.verify_proof(0, &self.proof)?;
+        let status = proof_engine.verify_proof(&self.proof)?;
         serde_json::to_value(status).map_err(|e| RpcErr::Internal(e.to_string()))
     }
 }
@@ -252,7 +252,7 @@ impl RpcHandler for VerifyNewPayloadRequestHeaderV1 {
 
         // Convert JSON header to SSZ NewPayloadRequestHeader and compute root.
         let ssz_root =
-            json_header_to_ssz_root(&self.header).map_err(|e| RpcErr::InvalidHeaderFormat(e))?;
+            json_header_to_ssz_root(&self.header).map_err(RpcErr::InvalidHeaderFormat)?;
 
         let status = proof_engine.verify_header(block_number, &H256::from_slice(&ssz_root))?;
         serde_json::to_value(status).map_err(|e| RpcErr::Internal(e.to_string()))
@@ -265,11 +265,14 @@ impl RpcHandler for VerifyNewPayloadRequestHeaderV1 {
 /// RPC ExecutionPayload fields. This is the "new_payload_request_root" that
 /// execution proofs commit to.
 fn compute_new_payload_request_root(
-    _payload: &ExecutionPayload,
+    payload: &ExecutionPayload,
     versioned_hashes: &[H256],
     parent_beacon_block_root: H256,
     execution_requests: &[Bytes],
 ) -> Result<[u8; 32], String> {
+    // Build the full SSZ ExecutionPayload from the RPC payload.
+    let ssz_payload = rpc_payload_to_ssz(payload)?;
+
     // Build SSZ versioned_hashes list.
     let ssz_hashes: SszList<[u8; 32], 4096> = versioned_hashes
         .iter()
@@ -290,53 +293,110 @@ fn compute_new_payload_request_root(
         .try_into()
         .map_err(|_| "Too many execution requests".to_string())?;
 
-    // For the full SSZ NewPayloadRequest, we'd need the complete SSZ
-    // ExecutionPayload which requires converting all transaction bytes,
-    // withdrawals, etc. into SSZ form. The actual root computation is
-    // done in the guest program. Here we compute the NewPayloadRequestHeader
-    // root as a proxy, since the header's root matches the full request's
-    // root when the variable-length fields are correctly tree-hashed.
-    //
-    // Build a minimal NewPayloadRequestHeader for root computation.
-    // The RPC handler doesn't have the SSZ ExecutionPayload, so it relies
-    // on the ProofEngine (which builds from the Block) for the actual root.
-    // This function returns a placeholder that will be replaced by the
-    // coordinator's actual root.
-    //
-    // For now, compute a deterministic root from the available data.
-    let ssz_header = eip8025_ssz::NewPayloadRequestHeader {
-        execution_payload_header: eip8025_ssz::ExecutionPayloadHeader {
-            parent_hash: [0u8; 32], // Placeholder -- actual computation in ProofEngine
-            fee_recipient: eip8025_ssz::Bytes20([0u8; 20]),
-            state_root: [0u8; 32],
-            receipts_root: [0u8; 32],
-            logs_bloom: vec![0u8; 256]
-                .try_into()
-                .map_err(|_| "logs_bloom conversion failed".to_string())?,
-            prev_randao: [0u8; 32],
-            block_number: 0,
-            gas_limit: 0,
-            gas_used: 0,
-            timestamp: 0,
-            extra_data: vec![]
-                .try_into()
-                .map_err(|_| "extra_data too large".to_string())?,
-            base_fee_per_gas: [0u8; 32],
-            block_hash: [0u8; 32],
-            transactions_root: [0u8; 32],
-            withdrawals_root: [0u8; 32],
-            blob_gas_used: 0,
-            excess_blob_gas: 0,
-            deposit_requests_root: [0u8; 32],
-            withdrawal_requests_root: [0u8; 32],
-            consolidation_requests_root: [0u8; 32],
-        },
+    let ssz_request = eip8025_ssz::NewPayloadRequest {
+        execution_payload: ssz_payload,
         versioned_hashes: ssz_hashes,
         parent_beacon_block_root: parent_beacon_block_root.0,
         execution_requests: ssz_requests,
     };
 
-    Ok(ssz_header.hash_tree_root())
+    let root = ssz_request.hash_tree_root();
+    // Also compute via header path for comparison
+    let header = ssz_request.to_header();
+    let header_root = header.hash_tree_root();
+    info!(
+        "SSZ root (full): 0x{}, (header): 0x{}, match: {}",
+        hex::encode(root),
+        hex::encode(header_root),
+        root == header_root
+    );
+
+    Ok(root)
+}
+
+/// Convert an RPC `ExecutionPayload` into a full SSZ `eip8025_ssz::ExecutionPayload`.
+fn rpc_payload_to_ssz(payload: &ExecutionPayload) -> Result<eip8025_ssz::ExecutionPayload, String> {
+    // Transactions: Vec<EncodedTransaction> -> SszList<SszList<u8, ...>, ...>
+    let ssz_txs: Vec<SszList<u8, 1073741824>> = payload
+        .transactions()
+        .iter()
+        .map(|tx| {
+            tx.0.to_vec()
+                .try_into()
+                .map_err(|_| "Transaction too large".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let ssz_transactions: SszList<SszList<u8, 1073741824>, 1048576> = ssz_txs
+        .try_into()
+        .map_err(|_| "Too many transactions".to_string())?;
+
+    // Withdrawals: Option<Vec<Withdrawal>> -> SszList<ssz::Withdrawal, 16>
+    let ssz_withdrawals: SszList<eip8025_ssz::Withdrawal, 16> = payload
+        .withdrawals()
+        .unwrap_or(&[])
+        .iter()
+        .map(|w| eip8025_ssz::Withdrawal {
+            index: w.index,
+            validator_index: w.validator_index,
+            address: eip8025_ssz::Bytes20(w.address.0),
+            amount: w.amount,
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| "Too many withdrawals".to_string())?;
+
+    // base_fee_per_gas: u64 -> [u8; 32] (256-bit little-endian)
+    let mut base_fee_bytes = [0u8; 32];
+    base_fee_bytes[..8].copy_from_slice(&payload.base_fee_per_gas().to_le_bytes());
+
+    // logs_bloom: Bloom (256 bytes) -> SszVector<u8, 256>
+    let ssz_logs_bloom: eip8025_ssz::LogsBloom = payload
+        .logs_bloom()
+        .0
+        .to_vec()
+        .try_into()
+        .map_err(|_| "logs_bloom conversion failed".to_string())?;
+
+    // extra_data: Bytes -> SszList<u8, 32>
+    let ssz_extra_data: SszList<u8, 32> = payload
+        .extra_data()
+        .to_vec()
+        .try_into()
+        .map_err(|_| "extra_data too large".to_string())?;
+
+    // Deposit/withdrawal/consolidation requests: empty (not in Engine API payload)
+    let ssz_deposit_requests: SszList<eip8025_ssz::DepositRequest, 8192> = vec![]
+        .try_into()
+        .expect("empty list should always convert");
+    let ssz_withdrawal_requests: SszList<eip8025_ssz::WithdrawalRequest, 16> = vec![]
+        .try_into()
+        .expect("empty list should always convert");
+    let ssz_consolidation_requests: SszList<eip8025_ssz::ConsolidationRequest, 1> = vec![]
+        .try_into()
+        .expect("empty list should always convert");
+
+    Ok(eip8025_ssz::ExecutionPayload {
+        parent_hash: payload.parent_hash().0,
+        fee_recipient: eip8025_ssz::Bytes20(payload.fee_recipient().0),
+        state_root: payload.state_root().0,
+        receipts_root: payload.receipts_root().0,
+        logs_bloom: ssz_logs_bloom,
+        prev_randao: payload.prev_randao().0,
+        block_number: payload.block_number,
+        gas_limit: payload.gas_limit(),
+        gas_used: payload.gas_used(),
+        timestamp: payload.timestamp,
+        extra_data: ssz_extra_data,
+        base_fee_per_gas: base_fee_bytes,
+        block_hash: payload.block_hash.0,
+        transactions: ssz_transactions,
+        withdrawals: ssz_withdrawals,
+        blob_gas_used: payload.blob_gas_used.unwrap_or(0),
+        excess_blob_gas: payload.excess_blob_gas.unwrap_or(0),
+        deposit_requests: ssz_deposit_requests,
+        withdrawal_requests: ssz_withdrawal_requests,
+        consolidation_requests: ssz_consolidation_requests,
+    })
 }
 
 /// Convert a JSON `NewPayloadRequestHeaderV1` to SSZ and compute its
@@ -385,6 +445,10 @@ fn json_header_to_ssz_root(header: &EngineNewPayloadRequestHeaderV1) -> Result<[
         .try_into()
         .map_err(|_| "Too many execution requests".to_string())?;
 
+    // base_fee_per_gas: H256 stores as big-endian, but SSZ Uint256 is little-endian.
+    let mut base_fee_le = ep.base_fee_per_gas.0;
+    base_fee_le.reverse();
+
     let ssz_header = eip8025_ssz::NewPayloadRequestHeader {
         execution_payload_header: eip8025_ssz::ExecutionPayloadHeader {
             parent_hash: ep.parent_hash.0,
@@ -398,7 +462,7 @@ fn json_header_to_ssz_root(header: &EngineNewPayloadRequestHeaderV1) -> Result<[
             gas_used: ep.gas_used,
             timestamp: ep.timestamp,
             extra_data: ssz_extra_data,
-            base_fee_per_gas: ep.base_fee_per_gas.0,
+            base_fee_per_gas: base_fee_le,
             block_hash: ep.block_hash.0,
             transactions_root: ep.transactions_root.0,
             withdrawals_root: ep.withdrawals_root.0,
@@ -413,5 +477,7 @@ fn json_header_to_ssz_root(header: &EngineNewPayloadRequestHeaderV1) -> Result<[
         execution_requests: ssz_requests,
     };
 
-    Ok(ssz_header.hash_tree_root())
+    let root = ssz_header.hash_tree_root();
+    info!("SSZ root (json_header): 0x{}", hex::encode(root),);
+    Ok(root)
 }

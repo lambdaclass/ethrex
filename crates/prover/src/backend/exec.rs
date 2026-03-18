@@ -27,8 +27,30 @@ impl ExecBackend {
     /// Core execution - runs the guest program directly.
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
         let crypto = Arc::new(NativeCrypto);
-        ethrex_guest_program::execution::execution_program(input, crypto)
-            .map_err(BackendError::execution)
+        // In EIP-8025 mode, execution_program takes (NewPayloadRequest, ExecutionWitness)
+        // which doesn't match ProgramInput. Use execute_blocks directly instead.
+        #[cfg(feature = "eip-8025")]
+        {
+            use ethrex_common::types::ELASTICITY_MULTIPLIER;
+            use ethrex_vm::Evm;
+            let _ = ethrex_guest_program::common::execute_blocks(
+                &input.blocks,
+                input.execution_witness,
+                ELASTICITY_MULTIPLIER,
+                |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+            )
+            .map_err(BackendError::execution)?;
+            // For the exec backend, we return a dummy output (no real proof).
+            Ok(ProgramOutput {
+                new_payload_request_root: [0u8; 32],
+                valid: true,
+            })
+        }
+        #[cfg(not(feature = "eip-8025"))]
+        {
+            ethrex_guest_program::execution::execution_program(input, crypto)
+                .map_err(BackendError::execution)
+        }
     }
 
     fn to_calldata() -> ProofCalldata {

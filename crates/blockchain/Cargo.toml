@@ -23,6 +23,8 @@ url = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 spawned-concurrency = { workspace = true, optional = true }
 ethrex-guest-program = { workspace = true, optional = true, default-features = false }
+ethrex-prover = { workspace = true, optional = true }
+ethrex-l2-common = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
@@ -53,6 +55,9 @@ eip-8025 = [
     "dep:reqwest",
     "dep:spawned-concurrency",
     "dep:ethrex-guest-program",
+    "dep:ethrex-prover",
+    "ethrex-prover?/eip-8025",
+    "dep:ethrex-l2-common",
 ]
 
 [lints.clippy]

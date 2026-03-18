@@ -48,7 +48,9 @@ impl MockServer {
     fn repl(&self) -> Repl {
         Repl::new(
             RpcClient::new(self.endpoint.clone()),
+            None,
             "/tmp/ethrex_repl_test_history".to_string(),
+            9200,
         )
     }
 }
@@ -305,7 +307,7 @@ async fn test_whitespace_input() {
 #[tokio::test]
 async fn test_multiple_sequential_commands() {
     let server = MockServer::start().await;
-    let repl = server.repl();
+    let mut repl = server.repl();
 
     let r1 = repl.execute_command("eth.blockNumber").await;
     assert!(r1.contains("68943"), "first command failed: {r1}");

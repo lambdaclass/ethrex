@@ -1,7 +1,8 @@
 //! L1 ProofCoordinator GenServer — manages prover connections and proof delivery.
 //!
 //! Follows the same `spawned_concurrency::GenServer` pattern as the L2
-//! `ProofCoordinator`, but simplified for L1 EIP-8025 use:
+//! `ProofCoordinator`, using the generic `ProofData<ProgramInput>` protocol
+//! from `ethrex-prover` for communication with prover workers.
 //!
 //! - Accepts TCP connections from prover workers
 //! - Serves `ProgramInput` for pending blocks
@@ -9,7 +10,9 @@
 
 use bytes::Bytes;
 use ethrex_common::H256;
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_guest_program::input::ProgramInput;
+use ethrex_l2_common::prover::{BatchProof, ProofFormat};
+use ethrex_prover::ProofData;
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
@@ -44,11 +47,12 @@ pub enum L1CoordinatorError {
 
 /// Pending proof generation input.
 #[derive(Clone)]
-#[allow(dead_code)]
-struct PendingInput {
-    proof_gen_id: ProofGenId,
-    new_payload_request_root: H256,
-    witness: ExecutionWitness,
+pub struct PendingInput {
+    pub proof_gen_id: ProofGenId,
+    pub new_payload_request_root: H256,
+    pub program_input: ProgramInput,
+    /// Proof types requested by the beacon via `engine_requestProofsV1`.
+    pub requested_proof_types: Vec<u64>,
 }
 
 /// Cast messages for the L1ProofCoordinator.
@@ -61,7 +65,8 @@ pub enum CoordCastMsg {
         block_number: u64,
         proof_gen_id: ProofGenId,
         new_payload_request_root: H256,
-        witness: Box<ExecutionWitness>,
+        program_input: Box<ProgramInput>,
+        requested_proof_types: Vec<u64>,
     },
 }
 
@@ -71,16 +76,21 @@ pub enum CoordOutMsg {
     Done,
 }
 
+/// Shared pending input map, accessible from both the coordinator accept loop
+/// and the ProofEngine (which inserts new inputs).
+pub type PendingInputMap = Arc<std::sync::Mutex<HashMap<u64, PendingInput>>>;
+
 /// L1 Proof Coordinator GenServer.
 ///
 /// Manages a map of pending proof inputs keyed by block number, accepts
-/// prover TCP connections, and dispatches work.
+/// prover TCP connections, and dispatches work using the `ProofData<ProgramInput>`
+/// protocol.
 #[derive(Clone)]
 pub struct L1ProofCoordinator {
     store: Store,
     config: ProofEngineConfig,
     /// Pending inputs awaiting proof generation: block_number → input.
-    pending: Arc<std::sync::Mutex<HashMap<u64, PendingInput>>>,
+    pending: PendingInputMap,
     /// HTTP client for callback delivery.
     http_client: reqwest::Client,
 }
@@ -94,6 +104,13 @@ impl L1ProofCoordinator {
             pending: Arc::new(std::sync::Mutex::new(HashMap::new())),
             http_client: reqwest::Client::new(),
         }
+    }
+
+    /// Get a reference to the shared pending input map.
+    /// This allows the ProofEngine to insert new inputs directly
+    /// without going through the GenServer (which is blocked in the accept loop).
+    pub fn pending_map(&self) -> PendingInputMap {
+        Arc::clone(&self.pending)
     }
 
     /// Accept loop — runs forever accepting TCP connections from provers.
@@ -119,9 +136,9 @@ impl L1ProofCoordinator {
         }
     }
 
-    /// Handle a proof request from a prover: return the next pending input.
+    /// Handle a witness request from a prover: return the next pending input.
     async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), L1CoordinatorError> {
-        info!("Proof request received from prover");
+        debug!("Witness request received from prover");
 
         // Find the oldest pending input.
         let input = {
@@ -129,81 +146,105 @@ impl L1ProofCoordinator {
                 .pending
                 .lock()
                 .map_err(|_| L1CoordinatorError::Internal("Pending lock poisoned".to_string()))?;
-            // Get the entry with the lowest block number.
             pending
                 .iter()
                 .min_by_key(|(bn, _)| **bn)
                 .map(|(bn, input)| (*bn, input.clone()))
         };
 
-        let response = match input {
+        let response: ProofData<ProgramInput> = match input {
             Some((block_number, pending_input)) => {
-                serde_json::json!({
-                    "type": "batch_response",
-                    "block_number": block_number,
-                    "proof_gen_id": hex::encode(pending_input.proof_gen_id),
-                    "new_payload_request_root": pending_input.new_payload_request_root,
-                    "has_input": true
-                })
+                info!(block_number, "Sending witness to prover");
+                ProofData::batch_response(
+                    block_number,
+                    pending_input.program_input,
+                    ProofFormat::Compressed,
+                )
             }
             None => {
-                serde_json::json!({
-                    "type": "batch_response",
-                    "has_input": false
-                })
+                debug!("No pending witnesses for prover");
+                ProofData::empty_batch_response()
             }
         };
 
-        send_response(stream, &response).await?;
+        send_proof_data(stream, &response).await?;
         Ok(())
     }
 
-    /// Handle a proof submission from a prover.
+    /// Handle a proof submission from a prover: store and ACK.
     async fn handle_submit(
         &self,
         stream: &mut TcpStream,
-        block_number: u64,
-        proof_type: u64,
-        proof_data: Vec<u8>,
-        new_payload_request_root: H256,
+        batch_number: u64,
+        batch_proof: &BatchProof,
     ) -> Result<(), L1CoordinatorError> {
-        info!(block_number, proof_type, "ProofSubmit received");
+        let prover_reported_type = batch_proof.prover_type() as u64;
+        info!(
+            block_number = batch_number,
+            prover_reported_type, "Proof received from prover"
+        );
+
+        let proof_data = match batch_proof {
+            BatchProof::ProofBytes(p) => p.proof.clone(),
+            BatchProof::ProofCalldata(_) => {
+                // ProofCalldata is for L2 on-chain verification; for L1 we store dummy bytes.
+                vec![0xDE, 0xAD]
+            }
+        };
 
         // Validate size.
         if proof_data.len() > MAX_PROOF_SIZE {
             warn!(
-                block_number,
+                batch_number,
                 size = proof_data.len(),
                 "Proof exceeds MAX_PROOF_SIZE, rejecting"
             );
-            let ack = serde_json::json!({ "type": "proof_submit_ack", "block_number": block_number, "accepted": false });
-            send_response(stream, &ack).await?;
+            let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(batch_number);
+            send_proof_data(stream, &ack).await?;
             return Ok(());
         }
 
-        // Store the proof.
-        self.store.store_execution_proof(
-            block_number,
-            new_payload_request_root,
-            proof_type,
-            proof_data.clone(),
-        )?;
+        // Look up the root and requested proof types from the pending map.
+        let (root, proof_type) = {
+            let pending = self
+                .pending
+                .lock()
+                .map_err(|_| L1CoordinatorError::Internal("Pending lock poisoned".to_string()))?;
+            match pending.get(&batch_number) {
+                Some(p) => {
+                    // Use the first requested proof type from the beacon's request.
+                    // Fall back to the prover's self-reported type if none was requested.
+                    let pt = p
+                        .requested_proof_types
+                        .first()
+                        .copied()
+                        .unwrap_or(prover_reported_type);
+                    (p.new_payload_request_root, pt)
+                }
+                None => (H256::default(), prover_reported_type),
+            }
+        };
 
-        info!(block_number, proof_type, "Execution proof stored");
+        // Store the proof.
+        self.store
+            .store_execution_proof(batch_number, root, proof_type, proof_data.clone())?;
+
+        info!(
+            block_number = batch_number,
+            proof_type, "Execution proof stored"
+        );
 
         // Remove from pending.
         if let Ok(mut pending) = self.pending.lock() {
-            pending.remove(&block_number);
+            pending.remove(&batch_number);
         }
 
         // Deliver via callback if configured.
         if let Some(callback_url) = &self.config.callback_url {
-            // Look up the proof_gen_id from our pending map (may have been removed).
             let proof_gen_id_bytes = {
-                // We already removed it, so reconstruct from block_number + root.
                 let mut id = [0u8; 8];
-                id[..4].copy_from_slice(&block_number.to_be_bytes()[4..]);
-                id[4..].copy_from_slice(&new_payload_request_root.as_bytes()[..4]);
+                id[..4].copy_from_slice(&batch_number.to_be_bytes()[4..]);
+                id[4..].copy_from_slice(&root.as_bytes()[..4]);
                 id
             };
 
@@ -213,7 +254,7 @@ impl L1ProofCoordinator {
                     proof_data: Bytes::from(proof_data),
                     proof_type,
                     public_input: PublicInputV1 {
-                        new_payload_request_root,
+                        new_payload_request_root: root,
                     },
                 },
             };
@@ -226,25 +267,28 @@ impl L1ProofCoordinator {
                 .await
             {
                 Ok(resp) if resp.status().is_success() => {
-                    info!(block_number, "Proof delivered to callback URL");
+                    info!(
+                        block_number = batch_number,
+                        "Proof delivered to callback URL"
+                    );
                 }
                 Ok(resp) => {
                     warn!(
-                        block_number,
+                        block_number = batch_number,
                         status = %resp.status(),
                         "Callback delivery returned non-success status"
                     );
                 }
                 Err(e) => {
-                    error!(block_number, error = %e, "Failed to deliver proof via callback");
+                    error!(block_number = batch_number, error = %e, "Failed to deliver proof via callback");
                 }
             }
         }
 
         // ACK.
-        let ack = serde_json::json!({ "type": "proof_submit_ack", "block_number": block_number, "accepted": true });
-        send_response(stream, &ack).await?;
-        info!(block_number, "ProofSubmit ACK sent");
+        let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(batch_number);
+        send_proof_data(stream, &ack).await?;
+        info!(block_number = batch_number, "Proof ACK sent to prover");
 
         Ok(())
     }
@@ -269,7 +313,8 @@ impl GenServer for L1ProofCoordinator {
                 block_number,
                 proof_gen_id,
                 new_payload_request_root,
-                witness,
+                program_input,
+                requested_proof_types,
             } => {
                 if let Ok(mut pending) = self.pending.lock() {
                     pending.insert(
@@ -277,7 +322,8 @@ impl GenServer for L1ProofCoordinator {
                         PendingInput {
                             proof_gen_id,
                             new_payload_request_root,
-                            witness: *witness,
+                            program_input: *program_input,
+                            requested_proof_types,
                         },
                     );
                     debug!(block_number, "Added pending input for proof generation");
@@ -342,67 +388,36 @@ impl L1ConnectionHandler {
         if let Some(mut stream) = Arc::into_inner(stream) {
             stream.read_to_end(&mut buffer).await?;
 
-            let data: Result<serde_json::Value, _> = serde_json::from_slice(&buffer);
-            match data {
-                Ok(msg) => {
-                    let msg_type = msg
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-
-                    match msg_type {
-                        "batch_request" => {
-                            if let Err(e) = self.coordinator.handle_request(&mut stream).await {
-                                error!("Failed to handle batch request: {e}");
-                            }
-                        }
-                        "proof_submit" => {
-                            let block_number = msg
-                                .get("block_number")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            let proof_type =
-                                msg.get("proof_type").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let proof_data = msg
-                                .get("proof_data")
-                                .and_then(|v| v.as_str())
-                                .and_then(|s| hex::decode(s).ok())
-                                .unwrap_or_default();
-                            let root_bytes = msg
-                                .get("new_payload_request_root")
-                                .and_then(|v| v.as_str())
-                                .and_then(|s| {
-                                    let s = s.strip_prefix("0x").unwrap_or(s);
-                                    hex::decode(s).ok()
-                                })
-                                .unwrap_or_default();
-                            let root = if root_bytes.len() == 32 {
-                                H256::from_slice(&root_bytes)
-                            } else {
-                                H256::zero()
-                            };
-
-                            if let Err(e) = self
-                                .coordinator
-                                .handle_submit(
-                                    &mut stream,
-                                    block_number,
-                                    proof_type,
-                                    proof_data,
-                                    root,
-                                )
-                                .await
-                            {
-                                error!("Failed to handle proof submit: {e}");
-                            }
-                        }
-                        _ => {
-                            warn!("Unknown message type: {msg_type}");
+            // Parse as ProofData<ProgramInput>.
+            let msg: Result<ProofData<ProgramInput>, _> = serde_json::from_slice(&buffer);
+            match msg {
+                Ok(proof_data) => match proof_data {
+                    ProofData::BatchRequest { .. } => {
+                        if let Err(e) = self.coordinator.handle_request(&mut stream).await {
+                            error!("Failed to handle batch request: {e}");
                         }
                     }
-                }
+                    ProofData::ProofSubmit {
+                        batch_number,
+                        batch_proof,
+                    } => {
+                        if let Err(e) = self
+                            .coordinator
+                            .handle_submit(&mut stream, batch_number, &batch_proof)
+                            .await
+                        {
+                            error!("Failed to handle proof submit: {e}");
+                        }
+                    }
+                    other => {
+                        warn!(
+                            "Unexpected ProofData variant from prover: {}",
+                            std::any::type_name_of_val(&other)
+                        );
+                    }
+                },
                 Err(e) => {
-                    warn!("Failed to parse prover message: {e}");
+                    warn!("Failed to parse prover message as ProofData: {e}");
                 }
             }
         } else {
@@ -437,10 +452,10 @@ impl GenServer for L1ConnectionHandler {
     }
 }
 
-/// Helper: serialize and send a JSON response over TCP.
-async fn send_response(
+/// Helper: serialize and send a `ProofData` response over TCP.
+async fn send_proof_data<I: serde::Serialize>(
     stream: &mut TcpStream,
-    response: &serde_json::Value,
+    response: &ProofData<I>,
 ) -> Result<(), L1CoordinatorError> {
     let buffer = serde_json::to_vec(response)?;
     stream.write_all(&buffer).await?;
@@ -459,6 +474,11 @@ pub async fn init_proof_engine(
 
     // Start the coordinator.
     let coordinator = L1ProofCoordinator::new(store, config.clone());
+
+    // Share the pending map with the engine (engine inserts, coordinator reads).
+    let pending_map = coordinator.pending_map();
+    engine.set_pending_map(pending_map);
+
     let mut coord_handle = coordinator.start();
 
     // Bind the TCP listener.
@@ -471,9 +491,6 @@ pub async fn init_proof_engine(
         .cast(CoordCastMsg::Listen { listener })
         .await
         .map_err(|e| L1CoordinatorError::Internal(e.to_string()))?;
-
-    // Wire the coordinator into the engine.
-    engine.set_coordinator(coord_handle);
 
     Ok(engine)
 }

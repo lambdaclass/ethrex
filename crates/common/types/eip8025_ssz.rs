@@ -277,3 +277,121 @@ impl NewPayloadRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_payload() -> ExecutionPayload {
+        ExecutionPayload {
+            parent_hash: [1u8; 32],
+            fee_recipient: Bytes20([2u8; 20]),
+            state_root: [3u8; 32],
+            receipts_root: [4u8; 32],
+            logs_bloom: vec![0u8; 256].try_into().unwrap(),
+            prev_randao: [5u8; 32],
+            block_number: 42,
+            gas_limit: 30_000_000,
+            gas_used: 21_000,
+            timestamp: 1_700_000_000,
+            extra_data: vec![0xAB, 0xCD].try_into().unwrap(),
+            base_fee_per_gas: {
+                let mut b = [0u8; 32];
+                b[0] = 7; // 7 in LE
+                b
+            },
+            block_hash: [6u8; 32],
+            transactions: vec![
+                vec![0xDE, 0xAD, 0xBE, 0xEF].try_into().unwrap(),
+            ]
+            .try_into()
+            .unwrap(),
+            withdrawals: vec![Withdrawal {
+                index: 0,
+                validator_index: 1,
+                address: Bytes20([7u8; 20]),
+                amount: 1_000_000,
+            }]
+            .try_into()
+            .unwrap(),
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+            deposit_requests: vec![].try_into().unwrap(),
+            withdrawal_requests: vec![].try_into().unwrap(),
+            consolidation_requests: vec![].try_into().unwrap(),
+        }
+    }
+
+    fn sample_request() -> NewPayloadRequest {
+        NewPayloadRequest {
+            execution_payload: sample_payload(),
+            versioned_hashes: vec![].try_into().unwrap(),
+            parent_beacon_block_root: [8u8; 32],
+            execution_requests: vec![].try_into().unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_ssz_root_roundtrip_payload_vs_header() {
+        let request = sample_request();
+        let header = request.to_header();
+
+        let request_root = request.hash_tree_root();
+        let header_root = header.hash_tree_root();
+
+        assert_eq!(
+            request_root, header_root,
+            "NewPayloadRequest root must equal NewPayloadRequestHeader root"
+        );
+    }
+
+    #[test]
+    fn test_ssz_root_changes_with_different_data() {
+        let request1 = sample_request();
+        let mut request2 = sample_request();
+        request2.execution_payload.block_number = 99;
+
+        assert_ne!(
+            request1.hash_tree_root(),
+            request2.hash_tree_root(),
+            "Different payloads must produce different roots"
+        );
+    }
+
+    #[test]
+    fn test_empty_list_roots() {
+        let payload = sample_payload();
+        let header = payload.to_header();
+        // Print the roots for debugging
+        println!("transactions_root: 0x{}", hex::encode(header.transactions_root));
+        println!("withdrawals_root: 0x{}", hex::encode(header.withdrawals_root));
+        println!("deposit_requests_root: 0x{}", hex::encode(header.deposit_requests_root));
+        println!("withdrawal_requests_root: 0x{}", hex::encode(header.withdrawal_requests_root));
+        println!("consolidation_requests_root: 0x{}", hex::encode(header.consolidation_requests_root));
+
+        // Now with truly empty lists
+        let empty_payload = ExecutionPayload {
+            transactions: vec![].try_into().unwrap(),
+            withdrawals: vec![].try_into().unwrap(),
+            deposit_requests: vec![].try_into().unwrap(),
+            withdrawal_requests: vec![].try_into().unwrap(),
+            consolidation_requests: vec![].try_into().unwrap(),
+            ..sample_payload()
+        };
+        let empty_header = empty_payload.to_header();
+        println!("\n--- Empty lists ---");
+        println!("transactions_root: 0x{}", hex::encode(empty_header.transactions_root));
+        println!("withdrawals_root: 0x{}", hex::encode(empty_header.withdrawals_root));
+        println!("deposit_requests_root: 0x{}", hex::encode(empty_header.deposit_requests_root));
+        println!("withdrawal_requests_root: 0x{}", hex::encode(empty_header.withdrawal_requests_root));
+        println!("consolidation_requests_root: 0x{}", hex::encode(empty_header.consolidation_requests_root));
+    }
+
+    #[test]
+    fn test_ssz_root_is_deterministic() {
+        let request = sample_request();
+        let root1 = request.hash_tree_root();
+        let root2 = request.hash_tree_root();
+        assert_eq!(root1, root2, "Same request must produce same root");
+    }
+}

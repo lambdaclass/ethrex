@@ -156,6 +156,56 @@ impl ExecutionPayload {
         Ok(Block::new(header, body))
     }
 
+    // Accessors for EIP-8025 SSZ conversion.
+    #[cfg(feature = "eip-8025")]
+    pub fn parent_hash(&self) -> H256 {
+        self.parent_hash
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn fee_recipient(&self) -> Address {
+        self.fee_recipient
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn state_root(&self) -> H256 {
+        self.state_root
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn receipts_root(&self) -> H256 {
+        self.receipts_root
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn logs_bloom(&self) -> &Bloom {
+        &self.logs_bloom
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn prev_randao(&self) -> H256 {
+        self.prev_randao
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn gas_used(&self) -> u64 {
+        self.gas_used
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn extra_data(&self) -> &Bytes {
+        &self.extra_data
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn base_fee_per_gas(&self) -> u64 {
+        self.base_fee_per_gas
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn transactions(&self) -> &[EncodedTransaction] {
+        &self.transactions
+    }
+    #[cfg(feature = "eip-8025")]
+    pub fn withdrawals(&self) -> Option<&[Withdrawal]> {
+        self.withdrawals.as_deref()
+    }
+
     pub fn from_block(block: Block, block_access_list: Option<BlockAccessList>) -> Self {
         Self {
             parent_hash: block.header.parent_hash,

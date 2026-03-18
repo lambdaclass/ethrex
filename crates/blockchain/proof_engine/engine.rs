@@ -6,15 +6,16 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_common::types::Block;
+use ethrex_guest_program::input::ProgramInput;
 use ethrex_storage::Store;
-use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::Blockchain;
 
 use super::config::ProofEngineConfig;
-use super::coordinator::{CoordCastMsg, L1ProofCoordinator};
+use super::coordinator::{PendingInput, PendingInputMap};
 use super::types::{
     ExecutionProofV1, MAX_PROOF_SIZE, MIN_REQUIRED_EXECUTION_PROOFS, ProofGenId, ProofStatusV1,
     ProofValidationStatus,
@@ -50,11 +51,12 @@ pub struct ProofEngine {
     store: Store,
     /// Engine configuration (callback URL, coordinator address).
     config: ProofEngineConfig,
-    /// Handle to the L1 ProofCoordinator GenServer (if started).
-    coordinator:
-        Option<TokioMutex<spawned_concurrency::tasks::GenServerHandle<L1ProofCoordinator>>>,
+    /// Shared pending input map for the coordinator (insert directly, bypassing GenServer).
+    pending: Option<PendingInputMap>,
     /// HTTP client for callback delivery.
     http_client: reqwest::Client,
+    /// Mapping from new_payload_request_root to block_number, populated by request_proofs().
+    root_to_block: Mutex<HashMap<H256, u64>>,
 }
 
 impl ProofEngine {
@@ -64,17 +66,15 @@ impl ProofEngine {
             blockchain,
             store,
             config,
-            coordinator: None,
+            pending: None,
             http_client: reqwest::Client::new(),
+            root_to_block: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Set the coordinator handle after the coordinator has been started.
-    pub fn set_coordinator(
-        &mut self,
-        handle: spawned_concurrency::tasks::GenServerHandle<L1ProofCoordinator>,
-    ) {
-        self.coordinator = Some(TokioMutex::new(handle));
+    /// Set the shared pending input map from the coordinator.
+    pub fn set_pending_map(&mut self, pending: PendingInputMap) {
+        self.pending = Some(pending);
     }
 
     /// Request proof generation for a new payload.
@@ -86,6 +86,7 @@ impl ProofEngine {
         &self,
         block: Block,
         new_payload_request_root: H256,
+        requested_proof_types: Vec<u64>,
     ) -> Result<ProofGenId, ProofEngineError> {
         let block_number = block.header.number;
         info!(block_number, "Requesting proof generation");
@@ -96,30 +97,37 @@ impl ProofEngine {
             .generate_witness_for_blocks(std::slice::from_ref(&block))
             .await?;
 
-        // Build ProgramInput (EIP-8025 variant with SSZ NewPayloadRequest).
-        // NOTE: The actual SSZ NewPayloadRequest construction from the block
-        // will be wired in Phase 5 when the guest program is integrated.
-        // For now, we use the L1 ProgramInput with blocks + witness.
+        // Build ProgramInput with the block and witness.
+        let program_input = ProgramInput::new(vec![block], witness);
+
+        // Record root → block_number mapping for later lookup.
+        if let Ok(mut map) = self.root_to_block.lock() {
+            map.insert(new_payload_request_root, block_number);
+        }
 
         // Generate a ProofGenId from (block_number, root).
         let proof_gen_id = Self::make_proof_gen_id(block_number, &new_payload_request_root);
 
-        // Send to coordinator if available.
-        if let Some(coord_mutex) = &self.coordinator {
-            let mut coord = coord_mutex.lock().await;
-            if let Err(e) = coord
-                .cast(CoordCastMsg::NewInput {
+        // Insert into the shared pending map (accessible by the coordinator's accept loop).
+        if let Some(pending) = &self.pending {
+            if let Ok(mut map) = pending.lock() {
+                map.insert(
                     block_number,
-                    proof_gen_id,
-                    new_payload_request_root,
-                    witness: Box::new(witness),
-                })
-                .await
-            {
-                error!("Failed to send input to coordinator: {e}");
+                    PendingInput {
+                        proof_gen_id,
+                        new_payload_request_root,
+                        program_input,
+                        requested_proof_types,
+                    },
+                );
+                debug!(
+                    block_number,
+                    "Input added to pending map for proof generation"
+                );
+            } else {
+                error!("Failed to lock pending map");
                 return Err(ProofEngineError::CoordinatorUnavailable);
             }
-            debug!(block_number, "Input sent to proof coordinator");
         } else {
             warn!("No proof coordinator configured; proof generation skipped");
         }
@@ -133,7 +141,6 @@ impl ProofEngine {
     /// returns the verification status.
     pub fn verify_proof(
         &self,
-        block_number: u64,
         proof: &ExecutionProofV1,
     ) -> Result<ProofStatusV1, ProofEngineError> {
         // Validate proof size.
@@ -152,10 +159,19 @@ impl ProofEngine {
 
         let root = proof.public_input.new_payload_request_root;
 
-        // TODO: When a prover backend is integrated, actually verify the
-        // proof cryptographically here. For now we accept all well-formed
-        // proofs and store them (the coordinator will have verified via the
-        // prover backend before submitting).
+        // Look up block_number from root mapping (populated by request_proofs).
+        let block_number = self
+            .root_to_block
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&root).copied())
+            .unwrap_or_else(|| {
+                warn!(
+                    root = %root,
+                    "Unknown root in verify_proof; storing with block_number=0"
+                );
+                0
+            });
 
         // Store the proof.
         self.store.store_execution_proof(
