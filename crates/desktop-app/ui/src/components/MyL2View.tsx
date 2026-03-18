@@ -266,6 +266,10 @@ export default function MyL2View() {
             return { ...l2, status: 'stopped' as const, phase: 'stopped', description: `${l2.programSlug} · stopped`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const }
           }
         } catch {
+          // Remote deployments: show unreachable instead of stale running
+          if ((l2.hostId || l2.networkMode === 'aws') && (l2.status === 'running' || l2.phase === 'running')) {
+            return { ...l2, status: 'unreachable' as const, phase: 'unreachable', description: `${l2.programSlug} · unreachable`, sequencerStatus: 'stopped' as const, proverStatus: 'stopped' as const, errorMessage: lang === 'ko' ? '원격 서버 연결 불가' : 'Remote server unreachable' }
+          }
           return l2
         }
       }))
