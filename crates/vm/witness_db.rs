@@ -32,21 +32,20 @@ impl GuestProgramStateWrapper {
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
-        crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
         self.lock_mutex()?
-            .apply_account_updates(account_updates, crypto)
+            .apply_account_updates(account_updates, self.crypto.as_ref())
     }
 
-    pub fn state_trie_root(&self, crypto: &dyn Crypto) -> Result<H256, GuestProgramStateError> {
-        self.lock_mutex()?.state_trie_root(crypto)
+    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
+        self.lock_mutex()?.state_trie_root(self.crypto.as_ref())
     }
 
     pub fn get_first_invalid_block_hash(
         &self,
-        crypto: &dyn Crypto,
     ) -> Result<Option<u64>, GuestProgramStateError> {
-        self.lock_mutex()?.get_first_invalid_block_hash(crypto)
+        self.lock_mutex()?
+            .get_first_invalid_block_hash(self.crypto.as_ref())
     }
 
     pub fn get_block_parent_header(
@@ -61,10 +60,9 @@ impl GuestProgramStateWrapper {
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
-        crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
         self.lock_mutex()?
-            .initialize_block_header_hashes(blocks, crypto)
+            .initialize_block_header_hashes(blocks, self.crypto.as_ref())
     }
 }
 

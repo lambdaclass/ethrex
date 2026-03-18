@@ -65,12 +65,12 @@ where
 
     // Hashing is expensive in zkVMs - initialize block header hashes once
     report_cycles("initialize_block_header_hashes", || {
-        wrapped_db.initialize_block_header_hashes(blocks, crypto.as_ref())
+        wrapped_db.initialize_block_header_hashes(blocks)
     })?;
 
     // Validate execution witness' block hashes
     report_cycles("get_first_invalid_block_hash", || {
-        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash(crypto.as_ref()) {
+        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
             return Err(ExecutionError::InvalidBlockHash(invalid_block_header));
         }
         Ok(())
@@ -89,7 +89,7 @@ where
 
     let initial_state_hash = report_cycles("state_trie_root", || {
         wrapped_db
-            .state_trie_root(crypto.as_ref())
+            .state_trie_root()
             .map_err(ExecutionError::GuestProgramState)
     })?;
 
@@ -139,7 +139,7 @@ where
         // and final state validation via state_trie_root())
         report_cycles("apply_account_updates", || {
             wrapped_db
-                .apply_account_updates(&account_updates, crypto.as_ref())
+                .apply_account_updates(&account_updates)
                 .map_err(ExecutionError::GuestProgramState)
         })?;
 
@@ -175,7 +175,7 @@ where
 
     let final_state_hash = report_cycles("get_final_state_root", || {
         wrapped_db
-            .state_trie_root(crypto.as_ref())
+            .state_trie_root()
             .map_err(ExecutionError::GuestProgramState)
     })?;
 
