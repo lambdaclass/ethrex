@@ -41,6 +41,10 @@ const LOG_FEE_TRANSFER_TOPIC: H256 = H256([
 /// Emits a `LogFeeTransfer` log after every transaction (matching Bor behavior).
 /// The fee log records only the TIP amount with synthetic before/after balances.
 pub struct PolygonHook {
+    /// BorConfig coinbase (receives tip per-tx). Separate from env.coinbase
+    /// which is header.coinbase (0x0 on Polygon) for correct COINBASE opcode
+    /// and warm set behavior.
+    fee_coinbase: Address,
     /// Burnt contract address (receives base fee per-tx). From BorConfig.
     burnt_contract: Option<Address>,
     /// Sender balance captured BEFORE gas deduction (buyGas).
@@ -50,8 +54,9 @@ pub struct PolygonHook {
 }
 
 impl PolygonHook {
-    pub fn new(burnt_contract: Option<Address>) -> Self {
+    pub fn new(fee_coinbase: Address, burnt_contract: Option<Address>) -> Self {
         Self {
+            fee_coinbase,
             burnt_contract,
             sender_balance_before: U256::zero(),
             coinbase_balance_before: U256::zero(),
@@ -63,9 +68,8 @@ impl Hook for PolygonHook {
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
         // Capture balances BEFORE gas deduction (Bor captures these at the top of execute())
         let sender = vm.env.origin;
-        let coinbase = vm.env.coinbase;
         self.sender_balance_before = vm.db.get_account(sender)?.info.balance;
-        self.coinbase_balance_before = vm.db.get_account(coinbase)?.info.balance;
+        self.coinbase_balance_before = vm.db.get_account(self.fee_coinbase)?.info.balance;
 
         // Same validation and upfront deduction as L1
         DefaultHook.prepare_execution(vm)
@@ -111,7 +115,7 @@ impl Hook for PolygonHook {
             .ok_or(InternalError::Overflow)?;
 
         if !tip_amount.is_zero() {
-            vm.increase_account_balance(vm.env.coinbase, tip_amount)?;
+            vm.increase_account_balance(self.fee_coinbase, tip_amount)?;
         }
 
         // Emit LogFeeTransfer log (Bor adds this after every transaction).
@@ -124,7 +128,7 @@ impl Hook for PolygonHook {
 
             let fee_log = build_fee_transfer_log(
                 vm.env.origin,
-                vm.env.coinbase,
+                self.fee_coinbase,
                 tip_amount,
                 self.sender_balance_before,
                 self.coinbase_balance_before,

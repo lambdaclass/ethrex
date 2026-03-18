@@ -1363,11 +1363,10 @@ impl LEVM {
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-        // Polygon: use BorConfig coinbase instead of header.coinbase (which is 0x0 on Polygon)
-        let coinbase = match &vm_type {
-            VMType::Polygon(pfc) => pfc.coinbase,
-            _ => block_header.coinbase,
-        };
+        // Use header.coinbase for EVM context (COINBASE opcode + warm set).
+        // On Polygon, header.coinbase is 0x0 — fee distribution uses BorConfig coinbase
+        // via PolygonHook separately.
+        let coinbase = block_header.coinbase;
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
