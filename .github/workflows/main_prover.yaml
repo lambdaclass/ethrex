@@ -145,6 +145,23 @@ jobs:
           echo "Timed out waiting for L2 deposits to be processed"
           exit 1
 
+      - name: Send ECMUL precompile transaction on L2
+        run: |
+          # Call the ECMUL precompile (0x07) with G1 generator (1,2) * scalar 7.
+          # This exercises the BN254 scalar multiplication path in the SP1 guest,
+          # which uses substrate-bn. The SP1 prover must prove a block containing
+          # this precompile call.
+          FIRST_TEST_PK=$(tail -n1 fixtures/keys/private_keys_tests.txt)
+          ECMUL_CALLDATA="0x000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000007"
+          TX_HASH=$(rex send 0x0000000000000000000000000000000000000007 \
+            --calldata "$ECMUL_CALLDATA" \
+            --gas-limit 100000 \
+            -k "$FIRST_TEST_PK" \
+            --rpc-url http://localhost:1729 2>&1 | head -1)
+          echo "Sent ECMUL precompile tx on L2: $TX_HASH"
+          sleep 3
+          rex receipt "$TX_HASH" http://localhost:1729 || echo "Receipt not yet available"
+
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
