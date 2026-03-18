@@ -147,6 +147,14 @@ impl BinaryTrieState {
         // overwrites basic_data with the new code_size, so it must come after.
         if let Some(ref code) = update.code {
             self.write_code(address, code)?;
+
+            // If code changed but info wasn't provided (defensive — LEVM always
+            // sends both together), update the code_hash leaf directly so the trie
+            // stays consistent with code_store.
+            if update.info.is_none() {
+                self.trie
+                    .insert(get_tree_key_for_code_hash(address), code.hash.0)?;
+            }
         }
 
         // Apply account info changes (writes basic_data + code_hash).
