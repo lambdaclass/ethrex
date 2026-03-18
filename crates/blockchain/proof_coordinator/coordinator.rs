@@ -233,8 +233,9 @@ impl L1ProofCoordinator {
         let proof_data = match proof {
             BatchProof::ProofBytes(p) => p.proof.clone(),
             BatchProof::ProofCalldata(_) => {
-                // ProofCalldata is for L2 on-chain verification; for L1 we store dummy bytes.
-                vec![0xDE, 0xAD]
+                return Err(L1CoordinatorError::Internal(
+                    "ProofCalldata is not supported on L1; expected ProofBytes".to_string(),
+                ));
             }
         };
 
@@ -251,34 +252,63 @@ impl L1ProofCoordinator {
         }
 
         // Look up the root, proof_gen_id and requested proof types from pending.
-        let (root, proof_type, proof_gen_id) = match self.pending.get(&block_number) {
+        // The prover reports its own type — validate it against the requested types.
+        let (root, proof_gen_id) = match self.pending.get(&block_number) {
             Some(p) => {
-                // Use the first requested proof type from the beacon's request.
-                // Fall back to the prover's self-reported type if none was requested.
-                let pt = p
-                    .requested_proof_types
-                    .first()
-                    .copied()
-                    .unwrap_or(prover_reported_type);
-                (p.new_payload_request_root, pt, p.proof_gen_id)
+                if !p.requested_proof_types.is_empty()
+                    && !p.requested_proof_types.contains(&prover_reported_type)
+                {
+                    warn!(
+                        block_number,
+                        prover_reported_type,
+                        requested = ?p.requested_proof_types,
+                        "Prover reported a type not in the requested set; accepting anyway"
+                    );
+                }
+                (p.new_payload_request_root, p.proof_gen_id)
             }
             None => {
                 warn!(
                     block_number,
                     "No pending request found for proof; using defaults"
                 );
-                (H256::default(), prover_reported_type, [0u8; 8])
+                (H256::default(), [0u8; 8])
             }
         };
 
-        // Store the proof.
-        self.store
-            .store_execution_proof(block_number, root, proof_type, proof_data.clone())?;
+        // Store the proof keyed by the prover's actual type.
+        self.store.store_execution_proof(
+            block_number,
+            root,
+            prover_reported_type,
+            proof_data.clone(),
+        )?;
 
-        info!(block_number, proof_type, "Execution proof stored");
+        info!(
+            block_number,
+            proof_type = prover_reported_type,
+            "Execution proof stored"
+        );
 
-        // Remove from pending.
-        self.pending.remove(&block_number);
+        // Remove from pending only when all requested proof types have been fulfilled.
+        if let Some(req) = self.pending.get(&block_number) {
+            if !req.requested_proof_types.is_empty() {
+                let all_fulfilled = req.requested_proof_types.iter().all(|pt| {
+                    self.store
+                        .get_execution_proof(block_number, &root, *pt)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                });
+                if all_fulfilled {
+                    self.pending.remove(&block_number);
+                    debug!(
+                        block_number,
+                        "All requested proof types fulfilled; removed from pending"
+                    );
+                }
+            }
+        }
 
         // Deliver via callback if configured.
         if let Some(callback_url) = &self.config.callback_url {
@@ -286,7 +316,7 @@ impl L1ProofCoordinator {
                 proof_gen_id: Bytes::copy_from_slice(&proof_gen_id),
                 execution_proof: ExecutionProofV1 {
                     proof_data: Bytes::from(proof_data),
-                    proof_type,
+                    proof_type: prover_reported_type,
                     public_input: PublicInputV1 {
                         new_payload_request_root: root,
                     },
