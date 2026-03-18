@@ -3896,6 +3896,7 @@ name = "ethrex-binary-trie"
 version = "9.0.0"
 dependencies = [
  "blake3",
+ "bytes",
  "ethrex-common",
  "hex",
  "serde",

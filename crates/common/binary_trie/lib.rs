@@ -3,6 +3,7 @@ pub mod hash;
 pub mod key_mapping;
 pub mod merkle;
 pub mod node;
+pub mod state;
 pub mod trie;
 
 pub use error::BinaryTrieError;

@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 blake3 = "1"
+bytes.workspace = true
 ethrex-common.workspace = true
 thiserror.workspace = true
 
