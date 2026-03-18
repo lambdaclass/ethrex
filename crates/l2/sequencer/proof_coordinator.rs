@@ -212,7 +212,7 @@ impl ProofCoordinator {
         commit_hash: String,
         prover_type: ProverType,
     ) -> Result<(), ProofCoordinatorError> {
-        info!("BatchRequest received from {prover_type} prover");
+        info!("InputRequest received from {prover_type} prover");
 
         // Step 1: Check if this prover's type is one of the needed proof types.
         // If not, tell the prover immediately — there's no point assigning
@@ -235,8 +235,8 @@ impl ProofCoordinator {
                 send_response(stream, &ProofData::version_mismatch()).await?;
                 info!("VersionMismatch sent");
             } else {
-                send_response(stream, &ProofData::empty_batch_response()).await?;
-                info!("Empty BatchResponse sent (no work available)");
+                send_response(stream, &ProofData::empty_input_response()).await?;
+                info!("Empty InputResponse sent (no work available)");
             }
             return Ok(());
         };
@@ -246,9 +246,9 @@ impl ProofCoordinator {
         } else {
             ProofFormat::Groth16
         };
-        let response = ProofData::batch_response(batch_to_prove, input, format);
+        let response = ProofData::input_response(batch_to_prove, input, format);
         send_response(stream, &response).await?;
-        info!("BatchResponse sent for batch number: {batch_to_prove}");
+        info!("InputResponse sent for batch number: {batch_to_prove}");
 
         Ok(())
     }
@@ -410,7 +410,7 @@ impl ConnectionHandler {
 
             let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
             match data {
-                Ok(ProofData::BatchRequest {
+                Ok(ProofData::InputRequest {
                     commit_hash,
                     prover_type,
                 }) => {
@@ -419,12 +419,12 @@ impl ConnectionHandler {
                         .handle_request(&mut stream, commit_hash, prover_type)
                         .await
                     {
-                        error!("Failed to handle BatchRequest: {e}");
+                        error!("Failed to handle InputRequest: {e}");
                     }
                 }
                 Ok(ProofData::ProofSubmit {
-                    batch_number,
-                    batch_proof,
+                    id: batch_number,
+                    proof: batch_proof,
                 }) => {
                     if let Err(e) = self
                         .proof_coordinator

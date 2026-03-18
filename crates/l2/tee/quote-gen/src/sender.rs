@@ -11,15 +11,15 @@ const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
 
 pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
-    let batch = connect_to_prover_server_wr(&ProofData::BatchRequest {
+    let batch = connect_to_prover_server_wr(&ProofData::InputRequest {
         commit_hash: commit_hash.clone(),
         prover_type: ProverType::TDX,
     })
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;
     match batch {
-        ProofData::BatchResponse {
-            batch_number,
+        ProofData::InputResponse {
+            id: batch_number,
             input,
             ..
         } => match (batch_number, input) {
@@ -58,7 +58,7 @@ pub async fn submit_proof(batch_number: u64, batch_proof: BatchProof) -> Result<
         .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
     match submit_ack {
-        ProofData::ProofSubmitACK { batch_number } => Ok(batch_number),
+        ProofData::ProofSubmitACK { id: batch_number } => Ok(batch_number),
         _ => Err("Expecting ProofData::SubmitAck".to_owned()),
     }
 }

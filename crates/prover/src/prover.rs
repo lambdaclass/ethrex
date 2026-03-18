@@ -141,17 +141,13 @@ where
 
     async fn request_new_input(&self, endpoint: &Url) -> Result<InputRequest, String> {
         let request: ProofData<I> =
-            ProofData::batch_request(self.config.commit_hash.clone(), self.backend.prover_type());
+            ProofData::input_request(self.config.commit_hash.clone(), self.backend.prover_type());
         let response: ProofData<I> = connect_to_prover_server_wr(endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
         let (batch_number, input, format) = match response {
-            ProofData::BatchResponse {
-                batch_number,
-                input,
-                format,
-            } => (batch_number, input, format),
+            ProofData::InputResponse { id, input, format } => (id, input, format),
             ProofData::VersionMismatch => {
                 warn!(
                     "Version mismatch: the next batch to prove was built with a different code \
@@ -190,7 +186,7 @@ where
     ) -> Result<(), String> {
         let submit: ProofData<I> = ProofData::proof_submit(batch_number, batch_proof);
 
-        let ProofData::ProofSubmitACK { batch_number } =
+        let ProofData::ProofSubmitACK { id: batch_number } =
             connect_to_prover_server_wr(endpoint, &submit)
                 .await
                 .map_err(|e| format!("Failed to get SubmitAck: {e}"))?

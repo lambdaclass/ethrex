@@ -161,19 +161,16 @@ impl L1ProofCoordinator {
         let msg: Result<ProofData<ProgramInput>, _> = serde_json::from_slice(&buffer);
         match msg {
             Ok(proof_data) => match proof_data {
-                ProofData::BatchRequest { .. } => {
+                ProofData::InputRequest { .. } => {
                     if let Err(e) = self.handle_request(&mut stream).await {
-                        error!("Failed to handle batch request: {e}");
+                        error!("Failed to handle input request: {e}");
                     }
                 }
                 ProofData::ProofSubmit {
-                    batch_number,
-                    batch_proof,
+                    id: block_number,
+                    ref proof,
                 } => {
-                    if let Err(e) = self
-                        .handle_submit(&mut stream, batch_number, &batch_proof)
-                        .await
-                    {
+                    if let Err(e) = self.handle_submit(&mut stream, block_number, proof).await {
                         error!("Failed to handle proof submit: {e}");
                     }
                 }
@@ -204,7 +201,7 @@ impl L1ProofCoordinator {
         let response: ProofData<ProgramInput> = match input {
             Some((block_number, request)) => {
                 info!(block_number, "Sending witness to prover");
-                ProofData::batch_response(
+                ProofData::input_response(
                     block_number,
                     request.program_input,
                     ProofFormat::Compressed,
@@ -212,7 +209,7 @@ impl L1ProofCoordinator {
             }
             None => {
                 debug!("No pending witnesses for prover");
-                ProofData::empty_batch_response()
+                ProofData::empty_input_response()
             }
         };
 
@@ -224,16 +221,16 @@ impl L1ProofCoordinator {
     async fn handle_submit(
         &mut self,
         stream: &mut TcpStream,
-        batch_number: u64,
-        batch_proof: &BatchProof,
+        block_number: u64,
+        proof: &BatchProof,
     ) -> Result<(), L1CoordinatorError> {
-        let prover_reported_type = batch_proof.prover_type() as u64;
+        let prover_reported_type = proof.prover_type() as u64;
         info!(
-            block_number = batch_number,
+            block_number,
             prover_reported_type, "Proof received from prover"
         );
 
-        let proof_data = match batch_proof {
+        let proof_data = match proof {
             BatchProof::ProofBytes(p) => p.proof.clone(),
             BatchProof::ProofCalldata(_) => {
                 // ProofCalldata is for L2 on-chain verification; for L1 we store dummy bytes.
@@ -244,17 +241,17 @@ impl L1ProofCoordinator {
         // Validate size.
         if proof_data.len() > MAX_PROOF_SIZE {
             warn!(
-                batch_number,
+                block_number,
                 size = proof_data.len(),
                 "Proof exceeds MAX_PROOF_SIZE, rejecting"
             );
-            let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(batch_number);
+            let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(block_number);
             send_proof_data(stream, &ack).await?;
             return Ok(());
         }
 
         // Look up the root, proof_gen_id and requested proof types from pending.
-        let (root, proof_type, proof_gen_id) = match self.pending.get(&batch_number) {
+        let (root, proof_type, proof_gen_id) = match self.pending.get(&block_number) {
             Some(p) => {
                 // Use the first requested proof type from the beacon's request.
                 // Fall back to the prover's self-reported type if none was requested.
@@ -267,7 +264,7 @@ impl L1ProofCoordinator {
             }
             None => {
                 warn!(
-                    block_number = batch_number,
+                    block_number,
                     "No pending request found for proof; using defaults"
                 );
                 (H256::default(), prover_reported_type, [0u8; 8])
@@ -276,15 +273,12 @@ impl L1ProofCoordinator {
 
         // Store the proof.
         self.store
-            .store_execution_proof(batch_number, root, proof_type, proof_data.clone())?;
+            .store_execution_proof(block_number, root, proof_type, proof_data.clone())?;
 
-        info!(
-            block_number = batch_number,
-            proof_type, "Execution proof stored"
-        );
+        info!(block_number, proof_type, "Execution proof stored");
 
         // Remove from pending.
-        self.pending.remove(&batch_number);
+        self.pending.remove(&block_number);
 
         // Deliver via callback if configured.
         if let Some(callback_url) = &self.config.callback_url {
@@ -307,28 +301,25 @@ impl L1ProofCoordinator {
                 .await
             {
                 Ok(resp) if resp.status().is_success() => {
-                    info!(
-                        block_number = batch_number,
-                        "Proof delivered to callback URL"
-                    );
+                    info!(block_number, "Proof delivered to callback URL");
                 }
                 Ok(resp) => {
                     warn!(
-                        block_number = batch_number,
+                        block_number,
                         status = %resp.status(),
                         "Callback delivery returned non-success status"
                     );
                 }
                 Err(e) => {
-                    error!(block_number = batch_number, error = %e, "Failed to deliver proof via callback");
+                    error!(block_number, error = %e, "Failed to deliver proof via callback");
                 }
             }
         }
 
         // ACK.
-        let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(batch_number);
+        let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(block_number);
         send_proof_data(stream, &ack).await?;
-        info!(block_number = batch_number, "Proof ACK sent to prover");
+        info!(block_number, "Proof ACK sent to prover");
 
         Ok(())
     }
