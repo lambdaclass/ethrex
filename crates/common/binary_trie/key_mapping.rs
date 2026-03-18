@@ -88,15 +88,30 @@ pub fn get_tree_key_for_code_chunk(address: &Address, chunk_id: u64) -> [u8; 32]
 /// Slots ≥ 64 map to the main storage area starting at 2^248.
 pub fn get_tree_key_for_storage_slot(address: &Address, storage_key: U256) -> [u8; 32] {
     let header_capacity = U256::from(CODE_OFFSET - HEADER_STORAGE_OFFSET); // 64
-    let pos = if storage_key < header_capacity {
-        U256::from(HEADER_STORAGE_OFFSET) + storage_key
+    if storage_key < header_capacity {
+        let pos = U256::from(HEADER_STORAGE_OFFSET) + storage_key;
+        let tree_index = pos / U256::from(STEM_SUBTREE_WIDTH);
+        // Safe: pos % 256 is always 0–255, fits in u8.
+        let sub_index = (pos % U256::from(STEM_SUBTREE_WIDTH)).as_u64() as u8;
+        get_tree_key(address, tree_index, sub_index)
     } else {
-        main_storage_offset() + storage_key
-    };
-    let tree_index = pos / U256::from(STEM_SUBTREE_WIDTH);
-    // Safe: pos % 256 is always 0–255, fits in u8.
-    let sub_index = (pos % U256::from(STEM_SUBTREE_WIDTH)).as_u64() as u8;
-    get_tree_key(address, tree_index, sub_index)
+        // pos = MAIN_STORAGE_OFFSET + storage_key = 2^248 + storage_key
+        // This can overflow U256 when storage_key >= 2^256 - 2^248.
+        // Compute tree_index and sub_index without materializing pos:
+        //   sub_index = (2^248 + storage_key) % 256
+        //             = (0 + storage_key) % 256     (since 2^248 % 256 = 0)
+        //             = storage_key % 256
+        //   tree_index = (2^248 + storage_key) / 256
+        //              = 2^240 + storage_key / 256   (when storage_key % 256 == sub_index,
+        //                                             exact since 2^248 is divisible by 256)
+        // But storage_key / 256 + 2^240 can also overflow if storage_key is huge.
+        // Use overflowing_add for safety — the result is truncated to 256 bits,
+        // which then gets hashed in get_tree_key anyway.
+        let sub_index = (storage_key % U256::from(STEM_SUBTREE_WIDTH)).as_u64() as u8;
+        let (tree_index, _) = (main_storage_offset() / U256::from(STEM_SUBTREE_WIDTH))
+            .overflowing_add(storage_key / U256::from(STEM_SUBTREE_WIDTH));
+        get_tree_key(address, tree_index, sub_index)
+    }
 }
 
 /// Packs account header fields into the 32-byte basic_data leaf layout.
