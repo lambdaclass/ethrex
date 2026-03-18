@@ -105,6 +105,8 @@ fn insert_node(
                         depth + 1,
                     )?);
                 }
+                // Invalidate this node's cached hash — a descendant was mutated.
+                internal.cached_hash = None;
                 Ok(Box::new(Node::Internal(internal)))
             }
         },
@@ -247,6 +249,8 @@ fn remove_node_at_depth(
                 }
 
                 // Collapse InternalNode if it now has only one child.
+                // Also invalidate the cached hash — a descendant was mutated.
+                internal.cached_hash = None;
                 let updated = match (&internal.left, &internal.right) {
                     (None, None) => None,
                     (Some(_), None) => internal.left,
@@ -422,8 +426,8 @@ mod tests {
         fresh.insert(k_80, val(3)).unwrap();
 
         assert_eq!(
-            crate::merkle::merkelize(trie.root.as_deref()),
-            crate::merkle::merkelize(fresh.root.as_deref())
+            crate::merkle::merkelize(trie.root.as_deref_mut()),
+            crate::merkle::merkelize(fresh.root.as_deref_mut())
         );
     }
 

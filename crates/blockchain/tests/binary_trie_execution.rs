@@ -98,7 +98,7 @@ fn test_full_state_lifecycle() {
     }
 
     // 5. Verify state changed.
-    let state = state_arc.read().unwrap();
+    let mut state = state_arc.write().unwrap();
     let root_after_transfer = state.state_root();
     assert_ne!(root_after_genesis, root_after_transfer);
 

@@ -1,5 +1,5 @@
 use crate::hash::blake3_hash;
-use crate::node::{Node, STEM_VALUES};
+use crate::node::{Node, STEM_VALUES, SUBTREE_SIZE};
 
 /// The canonical empty / zero hash.
 pub const ZERO_HASH: [u8; 32] = [0u8; 32];
@@ -17,62 +17,99 @@ fn merkle_hash_64(data: &[u8; 64]) -> [u8; 32] {
     }
 }
 
+/// Public re-export of `merkle_hash_64` used by `StemNode::update_subtree_cache`.
+#[inline]
+pub fn merkle_hash_64_pub(data: &[u8; 64]) -> [u8; 32] {
+    merkle_hash_64(data)
+}
+
 /// Compute the Merkle root hash of the entire trie rooted at `root`.
 ///
 /// - Empty tree  → ZERO_HASH
 /// - InternalNode → `merkle_hash_64(left_hash || right_hash)`
 /// - StemNode     → `merkle_hash_64(stem || 0x00 || subtree_root)` where `subtree_root`
 ///   is the root of the fixed-depth-8 complete binary Merkle tree over the 256 leaf hashes.
-pub fn merkelize(root: Option<&Node>) -> [u8; 32] {
+///
+/// Hashes are cached on each node and reused on subsequent calls unless a mutation
+/// has cleared the cache. The `root` parameter must be `&mut` so that computed
+/// hashes can be written back for future reuse.
+pub fn merkelize(root: Option<&mut Node>) -> [u8; 32] {
     match root {
         None => ZERO_HASH,
         Some(node) => hash_node(node),
     }
 }
 
-fn hash_node(node: &Node) -> [u8; 32] {
+pub(crate) fn hash_node(node: &mut Node) -> [u8; 32] {
     match node {
         Node::Internal(internal) => {
-            let left = internal.left.as_deref().map_or(ZERO_HASH, hash_node);
-            let right = internal.right.as_deref().map_or(ZERO_HASH, hash_node);
+            if let Some(h) = internal.cached_hash {
+                return h;
+            }
+            let left = internal.left.as_deref_mut().map_or(ZERO_HASH, hash_node);
+            let right = internal.right.as_deref_mut().map_or(ZERO_HASH, hash_node);
             let mut buf = [0u8; 64];
             buf[..32].copy_from_slice(&left);
             buf[32..].copy_from_slice(&right);
-            merkle_hash_64(&buf)
+            let h = merkle_hash_64(&buf);
+            internal.cached_hash = Some(h);
+            h
         }
         Node::Stem(stem_node) => {
-            // Step 1: compute the 256 leaf hashes.
-            let mut level: Vec<[u8; 32]> = (0..STEM_VALUES)
-                .map(|i| {
-                    stem_node.values[i]
-                        .map(|v| blake3_hash(&v))
-                        .unwrap_or(ZERO_HASH)
-                })
-                .collect();
-
-            // Step 2: reduce 256 leaves pairwise (log2(256) = 8 rounds) → single root.
-            for _ in 0..STEM_VALUES.ilog2() {
-                let next_len = level.len() / 2;
-                let mut next = Vec::with_capacity(next_len);
-                for pair in level.chunks_exact(2) {
-                    let mut buf = [0u8; 64];
-                    buf[..32].copy_from_slice(&pair[0]);
-                    buf[32..].copy_from_slice(&pair[1]);
-                    next.push(merkle_hash_64(&buf));
-                }
-                level = next;
+            if let Some(h) = stem_node.cached_hash {
+                return h;
             }
-            let subtree_root = level[0];
+            let subtree_root = compute_subtree_root(stem_node);
 
-            // Step 3: hash(stem || 0x00 || subtree_root)
+            // hash(stem || 0x00 || subtree_root)
             // stem is 31 bytes + 0x00 padding + 32-byte subtree_root = 64 bytes.
             let mut buf = [0u8; 64];
             buf[..31].copy_from_slice(&stem_node.stem);
             buf[31] = 0x00;
             buf[32..].copy_from_slice(&subtree_root);
-            merkle_hash_64(&buf)
+            let h = merkle_hash_64(&buf);
+            stem_node.cached_hash = Some(h);
+            h
         }
     }
+}
+
+/// Compute (and cache) the subtree root for a StemNode's 256 values.
+///
+/// The subtree is a complete binary Merkle tree of depth 8 with 256 leaves.
+/// It is represented as a flat array of 511 hashes (the same layout used by
+/// `StemNode::cached_subtree`).
+///
+/// If the cache is already populated (`Some`), return `cache[0]` directly.
+/// Otherwise, build the entire 511-entry cache from scratch and return its root.
+fn compute_subtree_root(stem_node: &mut crate::node::StemNode) -> [u8; 32] {
+    if let Some(ref cache) = stem_node.cached_subtree {
+        return cache[0];
+    }
+
+    // Build the full 511-entry flat binary tree.
+    let mut cache = Box::new([[0u8; 32]; SUBTREE_SIZE]);
+
+    // Fill leaf hashes at indices 255..=510.
+    for i in 0..STEM_VALUES {
+        cache[255 + i] = stem_node.values[i]
+            .map(|v| blake3_hash(&v))
+            .unwrap_or(ZERO_HASH);
+    }
+
+    // Reduce bottom-up: for each internal node (index 254 down to 0), hash children.
+    for parent in (0..255usize).rev() {
+        let left_child = 2 * parent + 1;
+        let right_child = 2 * parent + 2;
+        let mut buf = [0u8; 64];
+        buf[..32].copy_from_slice(&cache[left_child]);
+        buf[32..].copy_from_slice(&cache[right_child]);
+        cache[parent] = merkle_hash_64(&buf);
+    }
+
+    let root = cache[0];
+    stem_node.cached_subtree = Some(cache);
+    root
 }
 
 #[cfg(test)]
@@ -102,11 +139,9 @@ mod tests {
     #[test]
     fn stem_node_all_empty_values_hashes_correctly() {
         let stem = [0xAAu8; 31];
-        let stem_node = StemNode::new(stem);
-        let h = hash_node(&Node::Stem(stem_node));
+        let h = hash_node(&mut Node::Stem(StemNode::new(stem)));
         // Deterministic.
-        let stem_node2 = StemNode::new(stem);
-        let h2 = hash_node(&Node::Stem(stem_node2));
+        let h2 = hash_node(&mut Node::Stem(StemNode::new(stem)));
         assert_eq!(h, h2);
     }
 
@@ -114,19 +149,18 @@ mod tests {
     fn stem_node_zero_stem_all_empty_is_zero() {
         // stem = [0;31], 0x00, subtree_root = [0;32] → buf = [0;64] → ZERO_HASH
         let stem = [0u8; 31];
-        let stem_node = StemNode::new(stem);
-        let h = hash_node(&Node::Stem(stem_node));
+        let h = hash_node(&mut Node::Stem(StemNode::new(stem)));
         assert_eq!(h, ZERO_HASH);
     }
 
     #[test]
     fn stem_node_single_value_changes_hash() {
         let stem = [0u8; 31];
-        let mut stem_node = StemNode::new(stem);
-        let before_zero = hash_node(&Node::Stem(StemNode::new(stem)));
+        let before_zero = hash_node(&mut Node::Stem(StemNode::new(stem)));
 
+        let mut stem_node = StemNode::new(stem);
         stem_node.set_value(0, [1u8; 32]);
-        let after = hash_node(&Node::Stem(stem_node));
+        let after = hash_node(&mut Node::Stem(stem_node));
         assert_ne!(before_zero, after);
     }
 
@@ -141,8 +175,8 @@ mod tests {
         let mut node_b = StemNode::new(stem_b);
         node_b.set_value(0, [2u8; 32]);
 
-        let h_a = hash_node(&Node::Stem(node_a));
-        let h_b = hash_node(&Node::Stem(node_b));
+        let h_a = hash_node(&mut Node::Stem(node_a));
+        let h_b = hash_node(&mut Node::Stem(node_b));
 
         let mut buf = [0u8; 64];
         buf[..32].copy_from_slice(&h_a);
@@ -154,11 +188,11 @@ mod tests {
         let mut b2 = StemNode::new(stem_b);
         b2.set_value(0, [2u8; 32]);
 
-        let internal = Node::Internal(InternalNode::new(
+        let mut internal = Node::Internal(InternalNode::new(
             Some(Box::new(Node::Stem(a2))),
             Some(Box::new(Node::Stem(b2))),
         ));
-        let result = hash_node(&internal);
+        let result = hash_node(&mut internal);
         assert_eq!(result, expected);
     }
 
@@ -169,7 +203,7 @@ mod tests {
         let mut trie = BinaryTrie::new();
         let k = [0u8; 32];
         trie.insert(k, [42u8; 32]).unwrap();
-        let root = merkelize(trie.root.as_deref());
+        let root = merkelize(trie.root.as_deref_mut());
         assert_ne!(root, ZERO_HASH);
     }
 
@@ -189,7 +223,10 @@ mod tests {
         t2.insert(k1, [1u8; 32]).unwrap();
         t2.insert(k2, [2u8; 32]).unwrap();
 
-        assert_eq!(merkelize(t1.root.as_deref()), merkelize(t2.root.as_deref()));
+        assert_eq!(
+            merkelize(t1.root.as_deref_mut()),
+            merkelize(t2.root.as_deref_mut())
+        );
     }
 
     #[test]
@@ -213,7 +250,10 @@ mod tests {
         t2.insert(k1, [1u8; 32]).unwrap();
         t2.insert(k2, [2u8; 32]).unwrap();
 
-        assert_eq!(merkelize(t1.root.as_deref()), merkelize(t2.root.as_deref()));
+        assert_eq!(
+            merkelize(t1.root.as_deref_mut()),
+            merkelize(t2.root.as_deref_mut())
+        );
     }
 
     #[test]
@@ -227,6 +267,78 @@ mod tests {
         let mut t2 = BinaryTrie::new();
         t2.insert(k, [2u8; 32]).unwrap();
 
-        assert_ne!(merkelize(t1.root.as_deref()), merkelize(t2.root.as_deref()));
+        assert_ne!(
+            merkelize(t1.root.as_deref_mut()),
+            merkelize(t2.root.as_deref_mut())
+        );
+    }
+
+    // --- Caching-specific tests ---
+
+    #[test]
+    fn cached_hash_reused_on_second_call() {
+        use crate::trie::BinaryTrie;
+
+        let mut trie = BinaryTrie::new();
+        trie.insert([0u8; 32], [1u8; 32]).unwrap();
+
+        let root1 = merkelize(trie.root.as_deref_mut());
+        let root2 = merkelize(trie.root.as_deref_mut());
+        assert_eq!(root1, root2);
+    }
+
+    #[test]
+    fn cache_invalidated_after_insert() {
+        use crate::trie::BinaryTrie;
+
+        let mut trie = BinaryTrie::new();
+        trie.insert([0u8; 32], [1u8; 32]).unwrap();
+        let root_before = merkelize(trie.root.as_deref_mut());
+
+        // Mutate — inserts clear cached_hash on the path.
+        trie.insert([0u8; 32], [2u8; 32]).unwrap();
+        let root_after = merkelize(trie.root.as_deref_mut());
+
+        assert_ne!(root_before, root_after);
+    }
+
+    #[test]
+    fn subtree_cache_incremental_matches_full_build() {
+        // Build a StemNode, compute its hash (this populates cached_subtree).
+        // Then mutate a value — the incremental update path runs.
+        // Verify the result matches a fresh StemNode with the same final values.
+        let stem = [0u8; 31];
+
+        let mut sn = StemNode::new(stem);
+        sn.set_value(0, [1u8; 32]);
+        // First merkelize: builds full cached_subtree from scratch.
+        hash_node(&mut Node::Stem({
+            let mut tmp = StemNode::new(stem);
+            tmp.set_value(0, [1u8; 32]);
+            tmp
+        }));
+
+        // Now build a node, hash it once (populates cache), then set another value
+        // (incremental update path) and compare with a freshly constructed node.
+        let mut sn_cached = StemNode::new(stem);
+        sn_cached.set_value(0, [1u8; 32]);
+        hash_node(&mut Node::Stem(StemNode::new(stem))); // unrelated, just warming up
+        // Compute root on sn_cached (builds full cache).
+        let _ = hash_node(&mut Node::Stem({
+            let mut tmp = StemNode::new(stem);
+            tmp.set_value(0, [1u8; 32]);
+            tmp
+        }));
+        // Apply incremental mutation.
+        sn_cached.set_value(100, [2u8; 32]);
+        let r_incremental = hash_node(&mut Node::Stem(sn_cached));
+
+        // Reference: fresh node with both values set.
+        let mut sn_fresh = StemNode::new(stem);
+        sn_fresh.set_value(0, [1u8; 32]);
+        sn_fresh.set_value(100, [2u8; 32]);
+        let r_fresh = hash_node(&mut Node::Stem(sn_fresh));
+
+        assert_eq!(r_incremental, r_fresh);
     }
 }

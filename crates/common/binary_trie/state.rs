@@ -50,8 +50,11 @@ impl BinaryTrieState {
     }
 
     /// Compute the binary trie state root via merkelization.
-    pub fn state_root(&self) -> [u8; 32] {
-        merkelize(self.trie.root.as_deref())
+    ///
+    /// Takes `&mut self` because computed hashes are cached back into the trie
+    /// nodes for incremental reuse on subsequent calls.
+    pub fn state_root(&mut self) -> [u8; 32] {
+        merkelize(self.trie.root.as_deref_mut())
     }
 
     /// Read account state from the binary trie.
@@ -376,7 +379,7 @@ mod tests {
     // 1. Empty state has zero root.
     #[test]
     fn test_new_state_root_is_zero() {
-        let state = BinaryTrieState::new();
+        let mut state = BinaryTrieState::new();
         assert_eq!(state.state_root(), [0u8; 32]);
     }
 

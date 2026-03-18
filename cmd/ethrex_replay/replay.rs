@@ -147,7 +147,7 @@ impl BlockReplayer {
 
         let root = self
             .state
-            .read()
+            .write()
             .map_err(|e| anyhow!("state RwLock poisoned: {e}"))?
             .state_root();
 
