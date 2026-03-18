@@ -1466,7 +1466,9 @@ async function loadDeployments() {
 
     // Reconcile: check live Docker status for deployments with docker_project
     await Promise.all(list.map(async (d) => {
-      if (!d.docker_project || isDeploying(d.phase)) return;
+      const dc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
+      const isRemote = dc.cloud === 'aws' || !!d.host_id || dc.mode === 'ai-deploy';
+      if ((!d.docker_project && !isRemote) || isDeploying(d.phase)) return;
       try {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -1492,8 +1494,7 @@ async function loadDeployments() {
         }
       } catch {
         // Fetch timeout or server error — remote deployments show unreachable
-        const rc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
-        if ((rc.cloud === 'aws' || d.host_id) && d.phase === 'running') {
+        if (isRemote && d.phase === 'running') {
           d.phase = 'unreachable'; d.status = 'unreachable';
         }
       }
