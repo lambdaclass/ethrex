@@ -1468,7 +1468,7 @@ async function loadDeployments() {
     list.forEach(d => {
       const dc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
       const isRemote = dc.cloud === 'aws' || !!d.host_id || dc.mode === 'ai-deploy';
-      if (isRemote && d.phase === 'running') { d.phase = 'unreachable'; d.status = 'unreachable'; }
+      if (isRemote && d.phase === 'running') { d.phase = 'checking'; d.status = 'checking'; }
     });
 
     container.innerHTML = `
@@ -1502,14 +1502,14 @@ async function loadDeployments() {
         const statusData = await statusRes.json();
         const containers = statusData.containers || [];
         if (statusData.phase === 'unreachable') {
-          if (d.phase !== 'unreachable') { d.phase = 'unreachable'; d.status = 'unreachable'; changed = true; }
+          d.phase = 'unreachable'; d.status = 'unreachable'; changed = true;
         } else {
           const coreServices = ['tokamak-app-l1', 'tokamak-app-l2', 'tokamak-app-prover'];
           const coreContainers = containers.filter(c => coreServices.includes(c.Service));
           const anyRunning = coreContainers.some(c => (c.State || c.state) === 'running');
-          if (anyRunning && d.phase !== 'running') {
+          if (anyRunning) {
             d.phase = 'running'; d.status = 'active'; changed = true;
-          } else if (!anyRunning && containers.length > 0 && d.phase !== 'stopped') {
+          } else {
             d.phase = 'stopped'; d.status = 'configured'; changed = true;
           }
         }
@@ -1533,7 +1533,7 @@ function renderDeploymentRow(d) {
   const isExpanded = expandedDeploymentId === d.id;
   const hasError = !!d.error_message;
   const statusClass = hasError ? 'error' : d.phase === 'running' ? 'running'
-    : d.phase === 'unreachable' ? 'building'
+    : (d.phase === 'unreachable' || d.phase === 'checking') ? 'building'
     : d.phase === 'configured' ? 'configured'
     : ['building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_tools','checking_docker'].includes(d.phase) ? 'building' : 'stopped';
   const rowConfig = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
@@ -1631,7 +1631,7 @@ function statusLabel(phase) {
     configured: 'Configured', checking_docker: 'Checking...', building: 'Building',
     pulling: 'Pulling', l1_starting: 'Starting', deploying_contracts: 'Deploying',
     verifying_contracts: 'Verifying', l2_starting: 'Starting', starting_prover: 'Starting', starting_tools: 'Starting',
-    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Checking...',
+    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Unreachable', checking: 'Checking...',
   };
   return map[phase] || phase;
 }
@@ -2077,9 +2077,9 @@ function renderPhaseBadge(phase, hasError) {
     verifying_contracts: 'Verifying', l2_starting: 'Starting L2', starting_prover: 'Starting Prover',
     starting_op_node: 'Starting op-node', starting_batcher: 'Starting op-batcher', starting_proposer: 'Starting op-proposer',
     starting_tools: 'Starting Tools',
-    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Checking...',
+    running: 'Running', stopped: 'Stopped', error: 'Error', unreachable: 'Unreachable', checking: 'Checking...',
   };
-  const animating = ['ai-deploy','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_op_node','starting_batcher','starting_proposer','starting_tools'];
+  const animating = ['ai-deploy','checking','checking_docker','building','pulling','l1_starting','deploying_contracts','verifying_contracts','l2_starting','starting_prover','starting_op_node','starting_batcher','starting_proposer','starting_tools'];
   const label = labels[phase] || phase;
   if (hasError && phase !== 'error') {
     return `<span class="phase-badge phase-error" title="Error during: ${label}">${label} - Error</span>`;
@@ -2140,7 +2140,7 @@ function renderDetail() {
   document.getElementById('detail-name').textContent = d.name;
   const dc = d.config ? (typeof d.config === 'string' ? JSON.parse(d.config) : d.config) : {};
   const isRemoteDetail = dc.cloud === 'aws' || !!d.host_id || dc.mode === 'ai-deploy';
-  const initialPhase = (isRemoteDetail && d.phase === 'running') ? 'unreachable' : d.phase;
+  const initialPhase = (isRemoteDetail && d.phase === 'running') ? 'checking' : d.phase;
   document.getElementById('detail-phase').innerHTML = renderPhaseBadge(initialPhase);
 
   // Mode badge
