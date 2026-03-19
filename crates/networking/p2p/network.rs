@@ -21,6 +21,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use socket2::{Domain, Protocol, Socket, Type};
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     io,
@@ -28,7 +29,6 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
-use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio_util::task::TaskTracker;
 use tracing::{error, info};

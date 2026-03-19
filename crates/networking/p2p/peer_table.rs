@@ -144,20 +144,20 @@ impl Contact {
             // Store IPv6 address/ports so the IPv6 discovery server can use this
             // contact as a relay to bootstrap into the IPv6 portion of the network.
             // Ignore the unspecified address (::) which indicates a misconfigured peer.
-            if let Some(ip6) = pairs.ip6 {
-                if !ip6.is_unspecified() {
-                    tracing::trace!(
-                        node_id = %self.node.node_id(),
-                        ipv4 = ?pairs.ip,
-                        ipv6 = %ip6,
-                        tcp6 = ?pairs.tcp6_port,
-                        udp6 = ?pairs.udp6_port,
-                        "ENR contains IPv6 address"
-                    );
-                    self.ip6 = Some(ip6);
-                    self.tcp6_port = pairs.tcp6_port;
-                    self.udp6_port = pairs.udp6_port;
-                }
+            if let Some(ip6) = pairs.ip6
+                && !ip6.is_unspecified()
+            {
+                tracing::trace!(
+                    node_id = %self.node.node_id(),
+                    ipv4 = ?pairs.ip,
+                    ipv6 = %ip6,
+                    tcp6 = ?pairs.tcp6_port,
+                    udp6 = ?pairs.udp6_port,
+                    "ENR contains IPv6 address"
+                );
+                self.ip6 = Some(ip6);
+                self.tcp6_port = pairs.tcp6_port;
+                self.udp6_port = pairs.udp6_port;
             }
             self.record = Some(record);
         }
@@ -876,12 +876,12 @@ impl PeerTableServer {
                 // IPv6-only. Dual-stack peers are dialed via IPv4 even when
                 // they advertise ip6 in their ENR, since most don't actually
                 // accept IPv6 TCP connections.
-                if contact.node.ip.is_unspecified() {
-                    if let Some(ip6) = contact.ip6 {
-                        contact.node.ip = IpAddr::V6(ip6);
-                        if let Some(tcp6) = contact.tcp6_port {
-                            contact.node.tcp_port = tcp6;
-                        }
+                if contact.node.ip.is_unspecified()
+                    && let Some(ip6) = contact.ip6
+                {
+                    contact.node.ip = IpAddr::V6(ip6);
+                    if let Some(tcp6) = contact.tcp6_port {
+                        contact.node.tcp_port = tcp6;
                     }
                 }
                 return Some(contact);
@@ -906,12 +906,10 @@ impl PeerTableServer {
             .cloned()
             .cloned()
             .map(|mut contact| {
-                if ipv6 {
-                    if let Some(ip6) = contact.ip6 {
-                        contact.node.ip = IpAddr::V6(ip6);
-                        if let Some(udp6) = contact.udp6_port {
-                            contact.node.udp_port = udp6;
-                        }
+                if ipv6 && let Some(ip6) = contact.ip6 {
+                    contact.node.ip = IpAddr::V6(ip6);
+                    if let Some(udp6) = contact.udp6_port {
+                        contact.node.udp_port = udp6;
                     }
                 }
                 contact
