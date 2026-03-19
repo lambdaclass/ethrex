@@ -177,9 +177,7 @@ impl TrieIterator {
     // TODO: construct path from nibbles
     pub fn content(self) -> impl Iterator<Item = (PathRLP, ValueRLP)> {
         self.filter_map(|(p, n)| match n {
-            Node::Branch(branch_node) => {
-                (!branch_node.value.is_empty()).then_some((p.to_bytes(), branch_node.value))
-            }
+            Node::Branch(_) => None,
             Node::Extension(_) => None,
             Node::Leaf(leaf_node) => Some((p.to_bytes(), leaf_node.value)),
         })

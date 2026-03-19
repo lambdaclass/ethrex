@@ -21,26 +21,7 @@ macro_rules! pmt_node {
             choices
         })
     };
-    (
-        @( $trie:expr )
-        branch { $( $choice:expr => $child_type:ident { $( $child_tokens:tt )* } ),+ $(,)? }
-        with_leaf { $path:expr => $value:expr }
-        $( offset $offset:expr )?
-    ) => {{
-        $crate::node::BranchNode::new_with_value({
-            #[allow(unused_variables)]
-            let offset = true $( ^ $offset )?;
-            let mut choices = $crate::node::BranchNode::EMPTY_CHOICES;
-            $(
-                choices[$choice as usize] = $crate::node::Node::from(
-                    pmt_node! { @($trie)
-                        $child_type { $( $child_tokens )* }
-                        offset offset
-                    }).into();
-            )*
-            choices
-        }, $value)
-    }};
+
 
     (
         @( $trie:expr )

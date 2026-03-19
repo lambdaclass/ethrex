@@ -231,7 +231,7 @@ fn process_proof_nodes(
                         choice,
                     )?;
                 }
-                node.value
+                Vec::new()
             }
             Node::Extension(node) => {
                 current_path.extend(&node.prefix);
