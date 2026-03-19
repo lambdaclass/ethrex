@@ -185,17 +185,13 @@ impl BlockReplayer {
 
             // Flush checkpoint if configured.
             if self.checkpoint_interval > 0 && block_number % self.checkpoint_interval == 0 {
-                if let Err(e) = self.flush_checkpoint(block_number) {
-                    warn!("Checkpoint flush failed at block {block_number}: {e:#}");
-                }
+                self.flush_checkpoint(block_number)?;
             }
         }
 
         // Final flush to capture the last partial interval.
         if self.checkpoint_interval > 0 && end % self.checkpoint_interval != 0 {
-            if let Err(e) = self.flush_checkpoint(end) {
-                warn!("Final checkpoint flush failed: {e:#}");
-            }
+            self.flush_checkpoint(end)?;
         }
 
         let elapsed = start_time.elapsed().as_secs_f64();

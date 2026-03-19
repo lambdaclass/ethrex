@@ -321,12 +321,15 @@ impl NodeStore {
     /// `WriteBatch`. Used by `BinaryTrieState::flush` to build a single atomic
     /// batch that also contains code_store and storage_keys entries.
     ///
-    /// Clears the dirty and freed sets after writing.
+    /// Clears the dirty/freed sets and evicts all nodes from the cache to
+    /// bound memory usage. Evicted nodes are reloaded from RocksDB on the
+    /// next access (lazy loading).
     #[cfg(feature = "rocksdb")]
     pub fn flush_to_batch(&mut self, batch: &mut rocksdb::WriteBatch, root: Option<NodeId>) {
         self.write_to_batch(batch, root);
         self.dirty.clear();
         self.freed.clear();
+        self.cache.clear();
     }
 
     /// Internal helper: writes dirty nodes, freed deletions, and metadata into `batch`.
