@@ -364,8 +364,10 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
         addr.parse().expect("Failed to parse p2p address")
     } else {
-        local_ip()
-            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
+        local_ip().or_else(|_| local_ipv6()).unwrap_or_else(|e| {
+            warn!("Could not detect local IP ({e}), falling back to 0.0.0.0 — set --p2p.addr explicitly in Docker");
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        })
     };
 
     let local_public_key = public_key_from_signing_key(signer);
