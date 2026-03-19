@@ -340,7 +340,24 @@ impl BorEngine {
         let validator_set = span_to_validator_set(&span);
 
         // Create the snapshot at the pivot block.
-        let snapshot = Snapshot::new(block_number, block_hash, validator_set);
+        let mut snapshot = Snapshot::new(block_number, block_hash, validator_set);
+
+        // Fast-forward proposer rotation to match current block position.
+        // Heimdall returns priorities from span start, but Bor rotates at each sprint boundary.
+        let span_start = span.start_block;
+        let sprint_size = self.config.get_sprint_size(block_number);
+        let sprints_elapsed = if block_number > span_start && sprint_size > 0 {
+            (block_number - span_start) / sprint_size
+        } else {
+            0
+        };
+        if sprints_elapsed > 0 {
+            snapshot.increment_proposer_priority(sprints_elapsed as u32);
+            tracing::info!(
+                sprints_elapsed,
+                "Fast-forwarded proposer priority from span start"
+            );
+        }
 
         // Cache it for immediate use by verify_header().
         self.snapshots.insert(snapshot.clone());
