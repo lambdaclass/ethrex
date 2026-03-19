@@ -294,13 +294,18 @@ impl Node {
 
     pub fn enode_url(&self) -> String {
         let public_key = hex::encode(self.public_key);
-        let node_ip = self.ip;
+        // IPv6 addresses must be wrapped in brackets in enode URLs,
+        // e.g. enode://key@[::1]:30303 rather than enode://key@::1:30303.
+        let host = match self.ip {
+            IpAddr::V6(ip6) => format!("[{ip6}]"),
+            IpAddr::V4(_) => self.ip.to_string(),
+        };
         let discovery_port = self.udp_port;
         let listener_port = self.tcp_port;
         if discovery_port != listener_port {
-            format!("enode://{public_key}@{node_ip}:{listener_port}?discport={discovery_port}")
+            format!("enode://{public_key}@{host}:{listener_port}?discport={discovery_port}")
         } else {
-            format!("enode://{public_key}@{node_ip}:{listener_port}")
+            format!("enode://{public_key}@{host}:{listener_port}")
         }
     }
 
