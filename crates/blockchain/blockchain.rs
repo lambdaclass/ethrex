@@ -3154,7 +3154,11 @@ fn execute_polygon_system_calls(
         .flatten()
         .collect();
 
-    let need_span_commit = bor_config.need_to_commit_span(block_number);
+    // Use BorEngine's span-aware check if available, fall back to formula.
+    let need_span_commit = match bor_engine {
+        Some(engine) => engine.need_to_commit_span(block_number),
+        None => bor_config.need_to_commit_span(block_number),
+    };
 
     // No state sync data and no span commit → no receipt needed
     if state_sync_data.is_empty() && !need_span_commit {
@@ -3173,7 +3177,10 @@ fn execute_polygon_system_calls(
     // 1. commitSpan at span boundaries (BEFORE commitState, matching Bor's Finalize order)
     if need_span_commit {
         if let Some(engine) = bor_engine {
-            let current_span_id = bor_config.span_id_at(block_number);
+            // Use stored span ID if available, fall back to formula.
+            let current_span_id = engine
+                .current_span_id()
+                .unwrap_or_else(|| bor_config.span_id_at(block_number));
             let next_span_id = current_span_id + 1;
 
             // Fetch the next span from Heimdall (async → sync bridge)
@@ -3216,6 +3223,8 @@ fn execute_polygon_system_calls(
                 Ok(report) => {
                     if report.is_success() {
                         all_logs.extend(report.logs);
+                        // Update stored span — the committed span becomes current.
+                        engine.set_current_span(next_span);
                     } else {
                         // commitSpan reverts are fatal
                         return Err(ChainError::Custom(format!(

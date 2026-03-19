@@ -55,6 +55,9 @@ pub struct BorEngine {
     pub snapshots: SnapshotCache,
     /// Latest known milestone from Heimdall, used for reorg protection.
     latest_milestone: Mutex<Option<Milestone>>,
+    /// Current span from Heimdall, used for accurate span boundary detection.
+    /// Set during bootstrap and updated after each commitSpan.
+    current_span: Mutex<Option<crate::heimdall::Span>>,
 }
 
 impl std::fmt::Debug for BorEngine {
@@ -77,6 +80,7 @@ impl BorEngine {
             heimdall: HeimdallClient::new(heimdall_url),
             snapshots: SnapshotCache::new(),
             latest_milestone: Mutex::new(None),
+            current_span: Mutex::new(None),
         }
     }
 
@@ -93,6 +97,40 @@ impl BorEngine {
     /// Updates the latest milestone (called by the Heimdall poller).
     pub fn set_milestone(&self, milestone: Milestone) {
         *self.latest_milestone.lock().unwrap() = Some(milestone);
+    }
+
+    /// Returns the current span's ID, if known.
+    pub fn current_span_id(&self) -> Option<u64> {
+        self.current_span.lock().unwrap().as_ref().map(|s| s.id)
+    }
+
+    /// Updates the stored current span (called after bootstrap or commitSpan).
+    pub fn set_current_span(&self, span: crate::heimdall::Span) {
+        *self.current_span.lock().unwrap() = Some(span);
+    }
+
+    /// Returns true if a span commit system call is needed at this block.
+    ///
+    /// Uses the actual span boundaries from Heimdall instead of the formula-based
+    /// `span_id_at()` which can be inaccurate on networks like Amoy.
+    ///
+    /// Trigger condition: this block is a sprint start, and this sprint's end
+    /// reaches or crosses the current span's end_block.
+    /// Falls back to the formula-based check if no span is stored yet.
+    pub fn need_to_commit_span(&self, block_number: BlockNumber) -> bool {
+        if !self.config.is_sprint_start(block_number) || block_number == 0 {
+            return false;
+        }
+        let span = self.current_span.lock().unwrap();
+        match span.as_ref() {
+            Some(span) => {
+                let sprint = self.config.get_sprint_size(block_number);
+                let sprint_end = block_number + sprint - 1;
+                sprint_end >= span.end_block
+            }
+            // No span stored yet — fall back to formula.
+            None => self.config.need_to_commit_span(block_number),
+        }
     }
 
     /// Look up or create the snapshot for a given block hash.
@@ -196,7 +234,7 @@ impl BorEngine {
         let mut calls = Vec::new();
 
         // 1. Span commit at span boundaries (checked at sprint-start blocks)
-        if self.config.need_to_commit_span(block_number) {
+        if self.need_to_commit_span(block_number) {
             let span_call = self.build_span_commit_call(block_number).await?;
             calls.push(span_call);
         }
@@ -284,7 +322,10 @@ impl BorEngine {
         &self,
         block_number: BlockNumber,
     ) -> Result<SystemCallContext, BorEngineError> {
-        let current_span_id = self.config.span_id_at(block_number);
+        // Use stored span ID if available, fall back to formula.
+        let current_span_id = self
+            .current_span_id()
+            .unwrap_or_else(|| self.config.span_id_at(block_number));
         let next_span = self.heimdall.fetch_span(current_span_id + 1).await?;
 
         // Encode validators and producers as Bor-format bytes (40 bytes each:
@@ -299,6 +340,9 @@ impl BorEngine {
             &validator_bytes,
             &producer_bytes,
         );
+
+        // Update stored span to the next span (it becomes current after commit).
+        self.set_current_span(next_span);
 
         Ok(SystemCallContext {
             from: SYSTEM_ADDRESS,
@@ -369,13 +413,17 @@ impl BorEngine {
         // Cache it for immediate use by verify_header().
         self.snapshots.insert(snapshot.clone());
 
+        // Store the current span for accurate boundary detection.
         tracing::info!(
             block_number,
             span_id = span.id,
+            span_start = span.start_block,
+            span_end = span.end_block,
             validators = span.validators.len(),
             producers = span.selected_producers.len(),
             "Bootstrapped validator snapshot from Heimdall"
         );
+        self.set_current_span(span);
 
         Ok(snapshot)
     }
