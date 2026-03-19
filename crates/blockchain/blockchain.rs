@@ -2141,8 +2141,20 @@ impl Blockchain {
 
         let chain_config: ChainConfig = self.storage.get_chain_config();
 
-        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
-        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+        // Cache block hashes for the full batch so we can access them during
+        // execution without having to store the blocks beforehand.
+        // Also include the last 256 block hashes from the store so that
+        // BLOCKHASH can resolve references to blocks from previous batches
+        // (they may not be canonical yet during import).
+        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
+            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+        let first_number = first_block_header.number;
+        let lookback_start = first_number.saturating_sub(256);
+        for n in lookback_start..first_number {
+            if let Ok(Some(header)) = self.storage.get_block_header(n) {
+                block_hash_cache.entry(n).or_insert_with(|| header.hash());
+            }
+        }
 
         let parent_header = self
             .storage
