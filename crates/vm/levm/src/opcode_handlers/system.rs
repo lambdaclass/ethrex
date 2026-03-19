@@ -94,11 +94,12 @@ impl OpcodeHandler for OpCallHandler {
         // Regular gas OOG must not consume state gas that would inflate the parent's
         // reservoir on frame failure.
         let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
-        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         let gas_left = if needs_state_gas {
             let from_reservoir = vm.state_gas_reservoir.min(STATE_GAS_NEW_ACCOUNT);
+            // Safe: from_reservoir = min(reservoir, STATE_GAS_NEW_ACCOUNT) <= STATE_GAS_NEW_ACCOUNT
+            #[expect(clippy::arithmetic_side_effects, reason = "from_reservoir <= STATE_GAS_NEW_ACCOUNT")]
             let spill = STATE_GAS_NEW_ACCOUNT - from_reservoir;
-            (vm.current_call_frame.gas_remaining as u64)
+            gas_left
                 .checked_sub(spill)
                 .ok_or(ExceptionalHalt::OutOfGas)?
         } else {
