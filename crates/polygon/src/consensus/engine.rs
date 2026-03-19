@@ -159,6 +159,13 @@ impl BorEngine {
             });
         }
 
+        // 5. Proposer rotation at sprint boundaries.
+        // Must happen AFTER the difficulty check since difficulty is computed
+        // against the pre-rotation proposer.
+        if header.number > 0 && (header.number + 1).is_multiple_of(sprint_size) {
+            parent_snapshot.increment_proposer_priority(1);
+        }
+
         Ok(signer)
     }
 
