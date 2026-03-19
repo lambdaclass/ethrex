@@ -108,11 +108,13 @@ fn compute_subtree_root(stem_node: &mut crate::node::StemNode) -> [u8; 32] {
     // Build the full 511-entry flat binary tree.
     let mut cache = Box::new([[0u8; 32]; SUBTREE_SIZE]);
 
-    // Fill leaf hashes at indices 255..=510.
+    // Fill all leaves with ZERO_HASH (default for absent values).
     for i in 0..STEM_VALUES {
-        cache[255 + i] = stem_node.values[i]
-            .map(|v| blake3_hash(&v))
-            .unwrap_or(ZERO_HASH);
+        cache[255 + i] = ZERO_HASH;
+    }
+    // Overwrite only present values (sparse — typically 1-5 hashes instead of 256).
+    for (&idx, val) in &stem_node.values {
+        cache[255 + idx as usize] = blake3_hash(val);
     }
 
     // Reduce bottom-up: for each internal node (index 254 down to 0), hash children.
@@ -363,7 +365,7 @@ impl Clone for crate::node::StemNode {
     fn clone(&self) -> Self {
         Self {
             stem: self.stem,
-            values: Box::new(*self.values),
+            values: self.values.clone(),
             cached_subtree: self.cached_subtree.clone(),
             cached_hash: self.cached_hash,
         }

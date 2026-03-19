@@ -184,8 +184,7 @@ impl BlockReplayer {
 
                 // Log memory stats so we can spot unbounded growth.
                 if let Ok(state) = self.state.read() {
-                    let (clean, warm, dirty, freed, codes, storage_addrs) =
-                        state.memory_stats();
+                    let (clean, warm, dirty, freed, codes, storage_addrs) = state.memory_stats();
                     info!(
                         "  mem: clean={clean} warm={warm} dirty={dirty} freed={freed} \
                          codes={codes} storage_addrs={storage_addrs}"

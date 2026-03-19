@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 /// Maximum traversal depth: 31 bytes * 8 bits = 248 levels of InternalNodes.
 pub const MAX_DEPTH: usize = 248;
 
@@ -20,8 +22,6 @@ pub const SUBTREE_SIZE: usize = 511;
 
 impl Node {
     /// Strip cached hashes and subtree caches to reduce memory footprint.
-    ///
-    /// After stripping, a StemNode goes from ~25KB to ~8.5KB.
     pub fn strip_caches(&mut self) {
         match self {
             Node::Internal(n) => n.cached_hash = None,
@@ -60,8 +60,10 @@ impl InternalNode {
 /// to place on the stack (especially inside recursive tree operations).
 pub struct StemNode {
     pub stem: [u8; 31],
-    /// Each slot holds a 32-byte value or None (empty).
-    pub values: Box<[Option<[u8; 32]>; STEM_VALUES]>,
+    /// Sparse map of sub-index → 32-byte value. Only occupied slots are stored.
+    /// Typical StemNodes have 1-5 entries (~100-200 bytes) instead of the
+    /// previous fixed 256-slot array (~8.5KB).
+    pub values: BTreeMap<u8, [u8; 32]>,
     /// Cached intermediate hashes for the 256-value subtree (511 entries).
     ///
     /// Flat binary tree layout:
@@ -81,31 +83,29 @@ pub struct StemNode {
 impl StemNode {
     /// Create a new empty StemNode with the given 31-byte stem.
     pub fn new(stem: [u8; 31]) -> Self {
-        // Box::new([None; 256]) would require Copy on the Option type; we build manually.
-        let values = Box::new([None::<[u8; 32]>; STEM_VALUES]);
         Self {
             stem,
-            values,
+            values: BTreeMap::new(),
             cached_subtree: None,
             cached_hash: None,
         }
     }
 
-    /// Retrieve the value at the given sub-index (0–255).
+    /// Retrieve the value at the given sub-index (0-255).
     pub fn get_value(&self, sub_index: u8) -> Option<[u8; 32]> {
-        self.values[sub_index as usize]
+        self.values.get(&sub_index).copied()
     }
 
     /// Set the value at the given sub-index, updating the subtree cache incrementally.
     pub fn set_value(&mut self, sub_index: u8, value: [u8; 32]) {
-        self.values[sub_index as usize] = Some(value);
+        self.values.insert(sub_index, value);
         self.update_subtree_cache(sub_index);
         self.cached_hash = None;
     }
 
     /// Remove the value at the given sub-index, returning the previous value if any.
     pub fn remove_value(&mut self, sub_index: u8) -> Option<[u8; 32]> {
-        let old = self.values[sub_index as usize].take();
+        let old = self.values.remove(&sub_index);
         if old.is_some() {
             self.update_subtree_cache(sub_index);
             self.cached_hash = None;
@@ -113,9 +113,9 @@ impl StemNode {
         old
     }
 
-    /// Returns true if all 256 value slots are empty.
+    /// Returns true if all value slots are empty.
     pub fn is_empty(&self) -> bool {
-        self.values.iter().all(|v| v.is_none())
+        self.values.is_empty()
     }
 
     /// Update the subtree cache for a single changed leaf at `sub_index`.
@@ -137,8 +137,10 @@ impl StemNode {
         let leaf_flat = 255 + sub_index as usize;
 
         // Recompute the leaf hash.
-        cache[leaf_flat] = self.values[sub_index as usize]
-            .map(|v| blake3_hash(&v))
+        cache[leaf_flat] = self
+            .values
+            .get(&sub_index)
+            .map(|v| blake3_hash(v))
             .unwrap_or(ZERO_HASH);
 
         // Walk up from the leaf to the root, recomputing each parent.

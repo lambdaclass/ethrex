@@ -10,9 +10,9 @@ use crate::node::{Node, NodeId};
 
 /// Default maximum number of clean nodes kept in the LRU cache.
 ///
-/// Node sizes vary widely: InternalNode ≈ 65 bytes, StemNode ≈ 8.5 KB
-/// (without subtree cache, which is stripped on demote). A cap of 2M
-/// gives roughly 2M * ~4KB avg ≈ ~8 GB, suitable for 32+ GB machines.
+/// With sparse StemNode values, node sizes are: InternalNode ≈ 65 bytes,
+/// StemNode ≈ 450 bytes (BTreeMap overhead + 1-5 values). A cap of 2M
+/// gives roughly 2M * ~250 bytes avg ≈ ~500 MB.
 const DEFAULT_CLEAN_CACHE_CAP: usize = 2_000_000;
 
 // Key prefixes for RocksDB storage
@@ -60,22 +60,17 @@ fn serialize_node(node: &Node) -> Vec<u8> {
         Node::Stem(stem) => {
             // Build presence bitmap: 256 bits = 32 bytes.
             let mut bitmap = [0u8; 32];
-            for (i, val) in stem.values.iter().enumerate() {
-                if val.is_some() {
-                    bitmap[i / 8] |= 1 << (i % 8);
-                }
+            for &idx in stem.values.keys() {
+                bitmap[idx as usize / 8] |= 1 << (idx as usize % 8);
             }
 
-            // Count present values to pre-allocate.
-            let present_count = stem.values.iter().filter(|v| v.is_some()).count();
-            let mut buf = Vec::with_capacity(1 + 31 + 32 + present_count * 32);
+            let mut buf = Vec::with_capacity(1 + 31 + 32 + stem.values.len() * 32);
             buf.push(0x02);
             buf.extend_from_slice(&stem.stem);
             buf.extend_from_slice(&bitmap);
-            for val in stem.values.iter() {
-                if let Some(v) = val {
-                    buf.extend_from_slice(v);
-                }
+            // BTreeMap iterates in key order, matching bitmap bit order.
+            for v in stem.values.values() {
+                buf.extend_from_slice(v);
             }
             buf
         }
@@ -120,8 +115,8 @@ fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
             let stem: [u8; 31] = bytes[1..32].try_into().unwrap();
             let bitmap: [u8; 32] = bytes[32..64].try_into().unwrap();
 
-            // Reconstruct the values array from the bitmap and packed data.
-            let mut values = Box::new([None::<[u8; 32]>; STEM_VALUES]);
+            // Reconstruct the values map from the bitmap and packed data.
+            let mut values = std::collections::BTreeMap::new();
             let mut offset = 64usize;
             for i in 0..STEM_VALUES {
                 let byte = bitmap[i / 8];
@@ -134,7 +129,7 @@ fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
                     }
                     let mut v = [0u8; 32];
                     v.copy_from_slice(&bytes[offset..offset + 32]);
-                    values[i] = Some(v);
+                    values.insert(i as u8, v);
                     offset += 32;
                 }
             }
@@ -666,7 +661,7 @@ mod tests {
         let restored = deserialize_node(&bytes).unwrap();
         if let Node::Stem(sn) = restored {
             assert_eq!(sn.stem[0], 0x42);
-            assert!(sn.values.iter().all(|v| v.is_none()));
+            assert!(sn.values.is_empty());
             assert!(sn.cached_hash.is_none());
             assert!(sn.cached_subtree.is_none());
         } else {
