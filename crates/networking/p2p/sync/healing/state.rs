@@ -10,7 +10,7 @@
 
 use std::{
     cmp::min,
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -283,24 +283,20 @@ async fn heal_state_trie(
             // PERF: reuse buffers?
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
-            // NOTE: we keep only a single task in the background to avoid out of order deletes
+            // NOTE: we keep only a single task in the background to preserve write ordering
             if !db_joinset.is_empty()
                 && let Some(result) = db_joinset.join_next().await
             {
                 result??;
             }
             db_joinset.spawn_blocking(move || -> Result<(), SyncError> {
-                let mut encoded_to_write = BTreeMap::new();
-                for (path, node) in to_write {
-                    for i in 0..path.len() {
-                        encoded_to_write.insert(path.slice(0, i), vec![]);
-                    }
-                    encoded_to_write.insert(path, node.encode_to_vec());
-                }
+                let encoded_to_write: Vec<_> = to_write
+                    .into_iter()
+                    .map(|(path, node)| (path, node.encode_to_vec()))
+                    .collect();
                 let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
                 let db = trie_db.db();
-                // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
-                db.put_batch(encoded_to_write.into_iter().collect())?;
+                db.put_batch(encoded_to_write)?;
                 Ok(())
             });
         }
