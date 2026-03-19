@@ -146,7 +146,7 @@ impl Contact {
             // Ignore the unspecified address (::) which indicates a misconfigured peer.
             if let Some(ip6) = pairs.ip6 {
                 if !ip6.is_unspecified() {
-                    tracing::debug!(
+                    tracing::trace!(
                         node_id = %self.node.node_id(),
                         ipv4 = ?pairs.ip,
                         ipv6 = %ip6,
@@ -870,7 +870,21 @@ impl PeerTableServer {
                 && contact.is_fork_id_valid != Some(false)
             {
                 self.already_tried_peers.insert(node_id);
-                return Some(contact.clone());
+                let mut contact = contact.clone();
+                // Only use IPv6 for TCP if the peer's IPv4 address is
+                // unspecified (0.0.0.0), meaning they are effectively
+                // IPv6-only. Dual-stack peers are dialed via IPv4 even when
+                // they advertise ip6 in their ENR, since most don't actually
+                // accept IPv6 TCP connections.
+                if contact.node.ip.is_unspecified() {
+                    if let Some(ip6) = contact.ip6 {
+                        contact.node.ip = IpAddr::V6(ip6);
+                        if let Some(tcp6) = contact.tcp6_port {
+                            contact.node.tcp_port = tcp6;
+                        }
+                    }
+                }
+                return Some(contact);
             }
         }
         tracing::trace!("Resetting list of tried peers.");
