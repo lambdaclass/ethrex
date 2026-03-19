@@ -740,7 +740,7 @@ pub async fn regenerate_head_state(
 
         let Some(block) = store.get_block_by_number(i).await? else {
             warn!("Block {i} not found during state regeneration, rolling back head to block {}", i - 1);
-            store.set_latest_block_number(i - 1)?;
+            store.rollback_latest_block_number(i - 1)?;
             break;
         };
 

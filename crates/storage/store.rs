@@ -982,11 +982,16 @@ impl Store {
     }
 
     /// Set the latest block number in the DB (for recovery after interrupted sync).
-    pub fn set_latest_block_number(&self, number: BlockNumber) -> Result<(), StoreError> {
+    /// Roll back the latest block number (DB + in-memory cache) for recovery.
+    pub fn rollback_latest_block_number(&self, number: BlockNumber) -> Result<(), StoreError> {
         let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
         let mut txn = self.backend.begin_write()?;
         txn.put(CHAIN_DATA, &key, &number.to_le_bytes())?;
         txn.commit()?;
+        // Also update the in-memory cache
+        if let Some(header) = self.load_block_header(number)? {
+            self.latest_block_header.update(header);
+        }
         Ok(())
     }
 
