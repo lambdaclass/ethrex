@@ -52,9 +52,9 @@ impl BinaryTrieVmDb {
 
 impl VmDatabase for BinaryTrieVmDb {
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        let state = self
+        let mut state = self
             .state
-            .read()
+            .write()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         Ok(state.get_account_state(&address))
     }
@@ -64,9 +64,9 @@ impl VmDatabase for BinaryTrieVmDb {
         address: Address,
         key: H256,
     ) -> Result<Option<ethrex_common::U256>, EvmError> {
-        let state = self
+        let mut state = self
             .state
-            .read()
+            .write()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         Ok(state.get_storage_slot(&address, key))
     }

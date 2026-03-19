@@ -32,6 +32,18 @@ struct Args {
     /// Log binary trie root every N blocks (default: 1000).
     #[arg(long, default_value_t = 1000)]
     log_interval: u64,
+
+    /// Path to a RocksDB directory for persisting the binary trie state.
+    /// Enables checkpoint/resume: if the directory already contains a
+    /// checkpoint, replay resumes from the next block automatically.
+    /// If omitted, state is kept in memory only.
+    #[arg(long)]
+    trie_db_path: Option<PathBuf>,
+
+    /// Flush the binary trie state to disk every N blocks (default: 1000).
+    /// Only effective when --trie-db-path is set.
+    #[arg(long, default_value_t = 1000)]
+    checkpoint_interval: u64,
 }
 
 #[tokio::main]
@@ -77,7 +89,13 @@ async fn main() -> Result<()> {
     info!("Replaying blocks {start_block}..={end_block}");
 
     // Initialize and run the replayer.
-    let mut replayer = replay::BlockReplayer::new(genesis, store)?;
+    let mut replayer = replay::BlockReplayer::new(
+        genesis,
+        store,
+        args.trie_db_path.as_deref(),
+        args.checkpoint_interval,
+    )
+    .await?;
     replayer
         .replay(start_block, end_block, args.log_interval)
         .await?;

@@ -47,7 +47,7 @@ fn eip7864_reference_vectors() {
                 .unwrap_or_else(|e| panic!("insert failed for vector '{}': {e}", vector.name));
         }
 
-        let root = merkelize(trie.root.as_deref_mut());
+        let root = merkelize(&mut trie);
         let expected = hex_to_32(&vector.expected_root);
 
         assert_eq!(
@@ -83,8 +83,8 @@ fn eip7864_insertion_order_independence() {
             .unwrap();
     }
 
-    let root1 = merkelize(t1.root.as_deref_mut());
-    let root2 = merkelize(t2.root.as_deref_mut());
+    let root1 = merkelize(&mut t1);
+    let root2 = merkelize(&mut t2);
     assert_eq!(root1, root2, "insertion order should not affect root");
     assert_eq!(root1, hex_to_32(&vector.expected_root));
 }

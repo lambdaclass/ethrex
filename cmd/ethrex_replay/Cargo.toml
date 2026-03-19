@@ -15,7 +15,7 @@ ethrex-common = { workspace = true, default-features = false, features = ["secp2
 ethrex-storage = { workspace = true, features = ["rocksdb"] }
 ethrex-vm = { workspace = true, features = ["secp256k1"] }
 ethrex-blockchain = { workspace = true }
-ethrex-binary-trie = { workspace = true }
+ethrex-binary-trie = { workspace = true, features = ["rocksdb"] }
 ethrex-crypto = { workspace = true, default-features = false, features = ["secp256k1"] }
 
 anyhow.workspace = true

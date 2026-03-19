@@ -8,4 +8,10 @@ pub enum BinaryTrieError {
     InvalidKeyLength,
     #[error("stem must be exactly 31 bytes")]
     InvalidStemLength,
+    #[error("node {0} not found in store")]
+    NodeNotFound(u64),
+    #[error("node store I/O error: {0}")]
+    StoreError(String),
+    #[error("invalid node encoding: {0}")]
+    DeserializationError(String),
 }

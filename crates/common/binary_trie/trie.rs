@@ -1,9 +1,11 @@
 use crate::error::BinaryTrieError;
-use crate::node::{InternalNode, MAX_DEPTH, Node, StemNode, stem_bit};
+use crate::node::{InternalNode, MAX_DEPTH, Node, NodeId, StemNode, stem_bit};
+use crate::node_store::NodeStore;
 
-/// The binary trie. The root is an owned optional boxed node.
+/// The binary trie. Holds a `NodeStore` for node allocation and a root `NodeId`.
 pub struct BinaryTrie {
-    pub root: Option<Box<Node>>,
+    pub store: NodeStore,
+    pub root: Option<NodeId>,
 }
 
 /// Split a 32-byte key into a 31-byte stem and a 1-byte sub-index.
@@ -16,28 +18,51 @@ pub fn split_key(key: &[u8; 32]) -> ([u8; 31], u8) {
 impl BinaryTrie {
     /// Create a new empty trie.
     pub fn new() -> Self {
-        Self { root: None }
+        Self {
+            store: NodeStore::new_memory(),
+            root: None,
+        }
     }
 
     /// Insert a key-value pair into the trie.
     pub fn insert(&mut self, key: [u8; 32], value: [u8; 32]) -> Result<(), BinaryTrieError> {
         let (stem, sub_index) = split_key(&key);
-        self.root = Some(insert_node(self.root.take(), stem, sub_index, value, 0)?);
+        self.root = Some(insert_node(
+            &mut self.store,
+            self.root.take(),
+            stem,
+            sub_index,
+            value,
+            0,
+        )?);
         Ok(())
     }
 
     /// Look up the value for a key, returning None if absent.
-    pub fn get(&self, key: [u8; 32]) -> Option<[u8; 32]> {
+    ///
+    /// Takes `&mut self` because in RocksDB-backed stores the node cache may
+    /// be populated on a miss during traversal.
+    pub fn get(&mut self, key: [u8; 32]) -> Option<[u8; 32]> {
         let (stem, sub_index) = split_key(&key);
-        get_node(self.root.as_deref(), &stem, sub_index)
+        get_node(&mut self.store, self.root, &stem, sub_index)
     }
 
     /// Remove the value for a key, returning the previous value if it existed.
     pub fn remove(&mut self, key: [u8; 32]) -> Option<[u8; 32]> {
         let (stem, sub_index) = split_key(&key);
-        let (new_root, removed) = remove_node(self.root.take(), &stem, sub_index);
+        let (new_root, removed) = remove_node(&mut self.store, self.root.take(), &stem, sub_index);
         self.root = new_root;
         removed
+    }
+
+    /// Write all dirty/freed trie nodes and metadata into a caller-supplied
+    /// `WriteBatch`. Clears the dirty and freed sets after writing.
+    ///
+    /// Used by `BinaryTrieState::flush` to combine trie, code_store, and
+    /// storage_keys into a single atomic RocksDB write.
+    #[cfg(feature = "rocksdb")]
+    pub fn flush_to_batch(&mut self, batch: &mut rocksdb::WriteBatch) {
+        self.store.flush_to_batch(batch, self.root);
     }
 }
 
@@ -52,76 +77,79 @@ impl Default for BinaryTrie {
 // ---------------------------------------------------------------------------
 
 fn insert_node(
-    node: Option<Box<Node>>,
+    store: &mut NodeStore,
+    node_id: Option<NodeId>,
     stem: [u8; 31],
     sub_index: u8,
     value: [u8; 32],
     depth: usize,
-) -> Result<Box<Node>, BinaryTrieError> {
-    match node {
+) -> Result<NodeId, BinaryTrieError> {
+    match node_id {
         // Empty slot — create a new StemNode here.
         None => {
             let mut stem_node = StemNode::new(stem);
             stem_node.set_value(sub_index, value);
-            Ok(Box::new(Node::Stem(stem_node)))
+            Ok(store.create(Node::Stem(stem_node)))
         }
 
-        Some(existing) => match *existing {
-            // StemNode at this location.
-            Node::Stem(mut stem_node) => {
-                if stem_node.stem == stem {
-                    // Same stem: just update the value in place.
-                    stem_node.set_value(sub_index, value);
-                    Ok(Box::new(Node::Stem(stem_node)))
-                } else {
-                    // Different stem: split by creating InternalNodes until the stems diverge.
+        Some(id) => {
+            let existing = store.take(id)?;
+            match existing {
+                // StemNode at this location.
+                Node::Stem(mut stem_node) => {
+                    if stem_node.stem == stem {
+                        // Same stem: just update the value in place.
+                        stem_node.set_value(sub_index, value);
+                        store.put(id, Node::Stem(stem_node));
+                        Ok(id)
+                    } else {
+                        // Different stem: free the old ID and split by creating
+                        // InternalNodes until the stems diverge.
+                        if depth >= MAX_DEPTH {
+                            store.put(id, Node::Stem(stem_node));
+                            return Err(BinaryTrieError::MaxDepthExceeded);
+                        }
+                        store.free(id);
+                        split_stems(store, stem_node, stem, sub_index, value, depth)
+                    }
+                }
+
+                // InternalNode: follow the bit for the new stem and recurse.
+                Node::Internal(mut internal) => {
                     if depth >= MAX_DEPTH {
+                        store.put(id, Node::Internal(internal));
                         return Err(BinaryTrieError::MaxDepthExceeded);
                     }
-                    split_stems(stem_node, stem, sub_index, value, depth)
+                    let bit = stem_bit(&stem, depth);
+                    if bit == 0 {
+                        let new_left =
+                            insert_node(store, internal.left, stem, sub_index, value, depth + 1)?;
+                        internal.left = Some(new_left);
+                    } else {
+                        let new_right =
+                            insert_node(store, internal.right, stem, sub_index, value, depth + 1)?;
+                        internal.right = Some(new_right);
+                    }
+                    // Invalidate this node's cached hash — a descendant was mutated.
+                    internal.cached_hash = None;
+                    store.put(id, Node::Internal(internal));
+                    Ok(id)
                 }
             }
-
-            // InternalNode: follow the bit for the new stem and recurse.
-            Node::Internal(mut internal) => {
-                if depth >= MAX_DEPTH {
-                    return Err(BinaryTrieError::MaxDepthExceeded);
-                }
-                let bit = stem_bit(&stem, depth);
-                if bit == 0 {
-                    internal.left = Some(insert_node(
-                        internal.left.take(),
-                        stem,
-                        sub_index,
-                        value,
-                        depth + 1,
-                    )?);
-                } else {
-                    internal.right = Some(insert_node(
-                        internal.right.take(),
-                        stem,
-                        sub_index,
-                        value,
-                        depth + 1,
-                    )?);
-                }
-                // Invalidate this node's cached hash — a descendant was mutated.
-                internal.cached_hash = None;
-                Ok(Box::new(Node::Internal(internal)))
-            }
-        },
+        }
     }
 }
 
 /// Create a chain of InternalNodes until the two stems diverge, then place each
 /// StemNode in the appropriate child slot.
 fn split_stems(
+    store: &mut NodeStore,
     existing: StemNode,
     new_stem: [u8; 31],
     new_sub_index: u8,
     new_value: [u8; 32],
     depth: usize,
-) -> Result<Box<Node>, BinaryTrieError> {
+) -> Result<NodeId, BinaryTrieError> {
     if depth >= MAX_DEPTH {
         return Err(BinaryTrieError::MaxDepthExceeded);
     }
@@ -134,28 +162,32 @@ fn split_stems(
         let mut new_stem_node = StemNode::new(new_stem);
         new_stem_node.set_value(new_sub_index, new_value);
 
+        let existing_id = store.create(Node::Stem(existing));
+        let new_id = store.create(Node::Stem(new_stem_node));
+
         let (left, right) = if existing_bit == 0 {
-            (
-                Some(Box::new(Node::Stem(existing)) as Box<Node>),
-                Some(Box::new(Node::Stem(new_stem_node)) as Box<Node>),
-            )
+            (Some(existing_id), Some(new_id))
         } else {
-            (
-                Some(Box::new(Node::Stem(new_stem_node)) as Box<Node>),
-                Some(Box::new(Node::Stem(existing)) as Box<Node>),
-            )
+            (Some(new_id), Some(existing_id))
         };
 
-        Ok(Box::new(Node::Internal(InternalNode::new(left, right))))
+        Ok(store.create(Node::Internal(InternalNode::new(left, right))))
     } else {
         // Bits agree at this depth — recurse one level deeper.
-        let inner = split_stems(existing, new_stem, new_sub_index, new_value, depth + 1)?;
+        let inner = split_stems(
+            store,
+            existing,
+            new_stem,
+            new_sub_index,
+            new_value,
+            depth + 1,
+        )?;
         let (left, right) = if new_bit == 0 {
             (Some(inner), None)
         } else {
             (None, Some(inner))
         };
-        Ok(Box::new(Node::Internal(InternalNode::new(left, right))))
+        Ok(store.create(Node::Internal(InternalNode::new(left, right))))
     }
 }
 
@@ -163,34 +195,51 @@ fn split_stems(
 // Recursive get
 // ---------------------------------------------------------------------------
 
-fn get_node(node: Option<&Node>, stem: &[u8; 31], sub_index: u8) -> Option<[u8; 32]> {
-    get_node_at_depth(node, stem, sub_index, 0)
+fn get_node(
+    store: &mut NodeStore,
+    node_id: Option<NodeId>,
+    stem: &[u8; 31],
+    sub_index: u8,
+) -> Option<[u8; 32]> {
+    get_node_at_depth(store, node_id, stem, sub_index, 0)
 }
 
 fn get_node_at_depth(
-    node: Option<&Node>,
+    store: &mut NodeStore,
+    node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
     depth: usize,
 ) -> Option<[u8; 32]> {
-    match node? {
-        Node::Stem(stem_node) => {
-            if &stem_node.stem == stem {
+    let id = node_id?;
+    // We need to read the node but can't hold a &-reference into the HashMap
+    // while recursing (borrow checker). Take it out, extract what we need,
+    // and put it back clean before recursing.
+    let node = store.take(id).ok()?;
+    match node {
+        Node::Stem(ref stem_node) => {
+            let result = if &stem_node.stem == stem {
                 stem_node.get_value(sub_index)
             } else {
                 None
-            }
+            };
+            store.put_clean(id, node);
+            result
         }
-        Node::Internal(internal) => {
+        Node::Internal(ref internal) => {
             if depth >= MAX_DEPTH {
+                store.put_clean(id, node);
                 return None;
             }
             let bit = stem_bit(stem, depth);
-            if bit == 0 {
-                get_node_at_depth(internal.left.as_deref(), stem, sub_index, depth + 1)
+            let child = if bit == 0 {
+                internal.left
             } else {
-                get_node_at_depth(internal.right.as_deref(), stem, sub_index, depth + 1)
-            }
+                internal.right
+            };
+            // Put the node back before recursing so the child lookup works.
+            store.put_clean(id, node);
+            get_node_at_depth(store, child, stem, sub_index, depth + 1)
         }
     }
 }
@@ -199,82 +248,128 @@ fn get_node_at_depth(
 // Recursive remove
 // ---------------------------------------------------------------------------
 
-/// Returns the updated node (None if it should be collapsed) and the removed value.
+/// Returns the updated node ID (None if it should be collapsed) and the removed value.
 fn remove_node(
-    node: Option<Box<Node>>,
+    store: &mut NodeStore,
+    node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
-) -> (Option<Box<Node>>, Option<[u8; 32]>) {
-    remove_node_at_depth(node, stem, sub_index, 0)
+) -> (Option<NodeId>, Option<[u8; 32]>) {
+    remove_node_at_depth(store, node_id, stem, sub_index, 0)
 }
 
 fn remove_node_at_depth(
-    node: Option<Box<Node>>,
+    store: &mut NodeStore,
+    node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
     depth: usize,
-) -> (Option<Box<Node>>, Option<[u8; 32]>) {
+) -> (Option<NodeId>, Option<[u8; 32]>) {
+    let id = match node_id {
+        None => return (None, None),
+        Some(id) => id,
+    };
+
+    let node = match store.take(id) {
+        Ok(n) => n,
+        Err(_) => return (None, None),
+    };
+
     match node {
-        None => (None, None),
-        Some(boxed) => match *boxed {
-            Node::Stem(mut stem_node) => {
-                if &stem_node.stem != stem {
-                    return (Some(Box::new(Node::Stem(stem_node))), None);
-                }
-                let removed = stem_node.remove_value(sub_index);
-                let empty = stem_node.is_empty();
-                if empty {
-                    // StemNode is now empty — remove it entirely.
-                    (None, removed)
-                } else {
-                    (Some(Box::new(Node::Stem(stem_node))), removed)
-                }
+        Node::Stem(mut stem_node) => {
+            if &stem_node.stem != stem {
+                store.put(id, Node::Stem(stem_node));
+                return (Some(id), None);
+            }
+            let removed = stem_node.remove_value(sub_index);
+            if stem_node.is_empty() {
+                // StemNode is now empty — free it.
+                store.free(id);
+                (None, removed)
+            } else {
+                store.put(id, Node::Stem(stem_node));
+                (Some(id), removed)
+            }
+        }
+
+        Node::Internal(mut internal) => {
+            if depth >= MAX_DEPTH {
+                store.put(id, Node::Internal(internal));
+                return (Some(id), None);
+            }
+            let bit = stem_bit(stem, depth);
+            let removed;
+            if bit == 0 {
+                let (new_child, r) =
+                    remove_node_at_depth(store, internal.left, stem, sub_index, depth + 1);
+                internal.left = new_child;
+                removed = r;
+            } else {
+                let (new_child, r) =
+                    remove_node_at_depth(store, internal.right, stem, sub_index, depth + 1);
+                internal.right = new_child;
+                removed = r;
             }
 
-            Node::Internal(mut internal) => {
-                if depth >= MAX_DEPTH {
-                    return (Some(Box::new(Node::Internal(internal))), None);
-                }
-                let bit = stem_bit(stem, depth);
-                let removed;
-                if bit == 0 {
-                    let (new_child, r) =
-                        remove_node_at_depth(internal.left.take(), stem, sub_index, depth + 1);
-                    internal.left = new_child;
-                    removed = r;
-                } else {
-                    let (new_child, r) =
-                        remove_node_at_depth(internal.right.take(), stem, sub_index, depth + 1);
-                    internal.right = new_child;
-                    removed = r;
-                }
+            // Collapse: if one child is now None and the survivor is a StemNode,
+            // promote it. We must NOT promote a surviving InternalNode because
+            // get_node_at_depth uses `depth` to select the traversal bit —
+            // promoting an InternalNode to a shallower depth would use the wrong
+            // bit, losing data on the other branch.
+            internal.cached_hash = None;
 
-                // Collapse: if one child is now None and the survivor is a
-                // StemNode, promote it.  We must NOT promote a surviving
-                // InternalNode because `get_node_at_depth` uses `depth` to
-                // select the traversal bit — promoting an InternalNode to a
-                // shallower depth would make `get` use the wrong bit, losing
-                // data on the other branch.
-                internal.cached_hash = None;
-                let updated = match (&internal.left, &internal.right) {
-                    (None, None) => None,
-                    (Some(child), None) if matches!(child.as_ref(), Node::Stem(_)) => {
-                        internal.left
+            // Check what the surviving child looks like (if any).
+            let updated = match (internal.left, internal.right) {
+                (None, None) => {
+                    store.free(id);
+                    None
+                }
+                (Some(child_id), None) => {
+                    // Peek at the child to see if it's a StemNode.
+                    let is_stem = store
+                        .get(child_id)
+                        .map(|n| matches!(n, Node::Stem(_)))
+                        .unwrap_or(false);
+                    if is_stem {
+                        // Promote: free the internal node, return the stem's ID.
+                        store.free(id);
+                        Some(child_id)
+                    } else {
+                        internal.left = Some(child_id);
+                        store.put(id, Node::Internal(internal));
+                        Some(id)
                     }
-                    (None, Some(child)) if matches!(child.as_ref(), Node::Stem(_)) => {
-                        internal.right
+                }
+                (None, Some(child_id)) => {
+                    let is_stem = store
+                        .get(child_id)
+                        .map(|n| matches!(n, Node::Stem(_)))
+                        .unwrap_or(false);
+                    if is_stem {
+                        store.free(id);
+                        Some(child_id)
+                    } else {
+                        internal.right = Some(child_id);
+                        store.put(id, Node::Internal(internal));
+                        Some(id)
                     }
-                    _ => Some(Box::new(Node::Internal(internal))),
-                };
-                (updated, removed)
-            }
-        },
+                }
+                (Some(l), Some(r)) => {
+                    internal.left = Some(l);
+                    internal.right = Some(r);
+                    store.put(id, Node::Internal(internal));
+                    Some(id)
+                }
+            };
+            (updated, removed)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::Node;
 
     fn key(stem_byte: u8, sub: u8) -> [u8; 32] {
         let mut k = [0u8; 32];
@@ -297,7 +392,7 @@ mod tests {
 
     #[test]
     fn get_missing_returns_none() {
-        let trie = BinaryTrie::new();
+        let mut trie = BinaryTrie::new();
         assert_eq!(trie.get(key(0x01, 0)), None);
     }
 
@@ -360,7 +455,8 @@ mod tests {
         assert_eq!(trie.get(k1), Some(val(1)));
         assert_eq!(trie.get(k2), None);
         // After collapse the root should be a StemNode directly.
-        assert!(matches!(trie.root.as_deref(), Some(Node::Stem(_))));
+        let root_id = trie.root.unwrap();
+        assert!(matches!(trie.store.get(root_id).unwrap(), Node::Stem(_)));
     }
 
     #[test]
@@ -435,8 +531,8 @@ mod tests {
         fresh.insert(k_80, val(3)).unwrap();
 
         assert_eq!(
-            crate::merkle::merkelize(trie.root.as_deref_mut()),
-            crate::merkle::merkelize(fresh.root.as_deref_mut())
+            crate::merkle::merkelize(&mut trie),
+            crate::merkle::merkelize(&mut fresh)
         );
     }
 
@@ -454,7 +550,8 @@ mod tests {
         assert_eq!(removed, Some(val(10)));
         assert_eq!(trie.get(k0), None);
         assert_eq!(trie.get(k1), Some(val(20)));
-        assert!(matches!(trie.root.as_deref(), Some(Node::Stem(_))));
+        let root_id = trie.root.unwrap();
+        assert!(matches!(trie.store.get(root_id).unwrap(), Node::Stem(_)));
     }
 
     #[test]
@@ -464,9 +561,10 @@ mod tests {
         let mut trie = BinaryTrie::new();
 
         // Target stem: arbitrary 31 bytes
-        let target_stem = [120u8, 51, 78, 133, 189, 220, 159, 26, 100, 76,
-                           202, 249, 180, 89, 193, 93, 1, 43, 203, 121,
-                           29, 193, 209, 111, 220, 186, 157, 182, 152, 205, 187];
+        let target_stem = [
+            120u8, 51, 78, 133, 189, 220, 159, 26, 100, 76, 202, 249, 180, 89, 193, 93, 1, 43, 203,
+            121, 29, 193, 209, 111, 220, 186, 157, 182, 152, 205, 187,
+        ];
 
         // Create a "neighbor" stem that shares the first 26 bits with target
         // but diverges at bit 26, forcing the target StemNode to depth 26.

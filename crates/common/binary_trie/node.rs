@@ -4,6 +4,10 @@ pub const MAX_DEPTH: usize = 248;
 /// Number of leaf values per StemNode (one per possible sub-index byte value).
 pub const STEM_VALUES: usize = 256;
 
+/// Stable identifier for a node within a NodeStore. Zero is reserved as the
+/// "None" sentinel in serialized form; allocated IDs start at 1.
+pub type NodeId = u64;
+
 /// A node in the binary trie.
 pub enum Node {
     Internal(InternalNode),
@@ -15,16 +19,18 @@ pub enum Node {
 pub const SUBTREE_SIZE: usize = 511;
 
 /// An internal branching node with a left (bit=0) and right (bit=1) child.
+/// Children are referenced by NodeId rather than by pointer; the NodeStore is
+/// responsible for resolving IDs to nodes.
 pub struct InternalNode {
-    pub left: Option<Box<Node>>,
-    pub right: Option<Box<Node>>,
+    pub left: Option<NodeId>,
+    pub right: Option<NodeId>,
     /// Cached hash: `merkle_hash_64(left_hash || right_hash)`. Set to `None`
     /// whenever a descendant is mutated; filled lazily by `merkle::hash_node`.
     pub cached_hash: Option<[u8; 32]>,
 }
 
 impl InternalNode {
-    pub fn new(left: Option<Box<Node>>, right: Option<Box<Node>>) -> Self {
+    pub fn new(left: Option<NodeId>, right: Option<NodeId>) -> Self {
         Self {
             left,
             right,

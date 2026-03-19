@@ -1,5 +1,7 @@
 use crate::hash::blake3_hash;
-use crate::node::{Node, STEM_VALUES, SUBTREE_SIZE};
+use crate::node::{Node, NodeId, STEM_VALUES, SUBTREE_SIZE};
+use crate::node_store::NodeStore;
+use crate::trie::BinaryTrie;
 
 /// The canonical empty / zero hash.
 pub const ZERO_HASH: [u8; 32] = [0u8; 32];
@@ -23,7 +25,7 @@ pub fn merkle_hash_64_pub(data: &[u8; 64]) -> [u8; 32] {
     merkle_hash_64(data)
 }
 
-/// Compute the Merkle root hash of the entire trie rooted at `root`.
+/// Compute the Merkle root hash of the entire trie.
 ///
 /// - Empty tree  → ZERO_HASH
 /// - InternalNode → `merkle_hash_64(left_hash || right_hash)`
@@ -31,35 +33,50 @@ pub fn merkle_hash_64_pub(data: &[u8; 64]) -> [u8; 32] {
 ///   is the root of the fixed-depth-8 complete binary Merkle tree over the 256 leaf hashes.
 ///
 /// Hashes are cached on each node and reused on subsequent calls unless a mutation
-/// has cleared the cache. The `root` parameter must be `&mut` so that computed
-/// hashes can be written back for future reuse.
-pub fn merkelize(root: Option<&mut Node>) -> [u8; 32] {
-    match root {
+/// has cleared the cache. Takes `&mut BinaryTrie` so that computed hashes can be
+/// written back into the store for future reuse.
+pub fn merkelize(trie: &mut BinaryTrie) -> [u8; 32] {
+    match trie.root {
         None => ZERO_HASH,
-        Some(node) => hash_node(node),
+        Some(id) => hash_node_id(&mut trie.store, id),
     }
 }
 
-pub(crate) fn hash_node(node: &mut Node) -> [u8; 32] {
+pub(crate) fn hash_node_id(store: &mut NodeStore, id: NodeId) -> [u8; 32] {
+    // Take the node out so we can mutate it.
+    let node = match store.take(id) {
+        Ok(n) => n,
+        Err(_) => return ZERO_HASH,
+    };
+
     match node {
-        Node::Internal(internal) => {
+        Node::Internal(mut internal) => {
             if let Some(h) = internal.cached_hash {
+                store.put_clean(id, Node::Internal(internal));
                 return h;
             }
-            let left = internal.left.as_deref_mut().map_or(ZERO_HASH, hash_node);
-            let right = internal.right.as_deref_mut().map_or(ZERO_HASH, hash_node);
+            let left = internal
+                .left
+                .map(|lid| hash_node_id(store, lid))
+                .unwrap_or(ZERO_HASH);
+            let right = internal
+                .right
+                .map(|rid| hash_node_id(store, rid))
+                .unwrap_or(ZERO_HASH);
             let mut buf = [0u8; 64];
             buf[..32].copy_from_slice(&left);
             buf[32..].copy_from_slice(&right);
             let h = merkle_hash_64(&buf);
             internal.cached_hash = Some(h);
+            store.put_clean(id, Node::Internal(internal));
             h
         }
-        Node::Stem(stem_node) => {
+        Node::Stem(mut stem_node) => {
             if let Some(h) = stem_node.cached_hash {
+                store.put_clean(id, Node::Stem(stem_node));
                 return h;
             }
-            let subtree_root = compute_subtree_root(stem_node);
+            let subtree_root = compute_subtree_root(&mut stem_node);
 
             // hash(stem || 0x00 || subtree_root)
             // stem is 31 bytes + 0x00 padding + 32-byte subtree_root = 64 bytes.
@@ -69,6 +86,7 @@ pub(crate) fn hash_node(node: &mut Node) -> [u8; 32] {
             buf[32..].copy_from_slice(&subtree_root);
             let h = merkle_hash_64(&buf);
             stem_node.cached_hash = Some(h);
+            store.put_clean(id, Node::Stem(stem_node));
             h
         }
     }
@@ -116,10 +134,29 @@ fn compute_subtree_root(stem_node: &mut crate::node::StemNode) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::node::StemNode;
+    use crate::node_store::NodeStore;
+
+    fn hash_stem(stem_node: StemNode) -> [u8; 32] {
+        let mut store = NodeStore::new_memory();
+        let id = store.create(Node::Stem(stem_node));
+        hash_node_id(&mut store, id)
+    }
+
+    fn hash_internal_with_children(
+        store: &mut NodeStore,
+        left_id: Option<NodeId>,
+        right_id: Option<NodeId>,
+    ) -> [u8; 32] {
+        let id = store.create(Node::Internal(crate::node::InternalNode::new(
+            left_id, right_id,
+        )));
+        hash_node_id(store, id)
+    }
 
     #[test]
     fn empty_trie_is_zero_hash() {
-        assert_eq!(merkelize(None), ZERO_HASH);
+        let mut trie = BinaryTrie::new();
+        assert_eq!(merkelize(&mut trie), ZERO_HASH);
     }
 
     #[test]
@@ -139,9 +176,9 @@ mod tests {
     #[test]
     fn stem_node_all_empty_values_hashes_correctly() {
         let stem = [0xAAu8; 31];
-        let h = hash_node(&mut Node::Stem(StemNode::new(stem)));
+        let h = hash_stem(StemNode::new(stem));
         // Deterministic.
-        let h2 = hash_node(&mut Node::Stem(StemNode::new(stem)));
+        let h2 = hash_stem(StemNode::new(stem));
         assert_eq!(h, h2);
     }
 
@@ -149,25 +186,23 @@ mod tests {
     fn stem_node_zero_stem_all_empty_is_zero() {
         // stem = [0;31], 0x00, subtree_root = [0;32] → buf = [0;64] → ZERO_HASH
         let stem = [0u8; 31];
-        let h = hash_node(&mut Node::Stem(StemNode::new(stem)));
+        let h = hash_stem(StemNode::new(stem));
         assert_eq!(h, ZERO_HASH);
     }
 
     #[test]
     fn stem_node_single_value_changes_hash() {
         let stem = [0u8; 31];
-        let before_zero = hash_node(&mut Node::Stem(StemNode::new(stem)));
+        let before_zero = hash_stem(StemNode::new(stem));
 
         let mut stem_node = StemNode::new(stem);
         stem_node.set_value(0, [1u8; 32]);
-        let after = hash_node(&mut Node::Stem(stem_node));
+        let after = hash_stem(stem_node);
         assert_ne!(before_zero, after);
     }
 
     #[test]
     fn internal_node_hash_uses_children() {
-        use crate::node::InternalNode;
-
         let stem_a = [0u8; 31];
         let stem_b = [0xFFu8; 31];
         let mut node_a = StemNode::new(stem_a);
@@ -175,42 +210,37 @@ mod tests {
         let mut node_b = StemNode::new(stem_b);
         node_b.set_value(0, [2u8; 32]);
 
-        let h_a = hash_node(&mut Node::Stem(node_a));
-        let h_b = hash_node(&mut Node::Stem(node_b));
+        let h_a = hash_stem(node_a);
+        let h_b = hash_stem(node_b);
 
         let mut buf = [0u8; 64];
         buf[..32].copy_from_slice(&h_a);
         buf[32..].copy_from_slice(&h_b);
         let expected = merkle_hash_64(&buf);
 
+        let mut store = NodeStore::new_memory();
         let mut a2 = StemNode::new(stem_a);
         a2.set_value(0, [1u8; 32]);
         let mut b2 = StemNode::new(stem_b);
         b2.set_value(0, [2u8; 32]);
+        let a2_id = store.create(Node::Stem(a2));
+        let b2_id = store.create(Node::Stem(b2));
 
-        let mut internal = Node::Internal(InternalNode::new(
-            Some(Box::new(Node::Stem(a2))),
-            Some(Box::new(Node::Stem(b2))),
-        ));
-        let result = hash_node(&mut internal);
+        let result = hash_internal_with_children(&mut store, Some(a2_id), Some(b2_id));
         assert_eq!(result, expected);
     }
 
     #[test]
     fn merkle_root_via_trie() {
-        use crate::trie::BinaryTrie;
-
         let mut trie = BinaryTrie::new();
         let k = [0u8; 32];
         trie.insert(k, [42u8; 32]).unwrap();
-        let root = merkelize(trie.root.as_deref_mut());
+        let root = merkelize(&mut trie);
         assert_ne!(root, ZERO_HASH);
     }
 
     #[test]
     fn merkle_root_is_deterministic() {
-        use crate::trie::BinaryTrie;
-
         let mut t1 = BinaryTrie::new();
         let mut t2 = BinaryTrie::new();
         let k1 = [0u8; 32];
@@ -223,16 +253,11 @@ mod tests {
         t2.insert(k1, [1u8; 32]).unwrap();
         t2.insert(k2, [2u8; 32]).unwrap();
 
-        assert_eq!(
-            merkelize(t1.root.as_deref_mut()),
-            merkelize(t2.root.as_deref_mut())
-        );
+        assert_eq!(merkelize(&mut t1), merkelize(&mut t2));
     }
 
     #[test]
     fn merkle_root_order_independent() {
-        use crate::trie::BinaryTrie;
-
         let mut k1 = [0u8; 32];
         let mut k2 = [0u8; 32];
         let mut k3 = [0u8; 32];
@@ -250,16 +275,11 @@ mod tests {
         t2.insert(k1, [1u8; 32]).unwrap();
         t2.insert(k2, [2u8; 32]).unwrap();
 
-        assert_eq!(
-            merkelize(t1.root.as_deref_mut()),
-            merkelize(t2.root.as_deref_mut())
-        );
+        assert_eq!(merkelize(&mut t1), merkelize(&mut t2));
     }
 
     #[test]
     fn merkle_root_different_values_differ() {
-        use crate::trie::BinaryTrie;
-
         let k = [0u8; 32];
         let mut t1 = BinaryTrie::new();
         t1.insert(k, [1u8; 32]).unwrap();
@@ -267,37 +287,30 @@ mod tests {
         let mut t2 = BinaryTrie::new();
         t2.insert(k, [2u8; 32]).unwrap();
 
-        assert_ne!(
-            merkelize(t1.root.as_deref_mut()),
-            merkelize(t2.root.as_deref_mut())
-        );
+        assert_ne!(merkelize(&mut t1), merkelize(&mut t2));
     }
 
     // --- Caching-specific tests ---
 
     #[test]
     fn cached_hash_reused_on_second_call() {
-        use crate::trie::BinaryTrie;
-
         let mut trie = BinaryTrie::new();
         trie.insert([0u8; 32], [1u8; 32]).unwrap();
 
-        let root1 = merkelize(trie.root.as_deref_mut());
-        let root2 = merkelize(trie.root.as_deref_mut());
+        let root1 = merkelize(&mut trie);
+        let root2 = merkelize(&mut trie);
         assert_eq!(root1, root2);
     }
 
     #[test]
     fn cache_invalidated_after_insert() {
-        use crate::trie::BinaryTrie;
-
         let mut trie = BinaryTrie::new();
         trie.insert([0u8; 32], [1u8; 32]).unwrap();
-        let root_before = merkelize(trie.root.as_deref_mut());
+        let root_before = merkelize(&mut trie);
 
         // Mutate — inserts clear cached_hash on the path.
         trie.insert([0u8; 32], [2u8; 32]).unwrap();
-        let root_after = merkelize(trie.root.as_deref_mut());
+        let root_after = merkelize(&mut trie);
 
         assert_ne!(root_before, root_after);
     }
@@ -309,36 +322,50 @@ mod tests {
         // Verify the result matches a fresh StemNode with the same final values.
         let stem = [0u8; 31];
 
-        let mut sn = StemNode::new(stem);
-        sn.set_value(0, [1u8; 32]);
-        // First merkelize: builds full cached_subtree from scratch.
-        hash_node(&mut Node::Stem({
-            let mut tmp = StemNode::new(stem);
-            tmp.set_value(0, [1u8; 32]);
-            tmp
-        }));
-
-        // Now build a node, hash it once (populates cache), then set another value
+        // Build a node, hash it once (populates cache), then set another value
         // (incremental update path) and compare with a freshly constructed node.
         let mut sn_cached = StemNode::new(stem);
         sn_cached.set_value(0, [1u8; 32]);
-        hash_node(&mut Node::Stem(StemNode::new(stem))); // unrelated, just warming up
         // Compute root on sn_cached (builds full cache).
-        let _ = hash_node(&mut Node::Stem({
-            let mut tmp = StemNode::new(stem);
-            tmp.set_value(0, [1u8; 32]);
-            tmp
-        }));
-        // Apply incremental mutation.
-        sn_cached.set_value(100, [2u8; 32]);
-        let r_incremental = hash_node(&mut Node::Stem(sn_cached));
+        let _ = hash_stem(sn_cached.clone());
 
-        // Reference: fresh node with both values set.
-        let mut sn_fresh = StemNode::new(stem);
-        sn_fresh.set_value(0, [1u8; 32]);
-        sn_fresh.set_value(100, [2u8; 32]);
-        let r_fresh = hash_node(&mut Node::Stem(sn_fresh));
+        // Now build fresh for incremental test.
+        let mut sn_for_incremental = StemNode::new(stem);
+        sn_for_incremental.set_value(0, [1u8; 32]);
+        // Force the subtree cache to be built by merkelizing.
+        {
+            let mut store = NodeStore::new_memory();
+            let id = store.create(Node::Stem(sn_for_incremental));
+            hash_node_id(&mut store, id);
+            let node = store.take(id).unwrap();
+            if let Node::Stem(mut sn) = node {
+                // Apply incremental mutation.
+                sn.set_value(100, [2u8; 32]);
+                let mut store2 = NodeStore::new_memory();
+                let id2 = store2.create(Node::Stem(sn));
+                let r_incremental = hash_node_id(&mut store2, id2);
 
-        assert_eq!(r_incremental, r_fresh);
+                // Reference: fresh node with both values set.
+                let mut sn_fresh = StemNode::new(stem);
+                sn_fresh.set_value(0, [1u8; 32]);
+                sn_fresh.set_value(100, [2u8; 32]);
+                let r_fresh = hash_stem(sn_fresh);
+
+                assert_eq!(r_incremental, r_fresh);
+            }
+        }
+    }
+}
+
+// Implement Clone for StemNode so the test above can clone it.
+// (This is only needed because the test takes ownership before the incremental update.)
+impl Clone for crate::node::StemNode {
+    fn clone(&self) -> Self {
+        Self {
+            stem: self.stem,
+            values: Box::new(*self.values),
+            cached_subtree: self.cached_subtree.clone(),
+            cached_hash: self.cached_hash,
+        }
     }
 }

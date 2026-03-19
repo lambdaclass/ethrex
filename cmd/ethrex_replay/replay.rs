@@ -15,61 +15,142 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use ethrex_vm::backends::Evm;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct BlockReplayer {
     /// Source of blocks (existing MPT node's DB).
     store: Store,
-    /// Binary trie state (in-memory).
+    /// Binary trie state (in-memory, or RocksDB-backed when a path is configured).
     state: Arc<RwLock<BinaryTrieState>>,
     /// Chain configuration (from genesis).
     chain_config: ChainConfig,
     /// Block hashes for BLOCKHASH opcode (last 256 entries).
     block_hashes: BTreeMap<BlockNumber, H256>,
+    /// Flush binary trie state to disk every this many blocks (0 = never).
+    checkpoint_interval: u64,
 }
 
 impl BlockReplayer {
     /// Create a new replayer from a genesis JSON and an existing store.
     ///
-    /// Applies genesis allocations to a fresh `BinaryTrieState` and registers
-    /// the genesis block hash so that block 1 can call BLOCKHASH(0).
-    pub fn new(genesis: Genesis, store: Store) -> Result<Self> {
+    /// When `trie_db_path` is `Some`, the binary trie state is opened from (or
+    /// created at) that RocksDB path.  If a checkpoint exists in the database,
+    /// replay resumes from the block after the checkpoint; block_hashes for the
+    /// last 256 blocks are reconstructed from the store.  If no checkpoint
+    /// exists, genesis allocations are applied and replay starts from block 1.
+    ///
+    /// When `trie_db_path` is `None`, state is kept in memory only (original
+    /// behaviour).
+    pub async fn new(
+        genesis: Genesis,
+        store: Store,
+        trie_db_path: Option<&std::path::Path>,
+        checkpoint_interval: u64,
+    ) -> Result<Self> {
         let chain_config = genesis.config;
 
-        let mut state = BinaryTrieState::new();
-        state
-            .apply_genesis(&genesis.alloc)
-            .context("Failed to apply genesis to BinaryTrieState")?;
-
-        let genesis_root = state.state_root();
-        info!("Genesis binary trie root: 0x{}", hex::encode(genesis_root));
-
-        // Register genesis block hash so block 1 can call BLOCKHASH(0).
+        // Register genesis block hash so that block 1 can call BLOCKHASH(0).
         let genesis_block = genesis.get_block();
         let genesis_hash = genesis_block.hash();
-        let mut block_hashes = BTreeMap::new();
-        block_hashes.insert(0u64, genesis_hash);
+
+        let (state, block_hashes) = if let Some(path) = trie_db_path {
+            info!("Opening binary trie DB at {}", path.display());
+            let mut state =
+                BinaryTrieState::open(path).context("Failed to open binary trie RocksDB")?;
+
+            let mut block_hashes = BTreeMap::new();
+            block_hashes.insert(0u64, genesis_hash);
+
+            if state.has_data() {
+                // Resume: reconstruct block_hashes from the store for the last
+                // 256 blocks before the checkpoint so BLOCKHASH works correctly.
+                let checkpoint = state.checkpoint_block().unwrap_or(0);
+                info!("Resuming from checkpoint at block {checkpoint}");
+
+                let hash_start = checkpoint.saturating_sub(256);
+                block_hashes = reconstruct_block_hashes(&store, hash_start, checkpoint).await?;
+                // Always include genesis hash.
+                block_hashes.entry(0).or_insert(genesis_hash);
+            } else {
+                // New database — apply genesis.
+                info!("No checkpoint found; applying genesis");
+                state
+                    .apply_genesis(&genesis.alloc)
+                    .context("Failed to apply genesis to BinaryTrieState")?;
+                let genesis_root = state.state_root();
+                info!("Genesis binary trie root: 0x{}", hex::encode(genesis_root));
+            }
+
+            (state, block_hashes)
+        } else {
+            // In-memory path (original behaviour).
+            let mut state = BinaryTrieState::new();
+            state
+                .apply_genesis(&genesis.alloc)
+                .context("Failed to apply genesis to BinaryTrieState")?;
+
+            let genesis_root = state.state_root();
+            info!("Genesis binary trie root: 0x{}", hex::encode(genesis_root));
+
+            let mut block_hashes = BTreeMap::new();
+            block_hashes.insert(0u64, genesis_hash);
+
+            (state, block_hashes)
+        };
 
         Ok(Self {
             store,
             state: Arc::new(RwLock::new(state)),
             chain_config,
             block_hashes,
+            checkpoint_interval,
         })
+    }
+
+    /// Returns the block number to start replaying from.
+    ///
+    /// If a checkpoint is recorded in the state, resume from the next block;
+    /// otherwise return `requested_start`.
+    pub fn effective_start(&self, requested_start: BlockNumber) -> BlockNumber {
+        let checkpoint = self.state.read().ok().and_then(|s| s.checkpoint_block());
+        match checkpoint {
+            Some(n) if n >= requested_start => {
+                let resume = n + 1;
+                info!("Checkpoint found at block {n}; resuming from block {resume}");
+                resume
+            }
+            _ => requested_start,
+        }
     }
 
     /// Replay blocks from `start` to `end` (inclusive).
     ///
-    /// Logs the binary trie root every `log_interval` blocks and on the final block.
+    /// If a checkpoint is recorded in the state and it falls within the
+    /// requested range, replay automatically resumes from the block after the
+    /// checkpoint.
+    ///
+    /// Logs the binary trie root every `log_interval` blocks and on the final
+    /// block.  Flushes state to disk every `checkpoint_interval` blocks when a
+    /// trie DB path was configured.
     pub async fn replay(
         &mut self,
         start: BlockNumber,
         end: BlockNumber,
         log_interval: u64,
     ) -> Result<()> {
+        let effective_start = self.effective_start(start);
+
+        if effective_start > end {
+            info!(
+                "Nothing to replay: checkpoint ({}) is already at or beyond end block ({end})",
+                effective_start - 1
+            );
+            return Ok(());
+        }
+
         let start_time = Instant::now();
 
-        for block_number in start..=end {
+        for block_number in effective_start..=end {
             let block = self
                 .store
                 .get_block_by_number(block_number)
@@ -93,7 +174,7 @@ impl BlockReplayer {
 
             if block_number % log_interval == 0 || block_number == end {
                 let elapsed = start_time.elapsed().as_secs_f64();
-                let blocks_done = block_number - start + 1;
+                let blocks_done = block_number - effective_start + 1;
                 let bps = blocks_done as f64 / elapsed;
                 info!(
                     "Block {block_number}: root=0x{} ({:.1} blocks/sec)",
@@ -101,15 +182,44 @@ impl BlockReplayer {
                     bps
                 );
             }
+
+            // Flush checkpoint if configured.
+            if self.checkpoint_interval > 0 && block_number % self.checkpoint_interval == 0 {
+                if let Err(e) = self.flush_checkpoint(block_number) {
+                    warn!("Checkpoint flush failed at block {block_number}: {e:#}");
+                }
+            }
+        }
+
+        // Final flush to capture the last partial interval.
+        if self.checkpoint_interval > 0 && end % self.checkpoint_interval != 0 {
+            if let Err(e) = self.flush_checkpoint(end) {
+                warn!("Final checkpoint flush failed: {e:#}");
+            }
         }
 
         let elapsed = start_time.elapsed().as_secs_f64();
-        let total = end - start + 1;
+        let total = end - effective_start + 1;
         info!(
             "Replay complete: {total} blocks in {elapsed:.1}s ({:.1} blocks/sec)",
             total as f64 / elapsed
         );
 
+        Ok(())
+    }
+
+    /// Flush the binary trie state to disk, recording `block_number` as the checkpoint.
+    ///
+    /// This is a no-op when the state is not backed by a RocksDB database.
+    fn flush_checkpoint(&self, block_number: BlockNumber) -> Result<()> {
+        let mut state = self
+            .state
+            .write()
+            .map_err(|e| anyhow!("state RwLock poisoned: {e}"))?;
+        state
+            .flush(block_number)
+            .with_context(|| format!("Failed to flush checkpoint at block {block_number}"))?;
+        info!("Checkpoint saved at block {block_number}");
         Ok(())
     }
 
@@ -174,4 +284,38 @@ impl BlockReplayer {
             self.block_hashes = self.block_hashes.split_off(&(number - 256));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Fetch block hashes for `start..=end` from the store.
+///
+/// Used on resume to seed the `block_hashes` map with the last 256 entries
+/// preceding the checkpoint so BLOCKHASH works correctly for the first block
+/// after resume.
+async fn reconstruct_block_hashes(
+    store: &Store,
+    start: BlockNumber,
+    end: BlockNumber,
+) -> Result<BTreeMap<BlockNumber, H256>> {
+    let mut map = BTreeMap::new();
+    for n in start..=end {
+        match store.get_block_by_number(n).await {
+            Ok(Some(block)) => {
+                map.insert(n, block.hash());
+            }
+            Ok(None) => {
+                // Block not in store (e.g. before the store's earliest block).
+                // This is acceptable — BLOCKHASH will return zero for missing entries.
+            }
+            Err(e) => {
+                return Err(anyhow!(
+                    "store error reading block {n} for hash reconstruction: {e}"
+                ));
+            }
+        }
+    }
+    Ok(map)
 }

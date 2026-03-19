@@ -10,12 +10,17 @@ license.workspace = true
 blake3 = "1"
 bytes.workspace = true
 ethrex-common.workspace = true
+rustc-hash.workspace = true
 thiserror.workspace = true
+rocksdb = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+
+[features]
+rocksdb = ["dep:rocksdb"]
 
 [lib]
 path = "./lib.rs"

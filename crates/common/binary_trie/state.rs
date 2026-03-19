@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(feature = "rocksdb")]
+use std::sync::Arc;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -8,6 +12,8 @@ use ethrex_common::{
     utils::keccak,
 };
 
+#[cfg(feature = "rocksdb")]
+use crate::node_store::NodeStore;
 use crate::{
     BinaryTrie,
     error::BinaryTrieError,
@@ -18,6 +24,15 @@ use crate::{
     },
     merkle::merkelize,
 };
+
+// Key prefixes for code_store and storage_keys in RocksDB.
+// 0x01 is used by NodeStore for trie nodes; 0xFF for trie metadata.
+#[cfg(feature = "rocksdb")]
+const CODE_PREFIX: u8 = 0x02;
+#[cfg(feature = "rocksdb")]
+const STORAGE_KEYS_PREFIX: u8 = 0x03;
+#[cfg(feature = "rocksdb")]
+const META_BLOCK_KEY: &[u8] = &[0xFF, b'B'];
 
 pub struct BinaryTrieState {
     /// The underlying binary trie holding all state leaves.
@@ -31,22 +46,153 @@ pub struct BinaryTrieState {
     /// corresponding entry here. This is maintained by `apply_genesis` and
     /// `apply_account_update`. Any future deserialization or state-loading
     /// path must also populate this map, or `get_account_code` will fail.
-    code_store: HashMap<H256, Bytes>,
+    code_store: FxHashMap<H256, Bytes>,
 
     /// Tracks which storage keys each account has written.
     /// Needed for `removed_storage` (SELFDESTRUCT) since the binary trie
     /// has no prefix-enumeration — we can't discover all storage keys
     /// for an address without this side structure.
-    storage_keys: HashMap<Address, HashSet<H256>>,
+    storage_keys: FxHashMap<Address, FxHashSet<H256>>,
+
+    /// Shared RocksDB handle (present only when opened with `open()`).
+    #[cfg(feature = "rocksdb")]
+    db: Option<Arc<rocksdb::DB>>,
+
+    /// Code hashes written since the last `flush()`.
+    #[cfg(feature = "rocksdb")]
+    dirty_codes: FxHashSet<H256>,
+
+    /// Addresses whose storage_keys entry has changed since the last `flush()`.
+    #[cfg(feature = "rocksdb")]
+    dirty_storage_keys: FxHashSet<Address>,
 }
 
 impl BinaryTrieState {
     pub fn new() -> Self {
         Self {
             trie: BinaryTrie::new(),
-            code_store: HashMap::new(),
-            storage_keys: HashMap::new(),
+            code_store: FxHashMap::default(),
+            storage_keys: FxHashMap::default(),
+            #[cfg(feature = "rocksdb")]
+            db: None,
+            #[cfg(feature = "rocksdb")]
+            dirty_codes: FxHashSet::default(),
+            #[cfg(feature = "rocksdb")]
+            dirty_storage_keys: FxHashSet::default(),
         }
+    }
+
+    /// Open a persistent `BinaryTrieState` from a RocksDB path.
+    ///
+    /// If the database already contains data (the trie root is present),
+    /// the trie nodes, code store, and storage keys are loaded from it.
+    /// If the database is new/empty, an empty state is returned — the
+    /// caller is responsible for applying genesis.
+    #[cfg(feature = "rocksdb")]
+    pub fn open(path: &std::path::Path) -> Result<Self, BinaryTrieError> {
+        let mut opts = rocksdb::Options::default();
+        opts.create_if_missing(true);
+        let db = Arc::new(
+            rocksdb::DB::open(&opts, path)
+                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?,
+        );
+
+        let store = NodeStore::open(Arc::clone(&db))?;
+        let root = store.load_root();
+        let trie = BinaryTrie { store, root };
+
+        let (code_store, storage_keys) = if root.is_some() {
+            // Existing database — load side structures.
+            let code_store = load_code_store(&db)?;
+            let storage_keys = load_storage_keys(&db)?;
+            (code_store, storage_keys)
+        } else {
+            (FxHashMap::default(), FxHashMap::default())
+        };
+
+        Ok(Self {
+            trie,
+            code_store,
+            storage_keys,
+            db: Some(db),
+            dirty_codes: FxHashSet::default(),
+            dirty_storage_keys: FxHashSet::default(),
+        })
+    }
+
+    /// Returns `true` if the trie contains any data (i.e. a root node exists).
+    ///
+    /// Used to decide whether genesis needs to be applied after `open()`.
+    #[cfg(feature = "rocksdb")]
+    pub fn has_data(&self) -> bool {
+        self.trie.root.is_some()
+    }
+
+    /// Returns the last block number recorded by `flush()`, if any.
+    #[cfg(feature = "rocksdb")]
+    pub fn checkpoint_block(&self) -> Option<u64> {
+        let db = self.db.as_ref()?;
+        let bytes = db.get(META_BLOCK_KEY).ok()??;
+        if bytes.len() < 8 {
+            return None;
+        }
+        Some(u64::from_le_bytes(bytes[..8].try_into().unwrap()))
+    }
+
+    /// Persist the current state and record `block_number` as the checkpoint.
+    ///
+    /// All dirty trie nodes, code entries, and storage_keys entries are written
+    /// atomically in a single `WriteBatch`. On success the dirty sets are cleared.
+    #[cfg(feature = "rocksdb")]
+    pub fn flush(&mut self, block_number: u64) -> Result<(), BinaryTrieError> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| BinaryTrieError::StoreError("no DB configured".into()))?
+            .clone();
+
+        let mut batch = rocksdb::WriteBatch::default();
+
+        // 1. Flush trie nodes (dirty + freed nodes, root, next_id).
+        self.trie.flush_to_batch(&mut batch);
+
+        // 2. Write dirty code_store entries (prefix 0x02 || code_hash).
+        for hash in &self.dirty_codes {
+            let mut key = vec![CODE_PREFIX];
+            key.extend_from_slice(hash.as_bytes());
+            if let Some(code) = self.code_store.get(hash) {
+                batch.put(&key, code.as_ref());
+            } else {
+                // Code was removed — delete the entry.
+                batch.delete(&key);
+            }
+        }
+
+        // 3. Write dirty storage_keys entries (prefix 0x03 || address).
+        for addr in &self.dirty_storage_keys {
+            let mut key = vec![STORAGE_KEYS_PREFIX];
+            key.extend_from_slice(addr.as_bytes());
+            if let Some(keys) = self.storage_keys.get(addr) {
+                let mut value = Vec::with_capacity(keys.len() * 32);
+                for k in keys {
+                    value.extend_from_slice(k.as_bytes());
+                }
+                batch.put(&key, &value);
+            } else {
+                // Account's storage was fully cleared — delete the entry.
+                batch.delete(&key);
+            }
+        }
+
+        // 4. Write checkpoint block number.
+        batch.put(META_BLOCK_KEY, block_number.to_le_bytes());
+
+        db.write(batch)
+            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
+
+        self.dirty_codes.clear();
+        self.dirty_storage_keys.clear();
+        Ok(())
     }
 
     /// Compute the binary trie state root via merkelization.
@@ -54,7 +200,7 @@ impl BinaryTrieState {
     /// Takes `&mut self` because computed hashes are cached back into the trie
     /// nodes for incremental reuse on subsequent calls.
     pub fn state_root(&mut self) -> [u8; 32] {
-        merkelize(self.trie.root.as_deref_mut())
+        merkelize(&mut self.trie)
     }
 
     /// Read account state from the binary trie.
@@ -63,7 +209,7 @@ impl BinaryTrieState {
     /// The `storage_root` field is synthesized:
     ///   - EMPTY_TRIE_HASH if the account has no tracked storage keys
     ///   - A dummy non-empty hash (H256::from_low_u64_be(1)) otherwise
-    pub fn get_account_state(&self, address: &Address) -> Option<AccountState> {
+    pub fn get_account_state(&mut self, address: &Address) -> Option<AccountState> {
         let basic_data_key = get_tree_key_for_basic_data(address);
         let basic_data = self.trie.get(basic_data_key)?;
 
@@ -99,7 +245,7 @@ impl BinaryTrieState {
     }
 
     /// Read a storage slot value. Returns None if unset (treated as zero).
-    pub fn get_storage_slot(&self, address: &Address, key: H256) -> Option<U256> {
+    pub fn get_storage_slot(&mut self, address: &Address, key: H256) -> Option<U256> {
         let storage_key = U256::from_big_endian(key.as_bytes());
         let tree_key = get_tree_key_for_storage_slot(address, storage_key);
         self.trie.get(tree_key).map(|v| U256::from_big_endian(&v))
@@ -111,7 +257,7 @@ impl BinaryTrieState {
     }
 
     /// Get code size from basic_data. Returns 0 if account doesn't exist.
-    pub fn get_code_size(&self, address: &Address) -> u32 {
+    pub fn get_code_size(&mut self, address: &Address) -> u32 {
         let basic_data_key = get_tree_key_for_basic_data(address);
         match self.trie.get(basic_data_key) {
             Some(data) => {
@@ -183,6 +329,8 @@ impl BinaryTrieState {
                 self.trie.insert(tree_key, value.to_big_endian())?;
                 self.storage_keys.entry(*address).or_default().insert(*key);
             }
+            #[cfg(feature = "rocksdb")]
+            self.dirty_storage_keys.insert(*address);
         }
 
         Ok(())
@@ -214,6 +362,8 @@ impl BinaryTrieState {
                         .insert(get_tree_key_for_code_chunk(address, i as u64), *chunk)?;
                 }
                 self.code_store.insert(code_hash, genesis.code.clone());
+                #[cfg(feature = "rocksdb")]
+                self.dirty_codes.insert(code_hash);
             }
 
             // Write storage slots.
@@ -227,6 +377,8 @@ impl BinaryTrieState {
                         .entry(*address)
                         .or_default()
                         .insert(key_h256);
+                    #[cfg(feature = "rocksdb")]
+                    self.dirty_storage_keys.insert(*address);
                 }
             }
         }
@@ -288,6 +440,8 @@ impl BinaryTrieState {
 
         // Store in code_store for fast lookup.
         self.code_store.insert(code.hash, code.bytecode.clone());
+        #[cfg(feature = "rocksdb")]
+        self.dirty_codes.insert(code.hash);
 
         Ok(())
     }
@@ -327,9 +481,65 @@ impl BinaryTrieState {
                 let tree_key = get_tree_key_for_storage_slot(address, storage_key);
                 self.trie.remove(tree_key);
             }
+            // Mark the address as dirty (entry removed from storage_keys).
+            #[cfg(feature = "rocksdb")]
+            self.dirty_storage_keys.insert(*address);
         }
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// RocksDB helper loaders (used by `open`)
+// ---------------------------------------------------------------------------
+
+/// Load the code_store from RocksDB by iterating over keys with prefix 0x02.
+#[cfg(feature = "rocksdb")]
+fn load_code_store(db: &rocksdb::DB) -> Result<FxHashMap<H256, Bytes>, BinaryTrieError> {
+    let prefix = [CODE_PREFIX];
+    let mut map = FxHashMap::default();
+    let iter = db.prefix_iterator(&prefix);
+    for item in iter {
+        let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
+        if key.first() != Some(&CODE_PREFIX) {
+            break;
+        }
+        if key.len() < 1 + 32 {
+            continue;
+        }
+        let hash = H256::from_slice(&key[1..33]);
+        map.insert(hash, Bytes::copy_from_slice(&value));
+    }
+    Ok(map)
+}
+
+/// Load the storage_keys from RocksDB by iterating over keys with prefix 0x03.
+#[cfg(feature = "rocksdb")]
+fn load_storage_keys(
+    db: &rocksdb::DB,
+) -> Result<FxHashMap<Address, FxHashSet<H256>>, BinaryTrieError> {
+    let prefix = [STORAGE_KEYS_PREFIX];
+    let mut map: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
+    let iter = db.prefix_iterator(&prefix);
+    for item in iter {
+        let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
+        if key.first() != Some(&STORAGE_KEYS_PREFIX) {
+            break;
+        }
+        if key.len() < 1 + 20 {
+            continue;
+        }
+        let addr = Address::from_slice(&key[1..21]);
+        let mut keys = FxHashSet::default();
+        let mut offset = 0usize;
+        while offset + 32 <= value.len() {
+            let h = H256::from_slice(&value[offset..offset + 32]);
+            keys.insert(h);
+            offset += 32;
+        }
+        map.insert(addr, keys);
+    }
+    Ok(map)
 }
 
 impl Default for BinaryTrieState {
@@ -386,7 +596,7 @@ mod tests {
     // 2. Non-existent account returns None.
     #[test]
     fn test_get_nonexistent_account() {
-        let state = BinaryTrieState::new();
+        let mut state = BinaryTrieState::new();
         assert!(state.get_account_state(&make_address(1)).is_none());
     }
 
