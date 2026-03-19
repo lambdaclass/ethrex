@@ -1417,6 +1417,15 @@ impl Store {
 
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
+            // Store canonical block hash mapping (number → hash).
+            // On L1 this is done via fork_choice_updated, but for Polygon
+            // (no Engine API) we must do it here so BLOCKHASH lookups work.
+            tx.put(
+                CANONICAL_BLOCK_HASHES,
+                &block_number.to_le_bytes(),
+                &hash_key,
+            )?;
+
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 // Key: tx_hash + block_hash
