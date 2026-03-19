@@ -338,27 +338,32 @@ impl BorEngine {
         // where spans don't follow the uniform-from-genesis pattern.
         let span = self.fetch_span_for_block(block_number).await?;
 
-        // Convert Heimdall validators to snapshot validator entries.
-        let validator_set = span_to_validator_set(&span);
+        // Convert Heimdall span to snapshot validator entries.
+        // Post-Rio: use selected_producers (sorted by address) instead of full validators.
+        let is_rio = self.config.is_rio_active(block_number);
+        let validator_set = span_to_validator_set(&span, is_rio);
 
         // Create the snapshot at the pivot block.
         let mut snapshot = Snapshot::new(block_number, block_hash, validator_set);
 
         // Fast-forward proposer rotation to match current block position.
         // Heimdall returns priorities from span start, but Bor rotates at each sprint boundary.
-        let span_start = span.start_block;
-        let sprint_size = self.config.get_sprint_size(block_number);
-        let sprints_elapsed = if block_number > span_start && sprint_size > 0 {
-            (block_number - span_start) / sprint_size
-        } else {
-            0
-        };
-        if sprints_elapsed > 0 {
-            snapshot.increment_proposer_priority(sprints_elapsed as u32);
-            tracing::info!(
-                sprints_elapsed,
-                "Fast-forwarded proposer priority from span start"
-            );
+        // Post-Rio: Bor creates fresh snapshots from sorted producers without rotation.
+        if !is_rio {
+            let span_start = span.start_block;
+            let sprint_size = self.config.get_sprint_size(block_number);
+            let sprints_elapsed = if block_number > span_start && sprint_size > 0 {
+                (block_number - span_start) / sprint_size
+            } else {
+                0
+            };
+            if sprints_elapsed > 0 {
+                snapshot.increment_proposer_priority(sprints_elapsed as u32);
+                tracing::info!(
+                    sprints_elapsed,
+                    "Fast-forwarded proposer priority from span start"
+                );
+            }
         }
 
         // Cache it for immediate use by verify_header().
@@ -460,20 +465,32 @@ impl BorEngine {
     }
 }
 
-/// Convert a Heimdall span's validator set to snapshot `ValidatorInfo` entries.
+/// Convert a Heimdall span to snapshot `ValidatorInfo` entries.
 ///
-/// Uses the span's full `validators` list (not just `selected_producers`), since
-/// all validators need to be tracked for signer authorization and difficulty
-/// calculation.
-fn span_to_validator_set(span: &crate::heimdall::Span) -> Vec<super::snapshot::ValidatorInfo> {
-    span.validators
+/// Pre-Rio: uses the full `validators` list for signer authorization and difficulty.
+/// Post-Rio: uses `selected_producers` (sorted by address), matching Bor's behavior
+/// where only block producers participate in proposer rotation and difficulty.
+fn span_to_validator_set(
+    span: &crate::heimdall::Span,
+    is_rio: bool,
+) -> Vec<super::snapshot::ValidatorInfo> {
+    let source = if is_rio {
+        &span.selected_producers
+    } else {
+        &span.validators
+    };
+    let mut set: Vec<super::snapshot::ValidatorInfo> = source
         .iter()
         .map(|v| super::snapshot::ValidatorInfo {
             address: v.signer,
             voting_power: v.voting_power,
             proposer_priority: v.proposer_priority,
         })
-        .collect()
+        .collect();
+    if is_rio {
+        set.sort_by_key(|v| v.address);
+    }
+    set
 }
 
 /// Encode a list of Heimdall validators as Bor-format bytes.
