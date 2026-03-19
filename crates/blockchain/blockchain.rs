@@ -3060,30 +3060,19 @@ impl Blockchain {
                         parent = parent_header.number,
                         "No snapshot for parent block, bootstrapping from Heimdall"
                     );
-                    match tokio::task::block_in_place(|| {
+                    tokio::task::block_in_place(|| {
                         tokio::runtime::Handle::current()
                             .block_on(engine.bootstrap_snapshot(parent_header.number, parent_hash))
-                    }) {
-                        Ok(snap) => snap,
-                        Err(e) => {
-                            warn!(
-                                block = header.number,
-                                error = %e,
-                                "Failed to bootstrap snapshot, falling back to structural validation"
-                            );
-                            ethrex_polygon::validation::validate_bor_header(header, parent_header)
-                                .map_err(InvalidBlockError::from)?;
-                            return Ok(());
-                        }
-                    }
+                    })?
                 }
             };
             engine.verify_header(header, parent_header, &mut snapshot)?;
             // Cache the updated snapshot (now includes this block's signer in recents).
             engine.put_snapshot(snapshot);
         } else {
-            ethrex_polygon::validation::validate_bor_header(header, parent_header)
-                .map_err(InvalidBlockError::from)?;
+            return Err(ChainError::Custom(
+                "BorEngine not configured — cannot verify Polygon block seal".to_string(),
+            ));
         }
         Ok(())
     }
