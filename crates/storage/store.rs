@@ -1740,7 +1740,6 @@ impl Store {
             };
             if update.removed_storage {
                 account_state.storage_root = *EMPTY_TRIE_HASH;
-                destroyed_accounts.insert(hashed_address);
             }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
