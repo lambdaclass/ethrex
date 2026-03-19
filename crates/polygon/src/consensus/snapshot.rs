@@ -118,7 +118,7 @@ impl Snapshot {
         for (i, v) in self.validator_set.iter().enumerate().skip(1) {
             let best = &self.validator_set[best_idx];
             if v.proposer_priority > best.proposer_priority
-                || (v.proposer_priority == best.proposer_priority && v.address > best.address)
+                || (v.proposer_priority == best.proposer_priority && v.address < best.address)
             {
                 best_idx = i;
             }

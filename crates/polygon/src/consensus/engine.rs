@@ -167,7 +167,7 @@ impl BorEngine {
     ///
     /// # Arguments
     /// * `block_number` — the block being finalized
-    /// * `parent_timestamp` — parent block's timestamp (for state sync time window)
+    /// * `header_timestamp` — current block's timestamp (for state sync time window)
     /// * `last_state_id` — the last committed state ID from the state receiver contract
     ///   (obtained by calling `lastStateId()` on 0x1001)
     ///
@@ -175,7 +175,7 @@ impl BorEngine {
     pub async fn get_system_calls(
         &self,
         block_number: BlockNumber,
-        parent_timestamp: u64,
+        header_timestamp: u64,
         last_state_id: u64,
     ) -> Result<Vec<SystemCallContext>, BorEngineError> {
         let mut calls = Vec::new();
@@ -189,7 +189,7 @@ impl BorEngine {
         // 2. State sync at sprint-start blocks
         if self.config.is_sprint_start(block_number) && block_number > 0 {
             let state_sync_calls = self
-                .build_state_sync_calls(block_number, parent_timestamp, last_state_id)
+                .build_state_sync_calls(block_number, header_timestamp, last_state_id)
                 .await?;
             calls.extend(state_sync_calls);
         }
@@ -217,7 +217,7 @@ impl BorEngine {
     /// Build commitState system calls for state sync events.
     ///
     /// Fetches pending state sync events from Heimdall for the time window
-    /// ending at `parent_timestamp + confirmation_delay`, starting from
+    /// ending at `header_timestamp - confirmation_delay`, starting from
     /// `last_state_id + 1`.
     ///
     /// Note: EVM reverts in individual commitState calls are non-fatal.
@@ -225,11 +225,11 @@ impl BorEngine {
     async fn build_state_sync_calls(
         &self,
         block_number: BlockNumber,
-        parent_timestamp: u64,
+        header_timestamp: u64,
         last_state_id: u64,
     ) -> Result<Vec<SystemCallContext>, BorEngineError> {
         let delay = self.config.get_state_sync_delay(block_number);
-        let to_time = parent_timestamp + delay;
+        let to_time = header_timestamp - delay;
         let from_id = last_state_id + 1;
 
         // Heimdall returns events ordered by ID.

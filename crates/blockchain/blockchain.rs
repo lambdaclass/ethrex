@@ -333,6 +333,19 @@ impl Blockchain {
 
         // Validate the block pre-execution
         if matches!(self.options.r#type, BlockchainType::Polygon) {
+            // TODO(B9): Replace with BorEngine::verify_header() for full consensus validation.
+            // Currently only performs structural validation (gas, timestamps, Bor-specific fields).
+            // Missing: signer recovery from seal, authorization against validator set (snapshot),
+            // and difficulty validation (expected difficulty based on signer succession).
+            //
+            // To wire this in:
+            // 1. Add `Option<Arc<BorEngine>>` field to `Blockchain`
+            // 2. Initialize it with BorConfig + Heimdall URL during Polygon startup
+            // 3. Ensure parent snapshot is populated (via bootstrap_snapshot or cache)
+            // 4. Call: bor_engine.verify_header(&block.header, &parent_header, &mut parent_snapshot)
+            //
+            // BorEngine::verify_header is sync (no Heimdall calls), but obtaining the parent
+            // snapshot requires the cache to have been populated by bootstrap_snapshot (async).
             ethrex_polygon::validation::validate_bor_header(&block.header, &parent_header)
                 .map_err(InvalidBlockError::from)?;
         } else {
@@ -354,9 +367,11 @@ impl Blockchain {
         {
             let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
                 .unwrap_or(block.header.coinbase);
-            eprintln!(
+            tracing::debug!(
                 "POLYGON_AUTHOR block={} author={:?} header_coinbase={:?}",
-                block.header.number, author, block.header.coinbase
+                block.header.number,
+                author,
+                block.header.coinbase
             );
             vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
                 burnt_contract: bor_config.get_burnt_contract(block.header.number),
@@ -3086,8 +3101,8 @@ fn execute_polygon_system_calls(
         "Executing Polygon state sync system calls"
     );
 
-    // Compute sync_time = parent_timestamp + state_sync_confirmation_delay.
-    // This matches Bor's time window for fetching state sync events from Heimdall.
+    // Compute sync_time = header.timestamp - state_sync_confirmation_delay.
+    // This matches Bor's time window: header.Time - stateSyncDelay.
     let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
         .ok_or_else(|| {
             ChainError::Custom(format!(
@@ -3096,7 +3111,7 @@ fn execute_polygon_system_calls(
             ))
         })?;
     let delay = bor_config.get_state_sync_delay(block.header.number);
-    let sync_time = parent_header.timestamp + delay;
+    let sync_time = block.header.timestamp - delay;
 
     // TODO: At span boundaries, commitSpan should also be executed before commitState.
     // commitSpan logs are included in the state sync receipt alongside commitState logs.
