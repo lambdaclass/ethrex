@@ -251,9 +251,9 @@ pub const PRECOMPILES: [Precompile; 18] = [
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
     PRECOMPILES.into_iter().filter(move |precompile| {
         // On Polygon, KZG point evaluation is not available at Cancun —
-        // it's only activated at LisovoPro.
+        // it's activated at Lisovo, then removed at LisovoPro.
         if fork.is_polygon() && precompile.address == POINT_EVALUATION.address {
-            return fork >= Fork::LisovoPro;
+            return fork >= Fork::Lisovo && fork < Fork::LisovoPro;
         }
         precompile.active_since_fork <= fork
     })

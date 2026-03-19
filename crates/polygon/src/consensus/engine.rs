@@ -141,14 +141,14 @@ impl BorEngine {
         // difficulty = total_validators - succession, where succession is the
         // ring distance from proposer to signer. In-turn proposer gets the
         // highest difficulty (= total_validators), farthest gets 1.
-        if let Some(expected) = parent_snapshot.expected_difficulty(&signer) {
-            if header.difficulty != U256::from(expected) {
-                return Err(BorEngineError::WrongDifficulty {
-                    block: header.number,
-                    expected,
-                    actual: header.difficulty,
-                });
-            }
+        if let Some(expected) = parent_snapshot.expected_difficulty(&signer)
+            && header.difficulty != U256::from(expected)
+        {
+            return Err(BorEngineError::WrongDifficulty {
+                block: header.number,
+                expected,
+                actual: header.difficulty,
+            });
         }
 
         Ok(signer)

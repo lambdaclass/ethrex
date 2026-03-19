@@ -102,6 +102,9 @@ impl HeimdallClient {
     ///
     /// `to_time` is a Unix timestamp (seconds) which is converted to
     /// RFC3339Nano format for the Heimdall API.
+    ///
+    /// Paginates automatically: keeps fetching pages until fewer than `limit`
+    /// events are returned, matching Bor's behavior.
     pub async fn fetch_state_sync_events(
         &self,
         from_id: u64,
@@ -109,11 +112,29 @@ impl HeimdallClient {
         limit: u64,
     ) -> Result<Vec<EventRecord>, HeimdallError> {
         let to_time_rfc3339 = unix_to_rfc3339_nano(to_time);
-        let url = format!(
-            "{}/clerk/time?from_id={}&to_time={}&pagination.limit={}",
-            self.base_url, from_id, to_time_rfc3339, limit
-        );
-        self.with_retry(|| self.get_event_list(&url)).await
+        let mut all_events = Vec::new();
+        let mut current_from_id = from_id;
+
+        loop {
+            let url = format!(
+                "{}/clerk/time?from_id={}&to_time={}&pagination.limit={}",
+                self.base_url, current_from_id, to_time_rfc3339, limit
+            );
+            let page = self.with_retry(|| self.get_event_list(&url)).await?;
+            let page_len = page.len();
+
+            if let Some(last) = page.last() {
+                current_from_id = last.id + 1;
+            }
+
+            all_events.extend(page);
+
+            if (page_len as u64) < limit {
+                break;
+            }
+        }
+
+        Ok(all_events)
     }
 
     /// GET /milestones/latest
@@ -264,10 +285,10 @@ fn extract_from_body<T: serde::de::DeserializeOwned>(
         serde_json::from_str(body).map_err(|e| HeimdallError::Deserialize(format!("{e}")))?;
 
     // Try v2 format: {v2_key: T}
-    if let Some(inner) = value.get(v2_key) {
-        if let Ok(result) = serde_json::from_value(inner.clone()) {
-            return Ok(result);
-        }
+    if let Some(inner) = value.get(v2_key)
+        && let Ok(result) = serde_json::from_value(inner.clone())
+    {
+        return Ok(result);
     }
 
     // Fall back to v1 format: {"result": T}
@@ -336,10 +357,10 @@ fn extract_count(body: &str) -> Result<u64, HeimdallError> {
     }
 
     // Fall back to v1: {"result": {"count": "N"}}
-    if let Some(result) = value.get("result") {
-        if let Some(v) = result.get("count") {
-            return parse_json_u64(v);
-        }
+    if let Some(result) = value.get("result")
+        && let Some(v) = result.get("count")
+    {
+        return parse_json_u64(v);
     }
 
     Err(HeimdallError::Deserialize(

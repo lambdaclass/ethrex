@@ -367,11 +367,9 @@ impl Blockchain {
         {
             let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
                 .unwrap_or(block.header.coinbase);
-            tracing::debug!(
+            debug!(
                 "POLYGON_AUTHOR block={} author={:?} header_coinbase={:?}",
-                block.header.number,
-                author,
-                block.header.coinbase
+                block.header.number, author, block.header.coinbase
             );
             vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
                 burnt_contract: bor_config.get_burnt_contract(block.header.number),
@@ -3067,7 +3065,7 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 /// Returns `Some(receipt)` if the block contains a StateSyncTransaction, `None` otherwise.
 fn execute_polygon_system_calls(
     block: &Block,
-    parent_header: &BlockHeader,
+    _parent_header: &BlockHeader,
     chain_config: &ChainConfig,
     vm: &mut Evm,
     cumulative_gas_used: u64,
