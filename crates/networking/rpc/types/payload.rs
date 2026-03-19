@@ -8,8 +8,8 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
-        requests::EncodedRequests,
+        block_access_list::BlockAccessList, compute_transactions_root_from_encoded,
+        compute_withdrawals_root, requests::EncodedRequests,
     },
 };
 
@@ -113,6 +113,10 @@ impl ExecutionPayload {
         requests_hash: Option<H256>,
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
+        // Compute transactions root from raw encoded bytes to avoid decoding and re-encoding
+        let transactions_root =
+            compute_transactions_root_from_encoded(&self.transactions.iter().map(|tx| &tx.0).collect::<Vec<_>>());
+
         let body = BlockBody {
             transactions: self
                 .transactions
@@ -127,7 +131,7 @@ impl ExecutionPayload {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(&body.transactions),
+            transactions_root,
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),
