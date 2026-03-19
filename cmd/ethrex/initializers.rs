@@ -700,9 +700,25 @@ pub async fn regenerate_head_state(
         debug!("Need to regenerate state for block {parent_number}");
 
         let Some(parent_header) = store.get_block_header(parent_number)? else {
-            return Err(eyre::eyre!(
-                "Parent header for block {parent_number} not found"
-            ));
+            // Parent header missing — likely from an interrupted batch sync.
+            // Skip to the next known block by walking back further.
+            warn!("Parent header for block {parent_number} not found, continuing search...");
+            if parent_number == 0 {
+                return Err(eyre::eyre!("Cannot find any block with known state"));
+            }
+            // Try to find the next available header below
+            let mut search = parent_number.saturating_sub(1);
+            loop {
+                if let Some(h) = store.get_block_header(search)? {
+                    current_last_header = h;
+                    break;
+                }
+                if search == 0 {
+                    return Err(eyre::eyre!("Cannot find any block header in DB"));
+                }
+                search = search.saturating_sub(1);
+            }
+            continue;
         };
 
         current_last_header = parent_header;
