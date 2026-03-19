@@ -681,7 +681,7 @@ where
         let status = match eth.version {
             68 => {
                 let msg = StatusMessage68::new(&state.storage).await?;
-                info!(
+                debug!(
                     peer=%state.node,
                     eth_version = msg.eth_version,
                     network_id = msg.network_id,
@@ -696,7 +696,7 @@ where
             }
             69 => {
                 let msg = StatusMessage69::new(&state.storage).await?;
-                info!(
+                debug!(
                     peer=%state.node,
                     eth_version = msg.eth_version,
                     network_id = msg.network_id,
