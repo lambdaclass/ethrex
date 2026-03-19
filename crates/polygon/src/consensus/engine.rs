@@ -332,9 +332,11 @@ impl BorEngine {
         block_number: BlockNumber,
         block_hash: ethrex_common::H256,
     ) -> Result<Snapshot, BorEngineError> {
-        // Determine which span covers this block and fetch it.
-        let span_id = self.config.span_id_at(block_number);
-        let span = self.heimdall.fetch_span(span_id).await?;
+        // Fetch the span covering this block from Heimdall.
+        // We use fetch_latest_span() and walk back instead of span_id_at() because
+        // the formula-based span ID calculation can be off on networks like Amoy
+        // where spans don't follow the uniform-from-genesis pattern.
+        let span = self.fetch_span_for_block(block_number).await?;
 
         // Convert Heimdall validators to snapshot validator entries.
         let validator_set = span_to_validator_set(&span);
@@ -371,6 +373,40 @@ impl BorEngine {
         );
 
         Ok(snapshot)
+    }
+
+    /// Fetch the span that covers the given block number from Heimdall.
+    ///
+    /// Starts from the latest span and walks back until finding one where
+    /// `start_block <= block_number <= end_block`. This avoids relying on
+    /// `span_id_at()` which uses a formula that can be inaccurate on networks
+    /// like Amoy where spans don't follow uniform sizing from genesis.
+    async fn fetch_span_for_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<crate::heimdall::Span, BorEngineError> {
+        let mut span = self.heimdall.fetch_latest_span().await?;
+
+        // Walk back if the latest span is ahead of our block.
+        while span.start_block > block_number && span.id > 0 {
+            tracing::debug!(
+                span_id = span.id,
+                span_start = span.start_block,
+                block_number,
+                "Span too new, fetching previous"
+            );
+            span = self.heimdall.fetch_span(span.id - 1).await?;
+        }
+
+        tracing::info!(
+            block_number,
+            span_id = span.id,
+            span_start = span.start_block,
+            span_end = span.end_block,
+            "Found span for bootstrap block"
+        );
+
+        Ok(span)
     }
 
     // ---- Fork choice ----
