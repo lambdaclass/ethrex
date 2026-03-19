@@ -81,6 +81,9 @@ async fn test_global_whoareyou_rate_limiting() {
     let mut server = test_server(None).await;
     let nonce = [0u8; 12];
 
+    // Pin the window start so the test doesn't flake on slow CI runners
+    server.whoareyou_global_window_start = Instant::now();
+
     // Send 100 WHOAREYOU packets to different IPs (hits global limit)
     for i in 0..100u32 {
         let ip = format!("10.0.{}.{}", i / 256, i % 256);
@@ -101,15 +104,13 @@ async fn test_global_whoareyou_rate_limiting() {
 }
 
 #[tokio::test]
-async fn test_whoareyou_rate_limit_is_bounded() {
+async fn test_whoareyou_rate_limit_lru_cache_works() {
     let mut server = test_server(None).await;
     let nonce = [0u8; 12];
 
-    // Set the global window far in the past so global limit doesn't interfere
+    // Bypass the global rate limit so we can insert many entries
     server.whoareyou_global_window_start = Instant::now() - std::time::Duration::from_secs(10);
 
-    // Send more packets than the LRU capacity (10,000) to verify bounded memory
-    // We only test a subset to keep the test fast
     for i in 0..200u32 {
         server.whoareyou_global_count = 0; // reset global counter each iteration
         let ip = format!("10.{}.{}.{}", i / 65536, (i / 256) % 256, i % 256);
@@ -118,9 +119,10 @@ async fn test_whoareyou_rate_limit_is_bounded() {
         let _ = server.send_who_are_you(nonce, src_id, addr).await;
     }
 
-    // LRU cache should have entries (bounded by capacity)
-    assert!(server.whoareyou_rate_limit.len() <= 10_000);
+    // All 200 entries fit within the 10,000 LRU capacity
     assert_eq!(server.whoareyou_rate_limit.len(), 200);
+    // The cache is bounded — can never exceed capacity
+    assert!(server.whoareyou_rate_limit.len() <= 10_000);
 }
 
 #[tokio::test]

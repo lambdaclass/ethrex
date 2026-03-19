@@ -63,6 +63,9 @@ const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
 const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
 /// Maximum number of WHOAREYOU packets sent globally per second.
 /// Caps total outgoing WHOAREYOU bandwidth regardless of source IP.
+/// Note: uses a fixed-window counter, so up to 2x this limit can be sent in a
+/// short burst at window boundaries. This is acceptable since the global limit
+/// is a secondary defense — the per-IP limit is the primary protection.
 const GLOBAL_WHOAREYOU_RATE_LIMIT: u32 = 100;
 /// Time window for collecting IP votes from PONG recipient_addr.
 /// Votes older than this are discarded. Reference: nim-eth uses 5 minutes.
