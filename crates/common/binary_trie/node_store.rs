@@ -339,6 +339,11 @@ impl NodeStore {
                 let key = node_key(id);
                 let bytes = serialize_node(node);
                 batch.put(key, bytes);
+            } else {
+                debug_assert!(
+                    false,
+                    "dirty node {id} not in cache at flush time — likely take/put imbalance"
+                );
             }
         }
 

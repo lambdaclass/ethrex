@@ -48,11 +48,11 @@ impl BinaryTrie {
     }
 
     /// Remove the value for a key, returning the previous value if it existed.
-    pub fn remove(&mut self, key: [u8; 32]) -> Option<[u8; 32]> {
+    pub fn remove(&mut self, key: [u8; 32]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
         let (stem, sub_index) = split_key(&key);
-        let (new_root, removed) = remove_node(&mut self.store, self.root.take(), &stem, sub_index);
+        let (new_root, removed) = remove_node(&mut self.store, self.root.take(), &stem, sub_index)?;
         self.root = new_root;
-        removed
+        Ok(removed)
     }
 
     /// Write all dirty/freed trie nodes and metadata into a caller-supplied
@@ -121,14 +121,17 @@ fn insert_node(
                         return Err(BinaryTrieError::MaxDepthExceeded);
                     }
                     let bit = stem_bit(&stem, depth);
-                    if bit == 0 {
-                        let new_left =
-                            insert_node(store, internal.left, stem, sub_index, value, depth + 1)?;
-                        internal.left = Some(new_left);
+                    let result = if bit == 0 {
+                        insert_node(store, internal.left, stem, sub_index, value, depth + 1)
+                            .map(|new_left| internal.left = Some(new_left))
                     } else {
-                        let new_right =
-                            insert_node(store, internal.right, stem, sub_index, value, depth + 1)?;
-                        internal.right = Some(new_right);
+                        insert_node(store, internal.right, stem, sub_index, value, depth + 1)
+                            .map(|new_right| internal.right = Some(new_right))
+                    };
+                    if let Err(e) = result {
+                        // Put node back before propagating error.
+                        store.put(id, Node::Internal(internal));
+                        return Err(e);
                     }
                     // Invalidate this node's cached hash — a descendant was mutated.
                     internal.cached_hash = None;
@@ -254,7 +257,7 @@ fn remove_node(
     node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
-) -> (Option<NodeId>, Option<[u8; 32]>) {
+) -> Result<(Option<NodeId>, Option<[u8; 32]>), BinaryTrieError> {
     remove_node_at_depth(store, node_id, stem, sub_index, 0)
 }
 
@@ -264,51 +267,54 @@ fn remove_node_at_depth(
     stem: &[u8; 31],
     sub_index: u8,
     depth: usize,
-) -> (Option<NodeId>, Option<[u8; 32]>) {
+) -> Result<(Option<NodeId>, Option<[u8; 32]>), BinaryTrieError> {
     let id = match node_id {
-        None => return (None, None),
+        None => return Ok((None, None)),
         Some(id) => id,
     };
 
-    let node = match store.take(id) {
-        Ok(n) => n,
-        Err(_) => return (None, None),
-    };
+    let node = store.take(id)?;
 
     match node {
         Node::Stem(mut stem_node) => {
             if &stem_node.stem != stem {
                 store.put(id, Node::Stem(stem_node));
-                return (Some(id), None);
+                return Ok((Some(id), None));
             }
             let removed = stem_node.remove_value(sub_index);
             if stem_node.is_empty() {
                 // StemNode is now empty — free it.
                 store.free(id);
-                (None, removed)
+                Ok((None, removed))
             } else {
                 store.put(id, Node::Stem(stem_node));
-                (Some(id), removed)
+                Ok((Some(id), removed))
             }
         }
 
         Node::Internal(mut internal) => {
             if depth >= MAX_DEPTH {
                 store.put(id, Node::Internal(internal));
-                return (Some(id), None);
+                return Ok((Some(id), None));
             }
             let bit = stem_bit(stem, depth);
-            let removed;
-            if bit == 0 {
-                let (new_child, r) =
-                    remove_node_at_depth(store, internal.left, stem, sub_index, depth + 1);
-                internal.left = new_child;
-                removed = r;
+            let result = if bit == 0 {
+                remove_node_at_depth(store, internal.left, stem, sub_index, depth + 1)
             } else {
-                let (new_child, r) =
-                    remove_node_at_depth(store, internal.right, stem, sub_index, depth + 1);
+                remove_node_at_depth(store, internal.right, stem, sub_index, depth + 1)
+            };
+            let (new_child, removed) = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    // Put node back before propagating error.
+                    store.put(id, Node::Internal(internal));
+                    return Err(e);
+                }
+            };
+            if bit == 0 {
+                internal.left = new_child;
+            } else {
                 internal.right = new_child;
-                removed = r;
             }
 
             // Collapse: if one child is now None and the survivor is a StemNode,
@@ -325,13 +331,11 @@ fn remove_node_at_depth(
                     None
                 }
                 (Some(child_id), None) => {
-                    // Peek at the child to see if it's a StemNode.
                     let is_stem = store
                         .get(child_id)
                         .map(|n| matches!(n, Node::Stem(_)))
                         .unwrap_or(false);
                     if is_stem {
-                        // Promote: free the internal node, return the stem's ID.
                         store.free(id);
                         Some(child_id)
                     } else {
@@ -361,7 +365,7 @@ fn remove_node_at_depth(
                     Some(id)
                 }
             };
-            (updated, removed)
+            Ok((updated, removed))
         }
     }
 }
@@ -431,7 +435,7 @@ mod tests {
         let mut trie = BinaryTrie::new();
         let k = key(0xCC, 3);
         trie.insert(k, val(99)).unwrap();
-        let removed = trie.remove(k);
+        let removed = trie.remove(k).unwrap();
         assert_eq!(removed, Some(val(99)));
         assert_eq!(trie.get(k), None);
     }
@@ -439,7 +443,7 @@ mod tests {
     #[test]
     fn remove_absent_returns_none() {
         let mut trie = BinaryTrie::new();
-        assert_eq!(trie.remove(key(0x01, 0)), None);
+        assert_eq!(trie.remove(key(0x01, 0)).unwrap(), None);
     }
 
     #[test]
@@ -451,7 +455,7 @@ mod tests {
         trie.insert(k1, val(1)).unwrap();
         trie.insert(k2, val(2)).unwrap();
         // Remove one; the InternalNode at depth 0 should collapse.
-        trie.remove(k2);
+        trie.remove(k2).unwrap();
         assert_eq!(trie.get(k1), Some(val(1)));
         assert_eq!(trie.get(k2), None);
         // After collapse the root should be a StemNode directly.
@@ -464,7 +468,7 @@ mod tests {
         let mut trie = BinaryTrie::new();
         let k = key(0xDD, 7);
         trie.insert(k, val(5)).unwrap();
-        trie.remove(k);
+        trie.remove(k).unwrap();
         assert!(trie.root.is_none());
     }
 
@@ -518,7 +522,7 @@ mod tests {
         trie.insert(k_01, val(2)).unwrap();
         trie.insert(k_80, val(3)).unwrap();
 
-        trie.remove(k_01);
+        trie.remove(k_01).unwrap();
 
         // 0x00 and 0x80 should still be present.
         assert_eq!(trie.get(k_00), Some(val(1)));
@@ -546,7 +550,7 @@ mod tests {
         trie.insert(k0, val(10)).unwrap();
         trie.insert(k1, val(20)).unwrap();
 
-        let removed = trie.remove(k0);
+        let removed = trie.remove(k0).unwrap();
         assert_eq!(removed, Some(val(10)));
         assert_eq!(trie.get(k0), None);
         assert_eq!(trie.get(k1), Some(val(20)));
@@ -605,7 +609,7 @@ mod tests {
         assert_eq!(trie.get(k49), Some(val(1)));
 
         // Remove k49
-        let removed = trie.remove(k49);
+        let removed = trie.remove(k49).unwrap();
         assert_eq!(removed, Some(val(1)));
 
         // THE BUG: siblings on the same stem must survive

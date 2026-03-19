@@ -318,7 +318,7 @@ impl BinaryTrieState {
 
             if value.is_zero() {
                 // Zero means delete.
-                self.trie.remove(tree_key);
+                self.trie.remove(tree_key)?;
                 if let Some(keys) = self.storage_keys.get_mut(address) {
                     keys.remove(key);
                     if keys.is_empty() {
@@ -427,7 +427,7 @@ impl BinaryTrieState {
             // Remove chunks that won't be overwritten by the new code.
             for chunk_id in new_num_chunks..old_num_chunks {
                 self.trie
-                    .remove(get_tree_key_for_code_chunk(address, chunk_id));
+                    .remove(get_tree_key_for_code_chunk(address, chunk_id))?;
             }
         }
 
@@ -452,15 +452,15 @@ impl BinaryTrieState {
         let code_size = self.get_code_size(address);
 
         // Remove basic_data and code_hash leaves.
-        self.trie.remove(get_tree_key_for_basic_data(address));
-        self.trie.remove(get_tree_key_for_code_hash(address));
+        self.trie.remove(get_tree_key_for_basic_data(address))?;
+        self.trie.remove(get_tree_key_for_code_hash(address))?;
 
         // Remove code chunks.
         if code_size > 0 {
             let num_chunks = (code_size as u64).div_ceil(31);
             for chunk_id in 0..num_chunks {
                 self.trie
-                    .remove(get_tree_key_for_code_chunk(address, chunk_id));
+                    .remove(get_tree_key_for_code_chunk(address, chunk_id))?;
             }
         }
 
@@ -479,7 +479,7 @@ impl BinaryTrieState {
             for key in keys {
                 let storage_key = U256::from_big_endian(key.as_bytes());
                 let tree_key = get_tree_key_for_storage_slot(address, storage_key);
-                self.trie.remove(tree_key);
+                self.trie.remove(tree_key)?;
             }
             // Mark the address as dirty (entry removed from storage_keys).
             #[cfg(feature = "rocksdb")]
@@ -498,7 +498,12 @@ impl BinaryTrieState {
 fn load_code_store(db: &rocksdb::DB) -> Result<FxHashMap<H256, Bytes>, BinaryTrieError> {
     let prefix = [CODE_PREFIX];
     let mut map = FxHashMap::default();
-    let iter = db.prefix_iterator(&prefix);
+    // Use a forward iterator starting at the prefix byte, with manual stop.
+    // We don't use prefix_iterator because no prefix extractor is configured.
+    let iter = db.iterator(rocksdb::IteratorMode::From(
+        &prefix,
+        rocksdb::Direction::Forward,
+    ));
     for item in iter {
         let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
         if key.first() != Some(&CODE_PREFIX) {
@@ -520,7 +525,10 @@ fn load_storage_keys(
 ) -> Result<FxHashMap<Address, FxHashSet<H256>>, BinaryTrieError> {
     let prefix = [STORAGE_KEYS_PREFIX];
     let mut map: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
-    let iter = db.prefix_iterator(&prefix);
+    let iter = db.iterator(rocksdb::IteratorMode::From(
+        &prefix,
+        rocksdb::Direction::Forward,
+    ));
     for item in iter {
         let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
         if key.first() != Some(&STORAGE_KEYS_PREFIX) {
