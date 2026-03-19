@@ -438,6 +438,9 @@ impl NodeRecord {
             }
         }
 
+        // ENR pairs must be sorted by key (spec requirement).
+        record.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
         record.signature = record.sign_record(signer)?;
 
         Ok(record)
