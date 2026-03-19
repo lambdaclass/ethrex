@@ -739,7 +739,8 @@ pub async fn regenerate_head_state(
         debug!("Re-applying block {i} to regenerate state");
 
         let Some(block) = store.get_block_by_number(i).await? else {
-            warn!("Block {i} not found during state regeneration, stopping at block {}", i - 1);
+            warn!("Block {i} not found during state regeneration, rolling back head to block {}", i - 1);
+            store.set_latest_block_number(i - 1)?;
             break;
         };
 

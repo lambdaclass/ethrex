@@ -981,6 +981,15 @@ impl Store {
         Ok(self.latest_block_header.get().number)
     }
 
+    /// Set the latest block number in the DB (for recovery after interrupted sync).
+    pub fn set_latest_block_number(&self, number: BlockNumber) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        let mut txn = self.backend.begin_write()?;
+        txn.put(CHAIN_DATA, &key, &number.to_le_bytes())?;
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,
