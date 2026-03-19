@@ -5,14 +5,27 @@ const { createHost, getAllHosts, getHostById, updateHost, deleteHost } = require
 const { testConnection } = require("../lib/docker-remote");
 
 // POST /api/hosts — add a remote host
+// Security: accepts a file path to the SSH private key (privateKeyPath) instead
+// of raw key content, avoiding credential exposure in HTTP requests and SQLite DB.
+// The key is read from the filesystem only when needed for SSH connections.
 router.post("/", (req, res) => {
   try {
-    const { name, hostname, port, username, authMethod, privateKey } = req.body;
+    const { name, hostname, port, username, authMethod, privateKeyPath } = req.body;
     if (!name || !hostname || !username) {
       return res.status(400).json({ error: "name, hostname, and username are required" });
     }
-    if (authMethod === "key" && !privateKey) {
-      return res.status(400).json({ error: "privateKey is required for key authentication" });
+    if (authMethod === "key" && !privateKeyPath) {
+      return res.status(400).json({ error: "privateKeyPath is required for key authentication" });
+    }
+
+    // Validate key path exists (if provided)
+    const path = require("path");
+    const fs = require("fs");
+    if (privateKeyPath) {
+      const resolved = path.resolve(privateKeyPath);
+      if (!fs.existsSync(resolved)) {
+        return res.status(400).json({ error: "SSH key file not found at specified path" });
+      }
     }
 
     const host = createHost({
@@ -21,7 +34,7 @@ router.post("/", (req, res) => {
       port: port || 22,
       username: username.trim(),
       authMethod: authMethod || "key",
-      privateKey: privateKey || null,
+      privateKey: privateKeyPath ? path.resolve(privateKeyPath) : null,
     });
 
     const { private_key, ...safeHost } = host;

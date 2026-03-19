@@ -313,19 +313,20 @@ async function startToolsRemote(conn, projectName, remoteDir, envVars, toolsPort
   toolsEnv.PUBLIC_L1_EXPLORER_PROTOCOL = "http";
   toolsEnv.PUBLIC_L1_WS_PROTOCOL = "ws";
 
-  // Download tools compose file from the container's ethrex source
-  // The tools compose references a build context (tooling/bridge) which isn't available remotely.
-  // We download it from the repository and use it directly.
-  // For bridge-ui, we'll clone just the needed files.
-  const toolsComposeUrl = "https://raw.githubusercontent.com/tokamak-network/ethrex/tokamak-dev/crates/l2/docker-compose-zk-dex-tools.yaml";
+  // Download tools compose file from the container's ethrex source.
+  // Pinned to a specific commit SHA for reproducibility and supply-chain safety.
+  // Update TOOLS_SOURCE_REF when releasing new tools compose versions.
+  const TOOLS_SOURCE_REF = "ebc23708301d0176f075d5192ed31e6fa5cc619b";
+  const toolsComposeUrl = `https://raw.githubusercontent.com/tokamak-network/ethrex/${TOOLS_SOURCE_REF}/crates/l2/docker-compose-zk-dex-tools.yaml`;
   await exec(conn, `curl -fsSL "${toolsComposeUrl}" -o ${toolsDir}/docker-compose-tools.yaml`, {
     timeout: 30000,
   });
 
-  // Clone the bridge tooling directory for the build context
+  // Clone the bridge tooling directory for the build context (pinned to same ref)
   await exec(conn, `
     if [ ! -d ${toolsDir}/tooling ]; then
       git clone --depth=1 --filter=blob:none --sparse https://github.com/tokamak-network/ethrex.git ${toolsDir}/ethrex-sparse 2>/dev/null || true
+      cd ${toolsDir}/ethrex-sparse && git checkout ${TOOLS_SOURCE_REF} 2>/dev/null || true
       cd ${toolsDir}/ethrex-sparse && git sparse-checkout set crates/l2/tooling/bridge 2>/dev/null || true
       cp -r ${toolsDir}/ethrex-sparse/crates/l2/tooling ${toolsDir}/tooling 2>/dev/null || true
       rm -rf ${toolsDir}/ethrex-sparse

@@ -402,7 +402,9 @@ impl Command {
 
                 let chain_config = store.get_chain_config();
                 let chain_id = chain_config.chain_id;
-                let native_token_scale_factor = chain_config.native_token_scale_factor();
+                let native_token_scale_factor = chain_config
+                    .native_token_scale_factor()
+                    .map_err(|e| eyre::eyre!("Invalid chain config: {e}"))?;
 
                 let rollup_store =
                     StoreRollup::new(&store_path.join("rollup_store"), rollup_store_type)?;

@@ -27,6 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::env::var("VERGEN_GIT_BRANCH"),
         std::env::var("VERGEN_GIT_SHA"),
     ) {
+        println!("cargo:warning=Using VERGEN_GIT_BRANCH/SHA from env vars (no .git directory)");
         Emitter::default().add_instructions(&rustc)?.emit()?;
         println!("cargo:rustc-env=VERGEN_GIT_BRANCH={}", branch.trim());
         println!("cargo:rustc-env=VERGEN_GIT_SHA={}", sha.trim());

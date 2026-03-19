@@ -428,27 +428,11 @@ impl ChainConfig {
         self.native_token_l1_decimals.unwrap_or(18)
     }
 
-    /// Computes the scale factor: 10^(18 - l1_decimals).
-    /// Returns None if using ETH (no scaling needed).
-    /// Returns Err if native_token_l1_decimals > 18.
-    /// The scale factor converts L1 token amounts to L2 18-decimal amounts:
-    ///   l2_amount = l1_amount * scale_factor
-    pub fn native_token_scale_factor(&self) -> Option<U256> {
-        self.native_token_l1_address.map(|_| {
-            let decimals = self.native_token_l1_decimals();
-            assert!(
-                decimals <= 18,
-                "Native token L1 decimals ({decimals}) exceeds 18. Tokens with more than 18 decimals are not supported."
-            );
-            let exponent = 18 - decimals;
-            U256::from(10u64).pow(U256::from(exponent))
-        })
-    }
-
-    /// Validates the chain config at startup. Returns an error string if invalid.
-    pub fn validate(&self) -> Result<(), String> {
+    /// Validates native token decimals. Shared by `native_token_scale_factor()` and `validate()`.
+    fn validate_native_token_decimals(&self) -> Result<(), String> {
         if self.native_token_l1_address.is_some() {
             let decimals = self.native_token_l1_decimals();
+            // decimals is u8 so it cannot be negative, but must not exceed 18
             if decimals > 18 {
                 return Err(format!(
                     "Native token L1 decimals ({decimals}) exceeds 18. Tokens with more than 18 decimals are not supported."
@@ -456,6 +440,24 @@ impl ChainConfig {
             }
         }
         Ok(())
+    }
+
+    /// Computes the scale factor: 10^(18 - l1_decimals).
+    /// Returns Ok(None) if using ETH (no scaling needed).
+    /// Returns Err if native_token_l1_decimals > 18.
+    /// The scale factor converts L1 token amounts to L2 18-decimal amounts:
+    ///   l2_amount = l1_amount * scale_factor
+    pub fn native_token_scale_factor(&self) -> Result<Option<U256>, String> {
+        self.validate_native_token_decimals()?;
+        Ok(self.native_token_l1_address.map(|_| {
+            let exponent = 18 - self.native_token_l1_decimals();
+            U256::from(10u64).pow(U256::from(exponent))
+        }))
+    }
+
+    /// Validates the chain config at startup. Returns an error string if invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_native_token_decimals()
     }
 
     pub fn display_config(&self) -> String {
@@ -1194,7 +1196,7 @@ mod tests {
         };
         assert!(!config.uses_custom_native_token());
         assert_eq!(config.native_token_l1_decimals(), 18);
-        assert_eq!(config.native_token_scale_factor(), None);
+        assert_eq!(config.native_token_scale_factor().unwrap(), None);
     }
 
     #[test]
@@ -1211,7 +1213,10 @@ mod tests {
         assert!(config.uses_custom_native_token());
         assert_eq!(config.native_token_l1_decimals(), 18);
         // 10^(18-18) = 10^0 = 1
-        assert_eq!(config.native_token_scale_factor(), Some(U256::from(1)));
+        assert_eq!(
+            config.native_token_scale_factor().unwrap(),
+            Some(U256::from(1))
+        );
     }
 
     #[test]
@@ -1229,7 +1234,7 @@ mod tests {
         assert_eq!(config.native_token_l1_decimals(), 6);
         // 10^(18-6) = 10^12
         let expected = U256::from(10u64).pow(U256::from(12));
-        assert_eq!(config.native_token_scale_factor(), Some(expected));
+        assert_eq!(config.native_token_scale_factor().unwrap(), Some(expected));
     }
 
     #[test]
@@ -1245,12 +1250,14 @@ mod tests {
         };
         assert!(config.uses_custom_native_token());
         assert_eq!(config.native_token_l1_decimals(), 18);
-        assert_eq!(config.native_token_scale_factor(), Some(U256::from(1)));
+        assert_eq!(
+            config.native_token_scale_factor().unwrap(),
+            Some(U256::from(1))
+        );
     }
 
     #[test]
-    #[should_panic(expected = "exceeds 18")]
-    fn native_token_decimals_above_18_panics() {
+    fn native_token_decimals_above_18_returns_error() {
         let config = ChainConfig {
             chain_id: 1,
             deposit_contract_address: H160::zero(),
@@ -1260,8 +1267,10 @@ mod tests {
             native_token_l1_decimals: Some(24),
             ..Default::default()
         };
-        // This should panic because decimals > 18 is not supported
-        config.native_token_scale_factor();
+        // This should return Err because decimals > 18 is not supported
+        let result = config.native_token_scale_factor();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exceeds 18"));
     }
 
     #[test]

@@ -21,7 +21,7 @@ env:
 
 jobs:
   detect-changes:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'skip-ci') }}
     runs-on: ubuntu-latest
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}

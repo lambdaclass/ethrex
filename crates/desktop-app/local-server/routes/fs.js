@@ -11,8 +11,10 @@ router.get("/browse", (req, res) => {
     const dirPath = req.query.path || homeDir;
     const resolved = path.resolve(dirPath);
 
-    // Security: restrict browsing to home directory and below
-    if (!resolved.startsWith(homeDir)) {
+    // Security: restrict browsing to home directory and below.
+    // Use boundary-aware check to prevent prefix-match bypass
+    // (e.g., /Users/al matching /Users/alice).
+    if (resolved !== homeDir && !resolved.startsWith(homeDir + path.sep)) {
       return res.status(403).json({ error: "Access denied: path must be within home directory" });
     }
 

@@ -100,11 +100,22 @@ app.post("/api/open-url", (req, res) => {
     return;
   }
 
-  // Validate URL: only http/https on localhost or known domains
+  // Validate URL: only http/https on localhost or known Tokamak domains
   let parsed;
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: "Invalid URL" }); }
   if (!["http:", "https:"].includes(parsed.protocol)) {
     return res.status(400).json({ error: "Invalid URL protocol" });
+  }
+  const ALLOWED_HOSTNAMES = [
+    "localhost", "127.0.0.1", "0.0.0.0",
+    "tokamak.network", "sepolia.etherscan.io", "etherscan.io",
+    "holesky.etherscan.io",
+  ];
+  const isAllowed = ALLOWED_HOSTNAMES.some(
+    (h) => parsed.hostname === h || parsed.hostname.endsWith("." + h)
+  );
+  if (!isAllowed) {
+    return res.status(403).json({ error: "Hostname not in allowlist" });
   }
 
   const { execFile } = require("child_process");

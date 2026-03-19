@@ -297,7 +297,9 @@ impl BlockFetcher {
             Some(commit_tx),
             BlobsBundle::default(),
             chain_config.chain_id,
-            chain_config.native_token_scale_factor(),
+            chain_config
+                .native_token_scale_factor()
+                .map_err(BlockFetcherError::ConversionError)?,
         )
         .await?;
 
