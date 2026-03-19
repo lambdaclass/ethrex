@@ -1385,6 +1385,7 @@ name = "ethrex-blockchain"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "crossbeam 0.8.4",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-metrics",
@@ -1413,6 +1414,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hex-simd",
+ "indexmap 2.13.0",
  "k256",
  "kzg-rs",
  "lazy_static",
