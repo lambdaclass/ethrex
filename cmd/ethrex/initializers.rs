@@ -372,8 +372,7 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     let (rlpx_bind_addr, rlpx_external_addr): (IpAddr, IpAddr) =
         match (&opts.p2p_addr, &opts.nat_extip) {
             (_, Some(extip)) => {
-                let external: IpAddr =
-                    extip.parse().expect("Failed to parse --nat.extip address");
+                let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
                 let bind: IpAddr = opts
                     .p2p_addr
                     .as_deref()
