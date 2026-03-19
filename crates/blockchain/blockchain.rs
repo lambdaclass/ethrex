@@ -3052,14 +3052,30 @@ impl Blockchain {
             let mut snapshot = match engine.get_snapshot(&parent_hash) {
                 Some(snap) => snap,
                 None => {
-                    warn!(
+                    // No cached snapshot — bootstrap on-demand from Heimdall.
+                    // This happens after snap sync when the initial genesis snapshot
+                    // doesn't cover the current chain position.
+                    info!(
                         block = header.number,
                         parent = parent_header.number,
-                        "No snapshot for parent block, falling back to structural validation"
+                        "No snapshot for parent block, bootstrapping from Heimdall"
                     );
-                    ethrex_polygon::validation::validate_bor_header(header, parent_header)
-                        .map_err(InvalidBlockError::from)?;
-                    return Ok(());
+                    match tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(engine.bootstrap_snapshot(parent_header.number, parent_hash))
+                    }) {
+                        Ok(snap) => snap,
+                        Err(e) => {
+                            warn!(
+                                block = header.number,
+                                error = %e,
+                                "Failed to bootstrap snapshot, falling back to structural validation"
+                            );
+                            ethrex_polygon::validation::validate_bor_header(header, parent_header)
+                                .map_err(InvalidBlockError::from)?;
+                            return Ok(());
+                        }
+                    }
                 }
             };
             engine.verify_header(header, parent_header, &mut snapshot)?;
