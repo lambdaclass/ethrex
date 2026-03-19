@@ -20,7 +20,7 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::{U256, U512, types::Fork};
 
 /// Implementation for the `ADD` opcode.
 pub struct OpAddHandler;
@@ -72,7 +72,8 @@ pub struct OpDivHandler;
 impl OpcodeHandler for OpDivHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        vm.current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
+        let gas = if vm.env.config.fork >= Fork::Amsterdam { gas_cost::DIV_AMSTERDAM } else { gas_cost::DIV };
+        vm.current_call_frame.increase_consumed_gas(gas)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         match lhs.checked_div(rhs) {
@@ -89,8 +90,9 @@ pub struct OpSDivHandler;
 impl OpcodeHandler for OpSDivHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let gas = if vm.env.config.fork >= Fork::Amsterdam { gas_cost::SDIV_AMSTERDAM } else { gas_cost::SDIV };
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::SDIV)?;
+            .increase_consumed_gas(gas)?;
 
         let [mut lhs, mut rhs] = *vm.current_call_frame.stack.pop()?;
 
@@ -124,7 +126,8 @@ pub struct OpModHandler;
 impl OpcodeHandler for OpModHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        vm.current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
+        let gas = if vm.env.config.fork >= Fork::Amsterdam { gas_cost::MOD_AMSTERDAM } else { gas_cost::MOD };
+        vm.current_call_frame.increase_consumed_gas(gas)?;
 
         let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
         match lhs.checked_rem(rhs) {
@@ -200,8 +203,9 @@ pub struct OpMulModHandler;
 impl OpcodeHandler for OpMulModHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let gas = if vm.env.config.fork >= Fork::Amsterdam { gas_cost::MULMOD_AMSTERDAM } else { gas_cost::MULMOD };
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::MULMOD)?;
+            .increase_consumed_gas(gas)?;
 
         let [multiplicand, multiplier, modulus] = *vm.current_call_frame.stack.pop()?;
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {

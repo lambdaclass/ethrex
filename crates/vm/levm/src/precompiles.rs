@@ -15,10 +15,12 @@ use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
     errors::{InternalError, PrecompileError, VMError},
     gas_cost::{
-        self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
-        BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
-        BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST, ECMUL_COST, G1_MUL_COST, G2_MUL_COST,
-        POINT_EVALUATION_COST,
+        self, BLAKE2F_CONSTANT_COST_AMSTERDAM, BLAKE2F_ROUND_COST, BLAKE2F_ROUND_COST_AMSTERDAM,
+        BLS12_381_G1ADD_COST_AMSTERDAM, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
+        BLS12_381_G2ADD_COST_AMSTERDAM, BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST,
+        BLS12_381_MAP_FP_TO_G1_COST, BLS12_381_MAP_FP2_TO_G2_COST, ECADD_COST,
+        ECADD_COST_AMSTERDAM, ECMUL_COST, G1_MUL_COST, G2_MUL_COST, POINT_EVALUATION_COST,
+        POINT_EVALUATION_COST_AMSTERDAM,
     },
 };
 
@@ -692,13 +694,14 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
 pub fn ecadd(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    _fork: Fork,
+    fork: Fork,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128);
 
-    increase_precompile_consumed_gas(ECADD_COST, gas_remaining)?;
+    let cost = if fork >= Fork::Amsterdam { ECADD_COST_AMSTERDAM } else { ECADD_COST };
+    increase_precompile_consumed_gas(cost, gas_remaining)?;
 
     let (Some(first_point), Some(second_point)) =
         (parse_bn254_g1(&calldata, 0), parse_bn254_g1(&calldata, 64))
@@ -863,7 +866,7 @@ pub fn ecpairing(
 pub fn blake2f(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    _fork: Fork,
+    fork: Fork,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != 213 {
@@ -874,7 +877,9 @@ pub fn blake2f(
 
     let rounds = calldata.get_u32();
 
-    let gas_cost = u64::from(rounds) * BLAKE2F_ROUND_COST;
+    let constant_cost = if fork >= Fork::Amsterdam { BLAKE2F_CONSTANT_COST_AMSTERDAM } else { 0 };
+    let round_cost = if fork >= Fork::Amsterdam { BLAKE2F_ROUND_COST_AMSTERDAM } else { BLAKE2F_ROUND_COST };
+    let gas_cost = constant_cost + u64::from(rounds) * round_cost;
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     let mut h = [0; 8];
@@ -923,7 +928,7 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
 fn point_evaluation(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    _fork: Fork,
+    fork: Fork,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     if calldata.len() != 192 {
@@ -931,7 +936,7 @@ fn point_evaluation(
     }
 
     // Consume gas
-    let gas_cost = POINT_EVALUATION_COST;
+    let gas_cost = if fork >= Fork::Amsterdam { POINT_EVALUATION_COST_AMSTERDAM } else { POINT_EVALUATION_COST };
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
     // Parse inputs
@@ -1056,7 +1061,7 @@ fn parse_bls12_padded_fp(padded: &[u8; 64]) -> Result<[u8; 48], VMError> {
 pub fn bls12_g1add(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    _fork: Fork,
+    fork: Fork,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     let (x_data, calldata) = calldata
@@ -1070,7 +1075,8 @@ pub fn bls12_g1add(
     }
 
     // Apply precompile gas cost.
-    increase_precompile_consumed_gas(BLS12_381_G1ADD_COST, gas_remaining)
+    let cost = if fork >= Fork::Amsterdam { BLS12_381_G1ADD_COST_AMSTERDAM } else { BLS12_381_G1ADD_COST };
+    increase_precompile_consumed_gas(cost, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     // Parse two 128-byte padded G1 points into 48-byte unpadded coordinates.
@@ -1167,7 +1173,7 @@ pub fn bls12_g1msm(
 pub fn bls12_g2add(
     calldata: &Bytes,
     gas_remaining: &mut u64,
-    _fork: Fork,
+    fork: Fork,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     let (x_data, calldata) = calldata
@@ -1181,7 +1187,8 @@ pub fn bls12_g2add(
     }
 
     // Apply precompile gas cost.
-    increase_precompile_consumed_gas(BLS12_381_G2ADD_COST, gas_remaining)
+    let cost = if fork >= Fork::Amsterdam { BLS12_381_G2ADD_COST_AMSTERDAM } else { BLS12_381_G2ADD_COST };
+    increase_precompile_consumed_gas(cost, gas_remaining)
         .map_err(|_| PrecompileError::NotEnoughGas)?;
 
     // Parse two 256-byte padded G2 points into four 48-byte unpadded coordinates each.
