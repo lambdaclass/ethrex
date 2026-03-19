@@ -2143,24 +2143,34 @@ impl Blockchain {
 
         // Cache block hashes for the full batch so we can access them during
         // execution without having to store the blocks beforehand.
-        // Also include the last 256 block hashes from the store so that
-        // BLOCKHASH can resolve references to blocks from previous batches
-        // (they may not be canonical yet during import).
         let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
             blocks.iter().map(|b| (b.header.number, b.hash())).collect();
-        let first_number = first_block_header.number;
-        let lookback_start = first_number.saturating_sub(256);
-        for n in lookback_start..first_number {
-            if let Ok(Some(header)) = self.storage.get_block_header(n) {
-                block_hash_cache.entry(n).or_insert_with(|| header.hash());
-            }
-        }
 
         let parent_header = self
             .storage
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
+
+        // Walk the parent chain to cache the last 256 block hashes so that
+        // BLOCKHASH can resolve references to blocks from previous batches
+        // (they may not be canonical yet during import).
+        {
+            let mut hash = parent_header.hash();
+            let mut number = parent_header.number;
+            block_hash_cache.entry(number).or_insert(hash);
+            let lookback = first_block_header.number.saturating_sub(256);
+            while number > lookback {
+                match self.storage.get_block_header_by_hash(hash) {
+                    Ok(Some(header)) => {
+                        hash = header.parent_hash;
+                        number = number.saturating_sub(1);
+                        block_hash_cache.entry(number).or_insert(hash);
+                    }
+                    _ => break,
+                }
+            }
+        }
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,
