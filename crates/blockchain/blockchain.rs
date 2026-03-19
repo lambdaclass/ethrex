@@ -76,6 +76,7 @@ pub use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
+use ethrex_polygon::consensus::engine::BorEngine;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -196,6 +197,9 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Bor consensus engine for Polygon chains.
+    /// Present only when `options.type == BlockchainType::Polygon`.
+    pub bor_engine: Option<Arc<BorEngine>>,
 }
 
 /// Configuration options for the blockchain.
@@ -295,7 +299,11 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+    pub fn new(
+        store: Store,
+        blockchain_opts: BlockchainOptions,
+        bor_engine: Option<Arc<BorEngine>>,
+    ) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
@@ -303,6 +311,7 @@ impl Blockchain {
             polygon_sync_head: std::sync::Mutex::new(None),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            bor_engine,
         }
     }
 
@@ -314,6 +323,7 @@ impl Blockchain {
             polygon_sync_head: std::sync::Mutex::new(None),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            bor_engine: None,
         }
     }
 
@@ -333,21 +343,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         if matches!(self.options.r#type, BlockchainType::Polygon) {
-            // TODO(B9): Replace with BorEngine::verify_header() for full consensus validation.
-            // Currently only performs structural validation (gas, timestamps, Bor-specific fields).
-            // Missing: signer recovery from seal, authorization against validator set (snapshot),
-            // and difficulty validation (expected difficulty based on signer succession).
-            //
-            // To wire this in:
-            // 1. Add `Option<Arc<BorEngine>>` field to `Blockchain`
-            // 2. Initialize it with BorConfig + Heimdall URL during Polygon startup
-            // 3. Ensure parent snapshot is populated (via bootstrap_snapshot or cache)
-            // 4. Call: bor_engine.verify_header(&block.header, &parent_header, &mut parent_snapshot)
-            //
-            // BorEngine::verify_header is sync (no Heimdall calls), but obtaining the parent
-            // snapshot requires the cache to have been populated by bootstrap_snapshot (async).
-            ethrex_polygon::validation::validate_bor_header(&block.header, &parent_header)
-                .map_err(InvalidBlockError::from)?;
+            self.verify_bor_header(&block.header, &parent_header)?;
         } else {
             validate_block_pre_execution(
                 block,
@@ -395,9 +391,15 @@ impl Blockchain {
                 &chain_config,
                 &mut vm,
                 cumulative_gas,
+                self.bor_engine.as_deref(),
             )? {
                 execution_result.receipts.push(receipt);
             }
+
+            // Apply contract code upgrades (changeContractCodeIfNeeded).
+            // This runs AFTER system calls but BEFORE state root computation,
+            // matching Bor's Finalize order.
+            apply_polygon_block_alloc(block.header.number, &chain_config, &mut vm)?;
         }
 
         let account_updates = vm.get_state_transitions()?;
@@ -568,8 +570,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         if matches!(self.options.r#type, BlockchainType::Polygon) {
-            ethrex_polygon::validation::validate_bor_header(&block.header, parent_header)
-                .map_err(InvalidBlockError::from)?;
+            self.verify_bor_header(&block.header, parent_header)?;
         } else {
             validate_block_pre_execution(
                 block,
@@ -1441,8 +1442,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         if matches!(self.options.r#type, BlockchainType::Polygon) {
-            ethrex_polygon::validation::validate_bor_header(&block.header, parent_header)
-                .map_err(InvalidBlockError::from)?;
+            self.verify_bor_header(&block.header, parent_header)?;
         } else {
             validate_block_pre_execution(
                 block,
@@ -1466,9 +1466,13 @@ impl Blockchain {
                 chain_config,
                 vm,
                 cumulative_gas,
+                self.bor_engine.as_deref(),
             )? {
                 execution_result.receipts.push(receipt);
             }
+
+            // Apply contract code upgrades (changeContractCodeIfNeeded).
+            apply_polygon_block_alloc(block.header.number, chain_config, vm)?;
         }
 
         // Validate execution went alright
@@ -3028,6 +3032,45 @@ impl Blockchain {
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
         Ok(chain_config.fork(latest_block.timestamp))
     }
+
+    /// Verify a Bor header using the BorEngine if available, otherwise fall back
+    /// to structural validation only.
+    ///
+    /// When a BorEngine is present (normal Polygon operation), this performs full
+    /// consensus validation: structural checks, seal recovery, signer authorization
+    /// against the validator snapshot, and difficulty validation.
+    ///
+    /// Without a BorEngine (e.g. tests), falls back to `validate_bor_header` which
+    /// only checks structural fields.
+    fn verify_bor_header(
+        &self,
+        header: &BlockHeader,
+        parent_header: &BlockHeader,
+    ) -> Result<(), ChainError> {
+        if let Some(engine) = &self.bor_engine {
+            let parent_hash = parent_header.compute_block_hash();
+            let mut snapshot = match engine.get_snapshot(&parent_hash) {
+                Some(snap) => snap,
+                None => {
+                    warn!(
+                        block = header.number,
+                        parent = parent_header.number,
+                        "No snapshot for parent block, falling back to structural validation"
+                    );
+                    ethrex_polygon::validation::validate_bor_header(header, parent_header)
+                        .map_err(InvalidBlockError::from)?;
+                    return Ok(());
+                }
+            };
+            engine.verify_header(header, parent_header, &mut snapshot)?;
+            // Cache the updated snapshot (now includes this block's signer in recents).
+            engine.put_snapshot(snapshot);
+        } else {
+            ethrex_polygon::validation::validate_bor_header(header, parent_header)
+                .map_err(InvalidBlockError::from)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
@@ -3055,25 +3098,43 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
     Ok(evm)
 }
 
-/// Execute Polygon Bor system calls (commitState) and create the state sync receipt.
+/// Execute Polygon Bor system calls (commitSpan + commitState) and create the state sync receipt.
 ///
 /// In Bor, after all regular transactions are executed, system calls are run at sprint
-/// boundaries to sync state from Heimdall (L1→L2 bridge). The commitState calls target
-/// the StateReceiver contract (0x1001) and produce logs that are collected into a single
-/// "state sync receipt" (type 0x7F) appended after all regular receipts.
+/// boundaries to sync state from Heimdall (L1→L2 bridge). The execution order follows
+/// Bor's `Finalize`:
+///   1. `commitSpan` — at span boundaries (first block of last sprint in current span),
+///      commits the next span's validator/producer sets to the ValidatorSet contract (0x1000).
+///   2. `commitState` — at sprint-start blocks, commits state sync events from Heimdall
+///      to the StateReceiver contract (0x1001).
 ///
-/// Returns `Some(receipt)` if the block contains a StateSyncTransaction, `None` otherwise.
+/// Logs from both calls are collected into a single "state sync receipt" (type 0x7F)
+/// appended after all regular receipts.
+///
+/// Returns `Some(receipt)` if system calls produced logs, `None` otherwise.
 fn execute_polygon_system_calls(
     block: &Block,
     _parent_header: &BlockHeader,
     chain_config: &ChainConfig,
     vm: &mut Evm,
     cumulative_gas_used: u64,
+    bor_engine: Option<&BorEngine>,
 ) -> Result<Option<Receipt>, ChainError> {
     use ethrex_common::types::{Log, TxType};
+    use ethrex_polygon::consensus::engine::encode_validator_bytes;
     use ethrex_polygon::system_calls::{
-        MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, encode_commit_state,
+        MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, VALIDATOR_CONTRACT,
+        encode_commit_span, encode_commit_state,
     };
+
+    let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        .ok_or_else(|| {
+            ChainError::Custom(format!(
+                "No BorConfig for chain_id {}",
+                chain_config.chain_id
+            ))
+        })?;
+    let block_number = block.header.number;
 
     // Find the StateSyncTransaction in the block body (if any).
     // In Bor, this is the last transaction and contains the state sync event data.
@@ -3088,82 +3149,147 @@ fn execute_polygon_system_calls(
         .flatten()
         .collect();
 
-    // No state sync data → no receipt needed
-    if state_sync_data.is_empty() {
+    let need_span_commit = bor_config.need_to_commit_span(block_number);
+
+    // No state sync data and no span commit → no receipt needed
+    if state_sync_data.is_empty() && !need_span_commit {
         return Ok(None);
     }
 
     debug!(
-        block_number = block.header.number,
+        block_number,
         event_count = state_sync_data.len(),
-        "Executing Polygon state sync system calls"
+        need_span_commit,
+        "Executing Polygon system calls"
     );
-
-    // Compute sync_time = header.timestamp - state_sync_confirmation_delay.
-    // This matches Bor's time window: header.Time - stateSyncDelay.
-    let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
-        .ok_or_else(|| {
-            ChainError::Custom(format!(
-                "No BorConfig for chain_id {}",
-                chain_config.chain_id
-            ))
-        })?;
-    let delay = bor_config.get_state_sync_delay(block.header.number);
-    let sync_time = block.header.timestamp - delay;
-
-    // TODO: At span boundaries, commitSpan should also be executed before commitState.
-    // commitSpan logs are included in the state sync receipt alongside commitState logs.
-    // This requires Heimdall access to fetch span data, which is not yet available here.
-    // Span boundaries occur every ~6400 blocks.
 
     let mut all_logs: Vec<Log> = Vec::new();
 
-    for data in &state_sync_data {
-        // The `data` field in StateSyncData is the hex-encoded record bytes from Heimdall.
-        // In Bor's Go code, StateSyncData.Data is a `string` type (hex chars).
-        // When RLP-decoded into our Rust `Bytes`, it contains the ASCII hex characters.
-        let hex_str = std::str::from_utf8(&data.data).map_err(|e| {
-            ChainError::Custom(format!(
-                "Invalid UTF-8 in state sync data for event {}: {e}",
-                data.id
-            ))
-        })?;
-        let record_bytes =
-            hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str)).map_err(|e| {
+    // 1. commitSpan at span boundaries (BEFORE commitState, matching Bor's Finalize order)
+    if need_span_commit {
+        if let Some(engine) = bor_engine {
+            let current_span_id = bor_config.span_id_at(block_number);
+            let next_span_id = current_span_id + 1;
+
+            // Fetch the next span from Heimdall (async → sync bridge)
+            let next_span = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(engine.heimdall.fetch_span(next_span_id))
+            })
+            .map_err(|e| {
                 ChainError::Custom(format!(
-                    "Invalid hex in state sync data for event {}: {e}",
-                    data.id
+                    "Failed to fetch span {next_span_id} from Heimdall: {e}"
                 ))
             })?;
 
-        let calldata = encode_commit_state(sync_time, &record_bytes);
+            let validator_bytes = encode_validator_bytes(&next_span.validators);
+            let producer_bytes = encode_validator_bytes(&next_span.selected_producers);
+            let calldata = encode_commit_span(
+                next_span.id,
+                next_span.start_block,
+                next_span.end_block,
+                &validator_bytes,
+                &producer_bytes,
+            );
 
-        match vm.execute_polygon_system_call(
-            &block.header,
-            STATE_RECEIVER_CONTRACT,
-            SYSTEM_ADDRESS,
-            bytes::Bytes::from(calldata),
-            MAX_SYSTEM_CALL_GAS,
-        ) {
-            Ok(report) => {
-                // commitState reverts are non-fatal — collect logs only on success
-                if report.is_success() {
-                    all_logs.extend(report.logs);
+            debug!(
+                block_number,
+                span_id = next_span.id,
+                start = next_span.start_block,
+                end = next_span.end_block,
+                validators = next_span.validators.len(),
+                producers = next_span.selected_producers.len(),
+                "Executing commitSpan system call"
+            );
+
+            match vm.execute_polygon_system_call(
+                &block.header,
+                VALIDATOR_CONTRACT,
+                SYSTEM_ADDRESS,
+                bytes::Bytes::from(calldata),
+                MAX_SYSTEM_CALL_GAS,
+            ) {
+                Ok(report) => {
+                    if report.is_success() {
+                        all_logs.extend(report.logs);
+                    } else {
+                        // commitSpan reverts are fatal
+                        return Err(ChainError::Custom(format!(
+                            "commitSpan reverted at block {block_number} for span {}",
+                            next_span.id
+                        )));
+                    }
+                }
+                Err(e) => {
+                    return Err(ChainError::Custom(format!(
+                        "commitSpan system call failed at block {block_number}: {e}"
+                    )));
                 }
             }
-            Err(e) => {
-                // Non-fatal: log and continue to next event
-                warn!(
-                    event_id = data.id,
-                    error = %e,
-                    "Polygon commitState system call failed (non-fatal)"
-                );
+        } else {
+            warn!(
+                block_number,
+                "commitSpan needed but no BorEngine available — span commit skipped"
+            );
+        }
+    }
+
+    // 2. commitState for each state sync event
+    if !state_sync_data.is_empty() {
+        let delay = bor_config.get_state_sync_delay(block_number);
+        let sync_time = block.header.timestamp - delay;
+
+        for data in &state_sync_data {
+            // The `data` field in StateSyncData is the hex-encoded record bytes from Heimdall.
+            // In Bor's Go code, StateSyncData.Data is a `string` type (hex chars).
+            // When RLP-decoded into our Rust `Bytes`, it contains the ASCII hex characters.
+            let hex_str = std::str::from_utf8(&data.data).map_err(|e| {
+                ChainError::Custom(format!(
+                    "Invalid UTF-8 in state sync data for event {}: {e}",
+                    data.id
+                ))
+            })?;
+            let record_bytes =
+                hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str)).map_err(|e| {
+                    ChainError::Custom(format!(
+                        "Invalid hex in state sync data for event {}: {e}",
+                        data.id
+                    ))
+                })?;
+
+            let calldata = encode_commit_state(sync_time, &record_bytes);
+
+            match vm.execute_polygon_system_call(
+                &block.header,
+                STATE_RECEIVER_CONTRACT,
+                SYSTEM_ADDRESS,
+                bytes::Bytes::from(calldata),
+                MAX_SYSTEM_CALL_GAS,
+            ) {
+                Ok(report) => {
+                    // commitState reverts are non-fatal — collect logs only on success
+                    if report.is_success() {
+                        all_logs.extend(report.logs);
+                    }
+                }
+                Err(e) => {
+                    // Non-fatal: log and continue to next event
+                    warn!(
+                        event_id = data.id,
+                        error = %e,
+                        "Polygon commitState system call failed (non-fatal)"
+                    );
+                }
             }
         }
     }
 
+    // If no logs were produced by any system call, no receipt needed
+    if all_logs.is_empty() {
+        return Ok(None);
+    }
+
     debug!(
-        block_number = block.header.number,
+        block_number,
         log_count = all_logs.len(),
         cumulative_gas_used,
         "Created state sync receipt"
@@ -3174,6 +3300,66 @@ fn execute_polygon_system_calls(
     let receipt = Receipt::new(TxType::StateSync, true, cumulative_gas_used, all_logs);
 
     Ok(Some(receipt))
+}
+
+/// Apply Polygon block alloc updates (`changeContractCodeIfNeeded`).
+///
+/// At specific fork block numbers, Bor deploys or updates system contract code
+/// and optionally sets initial balances. These are direct state modifications that
+/// run AFTER system calls but BEFORE state root computation.
+///
+/// Matches Bor's `changeContractCodeIfNeeded(headerNumber, state)`:
+///   - For each address in the alloc: `state.SetCode(addr, account.Code)`
+///   - If the account's balance is zero: `state.SetBalance(addr, account.Balance)`
+fn apply_polygon_block_alloc(
+    block_number: u64,
+    chain_config: &ChainConfig,
+    vm: &mut Evm,
+) -> Result<(), ChainError> {
+    use ethrex_common::types::Code;
+
+    let bor_config = match ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id) {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+
+    let alloc_updates = match bor_config.block_alloc.get(&block_number) {
+        Some(updates) => updates,
+        None => return Ok(()),
+    };
+
+    debug!(
+        block_number,
+        account_count = alloc_updates.len(),
+        "Applying Polygon block alloc updates"
+    );
+
+    for (address, genesis_account) in alloc_updates {
+        // Set contract code (replicates Bor's state.SetCode(addr, account.Code))
+        if !genesis_account.code.is_empty() {
+            let code = Code::from_bytecode(genesis_account.code.clone());
+            let acc = vm.db.get_account_mut(*address).map_err(|e| {
+                ChainError::Custom(format!(
+                    "Failed to get account {address:?} at block {block_number}: {e}"
+                ))
+            })?;
+            acc.info.code_hash = code.hash;
+            vm.db.codes.entry(code.hash).or_insert(code);
+        }
+
+        // Set balance only if the account's current balance is zero
+        // (replicates Bor's: if state.GetBalance(addr) == 0 { state.SetBalance(...) })
+        let account = vm.db.get_account_mut(*address).map_err(|e| {
+            ChainError::Custom(format!(
+                "Failed to get account {address:?} at block {block_number}: {e}"
+            ))
+        })?;
+        if account.info.balance.is_zero() {
+            account.info.balance = genesis_account.balance;
+        }
+    }
+
+    Ok(())
 }
 
 /// Performs post-execution checks

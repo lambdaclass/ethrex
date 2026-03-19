@@ -57,6 +57,14 @@ pub struct BorEngine {
     latest_milestone: Mutex<Option<Milestone>>,
 }
 
+impl std::fmt::Debug for BorEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BorEngine")
+            .field("config", &"<BorConfig>")
+            .finish()
+    }
+}
+
 impl BorEngine {
     /// Creates a new BorEngine.
     ///
@@ -411,7 +419,7 @@ fn span_to_validator_set(span: &crate::heimdall::Span) -> Vec<super::snapshot::V
 /// Encode a list of Heimdall validators as Bor-format bytes.
 ///
 /// Each validator is 40 bytes: [20-byte address][20-byte big-endian padded voting power].
-fn encode_validator_bytes(validators: &[crate::heimdall::Validator]) -> Vec<u8> {
+pub fn encode_validator_bytes(validators: &[crate::heimdall::Validator]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(validators.len() * 40);
     for v in validators {
         bytes.extend_from_slice(v.signer.as_bytes());

@@ -23,6 +23,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
+use ethrex_polygon::consensus::engine::BorEngine;
 use ethrex_polygon::genesis::{bor_config_for_chain, polygon_genesis_block};
 use ethrex_polygon::heimdall::{HeimdallPoller, HeimdallPollerState};
 use ethrex_storage::{EngineType, Store, error::StoreError};
@@ -183,9 +184,13 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     }
 }
 
-pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
+pub fn init_blockchain(
+    store: Store,
+    blockchain_opts: BlockchainOptions,
+    bor_engine: Option<Arc<BorEngine>>,
+) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts).into()
+    Blockchain::new(store, blockchain_opts, bor_engine).into()
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -547,6 +552,14 @@ pub async fn init_l1(
         BlockchainType::L1
     };
 
+    // Create BorEngine for Polygon chains.
+    let bor_engine = if network.is_polygon() {
+        bor_config_for_chain(chain_id)
+            .map(|config| Arc::new(BorEngine::new(config, &opts.bor_heimdall)))
+    } else {
+        None
+    };
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
@@ -556,6 +569,7 @@ pub async fn init_l1(
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },
+        bor_engine,
     );
 
     regenerate_head_state(&store, &blockchain).await?;
@@ -739,7 +753,10 @@ pub async fn regenerate_head_state(
         debug!("Re-applying block {i} to regenerate state");
 
         let Some(block) = store.get_block_by_number(i).await? else {
-            warn!("Block {i} not found during state regeneration, rolling back head to block {}", i - 1);
+            warn!(
+                "Block {i} not found during state regeneration, rolling back head to block {}",
+                i - 1
+            );
             store.rollback_latest_block_number(i - 1)?;
             break;
         };

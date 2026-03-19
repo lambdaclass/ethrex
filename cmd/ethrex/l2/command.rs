@@ -455,7 +455,7 @@ impl Command {
                         r#type: blockchain_type,
                         ..Default::default()
                     };
-                    let blockchain = Blockchain::new(store.clone(), opts);
+                    let blockchain = Blockchain::new(store.clone(), opts, None);
 
                     for (i, block) in blocks.iter().enumerate() {
                         // Update blockchain with the block's fee config
