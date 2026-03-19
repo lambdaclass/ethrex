@@ -521,14 +521,12 @@ impl NodeRecord {
                     record
                         .pairs
                         .push(("ip6".into(), ipv6.encode_to_vec().into()));
-                    record.pairs.push((
-                        "tcp6".into(),
-                        network_config.tcp_port.encode_to_vec().into(),
-                    ));
-                    record.pairs.push((
-                        "udp6".into(),
-                        network_config.udp_port.encode_to_vec().into(),
-                    ));
+                    record
+                        .pairs
+                        .push(("tcp6".into(), network_config.tcp_port.encode_to_vec().into()));
+                    record
+                        .pairs
+                        .push(("udp6".into(), network_config.udp_port.encode_to_vec().into()));
                 }
             }
         }
