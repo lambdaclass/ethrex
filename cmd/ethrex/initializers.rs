@@ -574,6 +574,21 @@ pub async fn init_l1(
 
     regenerate_head_state(&store, &blockchain).await?;
 
+    // Bootstrap BorEngine snapshot so verify_header works from the first block.
+    if let Some(engine) = blockchain.bor_engine.as_ref() {
+        let latest = store.get_latest_block_number().await?;
+        if let Some(header) = store.get_block_header(latest)? {
+            match engine.bootstrap_snapshot(latest, header.hash()).await {
+                Ok(snap) => info!(
+                    block = latest,
+                    validators = snap.validator_set.len(),
+                    "Bootstrapped BorEngine snapshot"
+                ),
+                Err(e) => warn!("Failed to bootstrap BorEngine snapshot: {e}"),
+            }
+        }
+    }
+
     let signer = get_signer(datadir);
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
