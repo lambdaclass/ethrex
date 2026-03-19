@@ -510,27 +510,23 @@ impl NodeRecord {
                     record
                         .pairs
                         .push(("ip".into(), ipv4.encode_to_vec().into()));
-                    record.pairs.push((
-                        "tcp".into(),
-                        network_config.tcp_port.encode_to_vec().into(),
-                    ));
-                    record.pairs.push((
-                        "udp".into(),
-                        network_config.udp_port.encode_to_vec().into(),
-                    ));
+                    record
+                        .pairs
+                        .push(("tcp".into(), network_config.tcp_port.encode_to_vec().into()));
+                    record
+                        .pairs
+                        .push(("udp".into(), network_config.udp_port.encode_to_vec().into()));
                 }
                 IpAddr::V6(ipv6) => {
                     record
                         .pairs
                         .push(("ip6".into(), ipv6.encode_to_vec().into()));
-                    record.pairs.push((
-                        "tcp6".into(),
-                        network_config.tcp_port.encode_to_vec().into(),
-                    ));
-                    record.pairs.push((
-                        "udp6".into(),
-                        network_config.udp_port.encode_to_vec().into(),
-                    ));
+                    record
+                        .pairs
+                        .push(("tcp6".into(), network_config.tcp_port.encode_to_vec().into()));
+                    record
+                        .pairs
+                        .push(("udp6".into(), network_config.udp_port.encode_to_vec().into()));
                 }
             }
         }
