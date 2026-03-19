@@ -95,7 +95,11 @@ impl SyncManager {
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         // Skip if the auto-switch already transitioned to full sync (snap_enabled is now false)
-        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) {
+        // Skip on Polygon: snap sync needs a real target hash from a peer, which we don't
+        // have yet at startup. The Polygon sync bridge will trigger sync once a peer connects.
+        let chain_id = store.get_chain_config().chain_id;
+        let is_polygon = chain_id == 137 || chain_id == 80002;
+        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) && !is_polygon {
             sync_manager.start_sync();
         }
         sync_manager
