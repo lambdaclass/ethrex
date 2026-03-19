@@ -733,14 +733,15 @@ pub async fn regenerate_head_state(
 
     info!("Regenerating state from block {last_state_number} to {head_block_number}");
 
-    // Re-apply blocks from the last known state root to the head block
+    // Re-apply blocks from the last known state root to the head block.
+    // Stop early if a block is missing (can happen after interrupted batch sync).
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
-            .get_block_by_number(i)
-            .await?
-            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+        let Some(block) = store.get_block_by_number(i).await? else {
+            warn!("Block {i} not found during state regeneration, stopping at block {}", i - 1);
+            break;
+        };
 
         blockchain.add_block_pipeline(block, None)?;
     }
