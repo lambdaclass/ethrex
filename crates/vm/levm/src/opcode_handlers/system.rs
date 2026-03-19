@@ -97,7 +97,10 @@ impl OpcodeHandler for OpCallHandler {
         let gas_left = if needs_state_gas {
             let from_reservoir = vm.state_gas_reservoir.min(STATE_GAS_NEW_ACCOUNT);
             // Safe: from_reservoir = min(reservoir, STATE_GAS_NEW_ACCOUNT) <= STATE_GAS_NEW_ACCOUNT
-            #[expect(clippy::arithmetic_side_effects, reason = "from_reservoir <= STATE_GAS_NEW_ACCOUNT")]
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "from_reservoir <= STATE_GAS_NEW_ACCOUNT"
+            )]
             let spill = STATE_GAS_NEW_ACCOUNT - from_reservoir;
             gas_left
                 .checked_sub(spill)
