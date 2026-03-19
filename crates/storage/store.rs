@@ -1472,6 +1472,15 @@ impl Store {
         }
     }
 
+    /// Open a store with reduced memory settings (for replay / read-heavy workloads).
+    #[cfg(feature = "rocksdb")]
+    pub fn new_low_memory(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let db_path = path.as_ref().to_path_buf();
+        validate_store_schema_version(&db_path)?;
+        let backend = Arc::new(RocksDBBackend::open_low_memory(path)?);
+        Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+    }
+
     fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,

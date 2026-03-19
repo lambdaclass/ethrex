@@ -92,6 +92,15 @@ impl BinaryTrieState {
     pub fn open(path: &std::path::Path) -> Result<Self, BinaryTrieError> {
         let mut opts = rocksdb::Options::default();
         opts.create_if_missing(true);
+
+        // Limit RocksDB memory usage: 256MB block cache, small write buffers.
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        block_opts.set_block_cache(&rocksdb::Cache::new_lru_cache(256 * 1024 * 1024));
+        block_opts.set_cache_index_and_filter_blocks(true);
+        opts.set_block_based_table_factory(&block_opts);
+        opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
+        opts.set_max_write_buffer_number(2);
+
         let db = Arc::new(
             rocksdb::DB::open(&opts, path)
                 .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?,

@@ -201,6 +201,58 @@ impl RocksDBBackend {
         }
         Ok(Self { db: Arc::new(db) })
     }
+
+    /// Open a RocksDB store with minimal memory settings.
+    ///
+    /// Intended for read-heavy workloads (e.g. replay) where the full write-
+    /// optimized configuration wastes memory. Uses a shared 512MB block cache
+    /// and small write buffers across all column families.
+    pub fn open_low_memory(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        opts.set_max_open_files(256);
+        opts.set_max_background_jobs(2);
+        opts.set_db_write_buffer_size(64 * 1024 * 1024); // 64MB (was 1GB)
+        opts.set_write_buffer_size(16 * 1024 * 1024); // 16MB per CF
+        opts.set_max_write_buffer_number(2);
+        opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        // Shared block cache: 512MB total for all CFs.
+        let cache = rocksdb::Cache::new_lru_cache(512 * 1024 * 1024);
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+        block_opts.set_cache_index_and_filter_blocks(true);
+
+        let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
+            .unwrap_or_else(|_| vec!["default".to_string()]);
+
+        let mut all_cfs_to_open = HashSet::new();
+        all_cfs_to_open.extend(existing_cfs.iter().cloned());
+        all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
+
+        let cf_descriptors: Vec<_> = all_cfs_to_open
+            .iter()
+            .map(|cf_name| {
+                let mut cf_opts = Options::default();
+                cf_opts.set_write_buffer_size(16 * 1024 * 1024);
+                cf_opts.set_max_write_buffer_number(2);
+                cf_opts.set_block_based_table_factory(&block_opts);
+                ColumnFamilyDescriptor::new(cf_name, cf_opts)
+            })
+            .collect();
+
+        let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
+            &opts,
+            path.as_ref(),
+            cf_descriptors,
+        )
+        .map_err(|e| {
+            StoreError::Custom(format!("Failed to open RocksDB (low-memory): {}", e))
+        })?;
+
+        Ok(Self { db: Arc::new(db) })
+    }
 }
 
 impl Drop for RocksDBBackend {

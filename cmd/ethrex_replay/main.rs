@@ -3,7 +3,7 @@ mod replay;
 use anyhow::{Context, Result};
 use clap::Parser;
 use ethrex_common::types::Genesis;
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::Store;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -67,10 +67,11 @@ async fn main() -> Result<()> {
     let genesis: Genesis =
         serde_json::from_reader(genesis_file).context("Failed to parse genesis JSON")?;
 
-    // Open the existing RocksDB store (block source).
+    // Open the existing RocksDB store (block source) with low-memory settings.
+    // The replay only reads blocks; the full write-optimized config wastes ~20GB.
     info!("Opening store at {}", args.store_path.display());
     let store =
-        Store::new(&args.store_path, EngineType::RocksDB).context("Failed to open store")?;
+        Store::new_low_memory(&args.store_path).context("Failed to open store")?;
     store
         .load_initial_state()
         .await
