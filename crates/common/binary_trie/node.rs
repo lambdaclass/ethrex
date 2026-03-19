@@ -18,6 +18,21 @@ pub enum Node {
 /// Layout: index 0 = subtree root, indices 255..510 = leaf hashes (256 leaves).
 pub const SUBTREE_SIZE: usize = 511;
 
+impl Node {
+    /// Strip cached hashes and subtree caches to reduce memory footprint.
+    ///
+    /// After stripping, a StemNode goes from ~25KB to ~8.5KB.
+    pub fn strip_caches(&mut self) {
+        match self {
+            Node::Internal(n) => n.cached_hash = None,
+            Node::Stem(n) => {
+                n.cached_hash = None;
+                n.cached_subtree = None;
+            }
+        }
+    }
+}
+
 /// An internal branching node with a left (bit=0) and right (bit=1) child.
 /// Children are referenced by NodeId rather than by pointer; the NodeStore is
 /// responsible for resolving IDs to nodes.

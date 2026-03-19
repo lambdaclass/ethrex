@@ -90,9 +90,9 @@ impl VmDatabase for BinaryTrieVmDb {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        let state = self
+        let mut state = self
             .state
-            .read()
+            .write()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
             .get_account_code(&code_hash)
@@ -104,9 +104,9 @@ impl VmDatabase for BinaryTrieVmDb {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
-        let state = self
+        let mut state = self
             .state
-            .read()
+            .write()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
             .get_account_code(&code_hash)

@@ -15,7 +15,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use ethrex_vm::backends::Evm;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 pub struct BlockReplayer {
     /// Source of blocks (existing MPT node's DB).
@@ -181,6 +181,16 @@ impl BlockReplayer {
                     hex::encode(root),
                     bps
                 );
+
+                // Log memory stats so we can spot unbounded growth.
+                if let Ok(state) = self.state.read() {
+                    let (clean, warm, dirty, freed, codes, storage_addrs) =
+                        state.memory_stats();
+                    info!(
+                        "  mem: clean={clean} warm={warm} dirty={dirty} freed={freed} \
+                         codes={codes} storage_addrs={storage_addrs}"
+                    );
+                }
             }
 
             // Flush checkpoint if configured.

@@ -10,6 +10,7 @@ license.workspace = true
 blake3 = "1"
 bytes.workspace = true
 ethrex-common.workspace = true
+lru.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
 rocksdb = { workspace = true, optional = true }

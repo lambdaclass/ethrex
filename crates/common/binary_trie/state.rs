@@ -190,8 +190,23 @@ impl BinaryTrieState {
         db.write(batch)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
 
+        // Sliding-window eviction: keep only the entries that were dirty
+        // (recently modified = likely hot), drop everything else.  On a cache
+        // miss, entries are reloaded from RocksDB on demand.
+        self.code_store = self
+            .dirty_codes
+            .iter()
+            .filter_map(|h| self.code_store.remove_entry(h))
+            .collect();
+        self.storage_keys = self
+            .dirty_storage_keys
+            .iter()
+            .filter_map(|a| self.storage_keys.remove_entry(a))
+            .collect();
+
         self.dirty_codes.clear();
         self.dirty_storage_keys.clear();
+
         Ok(())
     }
 
@@ -199,8 +214,13 @@ impl BinaryTrieState {
     ///
     /// Takes `&mut self` because computed hashes are cached back into the trie
     /// nodes for incremental reuse on subsequent calls.
+    ///
+    /// After computing the root, strips subtree caches from dirty nodes to
+    /// reduce memory between blocks (~16KB saved per dirty StemNode).
     pub fn state_root(&mut self) -> [u8; 32] {
-        merkelize(&mut self.trie)
+        let root = merkelize(&mut self.trie);
+        self.trie.store.strip_dirty_subtrees();
+        root
     }
 
     /// Read account state from the binary trie.
@@ -226,10 +246,7 @@ impl BinaryTrieState {
         // The VM uses storage_root != EMPTY_TRIE_HASH to detect whether an account
         // has storage. We return EMPTY_TRIE_HASH when no storage is tracked, and
         // H256(1) as a sentinel when storage exists.
-        let has_storage = self
-            .storage_keys
-            .get(address)
-            .is_some_and(|keys| !keys.is_empty());
+        let has_storage = self.has_storage_keys(address);
         let storage_root = if has_storage {
             H256::from_low_u64_be(1)
         } else {
@@ -251,9 +268,24 @@ impl BinaryTrieState {
         self.trie.get(tree_key).map(|v| U256::from_big_endian(&v))
     }
 
-    /// Look up code by its keccak256 hash from the in-memory code store.
-    pub fn get_account_code(&self, code_hash: &H256) -> Option<Bytes> {
-        self.code_store.get(code_hash).cloned()
+    /// Look up code by its keccak256 hash.
+    ///
+    /// Checks the in-memory cache first; on a miss, reloads from RocksDB.
+    pub fn get_account_code(&mut self, code_hash: &H256) -> Option<Bytes> {
+        if let Some(code) = self.code_store.get(code_hash) {
+            return Some(code.clone());
+        }
+        #[cfg(feature = "rocksdb")]
+        if let Some(db) = self.db.as_ref() {
+            let mut key = vec![CODE_PREFIX];
+            key.extend_from_slice(code_hash.as_bytes());
+            if let Ok(Some(bytes)) = db.get(&key) {
+                let code = Bytes::copy_from_slice(&bytes);
+                self.code_store.insert(*code_hash, code.clone());
+                return Some(code);
+            }
+        }
+        None
     }
 
     /// Get code size from basic_data. Returns 0 if account doesn't exist.
@@ -385,9 +417,63 @@ impl BinaryTrieState {
         Ok(())
     }
 
+    /// Return sizes of the main in-memory collections for diagnostics.
+    ///
+    /// Returns `(clean_cache, warm, dirty_nodes, freed, code_store, storage_keys_accounts)`.
+    pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize, usize) {
+        (
+            self.trie.store.clean_cache_len(),
+            self.trie.store.warm_len(),
+            self.trie.store.dirty_len(),
+            self.trie.store.freed_len(),
+            self.code_store.len(),
+            self.storage_keys.len(),
+        )
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /// Check whether `address` has any tracked storage keys.
+    ///
+    /// Checks in-memory cache first; on a miss, reloads from RocksDB.
+    fn has_storage_keys(&mut self, address: &Address) -> bool {
+        if let Some(keys) = self.storage_keys.get(address) {
+            return !keys.is_empty();
+        }
+        self.reload_storage_keys(address)
+    }
+
+    /// Reload storage_keys for a single address from RocksDB.
+    /// Returns true if the address has non-empty storage keys.
+    #[cfg(feature = "rocksdb")]
+    fn reload_storage_keys(&mut self, address: &Address) -> bool {
+        let Some(db) = self.db.as_ref() else {
+            return false;
+        };
+        let mut key = vec![STORAGE_KEYS_PREFIX];
+        key.extend_from_slice(address.as_bytes());
+        if let Ok(Some(value)) = db.get(&key) {
+            if !value.is_empty() {
+                let mut keys = FxHashSet::default();
+                let mut offset = 0usize;
+                while offset + 32 <= value.len() {
+                    keys.insert(H256::from_slice(&value[offset..offset + 32]));
+                    offset += 32;
+                }
+                let has = !keys.is_empty();
+                self.storage_keys.insert(*address, keys);
+                return has;
+            }
+        }
+        false
+    }
+
+    #[cfg(not(feature = "rocksdb"))]
+    fn reload_storage_keys(&mut self, _address: &Address) -> bool {
+        false
+    }
 
     /// Write basic_data leaf for an account.
     ///
@@ -475,6 +561,10 @@ impl BinaryTrieState {
 
     /// Clear all storage slots for an account using the tracked storage_keys.
     fn clear_account_storage(&mut self, address: &Address) -> Result<(), BinaryTrieError> {
+        // Ensure storage_keys are loaded if they were evicted.
+        if !self.storage_keys.contains_key(address) {
+            self.reload_storage_keys(address);
+        }
         if let Some(keys) = self.storage_keys.remove(address) {
             for key in keys {
                 let storage_key = U256::from_big_endian(key.as_bytes());
@@ -918,7 +1008,7 @@ mod tests {
     // Extra: get_account_code returns None for unknown hash.
     #[test]
     fn test_get_account_code_unknown_hash() {
-        let state = BinaryTrieState::new();
+        let mut state = BinaryTrieState::new();
         assert!(state.get_account_code(&H256::zero()).is_none());
     }
 

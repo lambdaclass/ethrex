@@ -1,9 +1,19 @@
+use std::num::NonZeroUsize;
+
+use lru::LruCache;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::BinaryTrieError;
 #[cfg(any(test, feature = "rocksdb"))]
 use crate::node::{InternalNode, STEM_VALUES, StemNode};
 use crate::node::{Node, NodeId};
+
+/// Default maximum number of clean nodes kept in the LRU cache.
+///
+/// Node sizes vary widely: InternalNode ≈ 65 bytes, StemNode ≈ 8.5 KB
+/// (without subtree cache, which is stripped on demote). A cap of 2M
+/// gives roughly 2M * ~4KB avg ≈ ~8 GB, suitable for 32+ GB machines.
+const DEFAULT_CLEAN_CACHE_CAP: usize = 2_000_000;
 
 // Key prefixes for RocksDB storage
 #[cfg(any(test, feature = "rocksdb"))]
@@ -163,8 +173,19 @@ fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
 /// - `take` removes the node from the cache so the caller can modify it before
 ///   calling `put` or `free`.
 pub struct NodeStore {
-    cache: FxHashMap<NodeId, Node>,
-    dirty: FxHashSet<NodeId>,
+    /// Dirty (modified) nodes — guaranteed to stay in memory until flush.
+    dirty_nodes: FxHashMap<NodeId, Node>,
+    /// Tracks which node IDs are dirty. Survives `take`/`put_clean` cycles
+    /// (e.g. during merkelization) so that `put_clean` routes the node back
+    /// to `dirty_nodes` instead of the clean LRU cache.
+    dirty_ids: FxHashSet<NodeId>,
+    /// Warm (recently flushed) nodes — read-only, from the previous checkpoint
+    /// interval. Avoids the post-checkpoint cold-start by keeping the hot
+    /// working set in memory without LRU churn.
+    warm_nodes: FxHashMap<NodeId, Node>,
+    /// Clean (read-only) nodes — LRU-evicted when the cap is reached.
+    clean_cache: LruCache<NodeId, Node>,
+    /// IDs of nodes scheduled for deletion on the next flush.
     freed: FxHashSet<NodeId>,
     next_id: NodeId,
     #[cfg(feature = "rocksdb")]
@@ -175,8 +196,10 @@ impl NodeStore {
     /// Create a pure in-memory NodeStore (no persistence).
     pub fn new_memory() -> Self {
         Self {
-            cache: FxHashMap::default(),
-            dirty: FxHashSet::default(),
+            dirty_nodes: FxHashMap::default(),
+            dirty_ids: FxHashSet::default(),
+            warm_nodes: FxHashMap::default(),
+            clean_cache: LruCache::new(NonZeroUsize::new(DEFAULT_CLEAN_CACHE_CAP).unwrap()),
             freed: FxHashSet::default(),
             next_id: 1,
             #[cfg(feature = "rocksdb")]
@@ -198,8 +221,10 @@ impl NodeStore {
         };
 
         Ok(Self {
-            cache: FxHashMap::default(),
-            dirty: FxHashSet::default(),
+            dirty_nodes: FxHashMap::default(),
+            dirty_ids: FxHashSet::default(),
+            warm_nodes: FxHashMap::default(),
+            clean_cache: LruCache::new(NonZeroUsize::new(DEFAULT_CLEAN_CACHE_CAP).unwrap()),
             freed: FxHashSet::default(),
             next_id,
             db: Some(db),
@@ -225,40 +250,50 @@ impl NodeStore {
         id
     }
 
-    /// Create a new node, assign it an ID, insert into cache, and mark dirty.
+    /// Create a new node, assign it an ID, insert into dirty map.
     pub fn create(&mut self, node: Node) -> NodeId {
         let id = self.alloc_id();
-        self.cache.insert(id, node);
-        self.dirty.insert(id);
+        self.dirty_nodes.insert(id, node);
+        self.dirty_ids.insert(id);
         id
     }
 
     /// Get a shared reference to a node by ID.
     ///
-    /// On a cache miss, attempts to load from RocksDB (if a database is
-    /// configured). Returns `NodeNotFound` if the node is absent from both.
+    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → RocksDB.
     pub fn get(&mut self, id: NodeId) -> Result<&Node, BinaryTrieError> {
-        // Load from DB if not in cache.
-        if !self.cache.contains_key(&id) {
+        if self.dirty_nodes.contains_key(&id) {
+            return Ok(self.dirty_nodes.get(&id).unwrap());
+        }
+        if self.warm_nodes.contains_key(&id) {
+            return Ok(self.warm_nodes.get(&id).unwrap());
+        }
+        // Check clean cache; on miss, load from DB.
+        if !self.clean_cache.contains(&id) {
             #[cfg(feature = "rocksdb")]
             {
                 let node = self.load_from_db(id)?;
-                self.cache.insert(id, node);
+                self.clean_cache.put(id, node);
             }
             #[cfg(not(feature = "rocksdb"))]
             {
                 return Err(BinaryTrieError::NodeNotFound(id));
             }
         }
-        Ok(self.cache.get(&id).unwrap())
+        Ok(self.clean_cache.get(&id).unwrap())
     }
 
-    /// Remove a node from the cache and return it.
+    /// Remove a node from the store and return it.
     ///
     /// The caller must return the node via `put` or `free` on all code paths.
-    /// On a cache miss, attempts to load from RocksDB first.
     pub fn take(&mut self, id: NodeId) -> Result<Node, BinaryTrieError> {
-        if let Some(node) = self.cache.remove(&id) {
+        if let Some(node) = self.dirty_nodes.remove(&id) {
+            return Ok(node);
+        }
+        if let Some(node) = self.warm_nodes.remove(&id) {
+            return Ok(node);
+        }
+        if let Some(node) = self.clean_cache.pop(&id) {
             return Ok(node);
         }
         #[cfg(feature = "rocksdb")]
@@ -273,32 +308,39 @@ impl NodeStore {
 
     /// Put a node back (or update an existing one). Marks the node dirty.
     pub fn put(&mut self, id: NodeId, node: Node) {
-        self.cache.insert(id, node);
-        self.dirty.insert(id);
-        // If it was in the freed set (shouldn't happen in normal use), un-free it.
+        self.warm_nodes.remove(&id);
+        self.clean_cache.pop(&id);
+        self.dirty_nodes.insert(id, node);
+        self.dirty_ids.insert(id);
         self.freed.remove(&id);
     }
 
     /// Put a node back without marking it dirty.
     ///
-    /// Use this when only the in-memory cache needs to be updated — for example,
-    /// after computing and storing a `cached_hash` on a node that was otherwise
-    /// not mutated.
+    /// Uses `dirty_ids` (not `dirty_nodes`) to check dirtiness, because the
+    /// node may have been temporarily removed by `take` during merkelization.
     pub fn put_clean(&mut self, id: NodeId, node: Node) {
-        self.cache.insert(id, node);
+        if self.dirty_ids.contains(&id) {
+            self.dirty_nodes.insert(id, node);
+        } else {
+            self.clean_cache.put(id, node);
+        }
     }
 
     /// Schedule a node for deletion on the next `flush`.
     pub fn free(&mut self, id: NodeId) {
-        self.cache.remove(&id);
-        self.dirty.remove(&id);
+        self.dirty_nodes.remove(&id);
+        self.dirty_ids.remove(&id);
+        self.warm_nodes.remove(&id);
+        self.clean_cache.pop(&id);
         self.freed.insert(id);
     }
 
     /// Flush all dirty and freed nodes to RocksDB, writing the root and
     /// next_id metadata atomically via a `WriteBatch`.
     ///
-    /// After flushing, the dirty and freed sets are cleared.
+    /// After flushing, dirty nodes are demoted to the clean cache and the
+    /// freed set is cleared.
     #[cfg(feature = "rocksdb")]
     pub fn flush(&mut self, root: Option<NodeId>) -> Result<(), BinaryTrieError> {
         let db = match self.db.as_ref() {
@@ -312,7 +354,7 @@ impl NodeStore {
         db.write(batch)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
 
-        self.dirty.clear();
+        self.rotate_generations();
         self.freed.clear();
         Ok(())
     }
@@ -321,33 +363,22 @@ impl NodeStore {
     /// `WriteBatch`. Used by `BinaryTrieState::flush` to build a single atomic
     /// batch that also contains code_store and storage_keys entries.
     ///
-    /// Clears the dirty/freed sets and evicts all nodes from the cache to
-    /// bound memory usage. Evicted nodes are reloaded from RocksDB on the
-    /// next access (lazy loading).
+    /// After writing, performs generational rotation (dirty → warm → LRU).
     #[cfg(feature = "rocksdb")]
     pub fn flush_to_batch(&mut self, batch: &mut rocksdb::WriteBatch, root: Option<NodeId>) {
         self.write_to_batch(batch, root);
-        self.dirty.clear();
+        self.rotate_generations();
         self.freed.clear();
-        self.cache.clear();
     }
 
     /// Internal helper: writes dirty nodes, freed deletions, and metadata into `batch`.
-    /// Does NOT clear dirty/freed — callers do that after the batch is committed.
     #[cfg(feature = "rocksdb")]
     fn write_to_batch(&self, batch: &mut rocksdb::WriteBatch, root: Option<NodeId>) {
         // Write all dirty nodes.
-        for &id in &self.dirty {
-            if let Some(node) = self.cache.get(&id) {
-                let key = node_key(id);
-                let bytes = serialize_node(node);
-                batch.put(key, bytes);
-            } else {
-                debug_assert!(
-                    false,
-                    "dirty node {id} not in cache at flush time — likely take/put imbalance"
-                );
-            }
+        for (id, node) in &self.dirty_nodes {
+            let key = node_key(*id);
+            let bytes = serialize_node(node);
+            batch.put(key, bytes);
         }
 
         // Delete all freed nodes.
@@ -363,9 +394,61 @@ impl NodeStore {
         batch.put(META_NEXT_ID, self.next_id.to_le_bytes());
     }
 
+    /// Strip subtree caches from all dirty nodes to reduce memory.
+    ///
+    /// Called after `state_root()` — the subtree caches are only needed during
+    /// merkelization and will be rebuilt on the next call if needed. This
+    /// reduces dirty StemNodes from ~25KB to ~8.5KB each.
+    pub fn strip_dirty_subtrees(&mut self) {
+        for node in self.dirty_nodes.values_mut() {
+            if let Node::Stem(stem) = node {
+                stem.cached_subtree = None;
+            }
+        }
+    }
+
+    /// Generational rotation: old warm → LRU, dirty → warm.
+    ///
+    /// This avoids the post-checkpoint cold-start. The just-flushed dirty
+    /// nodes become the warm pool (fast HashMap lookups, no LRU churn).
+    /// The previous warm pool (now 2 intervals old) is demoted to the LRU.
+    fn rotate_generations(&mut self) {
+        // Demote old warm nodes into the LRU (strip caches to save memory).
+        for (id, mut node) in self.warm_nodes.drain() {
+            node.strip_caches();
+            self.clean_cache.put(id, node);
+        }
+        // Move dirty nodes into warm (strip subtrees, keep as hot read-only).
+        self.warm_nodes = std::mem::take(&mut self.dirty_nodes);
+        for node in self.warm_nodes.values_mut() {
+            node.strip_caches();
+        }
+        self.dirty_ids.clear();
+    }
+
     /// Return the next ID that will be allocated (for testing/debugging).
     pub fn next_id(&self) -> NodeId {
         self.next_id
+    }
+
+    /// Return the number of clean nodes in the LRU cache.
+    pub fn clean_cache_len(&self) -> usize {
+        self.clean_cache.len()
+    }
+
+    /// Return the number of warm (recently flushed) nodes.
+    pub fn warm_len(&self) -> usize {
+        self.warm_nodes.len()
+    }
+
+    /// Return the number of dirty nodes pending flush.
+    pub fn dirty_len(&self) -> usize {
+        self.dirty_nodes.len()
+    }
+
+    /// Return the number of freed nodes pending flush.
+    pub fn freed_len(&self) -> usize {
+        self.freed.len()
     }
 
     // -----------------------------------------------------------------------
@@ -472,12 +555,46 @@ mod tests {
     fn put_clean_does_not_mark_dirty() {
         let mut store = NodeStore::new_memory();
         let id = store.create(Node::Internal(InternalNode::new(None, None)));
-        // Drain dirty set.
-        store.dirty.clear();
+        // Rotate generations (simulates a flush).
+        store.rotate_generations();
 
         store.put_clean(id, Node::Internal(InternalNode::new(Some(2), Some(3))));
-        assert!(!store.dirty.contains(&id));
-        assert!(store.cache.contains_key(&id));
+        assert!(!store.dirty_ids.contains(&id));
+        assert!(!store.dirty_nodes.contains_key(&id));
+        assert!(store.clean_cache.contains(&id));
+    }
+
+    #[test]
+    fn put_clean_keeps_dirty_node_in_dirty_map() {
+        let mut store = NodeStore::new_memory();
+        let id = store.create(Node::Internal(InternalNode::new(None, None)));
+
+        // Simulate take/put_clean cycle (as merkelization does).
+        let node = store.take(id).unwrap();
+        store.put_clean(id, node);
+
+        // Node should still be in dirty_nodes (not demoted to clean_cache).
+        assert!(store.dirty_ids.contains(&id));
+        assert!(store.dirty_nodes.contains_key(&id));
+        assert!(!store.clean_cache.contains(&id));
+    }
+
+    #[test]
+    fn rotate_generations_moves_dirty_to_warm() {
+        let mut store = NodeStore::new_memory();
+        let id = store.create(Node::Internal(InternalNode::new(None, None)));
+        assert!(store.dirty_nodes.contains_key(&id));
+
+        store.rotate_generations();
+
+        assert!(!store.dirty_nodes.contains_key(&id));
+        assert!(store.warm_nodes.contains_key(&id));
+        assert!(!store.dirty_ids.contains(&id));
+
+        // Second rotation moves warm to clean cache.
+        store.rotate_generations();
+        assert!(!store.warm_nodes.contains_key(&id));
+        assert!(store.clean_cache.contains(&id));
     }
 
     #[test]
@@ -487,7 +604,9 @@ mod tests {
         store.free(id);
 
         assert!(store.freed.contains(&id));
-        assert!(!store.cache.contains_key(&id));
+        assert!(!store.dirty_nodes.contains_key(&id));
+        assert!(!store.warm_nodes.contains_key(&id));
+        assert!(!store.clean_cache.contains(&id));
         assert!(matches!(
             store.get(id),
             Err(BinaryTrieError::NodeNotFound(_))
