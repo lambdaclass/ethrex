@@ -1035,9 +1035,12 @@ async fn insert_accounts(
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
+    let t_total = std::time::Instant::now();
+
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
+    let t0 = std::time::Instant::now();
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
@@ -1047,8 +1050,13 @@ async fn insert_accounts(
         .into_iter()
         .map(|res| res.path())
         .collect();
+    let num_files = file_paths.len();
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    info!("[PROFILE] account insertion: SST ingest ({num_files} files) took {:?}", t0.elapsed());
+
+    let t1 = std::time::Instant::now();
+    let mut code_hash_count: u64 = 0;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     for account in iter {
         let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
@@ -1056,9 +1064,12 @@ async fn insert_accounts(
         if account_state.code_hash != *EMPTY_KECCACK_HASH {
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
+            code_hash_count += 1;
         }
     }
+    info!("[PROFILE] account insertion: code hash pass ({code_hash_count} hashes) took {:?}", t1.elapsed());
 
+    let t2 = std::time::Instant::now();
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     let compute_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
@@ -1079,6 +1090,7 @@ async fn insert_accounts(
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
+    info!("[PROFILE] account insertion: trie building took {:?}", t2.elapsed());
 
     drop(db); // close db before removing directory
 
@@ -1089,6 +1101,7 @@ async fn insert_accounts(
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+    info!("[PROFILE] account insertion: total took {:?}", t_total.elapsed());
     Ok((compute_state_root, accounts_with_storage))
 }
 
@@ -1141,8 +1154,11 @@ async fn insert_storages(
         }
     }
 
+    let t_total = std::time::Instant::now();
+
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
+    let t0 = std::time::Instant::now();
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
     let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
@@ -1152,10 +1168,14 @@ async fn insert_storages(
         .into_iter()
         .map(|res| res.path())
         .collect();
+    let num_files = file_paths.len();
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let snapshot = db.snapshot();
+    info!("[PROFILE] storage insertion: SST ingest ({num_files} files) took {:?}", t0.elapsed());
 
+    let t1 = std::time::Instant::now();
+    let num_accounts = accounts_with_storage.len();
     let account_with_storage_and_tries = accounts_with_storage
         .into_iter()
         .map(|account_hash| {
@@ -1167,6 +1187,7 @@ async fn insert_storages(
             )
         })
         .collect::<Vec<(H256, Trie)>>();
+    info!("[PROFILE] storage insertion: opening {num_accounts} tries took {:?}", t1.elapsed());
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
@@ -1179,6 +1200,8 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
+    info!("[PROFILE] storage insertion: starting trie builds with {thread_count} threads, {BUFFER_COUNT} buffers");
+    let t2 = std::time::Instant::now();
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
@@ -1219,6 +1242,7 @@ async fn insert_storages(
             pool.execute(task);
         }
     });
+    info!("[PROFILE] storage insertion: trie builds took {:?}", t2.elapsed());
 
     // close db before removing directory
     drop(snapshot);
@@ -1229,5 +1253,6 @@ async fn insert_storages(
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
 
+    info!("[PROFILE] storage insertion: total took {:?}", t_total.elapsed());
     Ok(())
 }
