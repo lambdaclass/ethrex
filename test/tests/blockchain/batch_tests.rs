@@ -34,7 +34,9 @@ fn workspace_root() -> PathBuf {
 
 /// Load the execution-api genesis, inject `sender` with a large balance,
 /// and return an in-memory store together with the chain id.
-async fn setup_store(sender: Address) -> (Store, u64) {
+async fn setup_store(
+    sender: Address,
+) -> (Store, u64, ethrex_common::types::Genesis) {
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
     let reader = BufReader::new(file);
@@ -58,11 +60,11 @@ async fn setup_store(sender: Address) -> (Store, u64) {
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
 
     store
-        .add_initial_state(genesis)
+        .add_initial_state(genesis.clone())
         .await
         .expect("Failed to add genesis state");
 
-    (store, chain_id)
+    (store, chain_id, genesis)
 }
 
 /// Build a block on top of `parent_header` using the payload builder,
@@ -157,8 +159,8 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
     let signer: Signer = LocalSigner::new(sk).into();
 
     // 2. Create store A and blockchain A (for single-block validation).
-    let (store_a, chain_id) = setup_store(sender).await;
-    let blockchain_a = Blockchain::default_with_store(store_a.clone());
+    let (store_a, chain_id, genesis) = setup_store(sender).await;
+    let blockchain_a = Blockchain::default_with_genesis(store_a.clone(), &genesis);
 
     let genesis_header = store_a.get_block_header(0).unwrap().unwrap();
 
@@ -233,8 +235,8 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
 
     // 7. Create a fresh store B and re-execute both blocks in batch.
     //    This is the code path that was buggy before the fix.
-    let (store_b, _) = setup_store(sender).await;
-    let blockchain_b = Blockchain::default_with_store(store_b);
+    let (store_b, _, genesis_b) = setup_store(sender).await;
+    let blockchain_b = Blockchain::default_with_genesis(store_b, &genesis_b);
 
     let result = blockchain_b
         .add_blocks_in_batch(vec![block1, block2], CancellationToken::new())
@@ -257,8 +259,8 @@ async fn batch_single_block_selfdestruct() {
     let signer: Signer = LocalSigner::new(sk).into();
 
     // Single-block path: build and validate.
-    let (store_a, chain_id) = setup_store(sender).await;
-    let blockchain_a = Blockchain::default_with_store(store_a.clone());
+    let (store_a, chain_id, genesis) = setup_store(sender).await;
+    let blockchain_a = Blockchain::default_with_genesis(store_a.clone(), &genesis);
     let genesis_header = store_a.get_block_header(0).unwrap().unwrap();
 
     let beneficiary = Address::from_low_u64_be(0xBEEF);
@@ -281,8 +283,8 @@ async fn batch_single_block_selfdestruct() {
         .expect("block1 should be valid (single-block)");
 
     // Batch path: re-execute the same block on a fresh store.
-    let (store_b, _) = setup_store(sender).await;
-    let blockchain_b = Blockchain::default_with_store(store_b);
+    let (store_b, _, genesis_b) = setup_store(sender).await;
+    let blockchain_b = Blockchain::default_with_genesis(store_b, &genesis_b);
 
     let result = blockchain_b
         .add_blocks_in_batch(vec![block1], CancellationToken::new())

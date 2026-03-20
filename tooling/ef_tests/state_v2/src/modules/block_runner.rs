@@ -147,7 +147,10 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
+    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+        ethrex_binary_trie::state::BinaryTrieState::new(),
+    ));
+    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default(), binary_trie_state);
 
     let result = blockchain.add_block_pipeline(block, None);
 

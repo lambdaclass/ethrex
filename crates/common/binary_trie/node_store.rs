@@ -290,6 +290,26 @@ impl NodeStore {
         Err(BinaryTrieError::NodeNotFound(id))
     }
 
+    /// Read a node from disk only, bypassing dirty/warm caches.
+    /// Used for reading the base (flushed) trie state.
+    pub fn get_from_disk(&self, id: NodeId) -> Result<Node, BinaryTrieError> {
+        {
+            let mut cache = self.clean_cache.lock().unwrap();
+            if let Some(node) = cache.get(&id) {
+                return Ok(node.clone());
+            }
+        }
+        #[cfg(feature = "rocksdb")]
+        {
+            let node = self.load_from_db(id)?;
+            let cloned = node.clone();
+            self.clean_cache.lock().unwrap().put(id, node);
+            Ok(cloned)
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        Err(BinaryTrieError::NodeNotFound(id))
+    }
+
     /// Get a shared reference to a node by ID, populating the cache on miss.
     ///
     /// Used by mutation paths (insert, remove, merkelize) where callers need

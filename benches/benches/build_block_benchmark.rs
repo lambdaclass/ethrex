@@ -236,6 +236,9 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                         .collect();
 
                     let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
+                    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+                        ethrex_binary_trie::state::BinaryTrieState::new(),
+                    ));
                     let block_chain = Blockchain::new(
                         store_with_genesis.clone(),
                         BlockchainOptions {
@@ -243,6 +246,7 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                             perf_logs_enabled: false,
                             ..Default::default()
                         },
+                        binary_trie_state,
                     );
                     fill_mempool(&block_chain, accounts).await;
 

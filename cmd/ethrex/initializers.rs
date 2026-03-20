@@ -5,6 +5,7 @@ use crate::{
         is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
     },
 };
+use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
@@ -169,9 +170,55 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     }
 }
 
-pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
-    info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts).into()
+/// Opens or creates the binary trie state, applying genesis if empty.
+pub fn init_binary_trie_state(
+    datadir: &Path,
+    genesis: &Genesis,
+) -> eyre::Result<Arc<std::sync::RwLock<BinaryTrieState>>> {
+    let genesis_hash = genesis.get_block().hash();
+
+    if is_memory_datadir(datadir) {
+        let mut state = BinaryTrieState::new();
+        info!("Initializing in-memory binary trie from genesis");
+        state
+            .apply_genesis(&genesis.alloc)
+            .map_err(|e| eyre::eyre!("Failed to apply genesis to binary trie: {e}"))?;
+        state.set_diff_base(genesis_hash, 0);
+        return Ok(Arc::new(std::sync::RwLock::new(state)));
+    }
+
+    let binary_trie_path = datadir.join("binary_trie");
+    let mut state = BinaryTrieState::open(&binary_trie_path)
+        .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
+
+    if !state.has_data() {
+        info!("Initializing binary trie from genesis");
+        state
+            .apply_genesis(&genesis.alloc)
+            .map_err(|e| eyre::eyre!("Failed to apply genesis to binary trie: {e}"))?;
+        state
+            .flush(0, genesis_hash)
+            .map_err(|e| eyre::eyre!("Failed to flush binary trie after genesis: {e}"))?;
+        info!("Binary trie genesis applied and flushed");
+    } else if let Some(checkpoint) = state.checkpoint_block() {
+        // On resume, set diff base to genesis hash.
+        // base_root was already loaded from disk by open().
+        // TODO: persist block hash alongside block number in META_BLOCK_KEY
+        // so we can use the exact checkpoint hash here.
+        state.set_diff_base(genesis_hash, checkpoint);
+        info!("Binary trie resuming from checkpoint block {checkpoint}");
+    }
+
+    Ok(Arc::new(std::sync::RwLock::new(state)))
+}
+
+pub fn init_blockchain(
+    store: Store,
+    blockchain_opts: BlockchainOptions,
+    binary_trie_state: Arc<std::sync::RwLock<BinaryTrieState>>,
+) -> Arc<Blockchain> {
+    info!("Initiating blockchain with levm (binary trie)");
+    Blockchain::new(store, blockchain_opts, binary_trie_state).into()
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -454,7 +501,7 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store = match init_store(&datadir, genesis.clone()).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -472,6 +519,8 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
+    let binary_trie_state = init_binary_trie_state(&datadir, &genesis)?;
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
@@ -481,6 +530,7 @@ pub async fn init_l1(
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },
+        binary_trie_state,
     );
 
     regenerate_head_state(&store, &blockchain).await?;

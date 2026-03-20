@@ -96,7 +96,10 @@ async fn migrate_libmdbx_to_rocksdb(
         r#type: BlockchainType::L2(L2Config::default()),
         ..Default::default()
     };
-    let blockchain = Blockchain::new(new_store.clone(), blockchain_opts);
+    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+        ethrex_binary_trie::state::BinaryTrieState::new(),
+    ));
+    let blockchain = Blockchain::new(new_store.clone(), blockchain_opts, binary_trie_state);
 
     let block_bodies = old_store
         .get_block_bodies(last_known_block + 1, last_block_number)

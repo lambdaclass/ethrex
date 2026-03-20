@@ -45,6 +45,17 @@ impl BinaryTrie {
         get_node(&self.store, self.root, &stem, sub_index)
     }
 
+    /// Look up a value using a specific root and disk-only reads.
+    /// Used for reading base (flushed) state, bypassing dirty/warm caches.
+    pub fn get_from_base(
+        &self,
+        base_root: Option<NodeId>,
+        key: [u8; 32],
+    ) -> Option<[u8; 32]> {
+        let (stem, sub_index) = split_key(&key);
+        get_node_from_base(&self.store, base_root, &stem, sub_index)
+    }
+
     /// Remove the value for a key, returning the previous value if it existed.
     pub fn remove(&mut self, key: [u8; 32]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
         let (stem, sub_index) = split_key(&key);
@@ -211,6 +222,48 @@ fn get_node(
     sub_index: u8,
 ) -> Option<[u8; 32]> {
     get_node_at_depth(store, node_id, stem, sub_index, 0)
+}
+
+/// Same as `get_node` but uses disk-only reads (bypasses dirty/warm caches).
+fn get_node_from_base(
+    store: &NodeStore,
+    node_id: Option<NodeId>,
+    stem: &[u8; 31],
+    sub_index: u8,
+) -> Option<[u8; 32]> {
+    get_node_from_base_at_depth(store, node_id, stem, sub_index, 0)
+}
+
+fn get_node_from_base_at_depth(
+    store: &NodeStore,
+    node_id: Option<NodeId>,
+    stem: &[u8; 31],
+    sub_index: u8,
+    depth: usize,
+) -> Option<[u8; 32]> {
+    let id = node_id?;
+    let node = store.get_from_disk(id).ok()?;
+    match node {
+        Node::Stem(ref stem_node) => {
+            if &stem_node.stem == stem {
+                stem_node.get_value(sub_index)
+            } else {
+                None
+            }
+        }
+        Node::Internal(ref internal) => {
+            if depth >= MAX_DEPTH {
+                return None;
+            }
+            let bit = stem_bit(stem, depth);
+            let child = if bit == 0 {
+                internal.left
+            } else {
+                internal.right
+            };
+            get_node_from_base_at_depth(store, child, stem, sub_index, depth + 1)
+        }
+    }
 }
 
 fn get_node_at_depth(

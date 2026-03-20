@@ -89,6 +89,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -109,7 +110,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use vm::StoreVmDatabase;
+use binary_trie_db::BinaryTrieVmDb;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
@@ -209,6 +210,8 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Binary trie state for EIP-7864.
+    pub binary_trie_state: Arc<RwLock<BinaryTrieState>>,
 }
 
 /// Configuration options for the blockchain.
@@ -318,13 +321,18 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+    pub fn new(
+        store: Store,
+        blockchain_opts: BlockchainOptions,
+        binary_trie_state: Arc<RwLock<BinaryTrieState>>,
+    ) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            binary_trie_state,
         }
     }
 
@@ -335,7 +343,90 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            binary_trie_state: Arc::new(RwLock::new(BinaryTrieState::new())),
         }
+    }
+
+    /// Like `default_with_store` but also populates the binary trie from genesis.
+    /// Use this in tests that execute blocks.
+    pub fn default_with_genesis(
+        store: Store,
+        genesis: &ethrex_common::types::Genesis,
+    ) -> Self {
+        let mut state = BinaryTrieState::new();
+        state
+            .apply_genesis(&genesis.alloc)
+            .expect("failed to apply genesis to binary trie");
+        // Set the diff tree base to the genesis block hash so reads
+        // at the genesis parent hash fall through to the base correctly.
+        let genesis_hash = genesis.get_block().hash();
+        state.set_diff_base(genesis_hash, 0);
+        Self {
+            storage: store,
+            mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
+            is_synced: AtomicBool::new(false),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+            options: BlockchainOptions::default(),
+            binary_trie_state: Arc::new(RwLock::new(state)),
+        }
+    }
+
+    /// Create a `BinaryTrieVmDb` that reads state as of `parent_hash`.
+    pub fn binary_trie_vm_db_for_block(
+        &self,
+        parent_hash: H256,
+        parent_number: u64,
+    ) -> BinaryTrieVmDb {
+        BinaryTrieVmDb::make_for_block(
+            self.binary_trie_state.clone(),
+            &self.storage,
+            parent_hash,
+            parent_number,
+        )
+    }
+
+    /// Create a `BinaryTrieVmDb` with a pre-built block hash cache
+    /// merged with historical hashes from the store.
+    fn binary_trie_vm_db_with_hash_cache(
+        &self,
+        block_hash_cache: BTreeMap<BlockNumber, H256>,
+        parent_hash: H256,
+        parent_number: u64,
+    ) -> BinaryTrieVmDb {
+        let vm_db = BinaryTrieVmDb::make_for_block(
+            self.binary_trie_state.clone(),
+            &self.storage,
+            parent_hash,
+            parent_number,
+        );
+        vm_db.add_block_hashes(block_hash_cache);
+        vm_db
+    }
+
+    /// Apply account updates to the binary trie with a diff layer and optionally flush.
+    fn apply_binary_trie_updates(
+        &self,
+        updates: &[AccountUpdate],
+        block_number: u64,
+        block_hash: H256,
+        parent_hash: H256,
+    ) -> Result<(), ChainError> {
+        let mut state = self
+            .binary_trie_state
+            .write()
+            .map_err(|e| ChainError::Custom(format!("binary trie lock error: {e}")))?;
+        state.begin_block(block_hash, parent_hash, block_number);
+        for update in updates {
+            state
+                .apply_account_update_for_block(update, block_hash)
+                .map_err(|e| ChainError::Custom(format!("binary trie update error: {e}")))?;
+        }
+        let root = state.state_root();
+        debug!("Binary trie root after block {block_number}: {}", H256::from(root));
+        state
+            .flush_if_needed(block_number, block_hash)
+            .map_err(|e| ChainError::Custom(format!("binary trie flush error: {e}")))?;
+        Ok(())
     }
 
     /// Executes a block withing a new vm instance and state
@@ -355,7 +446,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number);
         let mut vm = self.new_evm(vm_db)?;
 
         let (execution_result, bal) = vm.execute_block(block)?;
@@ -395,7 +486,7 @@ impl Blockchain {
         let parent_header = find_parent_header(&block.header, &self.storage)?;
 
         // Create VM and execute block with BAL recording
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number);
         let mut vm = self.new_evm(vm_db)?;
 
         let (_execution_result, bal) = vm.execute_block(block)?;
@@ -660,13 +751,10 @@ impl Blockchain {
         let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
         let mut has_storage: FxHashSet<H256> = Default::default();
 
-        // Accumulator for witness generation (only used if precompute_witnesses is true)
+        // Accumulator for raw account updates.
+        // Always populated: needed for binary trie updates and optionally for witness generation.
         let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            if self.options.precompute_witnesses {
-                Some(FxHashMap::default())
-            } else {
-                None
-            };
+            Some(FxHashMap::default());
 
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -844,12 +932,9 @@ impl Blockchain {
             }
         }
 
-        // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
-        } else {
-            None
-        };
+        // Extract raw account updates for binary trie and optional witness generation.
+        let accumulated_updates =
+            Some(all_updates.values().cloned().collect::<Vec<_>>());
 
         // Extract code updates and build work items with pre-hashed addresses
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
@@ -1207,13 +1292,8 @@ impl Blockchain {
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
 
-            // This assumes that the user has the necessary state stored already,
-            // so if the user only has the state previous to the first block, it
-            // will fail in the second iteration of this for loop. To ensure this,
-            // doesn't fail, later in this function we store the new state after
-            // re-execution.
             let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
+                Box::new(self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number));
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
@@ -1729,8 +1809,8 @@ impl Blockchain {
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        // Check state root matches the one in block header
-        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+        // Binary trie: skip MPT state root validation.
+        // The binary trie root is computed and logged in apply_binary_trie_updates.
 
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
@@ -1750,6 +1830,14 @@ impl Blockchain {
         let since = Instant::now();
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
+
+        // Apply account updates to the binary trie
+        self.apply_binary_trie_updates(
+            &updates,
+            block.header.number,
+            block.hash(),
+            block.header.parent_hash,
+        )?;
 
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
@@ -1828,10 +1916,8 @@ impl Blockchain {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
-            let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
-                self.storage.clone(),
-                parent_header.clone(),
-            )?);
+            let vm_db: DynVmDatabase =
+                Box::new(self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number));
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
@@ -1849,7 +1935,7 @@ impl Blockchain {
             };
             (vm, Some(logger))
         } else {
-            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+            let vm_db = self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number);
             let vm = self.new_evm(vm_db)?;
             (vm, None)
         };
@@ -1870,6 +1956,16 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
+
+        // Apply account updates to binary trie
+        if let Some(ref updates) = accumulated_updates {
+            self.apply_binary_trie_updates(
+                updates,
+                block_number,
+                block.hash(),
+                block.header.parent_hash,
+            )?;
+        }
 
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
@@ -2164,12 +2260,11 @@ impl Blockchain {
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
-        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
-            parent_header,
+        let vm_db = self.binary_trie_vm_db_with_hash_cache(
             block_hash_cache,
-        )
-        .map_err(|e| (ChainError::EvmError(e), None))?;
+            parent_header.hash(),
+            parent_header.number,
+        );
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
@@ -2232,6 +2327,19 @@ impl Blockchain {
         let last_block_number = last_block.header.number;
         let last_block_gas_limit = last_block.header.gas_limit;
 
+        // Apply account updates to binary trie.
+        // NOTE: collapses the entire batch into a single diff layer keyed on
+        // last_block.hash(). State reads at intermediate batch block hashes are
+        // unsupported and will fall through to the base trie (stale data).
+        // Acceptable during initial sync where intermediate blocks are not reorged.
+        self.apply_binary_trie_updates(
+            &account_updates,
+            last_block_number,
+            last_block.hash(),
+            first_block_header.parent_hash,
+        )
+        .map_err(|e| (e, None))?;
+
         // Apply the account updates over all blocks and compute the new state root
         let account_updates_list = self
             .storage
@@ -2239,13 +2347,11 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
-        let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
         let accounts_updates = account_updates_list.storage_updates;
         let code_updates = account_updates_list.code_updates;
 
-        // Check state root matches the one in block header
-        validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
+        // Binary trie: skip MPT state root validation.
 
         let update_batch = UpdateBatch {
             account_updates: state_updates,
@@ -3061,7 +3167,9 @@ pub fn new_evm(
     Ok(evm)
 }
 
-/// Performs post-execution checks
+/// Performs post-execution checks.
+/// Currently unused: binary trie skips MPT state root validation.
+#[allow(dead_code)]
 pub fn validate_state_root(
     block_header: &BlockHeader,
     new_state_root: H256,

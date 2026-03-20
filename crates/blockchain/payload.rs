@@ -42,7 +42,6 @@ use crate::{
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
-    vm::StoreVmDatabase,
 };
 
 use thiserror::Error;
@@ -242,6 +241,7 @@ impl PayloadBuildContext {
         payload: Block,
         storage: &Store,
         blockchain_type: &BlockchainType,
+        binary_trie_state: std::sync::Arc<std::sync::RwLock<ethrex_binary_trie::state::BinaryTrieState>>,
     ) -> Result<Self, EvmError> {
         let config = storage.get_chain_config();
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
@@ -256,7 +256,12 @@ impl PayloadBuildContext {
             .get_block_header_by_hash(payload.header.parent_hash)
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
-        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
+        let vm_db = crate::binary_trie_db::BinaryTrieVmDb::make_for_block(
+            binary_trie_state,
+            storage,
+            parent_header.hash(),
+            parent_header.number,
+        );
         let mut vm = new_evm(blockchain_type, vm_db)?;
 
         // Enable BAL recording for Amsterdam and later forks (EIP-7928)
@@ -446,7 +451,12 @@ impl Blockchain {
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
-        let mut context = PayloadBuildContext::new(payload, &self.storage, &self.options.r#type)?;
+        let mut context = PayloadBuildContext::new(
+            payload,
+            &self.storage,
+            &self.options.r#type,
+            self.binary_trie_state.clone(),
+        )?;
 
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
@@ -804,6 +814,25 @@ impl Blockchain {
         }
 
         context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
+
+        // Record diff layer (without modifying the trie) so subsequent
+        // payload builds on different parents can read this block's state.
+        {
+            let block_hash = context.payload.hash();
+            let parent_hash = context.payload.header.parent_hash;
+            let block_number = context.payload.header.number;
+            let mut state = self
+                .binary_trie_state
+                .write()
+                .map_err(|_| ChainError::Custom("binary trie lock poisoned".into()))?;
+            state.begin_block(block_hash, parent_hash, block_number);
+            for update in &context.account_updates {
+                state
+                    .record_diff_only(update, block_hash)
+                    .map_err(|e| ChainError::Custom(format!("diff record error: {e}")))?;
+            }
+        }
+
         Ok(())
     }
 }

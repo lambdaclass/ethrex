@@ -7,6 +7,7 @@ use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
+use ethrex_storage::Store;
 use ethrex_vm::{EvmError, VmDatabase};
 
 /// VmDatabase adapter backed by a BinaryTrieState.
@@ -19,14 +20,34 @@ pub struct BinaryTrieVmDb {
     state: Arc<RwLock<BinaryTrieState>>,
     chain_config: ChainConfig,
     block_hashes: Arc<Mutex<BTreeMap<BlockNumber, H256>>>,
+    /// Block hash to read state at. Reads return state as of this block.
+    read_at: H256,
 }
 
 impl BinaryTrieVmDb {
+    /// Test-only constructor. Uses `read_at = H256::zero()` which bypasses
+    /// diff layers entirely, falling through to the base trie for all reads.
+    /// Production code should use `new_at` or `make_for_block`.
     pub fn new(state: Arc<RwLock<BinaryTrieState>>, chain_config: ChainConfig) -> Self {
         Self {
             state,
             chain_config,
             block_hashes: Arc::new(Mutex::new(BTreeMap::new())),
+            read_at: H256::zero(),
+        }
+    }
+
+    /// Create a VmDb that reads state as of the given block hash.
+    pub fn new_at(
+        state: Arc<RwLock<BinaryTrieState>>,
+        chain_config: ChainConfig,
+        read_at: H256,
+    ) -> Self {
+        Self {
+            state,
+            chain_config,
+            block_hashes: Arc::new(Mutex::new(BTreeMap::new())),
+            read_at,
         }
     }
 
@@ -48,6 +69,25 @@ impl BinaryTrieVmDb {
             cache.insert(number, hash);
         }
     }
+
+    /// Create a VmDb for a specific parent block, populating BLOCKHASH entries
+    /// from the store. This is the standard factory for block execution.
+    pub fn make_for_block(
+        state: Arc<RwLock<BinaryTrieState>>,
+        storage: &Store,
+        parent_hash: H256,
+        parent_number: u64,
+    ) -> Self {
+        let config = storage.get_chain_config();
+        let vm_db = Self::new_at(state, config, parent_hash);
+        let start = parent_number.saturating_sub(256);
+        for n in start..=parent_number {
+            if let Ok(Some(hash)) = storage.get_canonical_block_hash_sync(n) {
+                vm_db.add_block_hash(n, hash);
+            }
+        }
+        vm_db
+    }
 }
 
 impl VmDatabase for BinaryTrieVmDb {
@@ -56,7 +96,7 @@ impl VmDatabase for BinaryTrieVmDb {
             .state
             .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
-        Ok(state.get_account_state(&address))
+        Ok(state.get_account_state_at(&address, self.read_at))
     }
 
     fn get_storage_slot(
@@ -68,7 +108,7 @@ impl VmDatabase for BinaryTrieVmDb {
             .state
             .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
-        Ok(state.get_storage_slot(&address, key))
+        Ok(state.get_storage_slot_at(&address, key, self.read_at))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
@@ -95,7 +135,7 @@ impl VmDatabase for BinaryTrieVmDb {
             .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
-            .get_account_code(&code_hash)
+            .get_account_code_at(&code_hash, self.read_at)
             .map(|bytes| Code::from_bytecode_unchecked(bytes, code_hash))
             .ok_or_else(|| EvmError::DB(format!("code not found for hash {code_hash:?}")))
     }
@@ -109,7 +149,7 @@ impl VmDatabase for BinaryTrieVmDb {
             .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
-            .get_account_code(&code_hash)
+            .get_account_code_at(&code_hash, self.read_at)
             .map(|bytes| CodeMetadata {
                 length: bytes.len() as u64,
             })

@@ -194,13 +194,15 @@ impl BlockReplayer {
 
             // Flush checkpoint if configured.
             if self.checkpoint_interval > 0 && block_number % self.checkpoint_interval == 0 {
-                self.flush_checkpoint(block_number)?;
+                self.flush_checkpoint(block_number, block_hash)?;
             }
         }
 
         // Final flush to capture the last partial interval.
         if self.checkpoint_interval > 0 && end % self.checkpoint_interval != 0 {
-            self.flush_checkpoint(end)?;
+            // Use the last block's hash for the final flush.
+            let last_hash = self.block_hashes.get(&end).copied().unwrap_or_default();
+            self.flush_checkpoint(end, last_hash)?;
         }
 
         let elapsed = start_time.elapsed().as_secs_f64();
@@ -216,13 +218,13 @@ impl BlockReplayer {
     /// Flush the binary trie state to disk, recording `block_number` as the checkpoint.
     ///
     /// This is a no-op when the state is not backed by a RocksDB database.
-    fn flush_checkpoint(&self, block_number: BlockNumber) -> Result<()> {
+    fn flush_checkpoint(&self, block_number: BlockNumber, block_hash: H256) -> Result<()> {
         let mut state = self
             .state
             .write()
             .map_err(|e| anyhow!("state RwLock poisoned: {e}"))?;
         state
-            .flush(block_number)
+            .flush(block_number, block_hash)
             .with_context(|| format!("Failed to flush checkpoint at block {block_number}"))?;
         info!("Checkpoint saved at block {block_number}");
         Ok(())
@@ -231,8 +233,9 @@ impl BlockReplayer {
     /// Execute a single block against the binary trie state and apply the resulting
     /// account updates. Returns the new binary trie state root.
     fn execute_block(&mut self, block: &Block) -> Result<[u8; 32]> {
-        // Build the VmDb adapter backed by the current binary trie state.
-        let vm_db = BinaryTrieVmDb::new(self.state.clone(), self.chain_config);
+        // Build the VmDb adapter reading state as of the parent block.
+        let parent_hash = block.header.parent_hash;
+        let vm_db = BinaryTrieVmDb::new_at(self.state.clone(), self.chain_config, parent_hash);
         vm_db.add_block_hashes(self.block_hashes.iter().map(|(&n, &h)| (n, h)));
 
         // Create the EVM and execute the block.

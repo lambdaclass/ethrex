@@ -25,7 +25,8 @@ use tracing::{Level, error, info, warn};
 
 use crate::{
     initializers::{
-        get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
+        get_network, init_binary_trie_state, init_blockchain, init_store, init_tracing, load_store,
+        regenerate_head_state,
     },
     utils::{
         self, default_datadir, get_client_version, get_client_version_string,
@@ -722,8 +723,10 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
+    let binary_trie_state =
+        init_binary_trie_state(datadir, &genesis).map_err(|e| ChainError::Custom(e.to_string()))?;
     let store = init_store(datadir, genesis).await?;
-    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts, binary_trie_state);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -840,8 +843,10 @@ pub async fn import_blocks_bench(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
+    let binary_trie_state =
+        init_binary_trie_state(datadir, &genesis).map_err(|e| ChainError::Custom(e.to_string()))?;
     let store = init_store(datadir, genesis).await?;
-    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts, binary_trie_state);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
 

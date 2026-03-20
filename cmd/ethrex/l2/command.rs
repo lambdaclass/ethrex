@@ -455,7 +455,10 @@ impl Command {
                         r#type: blockchain_type,
                         ..Default::default()
                     };
-                    let blockchain = Blockchain::new(store.clone(), opts);
+                    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+                        ethrex_binary_trie::state::BinaryTrieState::new(),
+                    ));
+                    let blockchain = Blockchain::new(store.clone(), opts, binary_trie_state);
 
                     for (i, block) in blocks.iter().enumerate() {
                         // Update blockchain with the block's fee config

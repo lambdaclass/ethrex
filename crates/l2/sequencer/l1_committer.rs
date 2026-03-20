@@ -1169,8 +1169,14 @@ impl L1Committer {
         // one for each block is fetched from the rollup store during head state regeneration.
         blockchain_opts.r#type = BlockchainType::L2(L2Config::default());
 
-        let checkpoint_blockchain =
-            Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
+        let binary_trie_state = Arc::new(std::sync::RwLock::new(
+            ethrex_binary_trie::state::BinaryTrieState::new(),
+        ));
+        let checkpoint_blockchain = Arc::new(Blockchain::new(
+            checkpoint_store.clone(),
+            blockchain_opts,
+            binary_trie_state,
+        ));
 
         regenerate_state(
             &checkpoint_store,
