@@ -4317,7 +4317,6 @@ dependencies = [
  "clap",
  "ethrex-common",
  "ethrex-guest-program",
- "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
  "openvm-continuations",

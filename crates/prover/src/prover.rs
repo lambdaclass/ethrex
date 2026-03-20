@@ -2,9 +2,8 @@ use crate::{
     backend::{BackendType, ExecBackend, ProverBackend},
     protocol::ProofData,
 };
-use ethrex_common::types::prover::{ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::BatchProof;
 use serde::{Serialize, de::DeserializeOwned};
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
@@ -101,7 +100,7 @@ where
                 }
             };
 
-            let batch_proof = if self.config.timed {
+            let proof_bytes = if self.config.timed {
                 self.backend
                     .prove_timed(prover_data.input, prover_data.format)
                     .and_then(|(output, elapsed)| {
@@ -114,7 +113,7 @@ where
                             prover_data.batch_number,
                             elapsed
                         );
-                        self.backend.to_batch_proof(output, prover_data.format)
+                        self.backend.to_proof_bytes(output, prover_data.format)
                     })
             } else {
                 self.backend
@@ -124,15 +123,15 @@ where
                             id = prover_data.batch_number,
                             "Proved payload #{}", prover_data.batch_number
                         );
-                        self.backend.to_batch_proof(output, prover_data.format)
+                        self.backend.to_proof_bytes(output, prover_data.format)
                     })
             };
-            let Ok(batch_proof) = batch_proof.inspect_err(|e| error!("{e}")) else {
+            let Ok(proof_bytes) = proof_bytes.inspect_err(|e| error!("{e}")) else {
                 continue;
             };
 
             let _ = self
-                .submit_proof(endpoint, prover_data.batch_number, batch_proof)
+                .submit_proof(endpoint, prover_data.batch_number, proof_bytes)
                 .await
                 .inspect_err(|e|
                 // TODO: Retry?
@@ -183,9 +182,9 @@ where
         &self,
         endpoint: &Url,
         batch_number: u64,
-        batch_proof: BatchProof,
+        proof_bytes: ProofBytes,
     ) -> Result<(), String> {
-        let submit: ProofData<I> = ProofData::proof_submit(batch_number, batch_proof);
+        let submit: ProofData<I> = ProofData::proof_submit(batch_number, proof_bytes);
 
         let ProofData::ProofSubmitACK { id: batch_number } =
             connect_to_prover_server_wr(endpoint, &submit)

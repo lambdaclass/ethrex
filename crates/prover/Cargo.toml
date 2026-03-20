@@ -24,9 +24,6 @@ ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 
-# l2 (for protocol types: BatchProof, ProofCalldata, ProverType, etc.)
-ethrex-l2-common = { workspace = true }
-
 ethrex-guest-program = { path = "../guest-program" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 

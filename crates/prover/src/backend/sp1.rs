@@ -1,9 +1,5 @@
 use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
 use ethrex_guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
-use ethrex_l2_common::{
-    calldata::Value,
-    prover::{BatchProof, ProofCalldata},
-};
 use rkyv::rancor::Error;
 use sp1_prover::components::CpuProverComponents;
 #[cfg(not(feature = "gpu"))]
@@ -105,12 +101,11 @@ impl Sp1Backend {
         }
     }
 
-    fn to_calldata(proof: &Sp1ProveOutput) -> ProofCalldata {
-        let calldata = vec![Value::Bytes(proof.proof.bytes().into())];
-
-        ProofCalldata {
+    fn to_groth16_proof_bytes(proof: &Sp1ProveOutput) -> ProofBytes {
+        ProofBytes {
             prover_type: ProverType::SP1,
-            calldata,
+            proof: proof.proof.bytes(),
+            public_values: proof.proof.public_values.to_vec(),
         }
     }
 
@@ -179,21 +174,21 @@ impl ProverBackend for Sp1Backend {
         Ok(())
     }
 
-    fn to_batch_proof(
+    fn to_proof_bytes(
         &self,
         proof: Self::ProofOutput,
         format: ProofFormat,
-    ) -> Result<BatchProof, BackendError> {
-        let batch_proof = match format {
-            ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
+    ) -> Result<ProofBytes, BackendError> {
+        let proof_bytes = match format {
+            ProofFormat::Compressed => ProofBytes {
                 prover_type: ProverType::SP1,
-                proof: bincode::serialize(&proof.proof).map_err(BackendError::batch_proof)?,
+                proof: bincode::serialize(&proof.proof).map_err(BackendError::proof_conversion)?,
                 public_values: proof.proof.public_values.to_vec(),
-            }),
-            ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)),
+            },
+            ProofFormat::Groth16 => Self::to_groth16_proof_bytes(&proof),
         };
 
-        Ok(batch_proof)
+        Ok(proof_bytes)
     }
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {

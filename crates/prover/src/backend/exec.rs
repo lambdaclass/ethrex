@@ -3,13 +3,9 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
-use ethrex_common::types::prover::{ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
 use ethrex_guest_program::crypto::NativeCrypto;
 use ethrex_guest_program::{input::ProgramInput, output::ProgramOutput};
-use ethrex_l2_common::{
-    calldata::Value,
-    prover::{BatchProof, ProofCalldata},
-};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -56,10 +52,11 @@ impl ExecBackend {
         }
     }
 
-    fn to_calldata() -> ProofCalldata {
-        ProofCalldata {
+    fn empty_proof_bytes() -> ProofBytes {
+        ProofBytes {
             prover_type: ProverType::Exec,
-            calldata: vec![Value::Bytes(vec![].into())],
+            proof: vec![],
+            public_values: vec![],
         }
     }
 }
@@ -99,12 +96,12 @@ impl ProverBackend for ExecBackend {
         Ok(())
     }
 
-    fn to_batch_proof(
+    fn to_proof_bytes(
         &self,
         _proof: Self::ProofOutput,
         _format: ProofFormat,
-    ) -> Result<BatchProof, BackendError> {
-        Ok(BatchProof::ProofCalldata(Self::to_calldata()))
+    ) -> Result<ProofBytes, BackendError> {
+        Ok(Self::empty_proof_bytes())
     }
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {

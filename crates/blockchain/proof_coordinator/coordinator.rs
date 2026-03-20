@@ -18,7 +18,7 @@ use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_prover::ProofData;
-use ethrex_prover::{BatchProof, ProofFormat, ProverType};
+use ethrex_prover::{ProofBytes, ProofFormat, ProverType};
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
@@ -243,22 +243,15 @@ impl L1ProofCoordinator {
         &mut self,
         stream: &mut TcpStream,
         block_number: u64,
-        proof: &BatchProof,
+        proof: &ProofBytes,
     ) -> Result<(), L1CoordinatorError> {
-        let prover_reported_type = proof.prover_type() as u64;
+        let prover_reported_type = proof.prover_type as u64;
         info!(
             block_number,
             prover_reported_type, "Proof received from prover"
         );
 
-        let proof_data = match proof {
-            BatchProof::ProofBytes(p) => p.proof.clone(),
-            BatchProof::ProofCalldata(_) => {
-                return Err(L1CoordinatorError::Internal(
-                    "ProofCalldata is not supported on L1; expected ProofBytes".to_string(),
-                ));
-            }
-        };
+        let proof_data = proof.proof.clone();
 
         // Validate size.
         if proof_data.len() > MAX_PROOF_SIZE {

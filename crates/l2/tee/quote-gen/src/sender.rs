@@ -5,7 +5,7 @@ use tokio::{
 };
 
 use ethrex_common::Bytes;
-use ethrex_l2_common::prover::{BatchProof, ProofData, ProverType};
+use ethrex_l2_common::prover::{ProofBytes, ProofData, ProverType};
 
 const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
@@ -50,8 +50,8 @@ pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), Strin
     }
 }
 
-pub async fn submit_proof(batch_number: u64, batch_proof: BatchProof) -> Result<u64, String> {
-    let submit = ProofData::proof_submit(batch_number, batch_proof);
+pub async fn submit_proof(batch_number: u64, proof_bytes: ProofBytes) -> Result<u64, String> {
+    let submit = ProofData::proof_submit(batch_number, proof_bytes);
 
     let submit_ack = connect_to_prover_server_wr(&submit)
         .await
