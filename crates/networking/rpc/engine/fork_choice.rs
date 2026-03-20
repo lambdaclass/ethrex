@@ -275,6 +275,7 @@ async fn handle_forkchoice(
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash,
+        &context.blockchain.binary_trie_state,
     )
     .await
     {

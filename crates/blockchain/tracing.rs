@@ -1,8 +1,9 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
+use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_common::{H256, tracing::CallTrace, types::Block};
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
@@ -91,7 +92,8 @@ impl Blockchain {
     ) -> Result<Evm, ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
-            get_missing_state_parents(parent_hash, &self.storage, reexec).await?;
+            get_missing_state_parents(parent_hash, &self.storage, &self.binary_trie_state, reexec)
+                .await?;
         // Base our Evm's state on the newest parent block which's state we have available
         let parent_hash = blocks_to_re_execute
             .last()
@@ -127,6 +129,7 @@ impl Blockchain {
 async fn get_missing_state_parents(
     mut parent_hash: H256,
     store: &Store,
+    binary_trie_state: &Arc<RwLock<BinaryTrieState>>,
     reexec: u32,
 ) -> Result<Vec<Block>, ChainError> {
     let mut missing_state_parents = Vec::new();
@@ -139,7 +142,11 @@ async fn get_missing_state_parents(
         let Some(parent_block) = store.get_block_by_hash(parent_hash).await? else {
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
-        if store.has_state_root(parent_block.header.state_root)? {
+        let has_state = binary_trie_state
+            .read()
+            .map(|s| s.has_state_for_block(parent_hash, parent_block.header.number))
+            .unwrap_or(false);
+        if has_state {
             break;
         }
         parent_hash = parent_block.header.parent_hash;

@@ -271,6 +271,18 @@ impl BinaryTrieState {
         }
     }
 
+    /// Check if state is available for the given block.
+    ///
+    /// Returns true if:
+    /// - The block is the current flushed base (its state is in the on-disk trie), OR
+    /// - The block number is at or before the base block (historical, already flushed), OR
+    /// - A diff layer exists for the block hash (recent, in-memory).
+    pub fn has_state_for_block(&self, block_hash: H256, block_number: u64) -> bool {
+        block_hash == self.diff_tree.base_hash
+            || block_number <= self.diff_tree.base_block
+            || self.diff_tree.layers.contains_key(&block_hash)
+    }
+
     /// Open a persistent `BinaryTrieState` from a RocksDB path.
     ///
     /// If the database already contains data (the trie root is present),

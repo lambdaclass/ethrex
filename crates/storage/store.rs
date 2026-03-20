@@ -1357,50 +1357,58 @@ impl Store {
 
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.backend.clone();
-        let parent_state_root = self
-            .get_block_header_by_hash(
-                update_batch
-                    .blocks
-                    .first()
-                    .ok_or(StoreError::UpdateBatchNoBlocks)?
-                    .header
-                    .parent_hash,
-            )?
-            .map(|header| header.state_root)
-            .unwrap_or_default();
-        let last_state_root = update_batch
-            .blocks
-            .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
-        let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
-        let is_batch = update_batch.batch_mode;
-
+        // Destructure all fields upfront so we can use them regardless of trie path.
         let UpdateBatch {
             account_updates,
             storage_updates,
-            ..
+            blocks,
+            receipts,
+            code_updates,
+            batch_mode,
         } = update_batch;
 
-        // Capacity one ensures sender just notifies and goes on
-        let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
-        let trie_update = TrieUpdate {
-            parent_state_root,
-            account_updates,
-            storage_updates,
-            result_sender: notify_tx,
-            child_state_root: last_state_root,
-            is_batch,
+        // Skip trie worker when there are no MPT account/storage updates.
+        // All paths now send empty vecs since the binary trie handles state.
+        let wait_for_new_layer = if !account_updates.is_empty() || !storage_updates.is_empty() {
+            let parent_state_root = self
+                .get_block_header_by_hash(
+                    blocks
+                        .first()
+                        .ok_or(StoreError::UpdateBatchNoBlocks)?
+                        .header
+                        .parent_hash,
+                )?
+                .map(|header| header.state_root)
+                .unwrap_or_default();
+            let last_state_root = blocks
+                .last()
+                .ok_or(StoreError::UpdateBatchNoBlocks)?
+                .header
+                .state_root;
+            let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
+
+            // Capacity one ensures sender just notifies and goes on
+            let (notify_tx, notify_rx) = sync_channel(1);
+            let trie_update = TrieUpdate {
+                parent_state_root,
+                account_updates,
+                storage_updates,
+                result_sender: notify_tx,
+                child_state_root: last_state_root,
+                is_batch: batch_mode,
+            };
+            trie_upd_worker_tx.send(trie_update).map_err(|e| {
+                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            })?;
+            Some(notify_rx)
+        } else {
+            None
         };
-        trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-        })?;
+
         let mut tx = db.begin_write()?;
 
-        for block in update_batch.blocks {
+        for block in blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
             let hash_key = block_hash.encode_to_vec();
@@ -1424,15 +1432,15 @@ impl Store {
             }
         }
 
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
+        for (block_hash, block_receipts) in receipts {
+            for (index, receipt) in block_receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
                 tx.put(RECEIPTS, &key, &value)?;
             }
         }
 
-        for (code_hash, code) in update_batch.code_updates {
+        for (code_hash, code) in code_updates {
             let buf = encode_code(&code);
             let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
@@ -1441,9 +1449,12 @@ impl Store {
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
         // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
-            .recv()
-            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
+        // Only needed when trie data was actually sent to the worker.
+        if let Some(notify_rx) = wait_for_new_layer {
+            notify_rx
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
+        }
         // After top-level is added, we can make the rest of the changes visible.
         tx.commit()?;
 

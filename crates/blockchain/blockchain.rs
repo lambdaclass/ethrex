@@ -136,8 +136,8 @@ static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
 // Result type for execute_block_pipeline
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
-    AccountUpdatesList,
-    Option<Vec<AccountUpdate>>,
+    Vec<AccountUpdate>,      // accumulated updates (always present)
+    Vec<(H256, Code)>,       // code updates
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
     usize,                   // max queue length
     [Instant; 6],            // timing instants
@@ -537,7 +537,7 @@ impl Blockchain {
 
         let cancelled = AtomicBool::new(false);
 
-        let (execution_result, merkleization_result, warmer_duration) =
+        let (execution_result, accumulator_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
@@ -607,41 +607,46 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
-                let parent_header_ref = &parent_header; // Avoid moving to thread
-                let merkleize_handle = std::thread::Builder::new()
-                    .name("block_executor_merkleizer".to_string())
-                    .spawn_scoped(s, move || -> Result<_, StoreError> {
-                        let (account_updates_list, accumulated_updates) = if bal.is_some() {
-                            self.handle_merkleization_bal(
-                                rx,
-                                parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                            )?
-                        } else {
-                            self.handle_merkleization(
-                                rx,
-                                parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                            )?
-                        };
-                        let merkle_end_instant = Instant::now();
-                        Ok((
-                            account_updates_list,
-                            accumulated_updates,
-                            merkle_end_instant,
-                        ))
+                let accumulator_handle = std::thread::Builder::new()
+                    .name("block_executor_accumulator".to_string())
+                    .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        let mut all_updates: FxHashMap<Address, AccountUpdate> =
+                            FxHashMap::default();
+                        let mut code_updates: Vec<(H256, Code)> = Vec::new();
+                        for updates in rx {
+                            let current_length =
+                                queue_length_ref.fetch_sub(1, Ordering::Acquire);
+                            *max_queue_length_ref = current_length.max(*max_queue_length_ref);
+                            for update in updates {
+                                if let Some(info) = &update.info {
+                                    if let Some(code) = &update.code {
+                                        code_updates.push((info.code_hash, code.clone()));
+                                    }
+                                }
+                                match all_updates.entry(update.address) {
+                                    Entry::Vacant(e) => {
+                                        e.insert(update);
+                                    }
+                                    Entry::Occupied(mut e) => {
+                                        e.get_mut().merge(update);
+                                    }
+                                }
+                            }
+                        }
+                        let accumulated: Vec<AccountUpdate> =
+                            all_updates.into_values().collect();
+                        let accumulator_end_instant = Instant::now();
+                        Ok((accumulated, code_updates, accumulator_end_instant))
                     })
                     .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
+                        ChainError::Custom(format!("Failed to spawn accumulator thread: {e}"))
                     })?;
                 let execution_result = execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
                 });
-                let merkleization_result = merkleize_handle.join().unwrap_or_else(|_| {
-                    Err(StoreError::Custom(
-                        "merkleization thread panicked".to_string(),
+                let accumulator_result = accumulator_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom(
+                        "accumulator thread panicked".to_string(),
                     ))
                 });
                 let warmer_duration = warm_handle
@@ -649,17 +654,17 @@ impl Blockchain {
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
-                Ok((execution_result, merkleization_result, warmer_duration))
+                Ok((execution_result, accumulator_result, warmer_duration))
             })?;
-        let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
+        let (accumulated_updates, code_updates, accumulator_end_instant) = accumulator_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
-        let exec_merkle_end_instant = Instant::now();
+        let exec_accumulate_end_instant = Instant::now();
 
         Ok((
             execution_result,
-            account_updates_list,
             accumulated_updates,
+            code_updates,
             produced_bal,
             max_queue_length,
             [
@@ -667,13 +672,14 @@ impl Blockchain {
                 block_validated_instant,
                 exec_merkle_start,
                 exec_end_instant,
-                merkle_end_instant,
-                exec_merkle_end_instant,
+                accumulator_end_instant,
+                exec_accumulate_end_instant,
             ],
             warmer_duration,
         ))
     }
 
+    #[allow(dead_code)]
     #[instrument(
         level = "trace",
         name = "Trie update",
@@ -901,6 +907,7 @@ impl Blockchain {
     /// and storage slots are known upfront. This enables computing storage roots
     /// in parallel across accounts before feeding final results into state trie
     /// shards.
+    #[allow(dead_code)]
     #[instrument(
         level = "trace",
         name = "Trie update (BAL)",
@@ -1551,17 +1558,27 @@ impl Blockchain {
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
-            let (storage_tries_after_update, account_updates_list) =
+            let (storage_tries_after_update, _account_updates_list) =
                 self.storage.apply_account_updates_from_trie_with_witness(
                     trie,
                     &account_updates,
                     used_storage_tries,
                 )?;
 
+            // Extract code updates from account updates
+            let code_updates: Vec<(H256, Code)> = account_updates
+                .iter()
+                .filter_map(|u| {
+                    u.info.as_ref().and_then(|info| {
+                        u.code.as_ref().map(|code| (info.code_hash, code.clone()))
+                    })
+                })
+                .collect();
+
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+            self.store_block(block.clone(), code_updates, execution_result)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -2015,18 +2032,15 @@ impl Blockchain {
     pub fn store_block(
         &self,
         block: Block,
-        account_updates_list: AccountUpdatesList,
+        code_updates: Vec<(H256, Code)>,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        // Binary trie: skip MPT state root validation.
-        // The binary trie root is computed and logged in apply_binary_trie_updates.
-
         let update_batch = UpdateBatch {
-            account_updates: account_updates_list.state_updates,
-            storage_updates: account_updates_list.storage_updates,
+            account_updates: vec![],
+            storage_updates: vec![],
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
-            code_updates: account_updates_list.code_updates,
+            code_updates,
             batch_mode: false,
         };
 
@@ -2048,11 +2062,15 @@ impl Blockchain {
             block.header.parent_hash,
         )?;
 
-        // Apply the account updates over the last block's state and compute the new state root
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(block.header.parent_hash, &updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
+        // Extract code updates from account updates
+        let code_updates: Vec<(H256, Code)> = updates
+            .iter()
+            .filter_map(|u| {
+                u.info.as_ref().and_then(|info| {
+                    u.code.as_ref().map(|code| (info.code_hash, code.clone()))
+                })
+            })
+            .collect();
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2062,7 +2080,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, code_updates, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -2151,8 +2169,8 @@ impl Blockchain {
 
         let (
             res,
-            account_updates_list,
             accumulated_updates,
+            code_updates,
             produced_bal,
             merkle_queue_length,
             instants,
@@ -2168,12 +2186,10 @@ impl Blockchain {
 
         // Generate witness BEFORE applying trie updates, so proofs are
         // against the pre-execution state root.
-        if let Some(ref logger) = logger
-            && let Some(ref updates) = accumulated_updates
-        {
+        if let Some(ref logger) = logger {
             let block_hash = block.hash();
             let witness = self.generate_witness_from_account_updates(
-                updates.clone(),
+                accumulated_updates.clone(),
                 &block,
                 parent_header,
                 logger,
@@ -2185,16 +2201,14 @@ impl Blockchain {
         }
 
         // Apply account updates to binary trie (advances trie to post-execution state).
-        if let Some(ref updates) = accumulated_updates {
-            self.apply_binary_trie_updates(
-                updates,
-                block_number,
-                block.hash(),
-                block.header.parent_hash,
-            )?;
-        }
+        self.apply_binary_trie_updates(
+            &accumulated_updates,
+            block_number,
+            block.hash(),
+            block.header.parent_hash,
+        )?;
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, code_updates, res);
 
         let stored = Instant::now();
 
@@ -2553,22 +2567,19 @@ impl Blockchain {
         )
         .map_err(|e| (e, None))?;
 
-        // Apply the account updates over all blocks and compute the new state root
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
-            .map_err(|e| (e.into(), None))?
-            .ok_or((ChainError::ParentStateNotFound, None))?;
-
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
-        let code_updates = account_updates_list.code_updates;
-
-        // Binary trie: skip MPT state root validation.
+        // Extract code updates from account updates
+        let code_updates: Vec<(H256, Code)> = account_updates
+            .iter()
+            .filter_map(|u| {
+                u.info.as_ref().and_then(|info| {
+                    u.code.as_ref().map(|code| (info.code_hash, code.clone()))
+                })
+            })
+            .collect();
 
         let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
+            account_updates: vec![],
+            storage_updates: vec![],
             blocks,
             receipts: all_receipts,
             code_updates,
