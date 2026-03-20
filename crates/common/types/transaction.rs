@@ -1116,10 +1116,10 @@ impl Transaction {
             .get_or_try_init(|| {
                 let tx_hash = self.hash();
                 // Fast path: check process-level signer cache (populated by p2p, prior blocks, etc.)
-                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.lock() {
-                    if let Some(&addr) = cache.get(&tx_hash) {
-                        return Ok(addr);
-                    }
+                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.lock()
+                    && let Some(&addr) = cache.get(&tx_hash)
+                {
+                    return Ok(addr);
                 }
                 // Slow path: actual secp256k1 recovery
                 let sender = self.compute_sender(crypto)?;
