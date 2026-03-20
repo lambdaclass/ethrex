@@ -484,7 +484,13 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    NodeRecord,
+    Arc<std::sync::RwLock<BinaryTrieState>>,
+)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -516,10 +522,16 @@ pub async fn init_l1(
         store.generate_flatkeyvalue()?;
     }
 
+    // Binary trie does not support snap sync -- it must replay from genesis.
+    if opts.syncmode == SyncMode::Snap {
+        warn!("Snap sync is not supported with binary trie. The node will replay blocks from genesis or the last checkpoint. State sync from peers is disabled.");
+    }
+
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
     let binary_trie_state = init_binary_trie_state(&datadir, &genesis)?;
+    let binary_trie_state_for_shutdown = binary_trie_state.clone();
 
     let blockchain = init_blockchain(
         store.clone(),
@@ -607,6 +619,7 @@ pub async fn init_l1(
         cancel_token,
         peer_handler.peer_table,
         local_node_record,
+        binary_trie_state_for_shutdown,
     ))
 }
 
@@ -752,54 +765,40 @@ pub async fn regenerate_head_state(
 ) -> eyre::Result<()> {
     let head_block_number = store.get_latest_block_number().await?;
 
-    let Some(last_header) = store.get_block_header(head_block_number)? else {
-        unreachable!("Database is empty, genesis block should be present");
+    // Determine the binary trie's checkpoint block.
+    let checkpoint = {
+        let state = blockchain
+            .binary_trie_state
+            .read()
+            .map_err(|e| eyre::eyre!("binary trie lock error: {e}"))?;
+        state.checkpoint_block().unwrap_or(0)
     };
 
-    let mut current_last_header = last_header;
-
-    // Find the last block with a known state root
-    while !store.has_state_root(current_last_header.state_root)? {
-        if current_last_header.number == 0 {
-            return Err(eyre::eyre!(
-                "Unknown state found in DB. Please run `ethrex removedb` and restart node"
-            ));
-        }
-        let parent_number = current_last_header.number - 1;
-
-        debug!("Need to regenerate state for block {parent_number}");
-
-        let Some(parent_header) = store.get_block_header(parent_number)? else {
-            return Err(eyre::eyre!(
-                "Parent header for block {parent_number} not found"
-            ));
-        };
-
-        current_last_header = parent_header;
-    }
-
-    let last_state_number = current_last_header.number;
-
-    if last_state_number == head_block_number {
-        debug!("State is already up to date");
+    if checkpoint >= head_block_number {
+        debug!("Binary trie state is up to date (checkpoint block {checkpoint})");
         return Ok(());
     }
 
-    info!("Regenerating state from block {last_state_number} to {head_block_number}");
+    let replay_from = checkpoint + 1;
+    info!(
+        "Binary trie at block {checkpoint}, head at {head_block_number}. Replaying {} blocks...",
+        head_block_number - checkpoint
+    );
 
-    // Re-apply blocks from the last known state root to the head block
-    for i in (last_state_number + 1)..=head_block_number {
-        debug!("Re-applying block {i} to regenerate state");
+    for i in replay_from..=head_block_number {
+        if i % 1000 == 0 {
+            debug!("Replaying block {i}/{head_block_number}");
+        }
 
         let block = store
             .get_block_by_number(i)
             .await?
-            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+            .ok_or_else(|| eyre::eyre!("Block {i} not found during state regeneration"))?;
 
         blockchain.add_block_pipeline(block, None)?;
     }
 
-    info!("Finished regenerating state");
+    info!("Finished regenerating binary trie state");
 
     Ok(())
 }
