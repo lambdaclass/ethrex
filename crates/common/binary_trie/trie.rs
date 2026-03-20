@@ -1,6 +1,7 @@
 use crate::error::BinaryTrieError;
 use crate::node::{InternalNode, MAX_DEPTH, Node, NodeId, StemNode, stem_bit};
 use crate::node_store::NodeStore;
+use crate::proof::{BinaryTrieProof, get_proof_impl};
 
 /// The binary trie. Holds a `NodeStore` for node allocation and a root `NodeId`.
 pub struct BinaryTrie {
@@ -50,6 +51,14 @@ impl BinaryTrie {
         let (new_root, removed) = remove_node(&mut self.store, self.root.take(), &stem, sub_index)?;
         self.root = new_root;
         Ok(removed)
+    }
+
+    /// Generate a Merkle proof for `key`.
+    ///
+    /// `state_root()` must be called before this method so that all node hashes
+    /// are cached. Returns an error if any sibling node has not been merkelized.
+    pub fn get_proof(&self, key: [u8; 32]) -> Result<BinaryTrieProof, BinaryTrieError> {
+        get_proof_impl(self, key)
     }
 
     /// Write all dirty/freed trie nodes and metadata into a caller-supplied

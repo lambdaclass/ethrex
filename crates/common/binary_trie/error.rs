@@ -14,4 +14,6 @@ pub enum BinaryTrieError {
     StoreError(String),
     #[error("invalid node encoding: {0}")]
     DeserializationError(String),
+    #[error("proof generation requires merkelization: call state_root() before get_proof()")]
+    ProofRequiresMerkelization,
 }

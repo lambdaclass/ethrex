@@ -88,3 +88,62 @@ fn eip7864_insertion_order_independence() {
     assert_eq!(root1, root2, "insertion order should not affect root");
     assert_eq!(root1, hex_to_32(&vector.expected_root));
 }
+
+/// Verify that proofs for every key in each test vector verify against
+/// the Python-validated root. Since the roots are cross-validated with the
+/// reference implementation, correct proof verification implies correct
+/// proof generation.
+#[test]
+fn eip7864_proofs_verify_against_reference_roots() {
+    let vectors = load_vectors();
+
+    for vector in &vectors {
+        let mut trie = BinaryTrie::new();
+        // Use a map so overwrites keep only the latest value per key.
+        let mut keys: std::collections::HashMap<[u8; 32], [u8; 32]> =
+            std::collections::HashMap::new();
+        for ins in &vector.inserts {
+            let key = hex_to_32(&ins.key);
+            let value = hex_to_32(&ins.value);
+            trie.insert(key, value).unwrap();
+            keys.insert(key, value);
+        }
+
+        let root = merkelize(&mut trie);
+        let expected = hex_to_32(&vector.expected_root);
+        assert_eq!(root, expected, "root mismatch for '{}'", vector.name);
+
+        // Prove every inserted key and verify against the reference root.
+        for (key, value) in &keys {
+            let proof = trie
+                .get_proof(*key)
+                .unwrap_or_else(|e| {
+                    panic!("get_proof failed for vector '{}', key {}: {e}", vector.name, hex::encode(key))
+                });
+            assert_eq!(
+                proof.value,
+                Some(*value),
+                "vector '{}': proof value mismatch for key {}",
+                vector.name,
+                hex::encode(key)
+            );
+            assert!(
+                proof.verify(root, *key),
+                "vector '{}': proof failed verification for key {}",
+                vector.name,
+                hex::encode(key)
+            );
+        }
+
+        // Also prove an absent key and verify.
+        let mut absent_key = [0xFFu8; 32];
+        absent_key[0] = 0xFE; // unlikely to collide with test stems
+        let absent_proof = trie.get_proof(absent_key).unwrap();
+        assert!(absent_proof.value.is_none());
+        assert!(
+            absent_proof.verify(root, absent_key),
+            "vector '{}': absence proof failed verification",
+            vector.name
+        );
+    }
+}
