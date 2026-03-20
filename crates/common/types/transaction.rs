@@ -1,22 +1,23 @@
-use std::{cmp::min, fmt::Display, sync::RwLock};
+use std::{cmp::min, fmt::Display, num::NonZeroUsize, sync::Mutex};
 
 use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, CryptoError};
+use lru::LruCache;
 pub use mempool::MempoolTransaction;
-use rustc_hash::FxHashMap;
+
+const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 
 lazy_static::lazy_static! {
     /// Global cache mapping transaction hash → recovered sender address.
     /// Populated by all code paths that call `recover_signer` (p2p, RPC, etc.)
     /// so that subsequent lookups (e.g. during `engine_newPayloadV4`) avoid
     /// redundant secp256k1 recovery (~200µs per tx).
-    static ref GLOBAL_SIGNER_CACHE: RwLock<FxHashMap<H256, Address>> =
-        RwLock::new(FxHashMap::default());
+    /// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
+    static ref GLOBAL_SIGNER_CACHE: Mutex<LruCache<H256, Address>> =
+        Mutex::new(LruCache::new(NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero")));
 }
-
-const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
@@ -1109,19 +1110,16 @@ impl Transaction {
             .get_or_try_init(|| {
                 let tx_hash = self.hash();
                 // Fast path: check process-level signer cache (populated by p2p, prior blocks, etc.)
-                if let Ok(cache) = GLOBAL_SIGNER_CACHE.read() {
+                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.lock() {
                     if let Some(&addr) = cache.get(&tx_hash) {
                         return Ok(addr);
                     }
                 }
                 // Slow path: actual secp256k1 recovery
                 let sender = self.compute_sender(crypto)?;
-                // Store in global cache for future lookups
-                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.write() {
-                    if cache.len() >= MAX_SIGNER_CACHE_ENTRIES {
-                        cache.clear();
-                    }
-                    cache.insert(tx_hash, sender);
+                // Store in global cache for future lookups (LRU evicts oldest on overflow)
+                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.lock() {
+                    cache.put(tx_hash, sender);
                 }
                 Ok(sender)
             })
