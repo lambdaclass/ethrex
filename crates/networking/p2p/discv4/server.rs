@@ -8,7 +8,7 @@ use crate::{
     peer_table::{
         Contact, DiscoveryProtocol, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError,
     },
-    types::{Endpoint, Node, NodeRecord},
+    types::{Endpoint, INITIAL_ENR_SEQ, Node, NodeRecord},
     utils::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
     },
@@ -106,7 +106,7 @@ impl DiscoveryServer {
     ) -> Result<GenServerHandle<Self>, DiscoveryServerError> {
         info!(protocol = "discv4", "Starting discovery server");
 
-        let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
         if let Ok(fork_id) = storage.get_fork_id().await {
             local_node_record
@@ -568,9 +568,9 @@ impl DiscoveryServer {
         sender_public_key: H512,
         node_record: NodeRecord,
     ) -> Result<(), DiscoveryServerError> {
-        let pairs = node_record.decode_pairs();
+        let node_fork_id = node_record.get_fork_id().cloned();
 
-        let Some(remote_fork_id) = pairs.eth else {
+        let Some(remote_fork_id) = node_fork_id else {
             self.peer_table
                 .set_is_fork_id_valid(&node_id, false)
                 .await?;

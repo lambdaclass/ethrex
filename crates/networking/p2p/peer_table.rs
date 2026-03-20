@@ -1008,8 +1008,8 @@ impl PeerTableServer {
     }
 
     async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
-        if let Some(remote_fork_id) = record.decode_pairs().eth {
-            backend::is_fork_id_valid(store, &remote_fork_id)
+        if let Some(remote_fork_id) = record.get_fork_id() {
+            backend::is_fork_id_valid(store, remote_fork_id)
                 .await
                 .ok()
                 .or(Some(false))
