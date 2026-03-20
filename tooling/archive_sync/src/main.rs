@@ -147,7 +147,10 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
         // Add code to DB if it is not empty
         if dump_account.code_hash != *EMPTY_KECCACK_HASH {
             store
-                .add_account_code(Code::from_bytecode(dump_account.code.clone()))
+                .add_account_code(Code::from_bytecode(
+                    dump_account.code.clone(),
+                    &ethrex_crypto::NativeCrypto,
+                ))
                 .await?;
         }
         // Process storage trie if it is not empty
@@ -163,7 +166,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
     for res in storage_tasks.join_all().await {
         res?;
     }
-    Ok(state_trie.hash()?)
+    Ok(state_trie.hash(&ethrex_crypto::NativeCrypto)?)
 }
 
 async fn process_dump_storage(
@@ -177,7 +180,7 @@ async fn process_dump_storage(
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
     }
-    if trie.hash()? != storage_root {
+    if trie.hash(&ethrex_crypto::NativeCrypto)? != storage_root {
         Err(eyre::ErrReport::msg(
             "Storage root doesn't match the one in the account during archive sync",
         ))

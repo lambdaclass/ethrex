@@ -82,7 +82,7 @@ pub async fn get_batch(
         .ok_or(UtilsError::InconsistentStorage(
             "This block should be in the store".to_owned(),
         ))?
-        .hash_no_commit();
+        .hash_no_commit(&ethrex_common::NativeCrypto);
 
     let (l1_out_message_hashes, balance_diffs) =
         get_batch_message_hashes_and_balance_diffs(store, batch, chain_id).await?;

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::decode::RLPDecode;
 
 use crate::{
@@ -51,7 +51,7 @@ pub fn verify_range(
         for (key, value) in keys.iter().zip(values.iter()) {
             trie.insert(key.0.to_vec(), value.clone())?;
         }
-        let hash = trie.hash()?;
+        let hash = trie.hash(&NativeCrypto)?;
         if hash != root {
             return Err(TrieError::Verify(format!(
                 "invalid proof, expected root hash {root}, got  {hash}",
@@ -123,7 +123,7 @@ pub fn verify_range(
     }
 
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
-    let hash = trie.hash();
+    let hash = trie.hash(&NativeCrypto);
     if hash != root {
         return Err(TrieError::Verify(format!(
             "invalid proof, expected root hash {root}, got  {hash}",
