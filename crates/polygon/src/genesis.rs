@@ -65,6 +65,8 @@ pub fn polygon_mainnet_bor_config() -> BorConfig {
                 "77414656": "0x7Ee41D8A25641000661B1EF5E6AE8A00400466B0"
             },
             "stateSyncConfirmationDelay": {"44934656": 128},
+            "istanbulBlock": 3395000,
+            "berlinBlock": 14750000,
             "londonBlock": 23850000,
             "shanghaiBlock": 50523000,
             "cancunBlock": 54876000,
@@ -106,6 +108,8 @@ pub fn amoy_bor_config() -> BorConfig {
                 "26272256": "0x7Ee41D8A25641000661B1EF5E6AE8A00400466B0"
             },
             "stateSyncConfirmationDelay": {"0": 128},
+            "istanbulBlock": 0,
+            "berlinBlock": 0,
             "londonBlock": 73100,
             "shanghaiBlock": 73100,
             "cancunBlock": 5423600,

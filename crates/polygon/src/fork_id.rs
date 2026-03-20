@@ -17,6 +17,8 @@ pub fn gather_polygon_forks(bor_config: &BorConfig) -> Vec<u64> {
         // Bor's gatherForks() uses reflection on ChainConfig and does NOT descend
         // into the nested *BorConfig struct, so Bor-specific forks (Jaipur, Delhi,
         // Indore, Ahmedabad, etc.) are excluded from the fork ID computation.
+        bor_config.istanbul_block,
+        bor_config.berlin_block,
         bor_config.london_block,
         bor_config.shanghai_block,
         bor_config.cancun_block,
@@ -167,6 +169,8 @@ mod tests {
                 "backupMultiplier": {"0": 2},
                 "validatorContract": "0x0000000000000000000000000000000000001000",
                 "stateReceiverContract": "0x0000000000000000000000000000000000001001",
+                "istanbulBlock": 3395000,
+                "berlinBlock": 14750000,
                 "londonBlock": 23850000,
                 "shanghaiBlock": 50523000,
                 "cancunBlock": 54876000,
@@ -199,6 +203,8 @@ mod tests {
         assert_eq!(
             forks,
             vec![
+                3_395_000,  // Istanbul
+                14_750_000, // Berlin
                 23_850_000, // London
                 50_523_000, // Shanghai
                 54_876_000, // Cancun
@@ -234,8 +240,8 @@ mod tests {
                 .unwrap();
 
         let fork_id = polygon_fork_id(genesis_hash, &config, 0);
-        // Before any fork, fork_next should be London block
-        assert_eq!(fork_id.fork_next, 23_850_000);
+        // Before any fork, fork_next should be Istanbul block
+        assert_eq!(fork_id.fork_next, 3_395_000);
         // fork_hash is just CRC32 of genesis hash (no forks XORed in yet)
         let mut hasher = Hasher::new();
         hasher.update(genesis_hash.as_bytes());
@@ -253,9 +259,11 @@ mod tests {
         let fork_id = polygon_fork_id(genesis_hash, &config, 23_850_000);
         // After London, fork_next should be Shanghai
         assert_eq!(fork_id.fork_next, 50_523_000);
-        // fork_hash includes London
+        // fork_hash includes Istanbul, Berlin, and London
         let mut hasher = Hasher::new();
         hasher.update(genesis_hash.as_bytes());
+        hasher.update(&3_395_000u64.to_be_bytes());
+        hasher.update(&14_750_000u64.to_be_bytes());
         hasher.update(&23_850_000u64.to_be_bytes());
         let expected_hash = H32::from_slice(&hasher.finalize().to_be_bytes());
         assert_eq!(fork_id.fork_hash, expected_hash);

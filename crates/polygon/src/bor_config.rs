@@ -73,8 +73,14 @@ pub struct BorConfig {
     pub state_sync_confirmation_delay: BTreeMap<BlockNumber, u64>,
 
     // ---- EVM-level fork blocks (stored as block numbers in Bor) ----
-    // Bor activates Shanghai/Cancun/Prague at block numbers, not timestamps.
+    // Bor activates EVM forks at block numbers, not timestamps.
     // These are needed for fork ID computation (EIP-2124).
+    /// Istanbul activation block.
+    #[serde(default)]
+    pub istanbul_block: Option<u64>,
+    /// Berlin activation block.
+    #[serde(default)]
+    pub berlin_block: Option<u64>,
     /// London (EIP-1559) activation block.
     #[serde(default)]
     pub london_block: Option<u64>,
@@ -502,6 +508,8 @@ mod tests {
             lisovo_block: None,
             lisovo_pro_block: None,
             giugliano_block: None,
+            istanbul_block: None,
+            berlin_block: None,
             london_block: None,
             shanghai_block: None,
             cancun_block: None,
