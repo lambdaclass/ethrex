@@ -42,6 +42,7 @@ pub fn run() {
             // Auto-start local server for deployment management
             let server = Arc::new(local_server::LocalServer::new());
             app.manage(server.clone());
+            let server_port_for_tray = server.port();
             let server_for_watchdog = server.clone();
             tauri::async_runtime::spawn(async move {
                 // Skip start if port already has a healthy server
@@ -57,20 +58,41 @@ pub fn run() {
             });
 
             // System tray
-            let show_item =
-                MenuItem::with_id(app, "show", "Tokamak Appchain 열기", true, None::<&str>)?;
+            let messenger_item =
+                MenuItem::with_id(app, "show", "메신저 열기", true, None::<&str>)?;
+            let manager_item =
+                MenuItem::with_id(app, "manager", "매니저 열기", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&messenger_item, &manager_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Tokamak Appchain")
                 .menu(&menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
+                .on_menu_event(move |app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
+                        }
+                    }
+                    "manager" => {
+                        let url = format!("http://127.0.0.1:{}", server_port_for_tray);
+                        // Use same window ID as Messenger's openDeployManager()
+                        if let Some(win) = app.get_webview_window("deploy-manager") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(
+                                app,
+                                "deploy-manager",
+                                tauri::WebviewUrl::External(url.parse().unwrap()),
+                            )
+                            .title("Tokamak L2 Manager")
+                            .inner_size(1100.0, 800.0)
+                            .min_inner_size(800.0, 600.0)
+                            .center()
+                            .build();
                         }
                     }
                     "quit" => {
@@ -79,7 +101,7 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|_tray, _event| {
-                    // Only open via menu "열기", not on tray icon click
+                    // Only open via menu, not on tray icon click
                 })
                 .build(app)?;
 

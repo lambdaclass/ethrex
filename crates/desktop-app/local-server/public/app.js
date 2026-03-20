@@ -46,7 +46,7 @@ let elapsedInterval = null;
 // ============================================================
 // Navigation
 // ============================================================
-const pageTitles = { deployments: 'My L2s', launch: 'Launch L2', hosts: 'Remote Hosts', detail: 'L2 Details' };
+const pageTitles = { deployments: 'My L2s', launch: 'Launch L2', hosts: 'Remote Hosts', detail: 'L2 Details', 'guest-builds': 'Guest Builds' };
 
 document.querySelectorAll('.nav-link').forEach(btn => {
   btn.addEventListener('click', () => showView(btn.dataset.view));
@@ -95,6 +95,7 @@ function showView(name) {
 
   if (name === 'deployments') loadDeployments();
   if (name === 'hosts') loadHosts();
+  if (name === 'guest-builds') loadGuestBuilds();
   if (name === 'launch') {
     loadPrograms(); launchGoStep(1); launchDeploymentId = null;
     resetLaunchForm();
@@ -4570,6 +4571,280 @@ function copyAIPrompt() {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
+
+// ============================================================
+// Guest Builds
+// ============================================================
+let guestBuildPollInterval = null;
+let guestBuildDetailOpen = false; // prevent auto-refresh from overwriting detail view
+let guestBuildHasActive = false; // only poll when there are active builds
+let guestBuildEventSource = null; // track active SSE connection
+
+async function loadGuestBuilds() {
+  const container = document.getElementById('guest-builds-list');
+  if (!container) return;
+  guestBuildDetailOpen = false;
+  if (guestBuildEventSource) { guestBuildEventSource.close(); guestBuildEventSource = null; }
+
+  // Smart polling: only auto-refresh when there are active builds
+  if (guestBuildPollInterval) clearInterval(guestBuildPollInterval);
+  guestBuildPollInterval = setInterval(() => {
+    if (guestBuildDetailOpen) return;
+    if (!guestBuildHasActive) { clearInterval(guestBuildPollInterval); return; }
+    const activeView = document.querySelector('.view.active');
+    if (activeView && activeView.id === 'view-guest-builds') {
+      loadGuestBuilds_render();
+    } else {
+      clearInterval(guestBuildPollInterval);
+    }
+  }, 3000);
+
+  await loadGuestBuilds_render();
+}
+
+async function loadGuestBuilds_render() {
+  const container = document.getElementById('guest-builds-list');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`${API}/guest-builds`);
+    const data = await res.json();
+    const builds = data.builds || [];
+    guestBuildHasActive = builds.some(b => b.status === 'building');
+
+    if (builds.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding:48px 0;">
+          <p style="font-size:14px;font-weight:600;">No builds yet</p>
+          <p style="font-size:12px;margin-top:4px;">Build requests from ChainForge Studio will appear here.</p>
+        </div>`;
+      return;
+    }
+
+    builds.sort((a, b) => {
+      if (a.status === 'building' && b.status !== 'building') return -1;
+      if (b.status === 'building' && a.status !== 'building') return 1;
+      return b.startedAt - a.startedAt;
+    });
+
+    const buildStatusClass = (s) => s === 'completed' ? 'running' : s === 'error' ? 'error' : 'deploying';
+    const buildStatusLabel = (s) => s === 'completed' ? 'Completed' : s === 'error' ? 'Failed' : 'Building';
+    const buildPhaseLabel = (s) => s === 'completed' ? 'Done' : s === 'error' ? 'Error' : 'In Progress';
+
+    container.innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:40px;padding-left:20px"></th>
+            <th>Program</th>
+            <th>Status</th>
+            <th>Artifacts</th>
+            <th>Phase</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${builds.map(b => {
+            const time = new Date(b.startedAt).toLocaleTimeString();
+            const duration = b.result?.buildDuration ? `${(b.result.buildDuration / 1000).toFixed(1)}s` : b.status === 'building' ? `${Math.floor((Date.now() - b.startedAt) / 1000)}s` : '-';
+            const sClass = buildStatusClass(b.status);
+            const initial = (b.programName || '?').charAt(0).toUpperCase();
+
+            return `
+            <tr class="deploy-row" onclick="showBuildDetail('${b.buildId}')" style="cursor:pointer">
+              <td style="padding-left:20px"></td>
+              <td>
+                <div class="name-cell">
+                  <div class="icon-box">${initial}</div>
+                  <div>
+                    <div class="name-text">${b.programName}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">${time} · ${duration}${b.sourceHash ? ` · <span style="font-family:monospace">${b.sourceHash}</span>` : ''}</div>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <div class="status-cell">
+                  <span class="status-dot ${sClass}"></span>
+                  <span>${buildStatusLabel(b.status)}</span>
+                </div>
+              </td>
+              <td style="font-size:11px;font-family:monospace;color:var(--text-muted)">
+                ${b.result?.elfHash ? `<div>ELF: ${b.result.elfHash.slice(0, 14)}...</div>` : '<div>-</div>'}
+                ${b.result?.vk ? `<div>VK: ${b.result.vk.slice(0, 14)}...</div>` : ''}
+              </td>
+              <td>${renderBuildPhaseBadge(b.status)}</td>
+              <td>
+                <div class="actions-cell">
+                  ${b.status === 'completed' ? `<a href="${API}/guest-builds/${b.buildId}/elf" download class="icon-btn" title="Download ELF" onclick="event.stopPropagation()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>` : ''}
+                  <button class="icon-btn" title="View Details" onclick="event.stopPropagation(); showBuildDetail('${b.buildId}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>
+                  <button class="icon-btn" title="Delete" onclick="event.stopPropagation(); deleteGuestBuild('${b.buildId}')" style="color:var(--danger,#ef4444)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+                </div>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+  } catch (err) {
+    container.innerHTML = `<p style="color:var(--danger);">Failed to load builds: ${err.message}</p>`;
+  }
+}
+
+async function deleteGuestBuild(buildId) {
+  try {
+    const resp = await fetch(`${API}/guest-builds/${buildId}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      console.error('[guest-builds] delete failed:', data);
+    }
+    loadGuestBuilds();
+  } catch (err) {
+    console.error('Failed to delete:', err.message);
+  }
+}
+
+function renderBuildPhaseBadge(status) {
+  if (status === 'completed') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:#dcfce7;color:#16a34a">Done</span>';
+  if (status === 'error') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:#fef2f2;color:#dc2626">Error</span>';
+  return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:#fef9c3;color:#ca8a04">Building</span>';
+}
+
+async function showBuildDetail(buildId) {
+  guestBuildDetailOpen = true; // prevent auto-refresh from overwriting
+  const container = document.getElementById('guest-builds-list');
+  if (!container) return;
+
+  container.innerHTML = '<p style="color:#52525b;">Loading build details...</p>';
+
+  try {
+    const res = await fetch(`${API}/guest-builds/${buildId}`);
+    const b = await res.json();
+    if (b.error) throw new Error(b.error);
+
+    const statusColor = b.status === 'completed' ? '#22c55e' : b.status === 'error' ? '#ef4444' : '#f59e0b';
+    const statusLabel = b.status === 'completed' ? 'Completed' : b.status === 'error' ? 'Failed' : 'Building...';
+    const time = b.startedAt ? new Date(b.startedAt).toLocaleString() : '-';
+    const duration = b.result?.buildDuration ? `${(b.result.buildDuration / 1000).toFixed(1)}s` : '-';
+    const logs = b.logs || [];
+
+    container.innerHTML = `
+      <div>
+        <button onclick="loadGuestBuilds()" style="padding:6px 14px;background:#27272a;border:1px solid #3f3f46;border-radius:8px;color:#a1a1aa;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:16px;">← Back to list</button>
+
+        <div style="padding:20px;border:1px solid #27272a;border-radius:12px;background:#18181b;margin-bottom:16px;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+            <span style="font-weight:700;font-size:18px;">${b.programName}</span>
+            <span style="font-size:12px;color:${statusColor};font-weight:600;padding:3px 8px;background:${statusColor}15;border-radius:6px;">${statusLabel}</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;font-size:12px;">
+            <div>
+              <div style="color:#52525b;font-size:10px;font-weight:600;text-transform:uppercase;margin-bottom:4px;">Build ID</div>
+              <div style="color:#a1a1aa;font-family:monospace;font-size:11px;word-break:break-all;">${buildId}</div>
+            </div>
+            <div>
+              <div style="color:#52525b;font-size:10px;font-weight:600;text-transform:uppercase;margin-bottom:4px;">Started</div>
+              <div style="color:#a1a1aa;">${time}</div>
+            </div>
+            <div>
+              <div style="color:#52525b;font-size:10px;font-weight:600;text-transform:uppercase;margin-bottom:4px;">Duration</div>
+              <div style="color:#a1a1aa;">${duration}</div>
+            </div>
+            <div>
+              <div style="color:#52525b;font-size:10px;font-weight:600;text-transform:uppercase;margin-bottom:4px;">Source Hash</div>
+              <div style="color:#a1a1aa;font-family:monospace;">${b.sourceHash || '-'}</div>
+            </div>
+          </div>
+
+          ${b.result && b.status === 'completed' ? `
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid #27272a;">
+            <div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#22c55e;margin-bottom:8px;">Artifacts</div>
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-size:12px;">
+              <div>
+                <div style="color:#52525b;font-size:10px;margin-bottom:2px;">ELF Hash</div>
+                <div style="color:#a1a1aa;font-family:monospace;font-size:10px;word-break:break-all;">${b.result.elfHash || '-'}</div>
+              </div>
+              <div>
+                <div style="color:#52525b;font-size:10px;margin-bottom:2px;">Verification Key</div>
+                <div style="color:#a1a1aa;font-family:monospace;font-size:10px;word-break:break-all;">${b.result.vk || '-'}</div>
+              </div>
+              <div>
+                <div style="color:#52525b;font-size:10px;margin-bottom:2px;">ELF Size</div>
+                <div style="color:#a1a1aa;">${b.result.elfSize ? (b.result.elfSize / 1024).toFixed(1) + ' KB' : '-'}</div>
+              </div>
+              <div>
+                <div style="color:#52525b;font-size:10px;margin-bottom:2px;">VK Extraction</div>
+                <div style="color:#a1a1aa;">${b.result.vkExtracted ? '✅ SP1 SDK (real)' : '⚠️ Deterministic fallback'}</div>
+              </div>
+            </div>
+            <div style="margin-top:12px;">
+              <a href="${API}/guest-builds/${buildId}/elf" download style="padding:6px 14px;background:#22c55e20;border:1px solid #22c55e40;border-radius:8px;color:#22c55e;font-size:11px;font-weight:600;text-decoration:none;">Download ELF</a>
+            </div>
+          </div>` : ''}
+
+          ${b.result?.error ? `
+          <div style="margin-top:16px;padding:12px;background:#ef444415;border:1px solid #ef444430;border-radius:8px;">
+            <div style="font-size:10px;font-weight:600;color:#ef4444;margin-bottom:4px;">Error</div>
+            <div style="font-size:12px;color:#fca5a5;">${b.result.error}</div>
+          </div>` : ''}
+        </div>
+
+        <div style="padding:16px;border:1px solid #27272a;border-radius:12px;background:#18181b;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="font-size:12px;font-weight:700;color:#a1a1aa;">Build Logs</div>
+            <span style="font-size:10px;color:#52525b;">${logs.length} lines</span>
+          </div>
+          <div style="background:#000;border-radius:8px;padding:12px;max-height:280px;overflow-y:auto;font-family:monospace;font-size:10px;line-height:1.6;">
+            ${logs.length === 0
+              ? '<span style="color:#52525b;">No logs available</span>'
+              : logs.map(line => {
+                  const color = line.startsWith('[error]') ? '#ef4444'
+                    : line.startsWith('[build]') ? '#22c55e'
+                    : line.startsWith('[vk]') ? '#a78bfa'
+                    : line.startsWith('[cache]') ? '#eab308'
+                    : '#71717a';
+                  return `<div style="color:${color};white-space:pre-wrap;word-break:break-all;">${esc(line)}</div>`;
+                }).join('')
+            }
+          </div>
+        </div>
+
+        ${b.status === 'building' ? `
+        <div style="margin-top:12px;text-align:center;">
+          <button onclick="showBuildDetail('${buildId}')" style="padding:6px 14px;background:#f59e0b20;border:1px solid #f59e0b40;border-radius:8px;color:#f59e0b;font-size:11px;font-weight:600;cursor:pointer;">Refresh Logs</button>
+        </div>` : ''}
+      </div>`;
+
+    // Auto-refresh detail view via SSE when building
+    if (b.status === 'building') {
+      if (guestBuildEventSource) { guestBuildEventSource.close(); guestBuildEventSource = null; }
+      const evtSource = new EventSource(`${API}/guest-builds/${buildId}/logs`);
+      guestBuildEventSource = evtSource;
+      evtSource.onmessage = (e) => {
+        try {
+          const evt = JSON.parse(e.data);
+          if (evt.type === 'completed' || evt.type === 'error') {
+            evtSource.close();
+            if (guestBuildDetailOpen) showBuildDetail(buildId);
+          } else if (evt.type === 'log') {
+            const logContainer = container.querySelector('[style*="background:#000"]');
+            if (logContainer) {
+              const div = document.createElement('div');
+              div.style.cssText = 'color:#71717a;white-space:pre-wrap;word-break:break-all;';
+              div.textContent = evt.message;
+              logContainer.appendChild(div);
+              logContainer.scrollTop = logContainer.scrollHeight;
+            }
+          }
+        } catch (_) {}
+      };
+      evtSource.onerror = () => evtSource.close();
+    }
+  } catch (err) {
+    container.innerHTML = `
+      <button onclick="loadGuestBuilds()" style="padding:6px 14px;background:#27272a;border:1px solid #3f3f46;border-radius:8px;color:#a1a1aa;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:16px;">← Back</button>
+      <p style="color:#ef4444;font-size:13px;">Failed to load build: ${err.message}</p>`;
+  }
+}
 
 const initialView = urlParams.get('view');
 const detailId = urlParams.get('detail');
