@@ -96,7 +96,9 @@ impl VmDatabase for BinaryTrieVmDb {
             .state
             .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
-        Ok(state.get_account_state_at(&address, self.read_at))
+        state
+            .get_account_state_at(&address, self.read_at)
+            .map_err(|e| EvmError::DB(format!("binary trie error: {e}")))
     }
 
     fn get_storage_slot(
@@ -108,7 +110,9 @@ impl VmDatabase for BinaryTrieVmDb {
             .state
             .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
-        Ok(state.get_storage_slot_at(&address, key, self.read_at))
+        state
+            .get_storage_slot_at(&address, key, self.read_at)
+            .map_err(|e| EvmError::DB(format!("binary trie error: {e}")))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
@@ -136,6 +140,7 @@ impl VmDatabase for BinaryTrieVmDb {
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
             .get_account_code_at(&code_hash, self.read_at)
+            .map_err(|e| EvmError::DB(format!("binary trie error: {e}")))?
             .map(|bytes| Code::from_bytecode_unchecked(bytes, code_hash))
             .ok_or_else(|| EvmError::DB(format!("code not found for hash {code_hash:?}")))
     }
@@ -150,6 +155,7 @@ impl VmDatabase for BinaryTrieVmDb {
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
             .get_account_code_at(&code_hash, self.read_at)
+            .map_err(|e| EvmError::DB(format!("binary trie error: {e}")))?
             .map(|bytes| CodeMetadata {
                 length: bytes.len() as u64,
             })

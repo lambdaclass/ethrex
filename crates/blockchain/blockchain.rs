@@ -424,6 +424,9 @@ impl Blockchain {
         let root = state.state_root();
         debug!("Binary trie root after block {block_number}: {}", H256::from(root));
         state
+            .persist_diff(block_hash)
+            .map_err(|e| ChainError::Custom(format!("binary trie persist_diff error: {e}")))?;
+        state
             .flush_if_needed(block_number, block_hash)
             .map_err(|e| ChainError::Custom(format!("binary trie flush error: {e}")))?;
         Ok(())

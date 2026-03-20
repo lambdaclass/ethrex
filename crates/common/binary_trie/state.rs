@@ -35,8 +35,12 @@ pub enum DiffLookup<T> {
     Found(T),
     /// Explicitly deleted in a diff layer.
     Deleted,
-    /// Not present in any diff layer; caller should read from the base trie.
-    NotInDiffs,
+    /// Walked all the way to the base without finding the key.
+    /// Safe to read from the base trie.
+    NotModified,
+    /// Block hash not found in the in-memory diff tree.
+    /// Caller must try loading from disk or return an error.
+    NotInMemory,
 }
 
 /// State changes from a single block.
@@ -89,7 +93,7 @@ impl DiffTree {
         let mut current = at;
         loop {
             if current == self.base_hash {
-                return DiffLookup::NotInDiffs;
+                return DiffLookup::NotModified;
             }
             match self.layers.get(&current) {
                 Some(node) => match node.diff.accounts.get(addr) {
@@ -97,7 +101,7 @@ impl DiffTree {
                     Some(None) => return DiffLookup::Deleted,
                     None => current = node.parent_hash,
                 },
-                None => return DiffLookup::NotInDiffs,
+                None => return DiffLookup::NotInMemory,
             }
         }
     }
@@ -107,7 +111,7 @@ impl DiffTree {
         let mut current = at;
         loop {
             if current == self.base_hash {
-                return DiffLookup::NotInDiffs;
+                return DiffLookup::NotModified;
             }
             match self.layers.get(&current) {
                 Some(node) => {
@@ -125,7 +129,7 @@ impl DiffTree {
                         }
                     }
                 }
-                None => return DiffLookup::NotInDiffs,
+                None => return DiffLookup::NotInMemory,
             }
         }
     }
@@ -135,14 +139,14 @@ impl DiffTree {
         let mut current = at;
         loop {
             if current == self.base_hash {
-                return DiffLookup::NotInDiffs;
+                return DiffLookup::NotModified;
             }
             match self.layers.get(&current) {
                 Some(node) => match node.diff.code.get(code_hash) {
                     Some(code) => return DiffLookup::Found(code.clone()),
                     None => current = node.parent_hash,
                 },
-                None => return DiffLookup::NotInDiffs,
+                None => return DiffLookup::NotInMemory,
             }
         }
     }
@@ -180,6 +184,10 @@ const CODE_PREFIX: u8 = 0x02;
 const STORAGE_KEYS_PREFIX: u8 = 0x03;
 #[cfg(feature = "rocksdb")]
 const META_BLOCK_KEY: &[u8] = &[0xFF, b'B'];
+#[cfg(feature = "rocksdb")]
+const DIFF_PREFIX: u8 = 0x04;
+#[cfg(feature = "rocksdb")]
+const META_BASE_HASH_KEY: &[u8] = &[0xFF, b'H'];
 
 impl std::fmt::Debug for BinaryTrieState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -302,9 +310,27 @@ impl BinaryTrieState {
 
         // The flushed root on disk IS the base for diff layers.
         let base_root = root;
+
+        // Restore the diff tree base_hash from disk so that disk-backed
+        // backward walks know where to stop and fall through to the base trie.
+        let base_hash = db
+            .get(META_BASE_HASH_KEY)
+            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
+            .and_then(|bytes| {
+                if bytes.len() >= 32 {
+                    Some(H256::from_slice(&bytes[..32]))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(H256::zero());
+
+        let mut diff_tree = DiffTree::new();
+        diff_tree.base_hash = base_hash;
+
         Ok(Self {
             trie,
-            diff_tree: DiffTree::new(),
+            diff_tree,
             base_root,
             code_store: Mutex::new(code_store),
             storage_keys: Mutex::new(storage_keys),
@@ -386,8 +412,9 @@ impl BinaryTrieState {
             }
         }
 
-        // 4. Write checkpoint block number.
+        // 4. Write checkpoint block number and base block hash.
         batch.put(META_BLOCK_KEY, block_number.to_le_bytes());
+        batch.put(META_BASE_HASH_KEY, block_hash.as_bytes());
 
         db.write(batch)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
@@ -553,35 +580,68 @@ impl BinaryTrieState {
     // ── Diff-layer-aware reads (for historical state) ─────────────────
 
     /// Read account state at a specific block (identified by block hash).
-    pub fn get_account_state_at(&self, address: &Address, block_hash: H256) -> Option<AccountState> {
+    ///
+    /// `H256::zero()` is a special bypass used by tests and BinaryTrieVmDb::new();
+    /// it reads directly from the tip trie without consulting any diff layer.
+    pub fn get_account_state_at(
+        &self,
+        address: &Address,
+        block_hash: H256,
+    ) -> Result<Option<AccountState>, BinaryTrieError> {
+        if block_hash.is_zero() {
+            return Ok(self.get_account_state(address));
+        }
         match self.diff_tree.get_account(address, block_hash) {
-            DiffLookup::Found(state) => Some(state),
-            DiffLookup::Deleted => None,
-            DiffLookup::NotInDiffs => self.get_account_state_from_base(address),
+            DiffLookup::Found(state) => Ok(Some(state)),
+            DiffLookup::Deleted => Ok(None),
+            DiffLookup::NotModified => Ok(self.get_account_state_from_base(address)),
+            DiffLookup::NotInMemory => {
+                self.get_account_state_from_disk_diffs(address, block_hash)
+            }
         }
     }
 
     /// Read a storage slot at a specific block.
+    ///
+    /// `H256::zero()` bypasses diff layers and reads from the tip trie.
     pub fn get_storage_slot_at(
         &self,
         address: &Address,
         key: H256,
         block_hash: H256,
-    ) -> Option<U256> {
+    ) -> Result<Option<U256>, BinaryTrieError> {
+        if block_hash.is_zero() {
+            return Ok(self.get_storage_slot(address, key));
+        }
         match self.diff_tree.get_storage(address, key, block_hash) {
-            DiffLookup::Found(val) => Some(val),
-            DiffLookup::Deleted => None,
-            DiffLookup::NotInDiffs => self.get_storage_slot_from_base(address, key),
+            DiffLookup::Found(val) => Ok(Some(val)),
+            DiffLookup::Deleted => Ok(None),
+            DiffLookup::NotModified => Ok(self.get_storage_slot_from_base(address, key)),
+            DiffLookup::NotInMemory => {
+                self.get_storage_slot_from_disk_diffs(address, key, block_hash)
+            }
         }
     }
 
     /// Look up code at a specific block.
-    pub fn get_account_code_at(&self, code_hash: &H256, block_hash: H256) -> Option<Bytes> {
+    ///
+    /// `H256::zero()` bypasses diff layers and reads from the tip trie.
+    pub fn get_account_code_at(
+        &self,
+        code_hash: &H256,
+        block_hash: H256,
+    ) -> Result<Option<Bytes>, BinaryTrieError> {
+        if block_hash.is_zero() {
+            return Ok(self.get_account_code(code_hash));
+        }
         match self.diff_tree.get_code(code_hash, block_hash) {
-            DiffLookup::Found(code) => Some(code),
-            DiffLookup::Deleted => None,
-            // Code is never deleted in practice; fall through to existing lookup.
-            DiffLookup::NotInDiffs => self.get_account_code(code_hash),
+            DiffLookup::Found(code) => Ok(Some(code)),
+            // Code is never deleted in practice.
+            DiffLookup::Deleted => Ok(None),
+            DiffLookup::NotModified => Ok(self.get_account_code(code_hash)),
+            DiffLookup::NotInMemory => {
+                self.get_account_code_from_disk_diffs(code_hash, block_hash)
+            }
         }
     }
 
@@ -1083,6 +1143,427 @@ impl Default for BinaryTrieState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Disk-backed diff persistence (rocksdb feature only)
+// ---------------------------------------------------------------------------
+
+impl BinaryTrieState {
+    /// Persist the diff layer for `block_hash` to RocksDB.
+    ///
+    /// Call after all `apply_account_update_for_block` calls for the block.
+    /// This is crash-safe: each block's diff is written individually rather
+    /// than waiting until flush.
+    #[cfg(feature = "rocksdb")]
+    pub fn persist_diff(&self, block_hash: H256) -> Result<(), BinaryTrieError> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| BinaryTrieError::StoreError("no DB configured".into()))?;
+        let layer = self.diff_tree.layers.get(&block_hash).ok_or_else(|| {
+            BinaryTrieError::StoreError(format!("no diff layer for block {block_hash:?}"))
+        })?;
+        let bytes =
+            serialize_diff_record(&layer.parent_hash, layer.block_number, &layer.diff);
+        let mut key = vec![DIFF_PREFIX];
+        key.extend_from_slice(block_hash.as_bytes());
+        db.put(&key, &bytes)
+            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "rocksdb"))]
+    pub fn persist_diff(&self, _block_hash: H256) -> Result<(), BinaryTrieError> {
+        Ok(())
+    }
+
+    /// Load a persisted diff record for a block hash from RocksDB.
+    #[cfg(feature = "rocksdb")]
+    fn load_diff_from_disk(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<(H256, u64, StateDiff)>, BinaryTrieError> {
+        let db = match self.db.as_ref() {
+            Some(db) => db,
+            None => return Ok(None),
+        };
+        let mut key = vec![DIFF_PREFIX];
+        key.extend_from_slice(block_hash.as_bytes());
+        match db.get(&key).map_err(|e| BinaryTrieError::StoreError(e.to_string()))? {
+            Some(bytes) => Ok(Some(deserialize_diff_record(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Walk persisted diffs backward from `block_hash` to find the account state.
+    #[cfg(feature = "rocksdb")]
+    fn get_account_state_from_disk_diffs(
+        &self,
+        address: &Address,
+        block_hash: H256,
+    ) -> Result<Option<AccountState>, BinaryTrieError> {
+        let mut current = block_hash;
+        const MAX_WALK: u64 = 100_000;
+        for _ in 0..MAX_WALK {
+            if current == self.diff_tree.base_hash {
+                return Ok(self.get_account_state_from_base(address));
+            }
+            // Check in-memory first (walk may re-enter the in-memory window).
+            if let Some(node) = self.diff_tree.layers.get(&current) {
+                match node.diff.accounts.get(address) {
+                    Some(Some(state)) => return Ok(Some(state.clone())),
+                    Some(None) => return Ok(None),
+                    None => {
+                        current = node.parent_hash;
+                        continue;
+                    }
+                }
+            }
+            // Load from disk.
+            let (parent_hash, _block_number, diff) =
+                match self.load_diff_from_disk(current)? {
+                    Some(record) => record,
+                    None => {
+                        return Err(BinaryTrieError::StoreError(format!(
+                            "missing diff record for block {current:?}"
+                        )));
+                    }
+                };
+            match diff.accounts.get(address) {
+                Some(Some(state)) => return Ok(Some(state.clone())),
+                Some(None) => return Ok(None),
+                None => current = parent_hash,
+            }
+        }
+        Err(BinaryTrieError::StoreError(
+            "exceeded max walk steps in disk diff lookup".into(),
+        ))
+    }
+
+    #[cfg(not(feature = "rocksdb"))]
+    fn get_account_state_from_disk_diffs(
+        &self,
+        _address: &Address,
+        _block_hash: H256,
+    ) -> Result<Option<AccountState>, BinaryTrieError> {
+        Ok(None)
+    }
+
+    /// Walk persisted diffs backward from `block_hash` to find the storage slot.
+    #[cfg(feature = "rocksdb")]
+    fn get_storage_slot_from_disk_diffs(
+        &self,
+        address: &Address,
+        key: H256,
+        block_hash: H256,
+    ) -> Result<Option<U256>, BinaryTrieError> {
+        let mut current = block_hash;
+        const MAX_WALK: u64 = 100_000;
+        for _ in 0..MAX_WALK {
+            if current == self.diff_tree.base_hash {
+                return Ok(self.get_storage_slot_from_base(address, key));
+            }
+            // Check in-memory first.
+            if let Some(node) = self.diff_tree.layers.get(&current) {
+                match node.diff.storage.get(&(*address, key)) {
+                    Some(Some(val)) => return Ok(Some(*val)),
+                    Some(None) => return Ok(None),
+                    None => {
+                        if node.diff.storage_cleared.contains(address) {
+                            return Ok(None);
+                        }
+                        current = node.parent_hash;
+                        continue;
+                    }
+                }
+            }
+            // Load from disk.
+            let (parent_hash, _block_number, diff) =
+                match self.load_diff_from_disk(current)? {
+                    Some(record) => record,
+                    None => {
+                        return Err(BinaryTrieError::StoreError(format!(
+                            "missing diff record for block {current:?}"
+                        )));
+                    }
+                };
+            match diff.storage.get(&(*address, key)) {
+                Some(Some(val)) => return Ok(Some(*val)),
+                Some(None) => return Ok(None),
+                None => {
+                    if diff.storage_cleared.contains(address) {
+                        return Ok(None);
+                    }
+                    current = parent_hash;
+                }
+            }
+        }
+        Err(BinaryTrieError::StoreError(
+            "exceeded max walk steps in disk diff lookup".into(),
+        ))
+    }
+
+    #[cfg(not(feature = "rocksdb"))]
+    fn get_storage_slot_from_disk_diffs(
+        &self,
+        _address: &Address,
+        _key: H256,
+        _block_hash: H256,
+    ) -> Result<Option<U256>, BinaryTrieError> {
+        Ok(None)
+    }
+
+    /// Walk persisted diffs backward from `block_hash` to find code.
+    ///
+    /// Code is content-addressed and never deleted, so if not found in diffs,
+    /// we fall back to the code store (which includes all ever-deployed code).
+    #[cfg(feature = "rocksdb")]
+    fn get_account_code_from_disk_diffs(
+        &self,
+        code_hash: &H256,
+        block_hash: H256,
+    ) -> Result<Option<Bytes>, BinaryTrieError> {
+        // Code is content-addressed and immutable. If we can find it anywhere
+        // (diffs or code store), it's the right code. We walk diffs only to
+        // find recently-deployed code that may not yet be in the code store.
+        let mut current = block_hash;
+        const MAX_WALK: u64 = 100_000;
+        for _ in 0..MAX_WALK {
+            if current == self.diff_tree.base_hash {
+                return Ok(self.get_account_code(code_hash));
+            }
+            // Check in-memory first.
+            if let Some(node) = self.diff_tree.layers.get(&current) {
+                if let Some(code) = node.diff.code.get(code_hash) {
+                    return Ok(Some(code.clone()));
+                }
+                current = node.parent_hash;
+                continue;
+            }
+            // Load from disk.
+            let (parent_hash, _block_number, diff) =
+                match self.load_diff_from_disk(current)? {
+                    Some(record) => record,
+                    None => return Ok(self.get_account_code(code_hash)),
+                };
+            if let Some(code) = diff.code.get(code_hash) {
+                return Ok(Some(code.clone()));
+            }
+            current = parent_hash;
+        }
+        Ok(self.get_account_code(code_hash))
+    }
+
+    #[cfg(not(feature = "rocksdb"))]
+    fn get_account_code_from_disk_diffs(
+        &self,
+        _code_hash: &H256,
+        _block_hash: H256,
+    ) -> Result<Option<Bytes>, BinaryTrieError> {
+        Ok(None)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StateDiff serialization (rocksdb feature only)
+// ---------------------------------------------------------------------------
+
+/// Serialize a `(parent_hash, block_number, StateDiff)` triple into a compact
+/// binary format for on-disk storage.
+///
+/// Format:
+/// ```text
+/// [parent_hash: 32 bytes]
+/// [block_number: u64 LE]
+/// [accounts_count: u32 LE]
+///   for each account:
+///     [address: 20 bytes]
+///     [tag: u8]  -- 0x00 = deleted, 0x01 = present
+///     if present: [nonce: u64 LE][balance: 32 bytes BE][storage_root: 32 bytes][code_hash: 32 bytes]
+/// [storage_count: u32 LE]
+///   for each storage entry:
+///     [address: 20 bytes][key: 32 bytes][tag: u8]  -- 0x00 = deleted, 0x01 = present
+///     if present: [value: 32 bytes BE]
+/// [code_count: u32 LE]
+///   for each code entry: [code_hash: 32 bytes][code_len: u32 LE][code_bytes]
+/// [storage_cleared_count: u32 LE]
+///   for each cleared address: [address: 20 bytes]
+/// ```
+#[cfg(feature = "rocksdb")]
+fn serialize_diff_record(parent_hash: &H256, block_number: u64, diff: &StateDiff) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    // parent_hash + block_number
+    buf.extend_from_slice(parent_hash.as_bytes());
+    buf.extend_from_slice(&block_number.to_le_bytes());
+
+    // accounts
+    buf.extend_from_slice(&(diff.accounts.len() as u32).to_le_bytes());
+    for (addr, maybe_state) in &diff.accounts {
+        buf.extend_from_slice(addr.as_bytes());
+        match maybe_state {
+            None => buf.push(0x00),
+            Some(state) => {
+                buf.push(0x01);
+                buf.extend_from_slice(&state.nonce.to_le_bytes());
+                buf.extend_from_slice(&state.balance.to_big_endian());
+                buf.extend_from_slice(state.storage_root.as_bytes());
+                buf.extend_from_slice(state.code_hash.as_bytes());
+            }
+        }
+    }
+
+    // storage slots
+    buf.extend_from_slice(&(diff.storage.len() as u32).to_le_bytes());
+    for ((addr, key), maybe_val) in &diff.storage {
+        buf.extend_from_slice(addr.as_bytes());
+        buf.extend_from_slice(key.as_bytes());
+        match maybe_val {
+            None => buf.push(0x00),
+            Some(val) => {
+                buf.push(0x01);
+                buf.extend_from_slice(&val.to_big_endian());
+            }
+        }
+    }
+
+    // code entries
+    buf.extend_from_slice(&(diff.code.len() as u32).to_le_bytes());
+    for (hash, code) in &diff.code {
+        buf.extend_from_slice(hash.as_bytes());
+        buf.extend_from_slice(&(code.len() as u32).to_le_bytes());
+        buf.extend_from_slice(code);
+    }
+
+    // storage_cleared addresses
+    buf.extend_from_slice(&(diff.storage_cleared.len() as u32).to_le_bytes());
+    for addr in &diff.storage_cleared {
+        buf.extend_from_slice(addr.as_bytes());
+    }
+
+    buf
+}
+
+/// Deserialize bytes written by `serialize_diff_record`.
+///
+/// Returns `(parent_hash, block_number, StateDiff)`.
+#[cfg(feature = "rocksdb")]
+fn deserialize_diff_record(
+    bytes: &[u8],
+) -> Result<(H256, u64, StateDiff), BinaryTrieError> {
+    let mut offset = 0usize;
+
+    macro_rules! read_bytes {
+        ($n:expr) => {{
+            if offset + $n > bytes.len() {
+                return Err(BinaryTrieError::DeserializationError(
+                    "unexpected end of diff record".into(),
+                ));
+            }
+            let slice = &bytes[offset..offset + $n];
+            offset += $n;
+            slice
+        }};
+    }
+
+    macro_rules! read_u32_le {
+        () => {{
+            let b = read_bytes!(4);
+            u32::from_le_bytes(b.try_into().unwrap())
+        }};
+    }
+
+    macro_rules! read_u64_le {
+        () => {{
+            let b = read_bytes!(8);
+            u64::from_le_bytes(b.try_into().unwrap())
+        }};
+    }
+
+    let parent_hash = H256::from_slice(read_bytes!(32));
+    let block_number = read_u64_le!();
+
+    // accounts
+    let accounts_count = read_u32_le!();
+    let mut accounts: FxHashMap<Address, Option<AccountState>> =
+        FxHashMap::with_capacity_and_hasher(accounts_count as usize, Default::default());
+    for _ in 0..accounts_count {
+        let addr = Address::from_slice(read_bytes!(20));
+        let tag = read_bytes!(1)[0];
+        let maybe_state = match tag {
+            0x00 => None,
+            0x01 => {
+                let nonce = read_u64_le!();
+                let balance = U256::from_big_endian(read_bytes!(32));
+                let storage_root = H256::from_slice(read_bytes!(32));
+                let code_hash = H256::from_slice(read_bytes!(32));
+                Some(AccountState {
+                    nonce,
+                    balance,
+                    storage_root,
+                    code_hash,
+                })
+            }
+            other => {
+                return Err(BinaryTrieError::DeserializationError(format!(
+                    "invalid account tag: {other:#x}"
+                )));
+            }
+        };
+        accounts.insert(addr, maybe_state);
+    }
+
+    // storage slots
+    let storage_count = read_u32_le!();
+    let mut storage: FxHashMap<(Address, H256), Option<U256>> =
+        FxHashMap::with_capacity_and_hasher(storage_count as usize, Default::default());
+    for _ in 0..storage_count {
+        let addr = Address::from_slice(read_bytes!(20));
+        let key = H256::from_slice(read_bytes!(32));
+        let tag = read_bytes!(1)[0];
+        let maybe_val = match tag {
+            0x00 => None,
+            0x01 => Some(U256::from_big_endian(read_bytes!(32))),
+            other => {
+                return Err(BinaryTrieError::DeserializationError(format!(
+                    "invalid storage tag: {other:#x}"
+                )));
+            }
+        };
+        storage.insert((addr, key), maybe_val);
+    }
+
+    // code entries
+    let code_count = read_u32_le!();
+    let mut code: FxHashMap<H256, Bytes> =
+        FxHashMap::with_capacity_and_hasher(code_count as usize, Default::default());
+    for _ in 0..code_count {
+        let hash = H256::from_slice(read_bytes!(32));
+        let code_len = read_u32_le!() as usize;
+        let code_bytes = Bytes::copy_from_slice(read_bytes!(code_len));
+        code.insert(hash, code_bytes);
+    }
+
+    // storage_cleared
+    let cleared_count = read_u32_le!();
+    let mut storage_cleared: FxHashSet<Address> =
+        FxHashSet::with_capacity_and_hasher(cleared_count as usize, Default::default());
+    for _ in 0..cleared_count {
+        let addr = Address::from_slice(read_bytes!(20));
+        storage_cleared.insert(addr);
+    }
+
+    Ok((
+        parent_hash,
+        block_number,
+        StateDiff {
+            accounts,
+            storage,
+            code,
+            storage_cleared,
+        },
+    ))
 }
 
 /// Write an account update into a diff layer.
@@ -1652,5 +2133,169 @@ mod tests {
 
         t1.join().unwrap();
         t2.join().unwrap();
+    }
+
+    // ── Serialization round-trip tests ─────────────────────────────────
+
+    #[cfg(feature = "rocksdb")]
+    mod serde_tests {
+        use super::*;
+        use crate::state::{StateDiff, deserialize_diff_record, serialize_diff_record};
+        use ethrex_common::types::AccountState;
+
+        fn make_h256(n: u64) -> H256 {
+            H256::from_low_u64_be(n)
+        }
+
+        fn make_addr(b: u8) -> Address {
+            let mut a = [0u8; 20];
+            a[19] = b;
+            Address::from(a)
+        }
+
+        #[test]
+        fn test_serde_empty_diff() {
+            let parent = make_h256(1);
+            let block_number = 100u64;
+            let diff = StateDiff::default();
+
+            let bytes = serialize_diff_record(&parent, block_number, &diff);
+            let (p2, bn2, d2) = deserialize_diff_record(&bytes).unwrap();
+
+            assert_eq!(p2, parent);
+            assert_eq!(bn2, block_number);
+            assert!(d2.accounts.is_empty());
+            assert!(d2.storage.is_empty());
+            assert!(d2.code.is_empty());
+            assert!(d2.storage_cleared.is_empty());
+        }
+
+        #[test]
+        fn test_serde_with_accounts() {
+            let parent = make_h256(42);
+            let block_number = 999u64;
+            let mut diff = StateDiff::default();
+
+            let addr1 = make_addr(0x01);
+            let addr2 = make_addr(0x02);
+
+            // Present account
+            diff.accounts.insert(
+                addr1,
+                Some(AccountState {
+                    nonce: 7,
+                    balance: U256::from(1_000_000u64),
+                    storage_root: make_h256(0xAA),
+                    code_hash: make_h256(0xBB),
+                }),
+            );
+            // Deleted account
+            diff.accounts.insert(addr2, None);
+
+            let bytes = serialize_diff_record(&parent, block_number, &diff);
+            let (p2, bn2, d2) = deserialize_diff_record(&bytes).unwrap();
+
+            assert_eq!(p2, parent);
+            assert_eq!(bn2, block_number);
+
+            let state1 = d2.accounts[&addr1].as_ref().unwrap();
+            assert_eq!(state1.nonce, 7);
+            assert_eq!(state1.balance, U256::from(1_000_000u64));
+            assert_eq!(state1.storage_root, make_h256(0xAA));
+            assert_eq!(state1.code_hash, make_h256(0xBB));
+
+            assert!(d2.accounts[&addr2].is_none());
+        }
+
+        #[test]
+        fn test_serde_with_storage() {
+            let parent = make_h256(0);
+            let block_number = 1u64;
+            let mut diff = StateDiff::default();
+
+            let addr = make_addr(0x10);
+            let key1 = make_h256(1);
+            let key2 = make_h256(2);
+
+            diff.storage
+                .insert((addr, key1), Some(U256::from(777u64)));
+            diff.storage.insert((addr, key2), None); // deleted
+
+            let bytes = serialize_diff_record(&parent, block_number, &diff);
+            let (_, _, d2) = deserialize_diff_record(&bytes).unwrap();
+
+            assert_eq!(d2.storage[&(addr, key1)], Some(U256::from(777u64)));
+            assert_eq!(d2.storage[&(addr, key2)], None);
+        }
+
+        #[test]
+        fn test_serde_with_code() {
+            let parent = make_h256(10);
+            let block_number = 50u64;
+            let mut diff = StateDiff::default();
+
+            let code_bytes = Bytes::from(vec![0x60u8, 0x00, 0x56]);
+            let code_hash = make_h256(0xCC);
+            diff.code.insert(code_hash, code_bytes.clone());
+
+            let bytes = serialize_diff_record(&parent, block_number, &diff);
+            let (_, _, d2) = deserialize_diff_record(&bytes).unwrap();
+
+            assert_eq!(d2.code[&code_hash], code_bytes);
+        }
+
+        #[test]
+        fn test_serde_with_storage_cleared() {
+            let parent = make_h256(5);
+            let block_number = 200u64;
+            let mut diff = StateDiff::default();
+
+            let addr1 = make_addr(0x20);
+            let addr2 = make_addr(0x21);
+            diff.storage_cleared.insert(addr1);
+            diff.storage_cleared.insert(addr2);
+
+            let bytes = serialize_diff_record(&parent, block_number, &diff);
+            let (_, _, d2) = deserialize_diff_record(&bytes).unwrap();
+
+            assert!(d2.storage_cleared.contains(&addr1));
+            assert!(d2.storage_cleared.contains(&addr2));
+            assert_eq!(d2.storage_cleared.len(), 2);
+        }
+
+        #[test]
+        fn test_serde_all_fields() {
+            let parent = make_h256(0xDEAD);
+            let block_number = 12345u64;
+            let mut diff = StateDiff::default();
+
+            let addr = make_addr(0x30);
+            let key = make_h256(0xFF);
+
+            diff.accounts.insert(
+                addr,
+                Some(AccountState {
+                    nonce: 1,
+                    balance: U256::from(500u64),
+                    storage_root: make_h256(1),
+                    code_hash: make_h256(2),
+                }),
+            );
+            diff.storage
+                .insert((addr, key), Some(U256::from(999u64)));
+            diff.code
+                .insert(make_h256(2), Bytes::from(vec![0x00u8; 10]));
+            diff.storage_cleared.insert(addr);
+
+            let bytes = serialize_diff_record(&parent, block_number, &diff);
+            let (p2, bn2, d2) = deserialize_diff_record(&bytes).unwrap();
+
+            assert_eq!(p2, parent);
+            assert_eq!(bn2, block_number);
+            assert!(d2.accounts.contains_key(&addr));
+            assert!(d2.storage.contains_key(&(addr, key)));
+            assert!(d2.code.contains_key(&make_h256(2)));
+            assert!(d2.storage_cleared.contains(&addr));
+        }
     }
 }
