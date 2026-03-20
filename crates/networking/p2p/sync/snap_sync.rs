@@ -1108,8 +1108,23 @@ async fn insert_storages(
         .into_iter()
         .map(|res| res.path())
         .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    let total_files = file_paths.len();
+    info!("Ingesting {total_files} SST files into temp RocksDB in batches...");
+    // Ingest in batches and delete files after each batch to limit disk usage.
+    for (batch_idx, batch) in file_paths.chunks(500).enumerate() {
+        db.ingest_external_file(batch.to_vec())
+            .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        for path in batch {
+            let _ = std::fs::remove_file(path);
+        }
+        info!(
+            "Ingested batch {}/{} ({} files)",
+            batch_idx + 1,
+            (total_files + 499) / 500,
+            batch.len()
+        );
+    }
+    info!("SST ingestion complete. Starting trie construction for {} accounts...", accounts_with_storage.len());
     let snapshot = db.snapshot();
 
     let account_with_storage_and_tries = accounts_with_storage
@@ -1126,6 +1141,8 @@ async fn insert_storages(
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
+    let total_accounts = account_with_storage_and_tries.len();
+    let mut accounts_processed = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
         .unwrap_or(8);
@@ -1144,6 +1161,10 @@ async fn insert_storages(
             if counter >= thread_count - 1 {
                 let _ = receiver.recv();
                 counter -= 1;
+                accounts_processed += 1;
+                if accounts_processed % 10000 == 0 {
+                    info!("Storage trie insertion: {accounts_processed}/{total_accounts} accounts");
+                }
             }
             counter += 1;
             let pool_clone = pool.clone();
