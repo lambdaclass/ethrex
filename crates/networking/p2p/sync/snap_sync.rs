@@ -377,7 +377,7 @@ pub async fn snap_sync(
                 storage_accounts.accounts_with_storage_root.len()
             );
             storage_range_request_attempts += 1;
-            if storage_range_request_attempts < 5 {
+            if storage_range_request_attempts < 100 {
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
