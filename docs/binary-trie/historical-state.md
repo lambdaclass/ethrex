@@ -1,160 +1,187 @@
-# Binary Trie Historical State: Design and Rationale
+# Binary Trie: Historical State via Persisted Diff Layers
 
-## The Problem
+## Background
 
-The binary trie stores one version of state on disk: the latest flushed snapshot. An
-in-memory diff tree holds the last ~128 blocks of changes on top of that snapshot.
+Content-addressed tries (like the MPT) naturally preserve history. Each node's identity
+is its hash, so modifying a node produces a new node with a new hash. Old nodes remain on
+disk. Every state root points into a different tree, and traversing that tree recovers the
+exact state at any past block. History is a free byproduct of the data structure.
 
-This means historical state queries ("what was account X's balance at block 5,000,000?")
-only work correctly for recent blocks within the diff window. For older blocks, the code
-silently falls back to the flushed snapshot, returning the **wrong** state for any account
-that changed between the queried block and the flush point.
+The binary trie uses stable NodeIds. Nodes are mutable -- the same NodeId is overwritten
+when state changes. This makes the trie compact and fast for latest-state access, but it
+means historical state is not inherently preserved. An explicit mechanism is needed.
 
-The MPT does not have this problem. Every block's state root points into a
-content-addressed tree of nodes on disk. Old nodes are never overwritten because their
-identity is their hash -- modifying a node produces a new node with a new hash. History
-is preserved as a natural consequence of the data structure.
+## Design: Persisted Diff Layers
 
-The binary trie uses stable NodeIds. When a node is modified, the same NodeId is
-overwritten in place. Old state is lost. We need an explicit mechanism to preserve history.
+The binary trie separates structure from state. The trie is an index: a lookup structure
+mapping 32-byte keys to values. The actual state (account balances, storage slot values,
+contract code) lives in the leaf values. This separation is fundamental to the design and
+does not exist in the MPT, where the trie nodes ARE the state.
 
-## Options Considered
+The historical state mechanism leverages this separation. The trie remains a single-version
+index optimized for block execution. History is stored as a flat journal of value-level
+diffs, one per block. This is analogous to how databases work: a B-tree index for fast
+lookups, plus a write-ahead log for history.
 
-### Option A: Persisted Diff Layers (chosen)
+Each block produces a `StateDiff`: the set of accounts, storage slots, and code that
+changed. These diffs serve two roles:
 
-Store each block's state diff (the set of account and storage values that changed) to
-disk. The trie on disk remains a single latest-state snapshot. Historical queries walk
-backward through persisted diffs until the target value is found or the base is reached.
+1. **In-memory diff tree** (~128 most recent blocks): fast access for block execution and
+   recent RPC queries. Supports branching for reorgs.
+2. **On-disk diff archive** (all blocks): permanent record in RocksDB, keyed by block hash.
+   Each record includes the parent block hash to enable backward traversal.
 
-### Option B: Versioned Node Storage
+### Query paths
 
-Store multiple versions of each trie node, keyed by `(NodeId, block_number)`. The trie
-itself becomes versioned. Historical queries traverse the trie at a specific block by
-reading the correct version of each node along the path.
+**Latest state** (block execution, RPC `latest`): read from the in-memory diff tree, fall
+back to the base trie on disk. This is the hot path and is unaffected by the historical
+state mechanism.
 
-### Why Option A
+**Recent state** (within the ~128-block diff window): served entirely from the in-memory
+diff tree. Same performance as latest state.
 
-The decision comes down to what makes the binary trie different from the MPT, and whether
-we should lean into that difference or replicate MPT's approach.
+**Historical state** (older than the diff window): load the target block's `StateDiff` from
+RocksDB. If the queried value (account, storage slot) appears in that diff, return it.
+Otherwise, follow the parent hash to the previous block's diff and repeat. Continue walking
+backward until the value is found or the base checkpoint is reached, at which point the
+base trie provides the answer.
 
-**The binary trie separates structure from state.** The trie is an index -- a lookup
-structure that maps 32-byte keys to values. The actual state (account balances, storage
-slot values, code) lives in the leaf values. This separation does not exist in the MPT,
-where the trie nodes ARE the state. Every MPT state root leads to a different tree of
-nodes, and traversing that tree is the only way to recover state at a given block.
+```
+Query: "balance of 0xABC at block 5000"
 
-Option A leverages this separation. The trie stays as a fast, compact, single-version
-index optimized for the hot path (block execution). History is stored separately as a
-flat journal of value-level diffs. This is analogous to how databases work: a B-tree
-index for fast lookups, plus a write-ahead log for history and recovery.
+  Block 5000 diff (disk) -- 0xABC not here
+       |
+       v  (parent_hash)
+  Block 4999 diff (disk) -- 0xABC not here
+       |
+       v
+  Block 4998 diff (disk) -- 0xABC balance = 42  --> return 42
+```
 
-Option B ignores this separation. It versions the trie structure itself, making the
-binary trie behave like the MPT: every modification creates new node versions along the
-path, old versions are kept. The binary trie's advantage of stable, overwritable NodeIds
-is discarded.
+Each step is a RocksDB point lookup (~10us with block cache). For a value last modified K
+blocks before the queried block, the cost is O(K) lookups. Most account state is modified
+frequently enough that K is small.
 
-**Disk usage.** Option A stores only the changed values per block. A typical block
-modifying 200 accounts and 500 storage slots produces ~50-100 KB of diff data (addresses,
-keys, values). Option B stores all modified trie nodes along the path: ~25 InternalNodes
-(73 bytes each) plus StemNodes (~450 bytes each) per modification, totaling ~150-350 KB
-per block. Option A uses 2-5x less disk. Both use significantly less disk than the MPT,
-which duplicates entire node paths (often 1-5 KB per modification due to larger nodes).
+### Periodic snapshots
 
-**Hot path impact.** Option A does not change the trie's read or write path at all. Block
-execution reads from the in-memory diff tree and base trie exactly as it does today.
-Historical queries are a separate code path that loads diffs from disk. Option B requires
-every node write to include a block number, every node read to do a versioned seek, and
-the NodeStore's cache system to become version-aware. This is a significant refactor of
-the trie's core with risk of regression on the hot path.
+For queries deep in history where K is large (millions of blocks), backward walking becomes
+slow. This is bounded by periodic snapshots: a frozen full-state checkpoint stored every N
+blocks (e.g., every 10,000). To query block 15,234, find the nearest snapshot at or before
+that block (block 10,000), then forward-apply diffs from 10,001 to 15,234. Worst-case walk
+length is capped at the snapshot interval.
 
-**Implementation complexity.** Option A is roughly 200-400 lines of new code, primarily
-in the state layer (serializing diffs, storing/loading them, walking backward). The trie
-internals (NodeStore, node_store.rs, trie.rs) are untouched. Option B requires 500-800+
-lines touching the core NodeStore, changing the RocksDB key format, adding versioned
-reads, and updating every call site that accesses nodes.
+Snapshots are an optimization, not a requirement. Without them, all historical queries are
+correct -- just slower for very old, infrequently-modified state.
 
-**Historical read performance.** This is Option A's weakness. Querying block N requires
-walking backward through diffs from block N until the target value is found. For recent
-blocks this is fast (a few diffs). For very old blocks it could be slow (thousands of
-diffs). Option B gives consistent O(tree_depth) reads at any block.
+### Diff lookup semantics
 
-This weakness is addressed by periodic snapshots (described below).
+The in-memory diff tree distinguishes two cases when a value is not found:
 
-## Periodic Snapshots (future optimization)
+- **NotModified**: the backward walk reached the base checkpoint without finding the value.
+  The value was not modified in any block after the checkpoint. The base trie on disk holds
+  the correct answer.
+- **NotInMemory**: the queried block hash is not in the in-memory diff tree. The on-disk
+  diff archive must be consulted.
 
-Option A's ancient query performance can be bounded by storing periodic full-state
-snapshots. Every N blocks (e.g., 10,000), persist a frozen copy of the base trie. To
-query block 15,234:
+This distinction prevents the silent-wrong-answer failure mode where an unknown block hash
+falls through to the base trie and returns the latest flushed state instead of the state at
+the requested block.
 
-1. Find the nearest snapshot at or before block 15,234 (snapshot at block 10,000)
-2. Forward-apply diffs from block 10,001 to 15,234
-3. Return the resulting state
+### Storage format
 
-This caps the walk length at the snapshot interval. With 10,000-block intervals, worst
-case is applying 10,000 diffs, which takes well under a second.
+Each persisted diff record contains:
 
-Snapshots are deferred to a later phase. The initial implementation supports full
-historical queries without them -- just slower for very old blocks.
+- **Parent hash** (32 bytes): enables backward traversal without coupling the trie crate to
+  the block header storage layer.
+- **Block number** (8 bytes): enables future pruning by block height without scanning keys.
+- **StateDiff**: the set of modified accounts, storage slots, deployed code, and
+  storage-cleared addresses for that block.
 
-## How It Works
+Records are keyed by `prefix_byte || block_hash` in the existing RocksDB instance, using
+prefix-based namespacing consistent with the trie's code and storage key stores.
 
-### Data flow
+### Disk usage
+
+A typical Ethereum mainnet block modifies ~200 accounts and ~500 storage slots. The
+resulting diff is ~50-100 KB (addresses, keys, values -- no trie node overhead). Over 20M
+blocks this is ~1-2 TB uncompressed, reduced 3-5x by RocksDB compression.
+
+For comparison, the MPT stores ~10-15 new trie nodes per modification (path duplication
+from root to leaf), totaling ~200-500 KB per block. Versioned node storage (storing each
+modified binary trie node as a separate version) would produce ~150-350 KB per block.
+Persisted diffs are the most space-efficient option because they store only raw values with
+no structural overhead.
+
+| Approach | Disk per block | Structural overhead |
+|----------|---------------|-------------------|
+| Persisted diffs | ~50-100 KB | None (values only) |
+| Versioned nodes | ~150-350 KB | Path nodes duplicated per version |
+| MPT (content-addressed) | ~200-500 KB | Full path duplication, larger nodes |
+
+### Why not version the trie nodes
+
+An alternative design stores multiple versions of each trie node keyed by
+`(NodeId, block_number)`. This gives O(tree_depth) reads at any historical block --
+consistent performance regardless of age. However:
+
+- It versions the trie structure itself, discarding the binary trie's advantage of stable,
+  overwritable NodeIds. The trie becomes append-only, similar to the MPT.
+- Every node write must include a block number. Every node read must perform a versioned
+  seek. The NodeStore's cache system must become version-aware. This is a deep refactor of
+  the trie core with regression risk on the block execution hot path.
+- Disk usage is 2-5x higher than persisted diffs because intermediate trie nodes along the
+  modification path are stored, not just the changed values.
+
+Persisted diffs keep the trie simple and fast for its primary job (block execution) while
+adding history as a separate, orthogonal concern. The tradeoff -- slower ancient queries --
+is bounded by periodic snapshots and acceptable for the RPC workload where recent queries
+dominate.
+
+## Binary Trie vs MPT: Historical State Comparison
+
+| Dimension | Binary Trie (persisted diffs) | MPT (content-addressed) |
+|-----------|-------------------------------|-------------------------|
+| **How history is preserved** | Explicit journal of value-level diffs per block | Implicit -- old nodes remain on disk because modifying a node creates a new hash/identity |
+| **Node identity** | Stable NodeIds, mutable in place | Content-addressed hashes, immutable once written |
+| **Latest-state reads** | Direct lookup by NodeId, single-version trie | Traverse from latest state root through hash-linked nodes |
+| **Historical reads** | Walk backward through diff chain, then fall back to base trie | Traverse from that block's state root -- same cost as latest |
+| **Historical read cost** | O(K) where K = blocks since value last changed. Bounded by snapshots | O(depth) always, regardless of age |
+| **Disk per block** | ~50-100 KB (changed values only) | ~200-500 KB (all path nodes from root to leaf duplicated) |
+| **Disk growth model** | Proportional to state changes per block | Proportional to state changes * trie depth |
+| **Structural overhead in history** | None -- diffs store raw values, no trie nodes | Full -- every intermediate node along the path is a new entry |
+| **Proof generation** | Requires latest trie structure; historical proofs need state reconstruction | Any state root can generate proofs directly from its nodes on disk |
+| **Pruning** | Delete diffs older than cutoff (simple key range delete) | Complex -- must identify unreferenced nodes across all state roots |
+| **Branching/reorgs** | Diff tree supports multiple branches; on-disk diffs are per-block-hash | Each branch has its own state root pointing to shared subtrees |
+| **Crash recovery** | Replay from last flush checkpoint; diffs persisted per block | State roots are always consistent on disk |
+| **Concurrency** | Single-writer trie + concurrent readers via RwLock | Requires careful locking around trie cache layers |
+| **ZK-friendliness** | Binary structure + Poseidon-friendly hashing | 16-way branching + keccak -- expensive in circuits |
+
+**Key strengths of the binary trie approach:**
+- 2-5x less disk for historical data due to value-only diffs (no structural duplication)
+- Simpler pruning -- deleting old diffs is a key range delete, not a graph reachability problem
+- The trie's hot path (block execution) is completely unaffected by the history mechanism
+- Clean separation of concerns: the trie handles fast lookups, the diff journal handles history
+
+**Key strengths of the MPT approach:**
+- Consistent O(depth) historical reads at any block age with no additional mechanism
+- Historical Merkle proofs are available directly from disk without state reconstruction
+- History is an inherent property of the data structure, not a bolt-on
+
+## Data flow
 
 ```
 Block execution
     |
     v
-StateDiff created (accounts changed, storage slots changed, code deployed)
+StateDiff produced (accounts, storage slots, code)
     |
-    +--> In-memory DiffTree (last ~128 blocks, fast access)
+    +---> In-memory DiffTree (recent ~128 blocks)
     |
-    +--> RocksDB "diffs" column family (permanent, keyed by block hash)
+    +---> RocksDB diff archive (permanent, keyed by block hash)
     |
     v
-On flush (every 128 blocks):
+Periodic flush (every ~128 blocks):
     - Base trie on disk updated to latest state
     - In-memory diffs for flushed blocks pruned
-    - On-disk diffs are NOT pruned (they are the historical record)
+    - On-disk diffs retained as permanent historical record
 ```
-
-### Query paths
-
-**Latest state (block execution, RPC "latest"):**
-Same as today. Read from in-memory diff tree, fall back to base trie. No change.
-
-**Recent historical (within diff window, ~128 blocks):**
-Same as today. In-memory diff tree lookup. No change.
-
-**Older historical (outside diff window):**
-1. Load the StateDiff for the queried block hash from RocksDB
-2. If the target value is in this diff, return it
-3. If not, load the parent block's diff and check there
-4. Continue walking backward through parent diffs
-5. If we reach a block at or before the base checkpoint, read from the base trie
-
-The parent hash for each block is stored in the persisted diff (or can be resolved from
-block headers in the Store). Walking backward is a chain of RocksDB point lookups.
-
-### DiffLookup fix
-
-The current `DiffLookup` enum conflates two cases into `NotInDiffs`:
-
-1. **Walked to base hash**: the value was not modified in any diff layer, so the base
-   trie has the correct value. This is a valid fallback.
-2. **Unknown block hash**: the block is not in the in-memory diff tree at all. Falling
-   back to the base trie returns the wrong state.
-
-After this change, case 2 triggers the on-disk diff lookup path instead of silently
-returning incorrect data.
-
-## Tradeoff Summary
-
-| Dimension | Option A (chosen) | Option B | MPT |
-|-----------|-------------------|----------|-----|
-| Disk per block | ~50-100 KB | ~150-350 KB | ~200-500 KB |
-| Latest reads | Unchanged (fast) | Versioned seek | Trie traversal |
-| Recent history | In-memory diffs | Versioned seek | Trie traversal |
-| Ancient history | Walk diffs (slow, fixable with snapshots) | Versioned seek (fast) | Trie traversal |
-| Hot path changes | None | Major (NodeStore refactor) | N/A |
-| Implementation risk | Low | High | N/A |
-| Leverages binary trie design | Yes (trie as index, diffs as journal) | No (versions trie like MPT) | N/A |
