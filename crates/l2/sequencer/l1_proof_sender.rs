@@ -12,7 +12,7 @@ use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProverType, ProverTypeL2Ext},
+    prover::{BatchProof, ProverType, empty_calldata},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
@@ -444,7 +444,7 @@ impl L1ProofSender {
             let risc0_bytes = proofs
                 .get(&ProverType::RISC0)
                 .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::RISC0.empty_calldata())
+                .unwrap_or(empty_calldata(ProverType::RISC0))
                 .into_iter()
                 .next()
                 .unwrap_or(Value::Bytes(vec![].into()));
@@ -453,7 +453,7 @@ impl L1ProofSender {
             let sp1_bytes = proofs
                 .get(&ProverType::SP1)
                 .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::SP1.empty_calldata())
+                .unwrap_or(empty_calldata(ProverType::SP1))
                 .into_iter()
                 .next()
                 .unwrap_or(Value::Bytes(vec![].into()));
@@ -462,7 +462,7 @@ impl L1ProofSender {
             let tdx_bytes = proofs
                 .get(&ProverType::TDX)
                 .map(|proof| proof.calldata())
-                .unwrap_or(ProverType::TDX.empty_calldata())
+                .unwrap_or(empty_calldata(ProverType::TDX))
                 .into_iter()
                 .next()
                 .unwrap_or(Value::Bytes(vec![].into()));

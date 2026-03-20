@@ -12,6 +12,27 @@ use crate::calldata::Value;
 // continue to work for all downstream crates.
 pub use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
 
+/// Returns empty calldata for a prover type, used as a placeholder when
+/// no real proof is available yet. Matches the `OnChainProposer.sol` verify() signature.
+pub fn empty_calldata(prover_type: ProverType) -> Vec<Value> {
+    match prover_type {
+        ProverType::Exec => unimplemented!("Exec prover doesn't generate calldata"),
+        _ => vec![Value::Bytes(vec![].into())],
+    }
+}
+
+/// Returns the on-chain getter name for checking whether this proof type
+/// is required by the OnChainProposer contract, or `None` for types that
+/// don't have an on-chain verifier.
+pub fn verifier_getter(prover_type: ProverType) -> Option<&'static str> {
+    match prover_type {
+        ProverType::RISC0 => Some("REQUIRE_RISC0_PROOF()"),
+        ProverType::SP1 => Some("REQUIRE_SP1_PROOF()"),
+        ProverType::TDX => Some("REQUIRE_TDX_PROOF()"),
+        ProverType::Exec => None,
+    }
+}
+
 #[serde_as]
 #[derive(Serialize, Deserialize, RDeserialize, RSerialize, Archive)]
 pub struct ProverInputData {
@@ -23,43 +44,6 @@ pub struct ProverInputData {
     #[serde_as(as = "[_; 48]")]
     pub blob_proof: blobs_bundle::Proof,
     pub fee_configs: Vec<FeeConfig>,
-}
-
-/// Extension trait for L2-specific `ProverType` methods that depend on the `Value` calldata type.
-pub trait ProverTypeL2Ext {
-    /// Used to get the empty_calldata structure for that specific prover.
-    /// It has to match the `OnChainProposer.sol` verify() function.
-    fn empty_calldata(&self) -> Vec<Value>;
-
-    /// Used to call a getter for the REQUIRE_*_PROOF boolean in the OnChainProposer contract.
-    fn verifier_getter(&self) -> Option<String>;
-}
-
-impl ProverTypeL2Ext for ProverType {
-    fn empty_calldata(&self) -> Vec<Value> {
-        match self {
-            ProverType::RISC0 => {
-                vec![Value::Bytes(vec![].into())]
-            }
-            ProverType::SP1 => {
-                vec![Value::Bytes(vec![].into())]
-            }
-            ProverType::TDX => {
-                vec![Value::Bytes(vec![].into())]
-            }
-            ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
-        }
-    }
-
-    fn verifier_getter(&self) -> Option<String> {
-        // These values have to match with the OnChainProposer.sol contract
-        match self {
-            ProverType::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
-            ProverType::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),
-            ProverType::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
-            ProverType::Exec => None,
-        }
-    }
 }
 
 /// Contains the proof data recently created by the prover.

@@ -4,7 +4,7 @@ use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
-use ethrex_l2_common::prover::{ProverType, ProverTypeL2Ext};
+use ethrex_l2_common::prover::{ProverType, verifier_getter};
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
     build_generic_tx, get_last_committed_batch, send_tx_bump_gas_exponential_backoff,
@@ -91,7 +91,7 @@ pub async fn get_needed_proof_types(
 
     let mut needed_proof_types = vec![];
     for prover_type in ProverType::all() {
-        let Some(getter) = prover_type.verifier_getter() else {
+        let Some(getter) = verifier_getter(prover_type) else {
             continue;
         };
         let calldata = keccak(getter)[..4].to_vec();
