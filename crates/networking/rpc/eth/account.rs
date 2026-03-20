@@ -5,7 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_common::{Address, BigEndianHash, H256, U256, constants::EMPTY_KECCACK_HASH, serde_utils};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -56,14 +56,28 @@ impl RpcHandler for GetBalanceRequest {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            ));
+        };
+        let Some(block_hash) = context
+            .storage
+            .get_canonical_block_hash(block_number)
+            .await?
+        else {
+            return Err(RpcErr::Internal(
+                "Could not resolve block hash".to_owned(),
+            ));
         };
 
-        let account = context
-            .storage
-            .get_account_info(block_number, self.address)
-            .await?;
-        let balance = account.map(|acc| acc.balance).unwrap_or_default();
+        let state = context
+            .blockchain
+            .binary_trie_state
+            .read()
+            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
+        let balance = state
+            .get_account_state_at(&self.address, block_hash)
+            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
+            .map(|acc| acc.balance)
+            .unwrap_or_default();
 
         serde_json::to_value(format!("{balance:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -92,14 +106,39 @@ impl RpcHandler for GetCodeRequest {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            ));
+        };
+        let Some(block_hash) = context
+            .storage
+            .get_canonical_block_hash(block_number)
+            .await?
+        else {
+            return Err(RpcErr::Internal(
+                "Could not resolve block hash".to_owned(),
+            ));
         };
 
-        let code = context
-            .storage
-            .get_code_by_account_address(block_number, self.address)
-            .await?
-            .map(|c| c.bytecode)
+        let state = context
+            .blockchain
+            .binary_trie_state
+            .read()
+            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
+
+        // Get account to find code_hash, then look up the code.
+        let code = state
+            .get_account_state_at(&self.address, block_hash)
+            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
+            .and_then(|acc| {
+                if acc.code_hash == *EMPTY_KECCACK_HASH {
+                    None
+                } else {
+                    state
+                        .get_account_code_at(&acc.code_hash, block_hash)
+                        .ok()
+                        .flatten()
+                }
+            })
+            .map(|c| c)
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))
@@ -131,12 +170,26 @@ impl RpcHandler for GetStorageAtRequest {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            ));
+        };
+        let Some(block_hash) = context
+            .storage
+            .get_canonical_block_hash(block_number)
+            .await?
+        else {
+            return Err(RpcErr::Internal(
+                "Could not resolve block hash".to_owned(),
+            ));
         };
 
-        let storage_value = context
-            .storage
-            .get_storage_at(block_number, self.address, self.storage_slot)?
+        let state = context
+            .blockchain
+            .binary_trie_state
+            .read()
+            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
+        let storage_value = state
+            .get_storage_slot_at(&self.address, self.storage_slot, block_hash)
+            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{storage_value:#x}"))
@@ -178,11 +231,24 @@ impl RpcHandler for GetTransactionCountRequest {
                     return serde_json::to_value("0x0")
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 };
-
-                context
+                let Some(block_hash) = context
                     .storage
-                    .get_nonce_by_account_address(block_number, self.address)
+                    .get_canonical_block_hash(block_number)
                     .await?
+                else {
+                    return serde_json::to_value("0x0")
+                        .map_err(|error| RpcErr::Internal(error.to_string()));
+                };
+
+                let state = context
+                    .blockchain
+                    .binary_trie_state
+                    .read()
+                    .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
+                state
+                    .get_account_state_at(&self.address, block_hash)
+                    .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
+                    .map(|acc| acc.nonce)
                     .unwrap_or_default()
             }
         };
@@ -218,28 +284,44 @@ impl RpcHandler for GetProofRequest {
         let Some(block_number) = self.block.resolve_block_number(storage).await? else {
             return Ok(Value::Null);
         };
-        let Some(header) = storage.get_block_header(block_number)? else {
+        let Some(block_hash) = storage.get_canonical_block_hash(block_number).await? else {
             return Ok(Value::Null);
         };
-        // Create account proof
-        let Some(account_proof) = storage
-            .get_account_proof(header.state_root, self.address, &self.storage_keys)
-            .await?
-        else {
-            return Err(RpcErr::Internal("Could not get account proof".to_owned()));
-        };
-        let storage_proof = account_proof
-            .storage_proof
-            .into_iter()
-            .map(|sp| StorageProof {
-                key: sp.key.into_uint(),
-                value: sp.value,
-                proof: sp.proof,
+
+        // Read account state from binary trie to populate the response fields.
+        let state = context
+            .blockchain
+            .binary_trie_state
+            .read()
+            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
+        let account = state
+            .get_account_state_at(&self.address, block_hash)
+            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
+            .unwrap_or_default();
+
+        // Storage slot values.
+        let storage_proof: Vec<StorageProof> = self
+            .storage_keys
+            .iter()
+            .map(|key| {
+                let value = state
+                    .get_storage_slot_at(&self.address, *key, block_hash)
+                    .unwrap_or(None)
+                    .unwrap_or_default();
+                StorageProof {
+                    key: key.into_uint(),
+                    // Binary trie proofs have a different format than MPT proofs.
+                    // Proof generation is not yet wired into this RPC handler.
+                    proof: vec![],
+                    value,
+                }
             })
             .collect();
-        let account = account_proof.account;
+
         let account_proof = AccountProof {
-            account_proof: account_proof.proof,
+            // Binary trie proofs use sibling hashes, not MPT-encoded nodes.
+            // Proof data is not yet wired into this RPC handler.
+            account_proof: vec![],
             address: self.address,
             balance: account.balance,
             code_hash: account.code_hash,
