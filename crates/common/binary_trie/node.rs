@@ -11,6 +11,7 @@ pub const STEM_VALUES: usize = 256;
 pub type NodeId = u64;
 
 /// A node in the binary trie.
+#[derive(Clone)]
 pub enum Node {
     Internal(InternalNode),
     Stem(StemNode),
@@ -36,6 +37,7 @@ impl Node {
 /// An internal branching node with a left (bit=0) and right (bit=1) child.
 /// Children are referenced by NodeId rather than by pointer; the NodeStore is
 /// responsible for resolving IDs to nodes.
+#[derive(Clone)]
 pub struct InternalNode {
     pub left: Option<NodeId>,
     pub right: Option<NodeId>,

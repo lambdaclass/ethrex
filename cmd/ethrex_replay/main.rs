@@ -70,8 +70,7 @@ async fn main() -> Result<()> {
     // Open the existing RocksDB store (block source) with low-memory settings.
     // The replay only reads blocks; the full write-optimized config wastes ~20GB.
     info!("Opening store at {}", args.store_path.display());
-    let store =
-        Store::new_low_memory(&args.store_path).context("Failed to open store")?;
+    let store = Store::new_low_memory(&args.store_path).context("Failed to open store")?;
     store
         .load_initial_state()
         .await

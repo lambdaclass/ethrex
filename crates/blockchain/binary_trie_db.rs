@@ -52,9 +52,9 @@ impl BinaryTrieVmDb {
 
 impl VmDatabase for BinaryTrieVmDb {
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        let mut state = self
+        let state = self
             .state
-            .write()
+            .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         Ok(state.get_account_state(&address))
     }
@@ -64,9 +64,9 @@ impl VmDatabase for BinaryTrieVmDb {
         address: Address,
         key: H256,
     ) -> Result<Option<ethrex_common::U256>, EvmError> {
-        let mut state = self
+        let state = self
             .state
-            .write()
+            .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         Ok(state.get_storage_slot(&address, key))
     }
@@ -90,9 +90,9 @@ impl VmDatabase for BinaryTrieVmDb {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        let mut state = self
+        let state = self
             .state
-            .write()
+            .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
             .get_account_code(&code_hash)
@@ -104,9 +104,9 @@ impl VmDatabase for BinaryTrieVmDb {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
-        let mut state = self
+        let state = self
             .state
-            .write()
+            .read()
             .map_err(|e| EvmError::DB(format!("lock error: {e}")))?;
         state
             .get_account_code(&code_hash)

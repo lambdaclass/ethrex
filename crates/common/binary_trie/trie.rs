@@ -39,12 +39,9 @@ impl BinaryTrie {
     }
 
     /// Look up the value for a key, returning None if absent.
-    ///
-    /// Takes `&mut self` because in RocksDB-backed stores the node cache may
-    /// be populated on a miss during traversal.
-    pub fn get(&mut self, key: [u8; 32]) -> Option<[u8; 32]> {
+    pub fn get(&self, key: [u8; 32]) -> Option<[u8; 32]> {
         let (stem, sub_index) = split_key(&key);
-        get_node(&mut self.store, self.root, &stem, sub_index)
+        get_node(&self.store, self.root, &stem, sub_index)
     }
 
     /// Remove the value for a key, returning the previous value if it existed.
@@ -199,7 +196,7 @@ fn split_stems(
 // ---------------------------------------------------------------------------
 
 fn get_node(
-    store: &mut NodeStore,
+    store: &NodeStore,
     node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
@@ -208,30 +205,24 @@ fn get_node(
 }
 
 fn get_node_at_depth(
-    store: &mut NodeStore,
+    store: &NodeStore,
     node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
     depth: usize,
 ) -> Option<[u8; 32]> {
     let id = node_id?;
-    // We need to read the node but can't hold a &-reference into the HashMap
-    // while recursing (borrow checker). Take it out, extract what we need,
-    // and put it back clean before recursing.
-    let node = store.take(id).ok()?;
+    let node = store.get(id).ok()?;
     match node {
         Node::Stem(ref stem_node) => {
-            let result = if &stem_node.stem == stem {
+            if &stem_node.stem == stem {
                 stem_node.get_value(sub_index)
             } else {
                 None
-            };
-            store.put_clean(id, node);
-            result
+            }
         }
         Node::Internal(ref internal) => {
             if depth >= MAX_DEPTH {
-                store.put_clean(id, node);
                 return None;
             }
             let bit = stem_bit(stem, depth);
@@ -240,8 +231,6 @@ fn get_node_at_depth(
             } else {
                 internal.right
             };
-            // Put the node back before recursing so the child lookup works.
-            store.put_clean(id, node);
             get_node_at_depth(store, child, stem, sub_index, depth + 1)
         }
     }

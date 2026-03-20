@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::sync::Mutex;
 
 use lru::LruCache;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -179,7 +180,8 @@ pub struct NodeStore {
     /// working set in memory without LRU churn.
     warm_nodes: FxHashMap<NodeId, Node>,
     /// Clean (read-only) nodes — LRU-evicted when the cap is reached.
-    clean_cache: LruCache<NodeId, Node>,
+    /// Wrapped in a Mutex so that cache population on read can occur with `&self`.
+    clean_cache: Mutex<LruCache<NodeId, Node>>,
     /// IDs of nodes scheduled for deletion on the next flush.
     freed: FxHashSet<NodeId>,
     next_id: NodeId,
@@ -194,7 +196,9 @@ impl NodeStore {
             dirty_nodes: FxHashMap::default(),
             dirty_ids: FxHashSet::default(),
             warm_nodes: FxHashMap::default(),
-            clean_cache: LruCache::new(NonZeroUsize::new(DEFAULT_CLEAN_CACHE_CAP).unwrap()),
+            clean_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CLEAN_CACHE_CAP).unwrap(),
+            )),
             freed: FxHashSet::default(),
             next_id: 1,
             #[cfg(feature = "rocksdb")]
@@ -219,7 +223,9 @@ impl NodeStore {
             dirty_nodes: FxHashMap::default(),
             dirty_ids: FxHashSet::default(),
             warm_nodes: FxHashMap::default(),
-            clean_cache: LruCache::new(NonZeroUsize::new(DEFAULT_CLEAN_CACHE_CAP).unwrap()),
+            clean_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_CLEAN_CACHE_CAP).unwrap(),
+            )),
             freed: FxHashSet::default(),
             next_id,
             db: Some(db),
@@ -253,10 +259,45 @@ impl NodeStore {
         id
     }
 
-    /// Get a shared reference to a node by ID.
+    /// Get a node by ID, returning it by value (cloned).
     ///
     /// Lookup order: dirty_nodes → warm_nodes → clean_cache → RocksDB.
-    pub fn get(&mut self, id: NodeId) -> Result<&Node, BinaryTrieError> {
+    ///
+    /// Takes `&self` so read paths (trie traversal) do not require `&mut`.
+    /// Cache population on a miss uses an internal `Mutex`.
+    pub fn get(&self, id: NodeId) -> Result<Node, BinaryTrieError> {
+        if let Some(node) = self.dirty_nodes.get(&id) {
+            return Ok(node.clone());
+        }
+        if let Some(node) = self.warm_nodes.get(&id) {
+            return Ok(node.clone());
+        }
+        // Check clean cache (brief lock); populate on miss.
+        {
+            let mut cache = self.clean_cache.lock().unwrap();
+            if let Some(node) = cache.get(&id) {
+                return Ok(node.clone());
+            }
+        }
+        #[cfg(feature = "rocksdb")]
+        {
+            let node = self.load_from_db(id)?;
+            let cloned = node.clone();
+            self.clean_cache.lock().unwrap().put(id, node);
+            Ok(cloned)
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        Err(BinaryTrieError::NodeNotFound(id))
+    }
+
+    /// Get a shared reference to a node by ID, populating the cache on miss.
+    ///
+    /// Used by mutation paths (insert, remove, merkelize) where callers need
+    /// a reference rather than an owned clone. Takes `&mut self` to allow
+    /// cache insertion without the overhead of a Mutex lock.
+    ///
+    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → RocksDB.
+    pub fn get_mut(&mut self, id: NodeId) -> Result<&Node, BinaryTrieError> {
         if self.dirty_nodes.contains_key(&id) {
             return Ok(self.dirty_nodes.get(&id).unwrap());
         }
@@ -264,18 +305,18 @@ impl NodeStore {
             return Ok(self.warm_nodes.get(&id).unwrap());
         }
         // Check clean cache; on miss, load from DB.
-        if !self.clean_cache.contains(&id) {
+        if !self.clean_cache.get_mut().unwrap().contains(&id) {
             #[cfg(feature = "rocksdb")]
             {
                 let node = self.load_from_db(id)?;
-                self.clean_cache.put(id, node);
+                self.clean_cache.get_mut().unwrap().put(id, node);
             }
             #[cfg(not(feature = "rocksdb"))]
             {
                 return Err(BinaryTrieError::NodeNotFound(id));
             }
         }
-        Ok(self.clean_cache.get(&id).unwrap())
+        Ok(self.clean_cache.get_mut().unwrap().get(&id).unwrap())
     }
 
     /// Remove a node from the store and return it.
@@ -288,7 +329,7 @@ impl NodeStore {
         if let Some(node) = self.warm_nodes.remove(&id) {
             return Ok(node);
         }
-        if let Some(node) = self.clean_cache.pop(&id) {
+        if let Some(node) = self.clean_cache.get_mut().unwrap().pop(&id) {
             return Ok(node);
         }
         #[cfg(feature = "rocksdb")]
@@ -304,7 +345,7 @@ impl NodeStore {
     /// Put a node back (or update an existing one). Marks the node dirty.
     pub fn put(&mut self, id: NodeId, node: Node) {
         self.warm_nodes.remove(&id);
-        self.clean_cache.pop(&id);
+        self.clean_cache.get_mut().unwrap().pop(&id);
         self.dirty_nodes.insert(id, node);
         self.dirty_ids.insert(id);
         self.freed.remove(&id);
@@ -318,7 +359,7 @@ impl NodeStore {
         if self.dirty_ids.contains(&id) {
             self.dirty_nodes.insert(id, node);
         } else {
-            self.clean_cache.put(id, node);
+            self.clean_cache.get_mut().unwrap().put(id, node);
         }
     }
 
@@ -327,7 +368,7 @@ impl NodeStore {
         self.dirty_nodes.remove(&id);
         self.dirty_ids.remove(&id);
         self.warm_nodes.remove(&id);
-        self.clean_cache.pop(&id);
+        self.clean_cache.get_mut().unwrap().pop(&id);
         self.freed.insert(id);
     }
 
@@ -408,10 +449,11 @@ impl NodeStore {
     /// nodes become the warm pool (fast HashMap lookups, no LRU churn).
     /// The previous warm pool (now 2 intervals old) is demoted to the LRU.
     fn rotate_generations(&mut self) {
+        let cache = self.clean_cache.get_mut().unwrap();
         // Demote old warm nodes into the LRU (strip caches to save memory).
         for (id, mut node) in self.warm_nodes.drain() {
             node.strip_caches();
-            self.clean_cache.put(id, node);
+            cache.put(id, node);
         }
         // Move dirty nodes into warm (strip subtrees, keep as hot read-only).
         self.warm_nodes = std::mem::take(&mut self.dirty_nodes);
@@ -428,7 +470,7 @@ impl NodeStore {
 
     /// Return the number of clean nodes in the LRU cache.
     pub fn clean_cache_len(&self) -> usize {
-        self.clean_cache.len()
+        self.clean_cache.lock().unwrap().len()
     }
 
     /// Return the number of warm (recently flushed) nodes.
@@ -556,7 +598,7 @@ mod tests {
         store.put_clean(id, Node::Internal(InternalNode::new(Some(2), Some(3))));
         assert!(!store.dirty_ids.contains(&id));
         assert!(!store.dirty_nodes.contains_key(&id));
-        assert!(store.clean_cache.contains(&id));
+        assert!(store.clean_cache.lock().unwrap().contains(&id));
     }
 
     #[test]
@@ -571,7 +613,7 @@ mod tests {
         // Node should still be in dirty_nodes (not demoted to clean_cache).
         assert!(store.dirty_ids.contains(&id));
         assert!(store.dirty_nodes.contains_key(&id));
-        assert!(!store.clean_cache.contains(&id));
+        assert!(!store.clean_cache.lock().unwrap().contains(&id));
     }
 
     #[test]
@@ -589,7 +631,7 @@ mod tests {
         // Second rotation moves warm to clean cache.
         store.rotate_generations();
         assert!(!store.warm_nodes.contains_key(&id));
-        assert!(store.clean_cache.contains(&id));
+        assert!(store.clean_cache.lock().unwrap().contains(&id));
     }
 
     #[test]
@@ -601,7 +643,7 @@ mod tests {
         assert!(store.freed.contains(&id));
         assert!(!store.dirty_nodes.contains_key(&id));
         assert!(!store.warm_nodes.contains_key(&id));
-        assert!(!store.clean_cache.contains(&id));
+        assert!(!store.clean_cache.lock().unwrap().contains(&id));
         assert!(matches!(
             store.get(id),
             Err(BinaryTrieError::NodeNotFound(_))
@@ -794,5 +836,71 @@ mod tests {
 
         let right = store.get(s2_id).unwrap();
         assert!(matches!(right, Node::Stem(_)));
+    }
+
+    // --- Interior mutability / &self read tests ---
+
+    #[test]
+    fn get_by_value_matches_get_mut_by_ref() {
+        let mut store = NodeStore::new_memory();
+        let mut stem = make_stem(0xAB);
+        stem.set_value(0, [1u8; 32]);
+        stem.set_value(42, [2u8; 32]);
+        let id = store.create(Node::Stem(stem));
+
+        // get(&self) returns by clone
+        let by_value = store.get(id).unwrap();
+        // get_mut(&mut self) returns by reference
+        let by_ref = store.get_mut(id).unwrap();
+
+        // Both should have the same data.
+        if let (Node::Stem(v), Node::Stem(r)) = (&by_value, by_ref) {
+            assert_eq!(v.stem, r.stem);
+            assert_eq!(v.get_value(0), r.get_value(0));
+            assert_eq!(v.get_value(42), r.get_value(42));
+            assert_eq!(v.get_value(1), r.get_value(1)); // None
+        } else {
+            panic!("expected Stem nodes");
+        }
+    }
+
+    #[test]
+    fn concurrent_reads_via_shared_ref() {
+        use std::sync::Arc;
+
+        let mut store = NodeStore::new_memory();
+        let mut stem = make_stem(0x01);
+        stem.set_value(0, [42u8; 32]);
+        let id = store.create(Node::Stem(stem));
+
+        // Rotate to move node into warm (simulates post-flush state).
+        store.rotate_generations();
+
+        let store = Arc::new(store);
+
+        // Spawn two threads that read concurrently via &self.
+        let s1 = Arc::clone(&store);
+        let s2 = Arc::clone(&store);
+
+        let t1 = std::thread::spawn(move || {
+            for _ in 0..1000 {
+                let node = s1.get(id).unwrap();
+                if let Node::Stem(s) = node {
+                    assert_eq!(s.get_value(0), Some([42u8; 32]));
+                }
+            }
+        });
+
+        let t2 = std::thread::spawn(move || {
+            for _ in 0..1000 {
+                let node = s2.get(id).unwrap();
+                if let Node::Stem(s) = node {
+                    assert_eq!(s.get_value(0), Some([42u8; 32]));
+                }
+            }
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
     }
 }

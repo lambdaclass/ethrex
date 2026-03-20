@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "rocksdb")]
@@ -46,13 +47,19 @@ pub struct BinaryTrieState {
     /// corresponding entry here. This is maintained by `apply_genesis` and
     /// `apply_account_update`. Any future deserialization or state-loading
     /// path must also populate this map, or `get_account_code` will fail.
-    code_store: FxHashMap<H256, Bytes>,
+    ///
+    /// Wrapped in a Mutex so `get_account_code` can populate the cache with
+    /// `&self` (concurrent reads from executor threads).
+    code_store: Mutex<FxHashMap<H256, Bytes>>,
 
     /// Tracks which storage keys each account has written.
     /// Needed for `removed_storage` (SELFDESTRUCT) since the binary trie
     /// has no prefix-enumeration — we can't discover all storage keys
     /// for an address without this side structure.
-    storage_keys: FxHashMap<Address, FxHashSet<H256>>,
+    ///
+    /// Wrapped in a Mutex so `has_storage_keys` can populate the cache with
+    /// `&self` (concurrent reads from executor threads).
+    storage_keys: Mutex<FxHashMap<Address, FxHashSet<H256>>>,
 
     /// Shared RocksDB handle (present only when opened with `open()`).
     #[cfg(feature = "rocksdb")]
@@ -65,20 +72,33 @@ pub struct BinaryTrieState {
     /// Addresses whose storage_keys entry has changed since the last `flush()`.
     #[cfg(feature = "rocksdb")]
     dirty_storage_keys: FxHashSet<Address>,
+
+    /// Number of blocks applied since the last flush.
+    #[cfg(feature = "rocksdb")]
+    blocks_since_flush: u64,
+
+    /// Flush to disk when `blocks_since_flush` reaches this threshold.
+    /// Default 128, matching MPT's `DB_COMMIT_THRESHOLD`.
+    #[cfg(feature = "rocksdb")]
+    flush_threshold: u64,
 }
 
 impl BinaryTrieState {
     pub fn new() -> Self {
         Self {
             trie: BinaryTrie::new(),
-            code_store: FxHashMap::default(),
-            storage_keys: FxHashMap::default(),
+            code_store: Mutex::new(FxHashMap::default()),
+            storage_keys: Mutex::new(FxHashMap::default()),
             #[cfg(feature = "rocksdb")]
             db: None,
             #[cfg(feature = "rocksdb")]
             dirty_codes: FxHashSet::default(),
             #[cfg(feature = "rocksdb")]
             dirty_storage_keys: FxHashSet::default(),
+            #[cfg(feature = "rocksdb")]
+            blocks_since_flush: 0,
+            #[cfg(feature = "rocksdb")]
+            flush_threshold: 128,
         }
     }
 
@@ -121,11 +141,13 @@ impl BinaryTrieState {
 
         Ok(Self {
             trie,
-            code_store,
-            storage_keys,
+            code_store: Mutex::new(code_store),
+            storage_keys: Mutex::new(storage_keys),
             db: Some(db),
             dirty_codes: FxHashSet::default(),
             dirty_storage_keys: FxHashSet::default(),
+            blocks_since_flush: 0,
+            flush_threshold: 128,
         })
     }
 
@@ -166,30 +188,36 @@ impl BinaryTrieState {
         self.trie.flush_to_batch(&mut batch);
 
         // 2. Write dirty code_store entries (prefix 0x02 || code_hash).
-        for hash in &self.dirty_codes {
-            let mut key = vec![CODE_PREFIX];
-            key.extend_from_slice(hash.as_bytes());
-            if let Some(code) = self.code_store.get(hash) {
-                batch.put(&key, code.as_ref());
-            } else {
-                // Code was removed — delete the entry.
-                batch.delete(&key);
+        {
+            let code_store = self.code_store.lock().unwrap();
+            for hash in &self.dirty_codes {
+                let mut key = vec![CODE_PREFIX];
+                key.extend_from_slice(hash.as_bytes());
+                if let Some(code) = code_store.get(hash) {
+                    batch.put(&key, code.as_ref());
+                } else {
+                    // Code was removed — delete the entry.
+                    batch.delete(&key);
+                }
             }
         }
 
         // 3. Write dirty storage_keys entries (prefix 0x03 || address).
-        for addr in &self.dirty_storage_keys {
-            let mut key = vec![STORAGE_KEYS_PREFIX];
-            key.extend_from_slice(addr.as_bytes());
-            if let Some(keys) = self.storage_keys.get(addr) {
-                let mut value = Vec::with_capacity(keys.len() * 32);
-                for k in keys {
-                    value.extend_from_slice(k.as_bytes());
+        {
+            let storage_keys = self.storage_keys.lock().unwrap();
+            for addr in &self.dirty_storage_keys {
+                let mut key = vec![STORAGE_KEYS_PREFIX];
+                key.extend_from_slice(addr.as_bytes());
+                if let Some(keys) = storage_keys.get(addr) {
+                    let mut value = Vec::with_capacity(keys.len() * 32);
+                    for k in keys {
+                        value.extend_from_slice(k.as_bytes());
+                    }
+                    batch.put(&key, &value);
+                } else {
+                    // Account's storage was fully cleared — delete the entry.
+                    batch.delete(&key);
                 }
-                batch.put(&key, &value);
-            } else {
-                // Account's storage was fully cleared — delete the entry.
-                batch.delete(&key);
             }
         }
 
@@ -202,21 +230,51 @@ impl BinaryTrieState {
         // Sliding-window eviction: keep only the entries that were dirty
         // (recently modified = likely hot), drop everything else.  On a cache
         // miss, entries are reloaded from RocksDB on demand.
-        self.code_store = self
-            .dirty_codes
-            .iter()
-            .filter_map(|h| self.code_store.remove_entry(h))
-            .collect();
-        self.storage_keys = self
-            .dirty_storage_keys
-            .iter()
-            .filter_map(|a| self.storage_keys.remove_entry(a))
-            .collect();
+        {
+            let mut code_store = self.code_store.lock().unwrap();
+            let evicted: FxHashMap<H256, Bytes> = self
+                .dirty_codes
+                .iter()
+                .filter_map(|h| code_store.remove_entry(h))
+                .collect();
+            *code_store = evicted;
+        }
+        {
+            let mut storage_keys = self.storage_keys.lock().unwrap();
+            let evicted: FxHashMap<Address, FxHashSet<H256>> = self
+                .dirty_storage_keys
+                .iter()
+                .filter_map(|a| storage_keys.remove_entry(a))
+                .collect();
+            *storage_keys = evicted;
+        }
 
         self.dirty_codes.clear();
         self.dirty_storage_keys.clear();
+        self.blocks_since_flush = 0;
 
         Ok(())
+    }
+
+    /// Flush to disk if the block threshold has been reached.
+    ///
+    /// Returns `true` if a flush was performed, `false` otherwise.
+    /// Call this after each block's `apply_account_update` calls.
+    #[cfg(feature = "rocksdb")]
+    pub fn flush_if_needed(&mut self, block_number: u64) -> Result<bool, BinaryTrieError> {
+        self.blocks_since_flush += 1;
+        if self.blocks_since_flush >= self.flush_threshold {
+            self.flush(block_number)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Set the flush threshold (number of blocks between disk commits).
+    #[cfg(feature = "rocksdb")]
+    pub fn set_flush_threshold(&mut self, threshold: u64) {
+        self.flush_threshold = threshold;
     }
 
     /// Compute the binary trie state root via merkelization.
@@ -238,7 +296,7 @@ impl BinaryTrieState {
     /// The `storage_root` field is synthesized:
     ///   - EMPTY_TRIE_HASH if the account has no tracked storage keys
     ///   - A dummy non-empty hash (H256::from_low_u64_be(1)) otherwise
-    pub fn get_account_state(&mut self, address: &Address) -> Option<AccountState> {
+    pub fn get_account_state(&self, address: &Address) -> Option<AccountState> {
         let basic_data_key = get_tree_key_for_basic_data(address);
         let basic_data = self.trie.get(basic_data_key)?;
 
@@ -271,7 +329,7 @@ impl BinaryTrieState {
     }
 
     /// Read a storage slot value. Returns None if unset (treated as zero).
-    pub fn get_storage_slot(&mut self, address: &Address, key: H256) -> Option<U256> {
+    pub fn get_storage_slot(&self, address: &Address, key: H256) -> Option<U256> {
         let storage_key = U256::from_big_endian(key.as_bytes());
         let tree_key = get_tree_key_for_storage_slot(address, storage_key);
         self.trie.get(tree_key).map(|v| U256::from_big_endian(&v))
@@ -280,9 +338,12 @@ impl BinaryTrieState {
     /// Look up code by its keccak256 hash.
     ///
     /// Checks the in-memory cache first; on a miss, reloads from RocksDB.
-    pub fn get_account_code(&mut self, code_hash: &H256) -> Option<Bytes> {
-        if let Some(code) = self.code_store.get(code_hash) {
-            return Some(code.clone());
+    pub fn get_account_code(&self, code_hash: &H256) -> Option<Bytes> {
+        {
+            let cache = self.code_store.lock().unwrap();
+            if let Some(code) = cache.get(code_hash) {
+                return Some(code.clone());
+            }
         }
         #[cfg(feature = "rocksdb")]
         if let Some(db) = self.db.as_ref() {
@@ -290,7 +351,10 @@ impl BinaryTrieState {
             key.extend_from_slice(code_hash.as_bytes());
             if let Ok(Some(bytes)) = db.get(&key) {
                 let code = Bytes::copy_from_slice(&bytes);
-                self.code_store.insert(*code_hash, code.clone());
+                self.code_store
+                    .lock()
+                    .unwrap()
+                    .insert(*code_hash, code.clone());
                 return Some(code);
             }
         }
@@ -298,7 +362,7 @@ impl BinaryTrieState {
     }
 
     /// Get code size from basic_data. Returns 0 if account doesn't exist.
-    pub fn get_code_size(&mut self, address: &Address) -> u32 {
+    pub fn get_code_size(&self, address: &Address) -> u32 {
         let basic_data_key = get_tree_key_for_basic_data(address);
         match self.trie.get(basic_data_key) {
             Some(data) => {
@@ -360,15 +424,21 @@ impl BinaryTrieState {
             if value.is_zero() {
                 // Zero means delete.
                 self.trie.remove(tree_key)?;
-                if let Some(keys) = self.storage_keys.get_mut(address) {
+                let mut storage_keys = self.storage_keys.lock().unwrap();
+                if let Some(keys) = storage_keys.get_mut(address) {
                     keys.remove(key);
                     if keys.is_empty() {
-                        self.storage_keys.remove(address);
+                        storage_keys.remove(address);
                     }
                 }
             } else {
                 self.trie.insert(tree_key, value.to_big_endian())?;
-                self.storage_keys.entry(*address).or_default().insert(*key);
+                self.storage_keys
+                    .lock()
+                    .unwrap()
+                    .entry(*address)
+                    .or_default()
+                    .insert(*key);
             }
             #[cfg(feature = "rocksdb")]
             self.dirty_storage_keys.insert(*address);
@@ -402,7 +472,10 @@ impl BinaryTrieState {
                     self.trie
                         .insert(get_tree_key_for_code_chunk(address, i as u64), *chunk)?;
                 }
-                self.code_store.insert(code_hash, genesis.code.clone());
+                self.code_store
+                    .lock()
+                    .unwrap()
+                    .insert(code_hash, genesis.code.clone());
                 #[cfg(feature = "rocksdb")]
                 self.dirty_codes.insert(code_hash);
             }
@@ -415,6 +488,8 @@ impl BinaryTrieState {
 
                     let key_h256 = H256(slot.to_big_endian());
                     self.storage_keys
+                        .lock()
+                        .unwrap()
                         .entry(*address)
                         .or_default()
                         .insert(key_h256);
@@ -435,8 +510,8 @@ impl BinaryTrieState {
             self.trie.store.warm_len(),
             self.trie.store.dirty_len(),
             self.trie.store.freed_len(),
-            self.code_store.len(),
-            self.storage_keys.len(),
+            self.code_store.lock().unwrap().len(),
+            self.storage_keys.lock().unwrap().len(),
         )
     }
 
@@ -447,9 +522,12 @@ impl BinaryTrieState {
     /// Check whether `address` has any tracked storage keys.
     ///
     /// Checks in-memory cache first; on a miss, reloads from RocksDB.
-    fn has_storage_keys(&mut self, address: &Address) -> bool {
-        if let Some(keys) = self.storage_keys.get(address) {
-            return !keys.is_empty();
+    fn has_storage_keys(&self, address: &Address) -> bool {
+        {
+            let cache = self.storage_keys.lock().unwrap();
+            if let Some(keys) = cache.get(address) {
+                return !keys.is_empty();
+            }
         }
         self.reload_storage_keys(address)
     }
@@ -457,7 +535,7 @@ impl BinaryTrieState {
     /// Reload storage_keys for a single address from RocksDB.
     /// Returns true if the address has non-empty storage keys.
     #[cfg(feature = "rocksdb")]
-    fn reload_storage_keys(&mut self, address: &Address) -> bool {
+    fn reload_storage_keys(&self, address: &Address) -> bool {
         let Some(db) = self.db.as_ref() else {
             return false;
         };
@@ -472,7 +550,7 @@ impl BinaryTrieState {
                     offset += 32;
                 }
                 let has = !keys.is_empty();
-                self.storage_keys.insert(*address, keys);
+                self.storage_keys.lock().unwrap().insert(*address, keys);
                 return has;
             }
         }
@@ -480,7 +558,7 @@ impl BinaryTrieState {
     }
 
     #[cfg(not(feature = "rocksdb"))]
-    fn reload_storage_keys(&mut self, _address: &Address) -> bool {
+    fn reload_storage_keys(&self, _address: &Address) -> bool {
         false
     }
 
@@ -534,7 +612,10 @@ impl BinaryTrieState {
         }
 
         // Store in code_store for fast lookup.
-        self.code_store.insert(code.hash, code.bytecode.clone());
+        self.code_store
+            .lock()
+            .unwrap()
+            .insert(code.hash, code.bytecode.clone());
         #[cfg(feature = "rocksdb")]
         self.dirty_codes.insert(code.hash);
 
@@ -571,10 +652,11 @@ impl BinaryTrieState {
     /// Clear all storage slots for an account using the tracked storage_keys.
     fn clear_account_storage(&mut self, address: &Address) -> Result<(), BinaryTrieError> {
         // Ensure storage_keys are loaded if they were evicted.
-        if !self.storage_keys.contains_key(address) {
+        if !self.storage_keys.lock().unwrap().contains_key(address) {
             self.reload_storage_keys(address);
         }
-        if let Some(keys) = self.storage_keys.remove(address) {
+        let keys = self.storage_keys.lock().unwrap().remove(address);
+        if let Some(keys) = keys {
             for key in keys {
                 let storage_key = U256::from_big_endian(key.as_bytes());
                 let tree_key = get_tree_key_for_storage_slot(address, storage_key);
@@ -1144,5 +1226,42 @@ mod tests {
             state.get_storage_slot(&addr, new_slot).unwrap(),
             U256::from(222u64)
         );
+    }
+
+    // Concurrent reads via &self.
+    #[test]
+    fn test_concurrent_state_reads() {
+        use std::sync::{Arc, RwLock};
+
+        let mut state = BinaryTrieState::new();
+        let addr = make_address(0xCC);
+
+        let mut accounts = BTreeMap::new();
+        accounts.insert(addr, make_genesis_eoa(12345, 7));
+        state.apply_genesis(&accounts).unwrap();
+
+        let state = Arc::new(RwLock::new(state));
+
+        let s1 = Arc::clone(&state);
+        let s2 = Arc::clone(&state);
+
+        let t1 = std::thread::spawn(move || {
+            for _ in 0..500 {
+                let s = s1.read().unwrap();
+                let acct = s.get_account_state(&make_address(0xCC)).unwrap();
+                assert_eq!(acct.balance, U256::from(12345u64));
+            }
+        });
+
+        let t2 = std::thread::spawn(move || {
+            for _ in 0..500 {
+                let s = s2.read().unwrap();
+                let acct = s.get_account_state(&make_address(0xCC)).unwrap();
+                assert_eq!(acct.nonce, 7);
+            }
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
     }
 }

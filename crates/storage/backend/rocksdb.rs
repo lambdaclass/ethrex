@@ -247,9 +247,7 @@ impl RocksDBBackend {
             path.as_ref(),
             cf_descriptors,
         )
-        .map_err(|e| {
-            StoreError::Custom(format!("Failed to open RocksDB (low-memory): {}", e))
-        })?;
+        .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB (low-memory): {}", e)))?;
 
         Ok(Self { db: Arc::new(db) })
     }
