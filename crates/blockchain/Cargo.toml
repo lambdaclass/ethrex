@@ -18,6 +18,7 @@ ethrex-vm.workspace = true
 ethrex-binary-trie.workspace = true
 ethrex-metrics = { path = "./metrics", default-features = false }
 
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true

@@ -1238,12 +1238,148 @@ impl Blockchain {
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
-    ) -> Result<ExecutionWitness, ChainError> {
+    ) -> Result<ethrex_binary_trie::BinaryTrieWitness, ChainError> {
         self.generate_witness_for_blocks_with_fee_configs(blocks, None)
             .await
     }
 
     pub async fn generate_witness_for_blocks_with_fee_configs(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<ethrex_binary_trie::BinaryTrieWitness, ChainError> {
+        let first_block = blocks.first().ok_or(ChainError::WitnessGeneration(
+            "Empty block batch".to_string(),
+        ))?;
+
+        // Accumulate all accessed accounts (address -> storage keys) and codes
+        // across all blocks in the batch.
+        let mut accessed_accounts: HashMap<Address, Vec<H256>> = HashMap::new();
+        let mut accessed_codes: HashSet<H256> = HashSet::new();
+        let mut accessed_block_hashes: HashMap<u64, H256> = HashMap::new();
+
+        for (i, block) in blocks.iter().enumerate() {
+            let parent_hash = block.header.parent_hash;
+            let parent_header = self
+                .storage
+                .get_block_header_by_hash(parent_hash)
+                .map_err(ChainError::StoreError)?
+                .ok_or(ChainError::ParentNotFound)?;
+
+            let vm_db: DynVmDatabase =
+                Box::new(self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number));
+            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
+
+            let mut vm = match &self.options.r#type {
+                BlockchainType::L1 => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
+                BlockchainType::L2(_) => {
+                    let fee_config = match fee_configs {
+                        Some(fee_configs) => {
+                            fee_configs.get(i).ok_or(ChainError::WitnessGeneration(
+                                "FeeConfig not found for witness generation".to_string(),
+                            ))?
+                        }
+                        None => {
+                            return Err(ChainError::WitnessGeneration(
+                                "L2Config not found for witness generation".to_string(),
+                            ));
+                        }
+                    };
+                    Evm::new_from_db_for_l2(logger.clone(), *fee_config, Arc::new(NativeCrypto))
+                }
+            };
+
+            // Re-execute the block with the logger to record state accesses.
+            vm.execute_block(block)
+                .map_err(|e| ChainError::WitnessGeneration(format!("block re-execution failed: {e}")))?;
+
+            // Merge accessed accounts and storage slots.
+            let state_accessed = logger
+                .state_accessed
+                .lock()
+                .map_err(|_| ChainError::WitnessGeneration("Failed to lock state_accessed".to_string()))?
+                .clone();
+            for (addr, keys) in state_accessed {
+                let entry = accessed_accounts.entry(addr).or_default();
+                entry.extend(keys);
+            }
+
+            // Merge accessed code hashes.
+            let code_accessed = logger
+                .code_accessed
+                .lock()
+                .map_err(|_| ChainError::WitnessGeneration("Failed to lock code_accessed".to_string()))?
+                .clone();
+            for code_hash in code_accessed {
+                accessed_codes.insert(code_hash);
+            }
+
+            // Merge accessed block hashes.
+            let block_hashes = logger
+                .block_hashes_accessed
+                .lock()
+                .map_err(|_| ChainError::WitnessGeneration("Failed to lock block_hashes_accessed".to_string()))?
+                .clone();
+            accessed_block_hashes.extend(block_hashes);
+        }
+
+        // Deduplicate storage keys for each address.
+        for keys in accessed_accounts.values_mut() {
+            keys.dedup();
+        }
+
+        // Collect RLP-encoded headers for accessed block hashes.
+        let mut block_headers: Vec<Vec<u8>> = Vec::new();
+        for (_block_number, block_hash) in &accessed_block_hashes {
+            if let Ok(Some(header)) = self.storage.get_block_header_by_hash(*block_hash) {
+                let mut encoded = Vec::new();
+                header.encode(&mut encoded);
+                block_headers.push(encoded);
+            }
+        }
+
+        // Also include the parent header of the first block (for state root context).
+        if let Ok(Some(parent_header)) = self
+            .storage
+            .get_block_header_by_hash(first_block.header.parent_hash)
+        {
+            let mut encoded = Vec::new();
+            parent_header.encode(&mut encoded);
+            block_headers.push(encoded);
+        }
+
+        // Reconstruct the trie at the pre-state of the first block by
+        // cloning from the flush-point base trie and replaying persisted diffs.
+        // NOTE: When periodic snapshots are implemented, this will load from
+        // the nearest snapshot instead of the flush-point base.
+        let parent_hash = first_block.header.parent_hash;
+        let mut reconstructed = {
+            let state = self
+                .binary_trie_state
+                .read()
+                .map_err(|e| ChainError::Custom(format!("binary trie lock error: {e}")))?;
+            state
+                .reconstruct_at_block(parent_hash)
+                .map_err(|e| ChainError::WitnessGeneration(format!("trie reconstruction failed: {e}")))?
+        };
+        // Merkelise so node hashes are cached for proof generation.
+        reconstructed.state_root();
+
+        reconstructed
+            .generate_witness(
+                first_block.header.number,
+                first_block.hash(),
+                &accessed_accounts,
+                &accessed_codes,
+                block_headers,
+            )
+            .map_err(|e| ChainError::WitnessGeneration(format!("proof generation failed: {e}")))
+    }
+
+    #[allow(dead_code)]
+    async fn generate_witness_for_blocks_with_fee_configs_mpt(
         &self,
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
@@ -1566,7 +1702,77 @@ impl Blockchain {
         })
     }
 
+    /// Generate a binary trie witness for a single block using pre-recorded
+    /// state accesses from a `DatabaseLogger`.
+    ///
+    /// **IMPORTANT**: Must be called BEFORE `apply_binary_trie_updates` so that
+    /// proofs are generated against the pre-execution state root.
     pub fn generate_witness_from_account_updates(
+        &self,
+        _account_updates: Vec<AccountUpdate>,
+        block: &Block,
+        _parent_header: BlockHeader,
+        logger: &DatabaseLogger,
+    ) -> Result<ethrex_binary_trie::BinaryTrieWitness, ChainError> {
+        // Extract accessed state from the logger.
+        let accessed_accounts = logger
+            .state_accessed
+            .lock()
+            .map_err(|_| ChainError::WitnessGeneration("Failed to lock state_accessed".to_string()))?
+            .clone();
+        let code_hashes = logger
+            .code_accessed
+            .lock()
+            .map_err(|_| ChainError::WitnessGeneration("Failed to lock code_accessed".to_string()))?
+            .clone();
+        let block_hashes_accessed = logger
+            .block_hashes_accessed
+            .lock()
+            .map_err(|_| ChainError::WitnessGeneration("Failed to lock block_hashes_accessed".to_string()))?
+            .clone();
+
+        let accessed_codes: HashSet<H256> = code_hashes.into_iter().collect();
+
+        // Collect RLP-encoded headers for accessed block hashes.
+        let mut block_headers: Vec<Vec<u8>> = Vec::new();
+        for (_block_number, block_hash) in &block_hashes_accessed {
+            if let Ok(Some(header)) = self.storage.get_block_header_by_hash(*block_hash) {
+                let mut encoded = Vec::new();
+                header.encode(&mut encoded);
+                block_headers.push(encoded);
+            }
+        }
+
+        // Include the current block's parent header.
+        if let Ok(Some(parent_header)) = self
+            .storage
+            .get_block_header_by_hash(block.header.parent_hash)
+        {
+            let mut encoded = Vec::new();
+            parent_header.encode(&mut encoded);
+            block_headers.push(encoded);
+        }
+
+        // The trie is at pre-execution state (caller has NOT yet called
+        // apply_binary_trie_updates). state_root() was called after the
+        // previous block, so node hashes are cached for proof generation.
+        let state = self
+            .binary_trie_state
+            .read()
+            .map_err(|e| ChainError::Custom(format!("binary trie lock error: {e}")))?;
+        state
+            .generate_witness(
+                block.header.number,
+                block.hash(),
+                &accessed_accounts,
+                &accessed_codes,
+                block_headers,
+            )
+            .map_err(|e| ChainError::WitnessGeneration(format!("proof generation failed: {e}")))
+    }
+
+    #[allow(dead_code)]
+    fn generate_witness_from_account_updates_mpt(
         &self,
         account_updates: Vec<AccountUpdate>,
         block: &Block,
@@ -1960,7 +2166,25 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        // Apply account updates to binary trie
+        // Generate witness BEFORE applying trie updates, so proofs are
+        // against the pre-execution state root.
+        if let Some(ref logger) = logger
+            && let Some(ref updates) = accumulated_updates
+        {
+            let block_hash = block.hash();
+            let witness = self.generate_witness_from_account_updates(
+                updates.clone(),
+                &block,
+                parent_header,
+                logger,
+            )?;
+            let json_bytes = serde_json::to_vec(&witness)
+                .map_err(|e| ChainError::WitnessGeneration(format!("Failed to serialize witness: {e}")))?;
+            self.storage
+                .store_witness_bytes(block_hash, block_number, json_bytes)?;
+        }
+
+        // Apply account updates to binary trie (advances trie to post-execution state).
         if let Some(ref updates) = accumulated_updates {
             self.apply_binary_trie_updates(
                 updates,
@@ -1969,20 +2193,6 @@ impl Blockchain {
                 block.header.parent_hash,
             )?;
         }
-
-        if let Some(logger) = logger
-            && let Some(account_updates) = accumulated_updates
-        {
-            let block_hash = block.hash();
-            let witness = self.generate_witness_from_account_updates(
-                account_updates,
-                &block,
-                parent_header,
-                &logger,
-            )?;
-            self.storage
-                .store_witness(block_hash, block_number, witness)?;
-        };
 
         let result = self.store_block(block, account_updates_list, res);
 

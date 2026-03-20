@@ -1967,6 +1967,21 @@ impl Store {
         self.cleanup_old_witnesses(block_number)
     }
 
+    /// Stores pre-serialized JSON witness bytes for a block.
+    ///
+    /// Use this when the witness is already serialized (e.g., binary trie witnesses
+    /// that derive `serde::Serialize` and are serialized by the blockchain layer).
+    pub fn store_witness_bytes(
+        &self,
+        block_hash: BlockHash,
+        block_number: u64,
+        json_bytes: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        self.write(EXECUTION_WITNESSES, key, json_bytes)?;
+        self.cleanup_old_witnesses(block_number)
+    }
+
     fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
         // If we have less than 128 blocks, no cleanup needed
         if latest_block_number <= MAX_WITNESSES {

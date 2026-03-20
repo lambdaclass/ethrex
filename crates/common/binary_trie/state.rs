@@ -924,6 +924,353 @@ impl BinaryTrieState {
     }
 
     // -------------------------------------------------------------------------
+    // Witness generation
+    // -------------------------------------------------------------------------
+
+    /// Generate a binary trie execution witness from recorded state accesses.
+    ///
+    /// **IMPORTANT**: Call this BEFORE applying account updates for the block,
+    /// so that proofs are generated against the pre-execution state root.
+    /// Requires that `state_root()` was called after the previous block
+    /// (so node hashes are cached for proof generation).
+    ///
+    /// - `block_number` / `block_hash`: identifies the block
+    /// - `accessed_accounts`: map of address -> list of storage keys accessed
+    /// - `accessed_codes`: set of code hashes whose bytecode was accessed
+    /// - `block_headers`: RLP-encoded headers needed for BLOCKHASH opcode
+    pub fn generate_witness(
+        &self,
+        block_number: u64,
+        block_hash: H256,
+        accessed_accounts: &std::collections::HashMap<Address, Vec<H256>>,
+        accessed_codes: &std::collections::HashSet<H256>,
+        block_headers: Vec<Vec<u8>>,
+    ) -> Result<crate::witness::BinaryTrieWitness, BinaryTrieError> {
+        use crate::key_mapping::{
+            get_tree_key_for_basic_data, get_tree_key_for_code_hash,
+            get_tree_key_for_storage_slot, unpack_basic_data,
+        };
+        use crate::witness::{
+            AccountWitnessEntry, BinaryTrieWitness, CodeWitnessEntry, ProofEntry,
+            StorageWitnessEntry,
+        };
+        use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH};
+
+        // Read the cached root hash -- this is the PRE-execution state root
+        // since the caller has not yet applied this block's updates.
+        let pre_state_root = match self.trie.root {
+            None => crate::merkle::ZERO_HASH,
+            Some(root_id) => {
+                let node = self.trie.store.get(root_id)?;
+                match node {
+                    crate::node::Node::Internal(internal) => internal
+                        .cached_hash
+                        .ok_or(BinaryTrieError::ProofRequiresMerkelization)?,
+                    crate::node::Node::Stem(stem_node) => stem_node
+                        .cached_hash
+                        .ok_or(BinaryTrieError::ProofRequiresMerkelization)?,
+                }
+            }
+        };
+
+        let mut account_proofs = Vec::new();
+        let mut storage_proofs = Vec::new();
+
+        for (address, storage_keys) in accessed_accounts {
+            let basic_data_key = get_tree_key_for_basic_data(address);
+            let code_hash_key = get_tree_key_for_code_hash(address);
+
+            let bd_proof = self.trie.get_proof(basic_data_key)?;
+            let ch_proof = self.trie.get_proof(code_hash_key)?;
+
+            // Extract pre-state values from the proof leaves.
+            let (balance, nonce, code_hash) = if let Some(ref basic_data) = bd_proof.value {
+                let (_version, _code_size, nonce, balance) = unpack_basic_data(basic_data);
+                let code_hash = ch_proof
+                    .value
+                    .map(H256)
+                    .unwrap_or(*EMPTY_KECCACK_HASH);
+                (balance, nonce, code_hash)
+            } else {
+                (U256::zero(), 0, *EMPTY_KECCACK_HASH)
+            };
+
+            account_proofs.push(AccountWitnessEntry {
+                address: *address,
+                balance,
+                nonce,
+                code_hash,
+                basic_data_proof: ProofEntry {
+                    siblings: bd_proof.siblings,
+                    stem_depth: bd_proof.stem_depth,
+                    value: bd_proof.value,
+                },
+                code_hash_proof: ProofEntry {
+                    siblings: ch_proof.siblings,
+                    stem_depth: ch_proof.stem_depth,
+                    value: ch_proof.value,
+                },
+            });
+
+            for slot_key in storage_keys {
+                let storage_key_u256 = U256::from_big_endian(slot_key.as_bytes());
+                let tree_key = get_tree_key_for_storage_slot(address, storage_key_u256);
+                let proof = self.trie.get_proof(tree_key)?;
+
+                let value = proof
+                    .value
+                    .map(|v| U256::from_big_endian(&v))
+                    .unwrap_or_default();
+
+                storage_proofs.push(StorageWitnessEntry {
+                    address: *address,
+                    slot: *slot_key,
+                    value,
+                    proof: ProofEntry {
+                        siblings: proof.siblings,
+                        stem_depth: proof.stem_depth,
+                        value: proof.value,
+                    },
+                });
+            }
+        }
+
+        let mut codes = Vec::new();
+        for code_hash in accessed_codes {
+            if let Some(bytecode) = self.get_account_code(code_hash) {
+                codes.push(CodeWitnessEntry {
+                    code_hash: *code_hash,
+                    bytecode: bytecode.to_vec(),
+                });
+            }
+        }
+
+        Ok(BinaryTrieWitness {
+            block_number,
+            block_hash,
+            pre_state_root,
+            account_proofs,
+            storage_proofs,
+            codes,
+            block_headers,
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // Trie reconstruction (for historical proof generation)
+    // -------------------------------------------------------------------------
+
+    /// Create a temporary `BinaryTrieState` at a specific historical block
+    /// by cloning the base trie from RocksDB and replaying persisted diffs.
+    ///
+    /// The returned state has a trie at the post-state of `target_parent_hash`
+    /// (i.e., the pre-state of the block whose parent is `target_parent_hash`).
+    /// Call `state_root()` on the result to merkelise, then `generate_witness()`.
+    ///
+    /// NOTE: When periodic snapshots are implemented, this method should load
+    /// from the nearest snapshot instead of always starting from the flush-point
+    /// base trie.
+    #[cfg(feature = "rocksdb")]
+    pub fn reconstruct_at_block(
+        &self,
+        target_parent_hash: H256,
+    ) -> Result<BinaryTrieState, BinaryTrieError> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| BinaryTrieError::StoreError("no DB configured".into()))?;
+
+        // Start from the base trie on disk (the flush-point snapshot).
+        let store = NodeStore::open(Arc::clone(db))?;
+        let root = store.load_root();
+        let trie = BinaryTrie { store, root };
+
+        let code_store = load_code_store(db)?;
+        let storage_keys = load_storage_keys(db)?;
+
+        let mut temp_state = BinaryTrieState {
+            trie,
+            diff_tree: DiffTree::new(),
+            base_root: root,
+            code_store: Mutex::new(code_store),
+            storage_keys: Mutex::new(storage_keys),
+            db: Some(Arc::clone(db)),
+            dirty_codes: FxHashSet::default(),
+            dirty_storage_keys: FxHashSet::default(),
+            blocks_since_flush: 0,
+            flush_threshold: u64::MAX, // never flush the temp state
+        };
+
+        // Collect the chain of diffs from base to target_parent_hash.
+        // Walk backward from target_parent_hash to base_hash, collecting
+        // diffs in reverse order, then apply them forward.
+        let mut diff_chain = Vec::new();
+        let mut current = target_parent_hash;
+
+        const MAX_REPLAY: u64 = 100_000;
+        for _ in 0..MAX_REPLAY {
+            if current == self.diff_tree.base_hash || current.is_zero() {
+                break;
+            }
+            // Check in-memory diffs first.
+            if let Some(node) = self.diff_tree.layers.get(&current) {
+                diff_chain.push((current, &node.diff));
+                current = node.parent_hash;
+                continue;
+            }
+            // Not in memory -- stop here. The remaining diffs would need
+            // to be loaded from disk, but we can't hold references to them
+            // across iterations. Break and load from disk below.
+            break;
+        }
+
+        // If we didn't reach the base via in-memory diffs, load from disk.
+        if current != self.diff_tree.base_hash && !current.is_zero() {
+            let mut disk_diffs = Vec::new();
+            for _ in 0..MAX_REPLAY {
+                if current == self.diff_tree.base_hash || current.is_zero() {
+                    break;
+                }
+                let (parent_hash, _block_number, diff) =
+                    self.load_diff_from_disk(current)?.ok_or_else(|| {
+                        BinaryTrieError::StoreError(format!(
+                            "missing diff record for block {current:?} during reconstruction"
+                        ))
+                    })?;
+                disk_diffs.push(diff);
+                current = parent_hash;
+            }
+            // Apply disk diffs in reverse (oldest first).
+            for diff in disk_diffs.into_iter().rev() {
+                temp_state.apply_diff(&diff)?;
+            }
+        }
+
+        // Apply in-memory diffs in reverse (oldest first).
+        for (_hash, diff) in diff_chain.into_iter().rev() {
+            temp_state.apply_diff(diff)?;
+        }
+
+        Ok(temp_state)
+    }
+
+    /// Trie reconstruction is not available without persistence.
+    /// In-memory trie states have no persisted diffs to replay from.
+    #[cfg(not(feature = "rocksdb"))]
+    pub fn reconstruct_at_block(
+        &self,
+        _target_parent_hash: H256,
+    ) -> Result<BinaryTrieState, BinaryTrieError> {
+        Err(BinaryTrieError::StoreError(
+            "trie reconstruction requires persistent storage (rocksdb)".into(),
+        ))
+    }
+
+    /// Apply a `StateDiff` directly to the trie.
+    ///
+    /// This writes the post-state values from the diff into the trie,
+    /// advancing it by one block. Used for trie reconstruction from
+    /// persisted diffs.
+    fn apply_diff(&mut self, diff: &StateDiff) -> Result<(), BinaryTrieError> {
+        use crate::key_mapping::{
+            chunkify_code, get_tree_key_for_basic_data, get_tree_key_for_code_hash,
+            get_tree_key_for_code_chunk, get_tree_key_for_storage_slot, pack_basic_data,
+        };
+
+        // Apply storage_cleared first (remove all tracked storage for those addresses).
+        for address in &diff.storage_cleared {
+            self.clear_account_storage(address)?;
+        }
+
+        // Apply account changes.
+        for (address, account_state_opt) in &diff.accounts {
+            match account_state_opt {
+                Some(state) => {
+                    // Compute code_size from the code store if code was deployed.
+                    let code_size = diff
+                        .code
+                        .iter()
+                        .find(|(_, _)| {
+                            // Check if this code belongs to this account.
+                            state.code_hash != *EMPTY_KECCACK_HASH
+                        })
+                        .and_then(|(hash, code)| {
+                            if *hash == state.code_hash {
+                                Some(code.len() as u32)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| self.get_code_size(address));
+
+                    let basic_data =
+                        pack_basic_data(0, code_size, state.nonce, state.balance);
+                    self.trie
+                        .insert(get_tree_key_for_basic_data(address), basic_data)?;
+                    self.trie
+                        .insert(get_tree_key_for_code_hash(address), state.code_hash.0)?;
+                }
+                None => {
+                    // Account deleted.
+                    self.remove_account(address)?;
+                }
+            }
+        }
+
+        // Apply code deployments.
+        for (code_hash, bytecode) in &diff.code {
+            let chunks = chunkify_code(bytecode);
+            // Find the address that deployed this code.
+            for (address, state_opt) in &diff.accounts {
+                if let Some(state) = state_opt {
+                    if state.code_hash == *code_hash {
+                        for (i, chunk) in chunks.iter().enumerate() {
+                            self.trie.insert(
+                                get_tree_key_for_code_chunk(address, i as u64),
+                                *chunk,
+                            )?;
+                        }
+                        break;
+                    }
+                }
+            }
+            self.code_store
+                .lock()
+                .unwrap()
+                .insert(*code_hash, bytecode.clone());
+        }
+
+        // Apply storage changes.
+        for ((address, key), value_opt) in &diff.storage {
+            let storage_key = U256::from_big_endian(key.as_bytes());
+            let tree_key = get_tree_key_for_storage_slot(address, storage_key);
+            match value_opt {
+                Some(value) => {
+                    self.trie.insert(tree_key, value.to_big_endian())?;
+                    self.storage_keys
+                        .lock()
+                        .unwrap()
+                        .entry(*address)
+                        .or_default()
+                        .insert(*key);
+                }
+                None => {
+                    self.trie.remove(tree_key)?;
+                    let mut sk = self.storage_keys.lock().unwrap();
+                    if let Some(keys) = sk.get_mut(address) {
+                        keys.remove(key);
+                        if keys.is_empty() {
+                            sk.remove(address);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
 
@@ -2296,6 +2643,324 @@ mod tests {
             assert!(d2.storage.contains_key(&(addr, key)));
             assert!(d2.code.contains_key(&make_h256(2)));
             assert!(d2.storage_cleared.contains(&addr));
+        }
+    }
+
+    // ── Witness generation and trie reconstruction tests ────────────────
+
+    #[cfg(feature = "rocksdb")]
+    mod witness_tests {
+        use super::*;
+        use std::collections::{HashMap, HashSet};
+
+        fn make_address(b: u8) -> Address {
+            let mut a = [0u8; 20];
+            a[19] = b;
+            Address::from(a)
+        }
+
+        fn tempdir() -> tempfile::TempDir {
+            tempfile::tempdir().expect("failed to create tempdir")
+        }
+
+        #[test]
+        fn test_generate_witness_basic() {
+            let dir = tempdir();
+            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+
+            let addr = make_address(0xAA);
+            let mut accounts = BTreeMap::new();
+            accounts.insert(
+                addr,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: BTreeMap::new(),
+                    balance: U256::from(1000u64),
+                    nonce: 5,
+                },
+            );
+            state.apply_genesis(&accounts).unwrap();
+            state.state_root(); // merkelise
+
+            let genesis_hash = H256::from_low_u64_be(0x1234);
+            state.flush(0, genesis_hash).unwrap();
+            state.set_diff_base(genesis_hash, 0);
+            state.state_root(); // re-cache hashes after flush
+
+            // Generate witness: account was accessed, no storage.
+            let mut accessed = HashMap::new();
+            accessed.insert(addr, vec![]);
+            let block_hash = H256::from_low_u64_be(0x5678);
+            let witness = state
+                .generate_witness(1, block_hash, &accessed, &HashSet::new(), vec![])
+                .unwrap();
+
+            assert_eq!(witness.block_number, 1);
+            assert_eq!(witness.block_hash, block_hash);
+            assert_ne!(witness.pre_state_root, [0u8; 32]);
+            assert_eq!(witness.account_proofs.len(), 1);
+
+            let entry = &witness.account_proofs[0];
+            assert_eq!(entry.address, addr);
+            assert_eq!(entry.balance, U256::from(1000u64));
+            assert_eq!(entry.nonce, 5);
+            assert_eq!(entry.code_hash, *EMPTY_KECCACK_HASH);
+            assert!(!entry.basic_data_proof.siblings.is_empty());
+        }
+
+        #[test]
+        fn test_generate_witness_with_storage() {
+            let dir = tempdir();
+            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+
+            let addr = make_address(0xBB);
+            let slot_key = U256::from(7u64);
+            let slot_h256 = H256(slot_key.to_big_endian());
+            let mut storage = BTreeMap::new();
+            storage.insert(slot_key, U256::from(42u64));
+
+            let mut accounts = BTreeMap::new();
+            accounts.insert(
+                addr,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage,
+                    balance: U256::from(100u64),
+                    nonce: 0,
+                },
+            );
+            state.apply_genesis(&accounts).unwrap();
+            state.state_root();
+
+            let genesis_hash = H256::from_low_u64_be(0xAAAA);
+            state.flush(0, genesis_hash).unwrap();
+            state.set_diff_base(genesis_hash, 0);
+            state.state_root(); // re-cache hashes after flush
+
+            let mut accessed = HashMap::new();
+            accessed.insert(addr, vec![slot_h256]);
+            let block_hash = H256::from_low_u64_be(0xBBBB);
+            let witness = state
+                .generate_witness(1, block_hash, &accessed, &HashSet::new(), vec![])
+                .unwrap();
+
+            assert_eq!(witness.storage_proofs.len(), 1);
+            let sp = &witness.storage_proofs[0];
+            assert_eq!(sp.address, addr);
+            assert_eq!(sp.slot, slot_h256);
+            assert_eq!(sp.value, U256::from(42u64));
+            assert!(!sp.proof.siblings.is_empty());
+        }
+
+        #[test]
+        fn test_generate_witness_with_code() {
+            let dir = tempdir();
+            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+
+            let addr = make_address(0xCC);
+            let bytecode = Bytes::from(vec![0x60u8, 0x00, 0x56]);
+            let code_hash = keccak(bytecode.as_ref());
+
+            let mut accounts = BTreeMap::new();
+            accounts.insert(
+                addr,
+                GenesisAccount {
+                    code: bytecode.clone(),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 1,
+                },
+            );
+            state.apply_genesis(&accounts).unwrap();
+            state.state_root();
+
+            let genesis_hash = H256::from_low_u64_be(0xCCCC);
+            state.flush(0, genesis_hash).unwrap();
+            state.set_diff_base(genesis_hash, 0);
+            state.state_root(); // re-cache hashes after flush
+
+            let mut accessed = HashMap::new();
+            accessed.insert(addr, vec![]);
+            let mut accessed_codes = HashSet::new();
+            accessed_codes.insert(code_hash);
+
+            let block_hash = H256::from_low_u64_be(0xDDDD);
+            let witness = state
+                .generate_witness(1, block_hash, &accessed, &accessed_codes, vec![])
+                .unwrap();
+
+            assert_eq!(witness.codes.len(), 1);
+            assert_eq!(witness.codes[0].code_hash, code_hash);
+            assert_eq!(witness.codes[0].bytecode, bytecode.to_vec());
+
+            // Account entry should have the code_hash.
+            assert_eq!(witness.account_proofs[0].code_hash, code_hash);
+        }
+
+        #[test]
+        fn test_reconstruct_at_block() {
+            let dir = tempdir();
+            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+
+            let addr = make_address(0xDD);
+            let mut accounts = BTreeMap::new();
+            accounts.insert(
+                addr,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: BTreeMap::new(),
+                    balance: U256::from(100u64),
+                    nonce: 0,
+                },
+            );
+            state.apply_genesis(&accounts).unwrap();
+            let genesis_root = state.state_root();
+
+            let genesis_hash = H256::from_low_u64_be(1);
+            state.flush(0, genesis_hash).unwrap();
+            state.set_diff_base(genesis_hash, 0);
+
+            // Apply block 1: change balance to 200.
+            let block1_hash = H256::from_low_u64_be(2);
+            state.begin_block(block1_hash, genesis_hash, 1);
+            let mut update = AccountUpdate::new(addr);
+            update.info = Some(AccountInfo {
+                code_hash: *EMPTY_KECCACK_HASH,
+                balance: U256::from(200u64),
+                nonce: 1,
+            });
+            state
+                .apply_account_update_for_block(&update, block1_hash)
+                .unwrap();
+            state.persist_diff(block1_hash).unwrap();
+            let post_root = state.state_root();
+
+            // Roots should differ.
+            assert_ne!(genesis_root, post_root);
+
+            // Reconstruct at genesis (pre-state of block 1).
+            let reconstructed = state.reconstruct_at_block(genesis_hash).unwrap();
+
+            // The reconstructed trie should have the genesis balance.
+            let acct = reconstructed.get_account_state(&addr).unwrap();
+            assert_eq!(acct.balance, U256::from(100u64));
+            assert_eq!(acct.nonce, 0);
+        }
+
+        #[test]
+        fn test_reconstruct_and_generate_witness() {
+            let dir = tempdir();
+            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+
+            let addr = make_address(0xEE);
+            let slot_key = U256::from(10u64);
+            let slot_h256 = H256(slot_key.to_big_endian());
+            let mut storage = BTreeMap::new();
+            storage.insert(slot_key, U256::from(50u64));
+
+            let mut accounts = BTreeMap::new();
+            accounts.insert(
+                addr,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage,
+                    balance: U256::from(500u64),
+                    nonce: 3,
+                },
+            );
+            state.apply_genesis(&accounts).unwrap();
+            state.state_root();
+
+            let genesis_hash = H256::from_low_u64_be(0x10);
+            state.flush(0, genesis_hash).unwrap();
+            state.set_diff_base(genesis_hash, 0);
+
+            // Apply block 1: change balance and storage.
+            let block1_hash = H256::from_low_u64_be(0x20);
+            state.begin_block(block1_hash, genesis_hash, 1);
+            let mut update = AccountUpdate::new(addr);
+            update.info = Some(AccountInfo {
+                code_hash: *EMPTY_KECCACK_HASH,
+                balance: U256::from(999u64),
+                nonce: 4,
+            });
+            update
+                .added_storage
+                .insert(slot_h256, U256::from(100u64));
+            state
+                .apply_account_update_for_block(&update, block1_hash)
+                .unwrap();
+            state.persist_diff(block1_hash).unwrap();
+            state.state_root();
+
+            // Reconstruct pre-state of block 1 and generate witness.
+            let mut reconstructed = state.reconstruct_at_block(genesis_hash).unwrap();
+            reconstructed.state_root(); // merkelise
+
+            let mut accessed = HashMap::new();
+            accessed.insert(addr, vec![slot_h256]);
+            let witness = reconstructed
+                .generate_witness(1, block1_hash, &accessed, &HashSet::new(), vec![])
+                .unwrap();
+
+            // Pre-state values should be genesis values, NOT block 1 values.
+            let entry = &witness.account_proofs[0];
+            assert_eq!(entry.balance, U256::from(500u64));
+            assert_eq!(entry.nonce, 3);
+
+            let sp = &witness.storage_proofs[0];
+            assert_eq!(sp.value, U256::from(50u64));
+        }
+
+        #[test]
+        fn test_reconstruct_multiple_blocks() {
+            let dir = tempdir();
+            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+
+            let addr = make_address(0xFF);
+            let mut accounts = BTreeMap::new();
+            accounts.insert(
+                addr,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: BTreeMap::new(),
+                    balance: U256::from(10u64),
+                    nonce: 0,
+                },
+            );
+            state.apply_genesis(&accounts).unwrap();
+            state.state_root();
+
+            let genesis_hash = H256::from_low_u64_be(0x01);
+            state.flush(0, genesis_hash).unwrap();
+            state.set_diff_base(genesis_hash, 0);
+
+            // Apply 5 blocks, each incrementing balance by 10.
+            let mut parent = genesis_hash;
+            for i in 1..=5u64 {
+                let block_hash = H256::from_low_u64_be(0x01 + i);
+                state.begin_block(block_hash, parent, i);
+                let mut update = AccountUpdate::new(addr);
+                update.info = Some(AccountInfo {
+                    code_hash: *EMPTY_KECCACK_HASH,
+                    balance: U256::from(10 + i * 10),
+                    nonce: i,
+                });
+                state
+                    .apply_account_update_for_block(&update, block_hash)
+                    .unwrap();
+                state.persist_diff(block_hash).unwrap();
+                state.state_root();
+                parent = block_hash;
+            }
+
+            // Reconstruct at block 3's parent (block 2) -> pre-state of block 3.
+            let block2_hash = H256::from_low_u64_be(0x03); // block 2
+            let reconstructed = state.reconstruct_at_block(block2_hash).unwrap();
+            let acct = reconstructed.get_account_state(&addr).unwrap();
+            // After block 2: balance = 10 + 2*10 = 30, nonce = 2
+            assert_eq!(acct.balance, U256::from(30u64));
+            assert_eq!(acct.nonce, 2);
         }
     }
 }

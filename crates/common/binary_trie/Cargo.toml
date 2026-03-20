@@ -10,15 +10,20 @@ license.workspace = true
 blake3 = "1"
 bytes.workspace = true
 ethrex-common.workspace = true
+hex.workspace = true
 lru.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
 rocksdb = { workspace = true, optional = true }
 
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
 [dev-dependencies]
 hex.workspace = true
-serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tempfile.workspace = true
 
 [features]
 rocksdb = ["dep:rocksdb"]
