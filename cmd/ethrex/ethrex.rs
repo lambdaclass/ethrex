@@ -26,7 +26,8 @@ fn log_global_allocator() {
 }
 
 // Tune jemalloc for throughput: use a background thread for memory purging instead
-// of doing it inline during malloc/free (which adds ~12% overhead to block execution).
+// of doing it inline during malloc/free (which adds ~12% of total block execution CPU time
+// to jemalloc purge calls, measured via perf profiling on mainnet blocks).
 #[cfg(all(
     feature = "jemalloc",
     not(feature = "jemalloc_profiling"),
