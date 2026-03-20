@@ -177,6 +177,9 @@ where
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
+    let mut total_buffer_wait = std::time::Duration::ZERO;
+    let mut flush_count: u64 = 0;
+    let t_trie_total = std::time::Instant::now();
     let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
@@ -201,9 +204,12 @@ where
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
             // We wait to get a new buffer to avoid writing too much
+            let t_wait = std::time::Instant::now();
             nodes_to_write = buffer_receiver
                 .recv()
                 .expect("This channel shouldn't close");
+            total_buffer_wait += t_wait.elapsed();
+            flush_count += 1;
         }
 
         let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
@@ -336,6 +342,18 @@ where
     };
 
     let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+    let elapsed = t_trie_total.elapsed();
+    if elapsed.as_secs() > 5 {
+        tracing::info!(
+            "[PROFILE] trie_from_sorted: total={:?}, buffer_wait={:?} ({:.1}%), flushes={}, cpu={:?} ({:.1}%)",
+            elapsed,
+            total_buffer_wait,
+            total_buffer_wait.as_secs_f64() / elapsed.as_secs_f64() * 100.0,
+            flush_count,
+            elapsed - total_buffer_wait,
+            (elapsed - total_buffer_wait).as_secs_f64() / elapsed.as_secs_f64() * 100.0,
+        );
+    }
     Ok(hash)
 }
 
