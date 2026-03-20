@@ -10,7 +10,7 @@ use aligned_sdk::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProverType},
+    prover::{ProofBytes, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
@@ -163,7 +163,7 @@ impl L1ProofVerifier {
             let mut current_batch_public_inputs = None;
 
             for (prover_type, proof) in proofs_for_batch {
-                let public_inputs = proof.public_values();
+                let public_inputs = proof.public_values.clone();
 
                 // check all proofs have the same public inputs
                 if let Some(ref existing_pi) = current_batch_public_inputs {
@@ -342,7 +342,7 @@ impl L1ProofVerifier {
     async fn get_proofs_for_batch(
         &self,
         batch_number: u64,
-    ) -> Result<HashMap<ProverType, BatchProof>, ProofVerifierError> {
+    ) -> Result<HashMap<ProverType, ProofBytes>, ProofVerifierError> {
         let mut proofs_for_batch = HashMap::new();
         for prover_type in &self.needed_proof_types {
             if let Some(proof) = self

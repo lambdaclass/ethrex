@@ -10,7 +10,7 @@ use ethrex_common::{
         batch::Batch, fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProofBytes, ProverInputData, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Transaction, Value,
@@ -838,7 +838,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_type: ProverType,
-        proof: BatchProof,
+        proof: ProofBytes,
     ) -> Result<(), RollupStoreError> {
         let serialized_proof = bincode::serialize(&proof)?;
         let prover_type: u32 = prover_type.into();
@@ -862,7 +862,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_type: ProverType,
-    ) -> Result<Option<BatchProof>, RollupStoreError> {
+    ) -> Result<Option<ProofBytes>, RollupStoreError> {
         let prover_type: u32 = prover_type.into();
         let mut rows = self
             .query(

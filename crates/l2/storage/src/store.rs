@@ -12,7 +12,7 @@ use ethrex_common::{
         batch::Batch, fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProofBytes, ProverInputData, ProverType};
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -394,7 +394,7 @@ impl Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-        proof: BatchProof,
+        proof: ProofBytes,
     ) -> Result<(), RollupStoreError> {
         self.engine
             .store_proof_by_batch_and_type(batch_number, proof_type, proof)
@@ -405,7 +405,7 @@ impl Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-    ) -> Result<Option<BatchProof>, RollupStoreError> {
+    ) -> Result<Option<ProofBytes>, RollupStoreError> {
         self.engine
             .get_proof_by_batch_and_type(batch_number, proof_type)
             .await

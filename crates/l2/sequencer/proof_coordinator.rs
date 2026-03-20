@@ -4,9 +4,7 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_git_commit_hash;
 use bytes::Bytes;
 use ethrex_common::Address;
-use ethrex_l2_common::prover::{
-    BatchProof, ProofBytes, ProofData, ProofFormat, ProverInputData, ProverType,
-};
+use ethrex_l2_common::prover::{ProofBytes, ProofData, ProofFormat, ProverInputData, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -288,13 +286,8 @@ impl ProofCoordinator {
                     })?;
                 METRICS.set_batch_proving_time(batch_number, proving_time)?;
             });
-            // If not, store it (wrap in BatchProof for the storage layer)
             self.rollup_store
-                .store_proof_by_batch_and_type(
-                    batch_number,
-                    prover_type,
-                    BatchProof::ProofBytes(proof_bytes),
-                )
+                .store_proof_by_batch_and_type(batch_number, prover_type, proof_bytes)
                 .await?;
         }
 

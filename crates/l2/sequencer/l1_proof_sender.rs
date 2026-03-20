@@ -12,7 +12,7 @@ use alloy::signers::local::PrivateKeySigner;
 use ethrex_common::{Address, U256};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProverType, empty_calldata},
+    prover::{ProofBytes, ProverType},
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch, get_last_verified_batch};
@@ -212,7 +212,7 @@ impl L1ProofSender {
         }
 
         // Collect consecutive proven batches starting from first_batch
-        let mut ready_batches: Vec<(u64, HashMap<ProverType, BatchProof>)> = Vec::new();
+        let mut ready_batches: Vec<(u64, HashMap<ProverType, ProofBytes>)> = Vec::new();
         for batch in first_batch..=last_committed_batch {
             let mut proofs = HashMap::new();
             let mut all_present = true;
@@ -294,7 +294,7 @@ impl L1ProofSender {
     async fn send_proof_to_aligned(
         &self,
         batch_number: u64,
-        batch_proofs: impl IntoIterator<Item = &BatchProof>,
+        batch_proofs: impl IntoIterator<Item = &ProofBytes>,
     ) -> Result<(), ProofSenderError> {
         info!(?batch_number, "Sending batch proof(s) to Aligned Layer");
 
@@ -320,7 +320,7 @@ impl L1ProofSender {
             })?;
 
         for batch_proof in batch_proofs {
-            let prover_type = batch_proof.prover_type();
+            let prover_type = batch_proof.prover_type;
 
             match prover_type {
                 ProverType::SP1 => {
@@ -354,22 +354,19 @@ impl L1ProofSender {
         gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
         sender_address: &str,
         batch_number: u64,
-        batch_proof: &BatchProof,
+        batch_proof: &ProofBytes,
     ) -> Result<(), ProofSenderError> {
-        let prover_type = batch_proof.prover_type();
+        let prover_type = batch_proof.prover_type;
 
         let sp1_vk = self.sp1_vk.as_ref().ok_or_else(|| {
             ProofSenderError::UnexpectedError("SP1 verifying key not initialized".to_string())
         })?;
 
-        let Some(proof_bytes) = batch_proof.compressed() else {
-            return Err(ProofSenderError::AlignedWrongProofFormat);
-        };
-
         // Deserialize the proof from bincode format
-        let proof: SP1ProofWithPublicValues = bincode::deserialize(&proof_bytes).map_err(|e| {
-            ProofSenderError::UnexpectedError(format!("Failed to deserialize SP1 proof: {e}"))
-        })?;
+        let proof: SP1ProofWithPublicValues =
+            bincode::deserialize(&batch_proof.proof).map_err(|e| {
+                ProofSenderError::UnexpectedError(format!("Failed to deserialize SP1 proof: {e}"))
+            })?;
 
         // Get the nonce that will be used for this submission
         let nonce = gateway
@@ -420,7 +417,7 @@ impl L1ProofSender {
         _gateway: &AggregationModeGatewayProvider<PrivateKeySigner>,
         _sender_address: &str,
         _batch_number: u64,
-        _batch_proof: &BatchProof,
+        _batch_proof: &ProofBytes,
     ) -> Result<(), ProofSenderError> {
         Err(ProofSenderError::UnexpectedError(
             "SP1 proofs require the 'sp1' feature to be enabled".to_string(),
@@ -432,7 +429,7 @@ impl L1ProofSender {
     async fn send_verify_batches_tx(
         &self,
         first_batch: u64,
-        batches: &[(u64, &HashMap<ProverType, BatchProof>)],
+        batches: &[(u64, &HashMap<ProverType, ProofBytes>)],
     ) -> Result<ethrex_common::H256, EthClientError> {
         let batch_count = batches.len();
 
@@ -441,32 +438,15 @@ impl L1ProofSender {
         let mut tdx_array = Vec::with_capacity(batch_count);
 
         for (_batch_number, proofs) in batches {
-            let risc0_bytes = proofs
-                .get(&ProverType::RISC0)
-                .map(|proof| proof.calldata())
-                .unwrap_or(empty_calldata(ProverType::RISC0))
-                .into_iter()
-                .next()
-                .unwrap_or(Value::Bytes(vec![].into()));
-            risc0_array.push(risc0_bytes);
-
-            let sp1_bytes = proofs
-                .get(&ProverType::SP1)
-                .map(|proof| proof.calldata())
-                .unwrap_or(empty_calldata(ProverType::SP1))
-                .into_iter()
-                .next()
-                .unwrap_or(Value::Bytes(vec![].into()));
-            sp1_array.push(sp1_bytes);
-
-            let tdx_bytes = proofs
-                .get(&ProverType::TDX)
-                .map(|proof| proof.calldata())
-                .unwrap_or(empty_calldata(ProverType::TDX))
-                .into_iter()
-                .next()
-                .unwrap_or(Value::Bytes(vec![].into()));
-            tdx_array.push(tdx_bytes);
+            let proof_to_value = |pt: ProverType| -> Value {
+                proofs
+                    .get(&pt)
+                    .map(|p| Value::Bytes(p.proof.clone().into()))
+                    .unwrap_or(Value::Bytes(vec![].into()))
+            };
+            risc0_array.push(proof_to_value(ProverType::RISC0));
+            sp1_array.push(proof_to_value(ProverType::SP1));
+            tdx_array.push(proof_to_value(ProverType::TDX));
         }
 
         let calldata_values = vec![
@@ -550,7 +530,7 @@ impl L1ProofSender {
     async fn send_single_batch_proof(
         &self,
         batch_number: u64,
-        proofs: &HashMap<ProverType, BatchProof>,
+        proofs: &HashMap<ProverType, ProofBytes>,
     ) -> Result<(), ProofSenderError> {
         let single_batch = [(batch_number, proofs)];
         let result = self
@@ -590,7 +570,7 @@ impl L1ProofSender {
     async fn send_batches_proof_to_contract(
         &self,
         first_batch: u64,
-        batches: &[(u64, HashMap<ProverType, BatchProof>)],
+        batches: &[(u64, HashMap<ProverType, ProofBytes>)],
     ) -> Result<(), ProofSenderError> {
         let batch_count = batches.len();
         let last_batch = batches.last().map(|(n, _)| *n).unwrap_or(first_batch);
@@ -599,7 +579,7 @@ impl L1ProofSender {
             last_batch, "Sending batch verification transaction to L1"
         );
 
-        let batch_refs: Vec<(u64, &HashMap<ProverType, BatchProof>)> =
+        let batch_refs: Vec<(u64, &HashMap<ProverType, ProofBytes>)> =
             batches.iter().map(|(n, p)| (*n, p)).collect();
         let send_verify_tx_result = self.send_verify_batches_tx(first_batch, &batch_refs).await;
 
