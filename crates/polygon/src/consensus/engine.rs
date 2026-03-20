@@ -430,17 +430,24 @@ impl BorEngine {
 
     /// Fetch the span that covers the given block number from Heimdall.
     ///
-    /// Starts from the latest span and walks back until finding one where
-    /// `start_block <= block_number <= end_block`. This avoids relying on
-    /// `span_id_at()` which uses a formula that can be inaccurate on networks
-    /// like Amoy where spans don't follow uniform sizing from genesis.
+    /// Starts from the formula-estimated span ID and walks in the correct
+    /// direction until finding one where `start_block <= block_number`.
+    /// The formula is typically off by a bounded amount (~200 on Amoy,
+    /// ~234 on mainnet), so this converges quickly.
     async fn fetch_span_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<crate::heimdall::Span, BorEngineError> {
-        let mut span = self.heimdall.fetch_latest_span().await?;
+        // Span 0 covers blocks 0..=255 — fetch directly.
+        if block_number <= 255 {
+            return Ok(self.heimdall.fetch_span(0).await?);
+        }
 
-        // Walk back if the latest span is ahead of our block.
+        // Start from the formula estimate and search from there.
+        let estimated_id = self.config.span_id_at(block_number);
+        let mut span = self.heimdall.fetch_span(estimated_id).await?;
+
+        // Walk back if the estimate is too high.
         while span.start_block > block_number && span.id > 0 {
             tracing::debug!(
                 span_id = span.id,
@@ -449,6 +456,17 @@ impl BorEngine {
                 "Span too new, fetching previous"
             );
             span = self.heimdall.fetch_span(span.id - 1).await?;
+        }
+
+        // Walk forward if the estimate is too low.
+        while span.end_block < block_number {
+            tracing::debug!(
+                span_id = span.id,
+                span_end = span.end_block,
+                block_number,
+                "Span too old, fetching next"
+            );
+            span = self.heimdall.fetch_span(span.id + 1).await?;
         }
 
         tracing::info!(
