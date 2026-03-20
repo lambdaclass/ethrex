@@ -414,7 +414,7 @@ impl ConnectionHandler {
         if let Some(mut stream) = Arc::into_inner(stream) {
             stream.read_to_end(&mut buffer).await?;
 
-            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+            let data: Result<ProofData<ProverInputData>, _> = serde_json::from_slice(&buffer);
             match data {
                 Ok(ProofData::InputRequest {
                     commit_hash,
@@ -506,7 +506,7 @@ impl GenServer for ConnectionHandler {
 
 async fn send_response(
     stream: &mut TcpStream,
-    response: &ProofData,
+    response: &ProofData<ProverInputData>,
 ) -> Result<(), ProofCoordinatorError> {
     let buffer = serde_json::to_vec(response)?;
     stream

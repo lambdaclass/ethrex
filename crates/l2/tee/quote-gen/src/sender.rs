@@ -5,16 +5,16 @@ use tokio::{
 };
 
 use ethrex_common::Bytes;
-use ethrex_l2_common::prover::{ProofBytes, ProofData, ProverType};
+use ethrex_l2_common::prover::{ProofBytes, ProofData, ProverInputData, ProverType};
 
 const SERVER_URL: &str = "172.17.0.1:3900";
 const SERVER_URL_DEV: &str = "localhost:3900";
 
 pub async fn get_batch(commit_hash: String) -> Result<(u64, ProgramInput), String> {
-    let batch = connect_to_prover_server_wr(&ProofData::InputRequest {
-        commit_hash: commit_hash.clone(),
-        prover_type: ProverType::TDX,
-    })
+    let batch = connect_to_prover_server_wr(&ProofData::<ProverInputData>::input_request(
+        commit_hash.clone(),
+        ProverType::TDX,
+    ))
     .await
     .map_err(|e| format!("Failed to get Response: {e}"))?;
     match batch {
@@ -77,8 +77,8 @@ pub async fn submit_quote(quote: Bytes) -> Result<(), String> {
 }
 
 async fn connect_to_prover_server_wr(
-    write: &ProofData,
-) -> Result<ProofData, Box<dyn std::error::Error>> {
+    write: &ProofData<ProverInputData>,
+) -> Result<ProofData<ProverInputData>, Box<dyn std::error::Error>> {
     let addr = if std::env::var("ETHREX_TDX_DEV_MODE").is_ok() {
         SERVER_URL_DEV
     } else {
@@ -92,6 +92,6 @@ async fn connect_to_prover_server_wr(
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
 
-    let response: Result<ProofData, _> = serde_json::from_slice(&buffer);
+    let response: Result<ProofData<ProverInputData>, _> = serde_json::from_slice(&buffer);
     Ok(response?)
 }
