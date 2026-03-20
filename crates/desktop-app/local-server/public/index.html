@@ -496,6 +496,111 @@
         </div>
       </section>
 
+      <!-- Bundle Deploy (ChainForge) -->
+      <section id="view-bundle-deploy" class="view">
+        <div class="detail-header">
+          <div class="back-link">
+            <button class="btn-back" onclick="showView('deployments')">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              Back to My L2s
+            </button>
+          </div>
+          <h2 style="font-size:16px;margin-bottom:4px">Deploy ChainForge Bundle</h2>
+          <p class="step-desc" style="margin-bottom:14px">Configure and deploy a chain designed in ChainForge Studio.</p>
+        </div>
+
+        <div id="bundle-info-card" class="selected-program-card" style="padding:12px 16px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px" id="bundle-chain-name">Loading...</div>
+          <div style="display:flex;gap:16px;font-size:11px;color:var(--text-secondary)">
+            <span>Programs: <strong id="bundle-program-count">-</strong></span>
+            <span>Chain ID: <strong id="bundle-chain-id">-</strong></span>
+          </div>
+          <div id="bundle-program-list" style="margin-top:8px;font-size:11px;color:var(--text-secondary)"></div>
+        </div>
+
+        <div class="config-form">
+          <label style="margin-bottom:8px">Environment</label>
+          <div class="mode-cards" style="margin-bottom:12px">
+            <button type="button" class="mode-card active" data-mode="local" onclick="setBundleMode('local')" style="padding:8px">
+              <div class="mode-title">Local (Docker)</div>
+              <div class="mode-desc">Build and run on this machine</div>
+            </button>
+            <button type="button" class="mode-card" data-mode="testnet" onclick="setBundleMode('testnet')" style="padding:8px">
+              <div class="mode-title">Testnet</div>
+              <div class="mode-desc">Deploy to Sepolia / Holesky / Custom L1</div>
+            </button>
+          </div>
+
+          <div id="bundle-testnet-fields" style="display:none">
+            <div class="testnet-info-box" style="background:var(--blue-50,#eff6ff);border:1px solid var(--blue-200,#bfdbfe);border-radius:8px;padding:10px 14px;margin-bottom:12px">
+              <p style="font-weight:600;color:var(--blue-700,#1d4ed8);margin-bottom:4px;font-size:13px">Testnet Deployment</p>
+              <p style="color:var(--blue-600,#2563eb);font-size:11px;line-height:1.5">
+                No built-in L1 node will be started. L2 contracts will be deployed to the external L1.<br>
+                The deployer account must be funded with testnet ETH.
+              </p>
+            </div>
+            <label style="margin-bottom:8px">L1 RPC URL *
+              <input type="text" id="bundle-testnet-rpc" placeholder="https://sepolia.infura.io/v3/YOUR_KEY" style="border-color:#f87171">
+              <p class="form-hint">Ethereum L1 RPC endpoint.</p>
+            </label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <p style="font-weight:600;font-size:13px;margin:0">Wallet Configuration</p>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button type="button" class="btn-secondary" onclick="registerKeychainKey()" style="font-size:11px;white-space:nowrap;padding:4px 8px">+ Register Key</button>
+                <button type="button" class="btn-secondary" onclick="refreshBundleKeychainKeys()" style="font-size:11px;white-space:nowrap;padding:4px 8px" title="Refresh key list">↻</button>
+              </div>
+            </div>
+            <p class="form-hint" style="margin-bottom:8px">Private keys are stored in macOS Keychain. The app only references key names.</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div style="border-left:4px solid #2563eb;border-radius:8px;padding:10px 10px 10px 12px;background:#eff6ff;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                <div style="font-size:12px;font-weight:700;color:#1d4ed8;margin-bottom:4px">Deployer *</div>
+                <select id="bundle-deployer-key" onchange="onBundleKeychainKeyChange()" style="margin:0 0 2px;font-size:12px;width:100%">
+                  <option value="">Select key...</option>
+                </select>
+                <input type="text" id="bundle-deployer-addr" placeholder="—" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                <div id="bundle-balance-deployer"></div>
+              </div>
+              <div style="border-left:4px solid #16a34a;border-radius:8px;padding:10px 10px 10px 12px;background:#f0fdf4;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                <div style="font-size:12px;font-weight:700;color:#15803d;margin-bottom:4px">Committer</div>
+                <select id="bundle-committer-key" onchange="onBundleRoleKeyChange('committer')" style="margin:0 0 2px;font-size:12px;width:100%">
+                  <option value="">Same as Deployer</option>
+                </select>
+                <input type="text" id="bundle-committer-addr" placeholder="= Deployer" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                <div id="bundle-balance-committer"></div>
+              </div>
+              <div style="border-left:4px solid #9333ea;border-radius:8px;padding:10px 10px 10px 12px;background:#faf5ff;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                <div style="font-size:12px;font-weight:700;color:#7e22ce;margin-bottom:4px">Proof Coordinator</div>
+                <select id="bundle-proof-coordinator-key" onchange="onBundleRoleKeyChange('proof-coordinator')" style="margin:0 0 2px;font-size:12px;width:100%">
+                  <option value="">Same as Deployer</option>
+                </select>
+                <input type="text" id="bundle-proof-coordinator-addr" placeholder="= Deployer" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                <div id="bundle-balance-proof-coordinator"></div>
+              </div>
+              <div style="border-left:4px solid #d97706;border-radius:8px;padding:10px 10px 10px 12px;background:#fffbeb;box-shadow:0 1px 2px rgba(0,0,0,0.05)">
+                <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:4px">Bridge Owner</div>
+                <select id="bundle-bridge-owner-key" onchange="onBundleRoleKeyChange('bridge-owner')" style="margin:0 0 2px;font-size:12px;width:100%">
+                  <option value="">Same as Deployer</option>
+                </select>
+                <input type="text" id="bundle-bridge-owner-addr" placeholder="= Deployer" readonly style="background:white;color:#4b5563;font-size:10px;padding:3px 6px;width:100%;box-sizing:border-box">
+                <div id="bundle-balance-bridge-owner"></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:8px">
+              <button type="button" class="btn-secondary" onclick="checkBundleTestnetBalance()" style="font-size:11px">Check All Balances</button>
+            </div>
+            <div id="bundle-balance-check" style="margin-bottom:8px"></div>
+          </div>
+
+          <div id="bundle-docker-status"></div>
+          <div id="bundle-error" class="error-msg" style="display:none"></div>
+
+          <div class="form-actions" style="margin-top:12px">
+            <button class="btn-secondary" onclick="showView('deployments')">Cancel</button>
+            <button class="btn-primary" id="bundle-deploy-btn" onclick="handleBundleDeploy()">Deploy Chain</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Deployment Detail -->
       <section id="view-detail" class="view">
         <div class="detail-header">

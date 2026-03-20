@@ -1864,6 +1864,212 @@ testAsync("isHealthy returns false for unreachable host", async () => {
       return Promise.resolve();
     })
 
+    // ============================================================
+    // ChainForge Bundle Deploy Tests
+    // ============================================================
+    .then(async () => {
+      console.log("\n=== ChainForge Bundle Deploy Tests ===");
+
+      const app = require("./server");
+      const server = http.createServer(app);
+      await new Promise((resolve) => server.listen(0, resolve));
+      const port = server.address().port;
+      const base = `http://127.0.0.1:${port}`;
+
+      try {
+        // -- POST /from-bundle creates deployment with files --
+        let bundleDeployId;
+        const testGenesis = JSON.stringify({
+          config: { chainId: 901, homesteadBlock: 0, eip150Block: 0 },
+          alloc: { "0xFFFF": { balance: "0x0", code: "0x00" } },
+          gasLimit: "0x1c9c380",
+          nonce: "0x42",
+        });
+        const testProgramsToml = [
+          'default_program = "evm-l2"',
+          'enabled_programs = ["evm-l2", "bridge"]',
+          "",
+          "[programs.evm-l2]",
+          "type_id = 1",
+          'display_name = "EVM L2"',
+          "is_base = true",
+          "",
+          "[programs.bridge]",
+          "type_id = 2",
+          'display_name = "Bridge"',
+          "is_base = false",
+        ].join("\n");
+        const testPrograms = [
+          { programId: "evm-l2", programTypeId: 1, role: "base" },
+          { programId: "bridge", programTypeId: 2, role: "app-specific" },
+        ];
+
+        await testAsync("POST /from-bundle creates deployment", async () => {
+          const res = await fetch(`${base}/api/deployments/from-bundle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: "Bundle Test Chain",
+              chainId: 65537001,
+              genesis: testGenesis,
+              programsToml: testProgramsToml,
+              programs: testPrograms,
+              contracts: { l1: { OnChainProposer: "<pending>" }, l2System: {} },
+            }),
+          });
+          assert.equal(res.status, 201, `Expected 201, got ${res.status}`);
+          const data = await res.json();
+          assert.ok(data.deployment, "response should have deployment");
+          assert.ok(data.deployment.id, "deployment should have id");
+          assert.equal(data.deployment.name, "Bundle Test Chain");
+          assert.ok(data.configUrl, "response should have configUrl");
+          assert.ok(data.configUrl.includes("bundle-deploy"), "configUrl should reference bundle-deploy view");
+          bundleDeployId = data.deployment.id;
+        });
+
+        await testAsync("POST /from-bundle writes genesis l2.json to deploy dir", async () => {
+          const { getDeploymentDir } = require("./lib/compose-generator");
+          const deployDir = getDeploymentDir(bundleDeployId);
+          const genesisPath = path.join(deployDir, "l2.json");
+          assert.ok(fs.existsSync(genesisPath), "l2.json should exist in deploy dir");
+          const content = JSON.parse(fs.readFileSync(genesisPath, "utf-8"));
+          assert.equal(content.config.chainId, 901, "genesis chainId should match");
+          assert.ok(content.alloc["0xFFFF"], "genesis alloc should be preserved");
+        });
+
+        await testAsync("POST /from-bundle writes programs.toml to deploy dir", async () => {
+          const { getDeploymentDir } = require("./lib/compose-generator");
+          const deployDir = getDeploymentDir(bundleDeployId);
+          const tomlPath = path.join(deployDir, "programs.toml");
+          assert.ok(fs.existsSync(tomlPath), "programs.toml should exist in deploy dir");
+          const content = fs.readFileSync(tomlPath, "utf-8");
+          assert.ok(content.includes('default_program = "evm-l2"'), "programs.toml should have default_program");
+          assert.ok(content.includes("[programs.bridge]"), "programs.toml should have bridge section");
+        });
+
+        await testAsync("POST /from-bundle stores chainforgeBundle flag in config", async () => {
+          const dep = db.prepare("SELECT * FROM deployments WHERE id = ?").get(bundleDeployId);
+          assert.ok(dep, "deployment should exist in DB");
+          const config = JSON.parse(dep.config);
+          assert.equal(config.chainforgeBundle, true, "config should have chainforgeBundle: true");
+          assert.ok(Array.isArray(config.bundlePrograms), "config should have bundlePrograms array");
+          assert.equal(config.bundlePrograms.length, 2, "should have 2 programs");
+          assert.equal(config.bundlePrograms[0].programId, "evm-l2");
+        });
+
+        await testAsync("POST /from-bundle rejects missing name", async () => {
+          const res = await fetch(`${base}/api/deployments/from-bundle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ genesis: "{}", programsToml: "x" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("name"), "error should mention name");
+        });
+
+        await testAsync("POST /from-bundle rejects missing genesis", async () => {
+          const res = await fetch(`${base}/api/deployments/from-bundle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Test", programsToml: "x" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("genesis"), "error should mention genesis");
+        });
+
+        await testAsync("POST /from-bundle rejects missing programsToml", async () => {
+          const res = await fetch(`${base}/api/deployments/from-bundle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Test", genesis: "{}" }),
+          });
+          assert.equal(res.status, 400);
+          const data = await res.json();
+          assert.ok(data.error.includes("programsToml"), "error should mention programsToml");
+        });
+
+        await testAsync("GET /deployments/:id returns bundle deployment", async () => {
+          const res = await fetch(`${base}/api/deployments/${bundleDeployId}`);
+          assert.equal(res.status, 200);
+          const data = await res.json();
+          assert.equal(data.deployment.name, "Bundle Test Chain");
+          assert.equal(data.deployment.chain_id, 65537001);
+          assert.equal(data.deployment.program_slug, "evm-l2");
+          assert.equal(data.deployment.stack_type, "ethrex");
+        });
+
+        // -- Compose generator: bundleProgramsToml --
+        await testAsync("compose-generator uses bundleProgramsToml when provided", async () => {
+          const { generateComposeFile } = require("./lib/compose-generator");
+          const compose = generateComposeFile({
+            programSlug: "evm-l2",
+            l1Port: 8545,
+            l2Port: 1729,
+            proofCoordPort: 3900,
+            metricsPort: 3702,
+            projectName: "test-bundle",
+            customGenesisPath: "/tmp/test-genesis.json",
+            l2ChainId: 65537001,
+            customL1GenesisPath: "/tmp/test-l1.json",
+            bundleProgramsToml: "/tmp/test-programs.toml",
+          });
+          assert.ok(compose.includes("/tmp/test-programs.toml:/etc/ethrex/programs.toml"), "compose should mount bundle programs.toml");
+          assert.ok(compose.includes("--programs-config /etc/ethrex/programs.toml"), "compose should include programs-config flag");
+        });
+
+        await testAsync("compose-generator testnet uses bundleProgramsToml", async () => {
+          const { generateTestnetComposeFile } = require("./lib/compose-generator");
+          const compose = generateTestnetComposeFile({
+            programSlug: "evm-l2",
+            l2Port: 1729,
+            proofCoordPort: 3900,
+            metricsPort: 3702,
+            projectName: "test-bundle-tn",
+            l1RpcUrl: "https://sepolia.example.com",
+            deployerAddress: "0x1111111111111111111111111111111111111111",
+            committerAddress: "0x2222222222222222222222222222222222222222",
+            proofCoordinatorAddress: "0x3333333333333333333333333333333333333333",
+            bridgeOwnerAddress: "0x4444444444444444444444444444444444444444",
+            customGenesisPath: "/tmp/test-genesis.json",
+            l2ChainId: 65537001,
+            bundleProgramsToml: "/tmp/test-programs.toml",
+          });
+          assert.ok(compose.includes("/tmp/test-programs.toml:/etc/ethrex/programs.toml"), "testnet compose should mount bundle programs.toml");
+        });
+
+        await testAsync("compose-generator without bundleProgramsToml uses stock path", async () => {
+          const { generateComposeFile } = require("./lib/compose-generator");
+          const compose = generateComposeFile({
+            programSlug: "evm-l2",
+            l1Port: 8545,
+            l2Port: 1729,
+            proofCoordPort: 3900,
+            metricsPort: 3702,
+            projectName: "test-stock",
+            customGenesisPath: "/tmp/test-genesis.json",
+            l2ChainId: 901,
+            customL1GenesisPath: "/tmp/test-l1.json",
+          });
+          // evm-l2 profile has no programsToml, so no mount should appear
+          assert.ok(!compose.includes("/etc/ethrex/programs.toml"), "stock evm-l2 should not mount programs.toml");
+        });
+
+        // Cleanup bundle deployment
+        db.prepare("DELETE FROM deployments WHERE id = ?").run(bundleDeployId);
+        const { getDeploymentDir } = require("./lib/compose-generator");
+        const bundleDir = getDeploymentDir(bundleDeployId);
+        if (fs.existsSync(bundleDir)) {
+          fs.rmSync(bundleDir, { recursive: true, force: true });
+        }
+      } finally {
+        server.close();
+      }
+
+      return Promise.resolve();
+    })
+
     .then(() => {
       // Cleanup
       fs.rmSync(testDir, { recursive: true, force: true });

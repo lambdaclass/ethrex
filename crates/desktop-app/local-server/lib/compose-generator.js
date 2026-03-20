@@ -96,7 +96,7 @@ function getAppProfile(programSlug) {
  * @returns {string} docker-compose.yaml content
  */
 function generateComposeFile(opts) {
-  const { programSlug: rawSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName, gpu = false, dumpFixtures = false, isPublic = false, customGenesisPath, l2ChainId, customL1GenesisPath } = opts;
+  const { programSlug: rawSlug, l1Port, l2Port, proofCoordPort = 3900, metricsPort = 3702, projectName, gpu = false, dumpFixtures = false, isPublic = false, customGenesisPath, l2ChainId, customL1GenesisPath, bundleProgramsToml } = opts;
   const programSlug = sanitizeSlug(rawSlug);
   const bindAddr = isPublic ? '0.0.0.0' : '127.0.0.1';
   // Proof coordinator and metrics are internal-only — never bind to 0.0.0.0
@@ -146,21 +146,23 @@ function generateComposeFile(opts) {
   // L2 extra config
   let l2ExtraVolumes = "";
   let l2Genesis = `/genesis/${profile.genesisFile}`;
-  if (profile.programsToml) {
-    l2ExtraVolumes += `      - ${ETHREX_ROOT}/crates/l2/${profile.programsToml}:/etc/ethrex/programs.toml\n`;
+  const programsTomlSource = bundleProgramsToml || (profile.programsToml ? `${ETHREX_ROOT}/crates/l2/${profile.programsToml}` : null);
+  if (programsTomlSource) {
+    l2ExtraVolumes += `      - ${programsTomlSource}:/etc/ethrex/programs.toml\n`;
   }
 
   // Prover config
   let proverExtraEnv = "";
   let proverExtraVolumes = "";
   let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
-  if (profile.proverBackend === "sp1") {
+  if (profile.proverBackend === "sp1" || bundleProgramsToml) {
     proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
     proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
       - PROVER_CLIENT_TIMED=true
       - DOCKER_HOST=\${DOCKER_HOST:-unix:///var/run/docker.sock}
       - HOME=\${HOME}`;
-    proverExtraVolumes = `      - ${ETHREX_ROOT}/crates/l2/${profile.programsToml}:/etc/ethrex/programs.toml
+    const proverTomlSource = bundleProgramsToml || `${ETHREX_ROOT}/crates/l2/${profile.programsToml}`;
+    proverExtraVolumes = `      - ${proverTomlSource}:/etc/ethrex/programs.toml
       - /var/run/docker.sock:/var/run/docker.sock
       - \${HOME}/.sp1:\${HOME}/.sp1
       - /tmp:/tmp`;
@@ -840,7 +842,7 @@ function generateTestnetComposeFile(opts) {
     programSlug: rawSlug, l2Port, proofCoordPort = 3900, metricsPort = 3702,
     projectName, l1RpcUrl, gpu = false,
     deployerAddress, committerAddress, proofCoordinatorAddress, bridgeOwnerAddress,
-    isPublic = false, customGenesisPath, l2ChainId,
+    isPublic = false, customGenesisPath, l2ChainId, bundleProgramsToml,
   } = opts;
 
   // Validate required addresses to fail fast on caller errors
@@ -893,20 +895,22 @@ function generateTestnetComposeFile(opts) {
 
   let l2ExtraVolumes = "";
   let l2Genesis = `/genesis/${profile.genesisFile}`;
-  if (profile.programsToml) {
-    l2ExtraVolumes += `      - ${ETHREX_ROOT}/crates/l2/${profile.programsToml}:/etc/ethrex/programs.toml\n`;
+  const testnetTomlSource = bundleProgramsToml || (profile.programsToml ? `${ETHREX_ROOT}/crates/l2/${profile.programsToml}` : null);
+  if (testnetTomlSource) {
+    l2ExtraVolumes += `      - ${testnetTomlSource}:/etc/ethrex/programs.toml\n`;
   }
 
   let proverExtraEnv = "";
   let proverExtraVolumes = "";
   let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
-  if (profile.proverBackend === "sp1") {
+  if (profile.proverBackend === "sp1" || bundleProgramsToml) {
     proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
     proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
       - PROVER_CLIENT_TIMED=true
       - DOCKER_HOST=\${DOCKER_HOST:-unix:///var/run/docker.sock}
       - HOME=\${HOME}`;
-    proverExtraVolumes = `      - ${ETHREX_ROOT}/crates/l2/${profile.programsToml}:/etc/ethrex/programs.toml
+    const testnetProverToml = bundleProgramsToml || `${ETHREX_ROOT}/crates/l2/${profile.programsToml}`;
+    proverExtraVolumes = `      - ${testnetProverToml}:/etc/ethrex/programs.toml
       - /var/run/docker.sock:/var/run/docker.sock
       - \${HOME}/.sp1:\${HOME}/.sp1
       - /tmp:/tmp`;

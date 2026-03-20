@@ -46,7 +46,7 @@ let elapsedInterval = null;
 // ============================================================
 // Navigation
 // ============================================================
-const pageTitles = { deployments: 'My L2s', launch: 'Launch L2', hosts: 'Remote Hosts', detail: 'L2 Details', 'guest-builds': 'Guest Builds' };
+const pageTitles = { deployments: 'My L2s', launch: 'Launch L2', hosts: 'Remote Hosts', detail: 'L2 Details', 'guest-builds': 'Guest Builds', 'bundle-deploy': 'Deploy ChainForge Bundle' };
 
 document.querySelectorAll('.nav-link').forEach(btn => {
   btn.addEventListener('click', () => showView(btn.dataset.view));
@@ -4793,7 +4793,7 @@ async function showBuildDetail(buildId) {
             <div style="font-size:12px;font-weight:700;color:#a1a1aa;">Build Logs</div>
             <span style="font-size:10px;color:#52525b;">${logs.length} lines</span>
           </div>
-          <div style="background:#000;border-radius:8px;padding:12px;max-height:280px;overflow-y:auto;font-family:monospace;font-size:10px;line-height:1.6;">
+          <div style="background:#000;border-radius:10px;padding:20px 24px;max-height:360px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:2.0;">
             ${logs.length === 0
               ? '<span style="color:#52525b;">No logs available</span>'
               : logs.map(line => {
@@ -4846,10 +4846,247 @@ async function showBuildDetail(buildId) {
   }
 }
 
+// ============================================================
+// Bundle Deploy (ChainForge)
+// ============================================================
+let bundleDeploymentId = null;
+let bundleMode = 'local';
+
+function showBundleDeploy(deploymentId) {
+  bundleDeploymentId = deploymentId;
+  bundleMode = 'local';
+  showView('bundle-deploy');
+
+  // Load deployment info
+  fetch(`${API}/deployments/${deploymentId}`).then(r => r.json()).then(data => {
+    const dep = data.deployment;
+    if (!dep) return;
+
+    document.getElementById('bundle-chain-name').textContent = dep.name;
+    document.getElementById('bundle-chain-id').textContent = dep.chain_id || 'auto';
+
+    let config = {};
+    try { config = dep.config ? JSON.parse(dep.config) : {}; } catch (e) { console.warn('[bundle] config parse:', e.message); }
+
+    const programs = config.bundlePrograms || [];
+    document.getElementById('bundle-program-count').textContent = programs.length;
+
+    const listEl = document.getElementById('bundle-program-list');
+    if (programs.length > 0) {
+      listEl.innerHTML = '';
+      programs.forEach(p => {
+        const span = document.createElement('span');
+        span.style.cssText = 'display:inline-block;background:var(--bg-surface,#1a1a2e);border:1px solid var(--border,#333);border-radius:4px;padding:2px 8px;margin:2px 4px 2px 0;font-size:10px';
+        span.textContent = `${p.programId || p.displayName || 'unknown'} (${p.role || 'app'})`;
+        listEl.appendChild(span);
+      });
+    } else {
+      listEl.textContent = '';
+    }
+  });
+
+  // Reset mode UI
+  setBundleMode('local');
+  loadBundleKeychainKeys();
+}
+
+function setBundleMode(mode) {
+  bundleMode = mode;
+  document.querySelectorAll('#view-bundle-deploy .mode-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.mode === mode);
+  });
+  const testnetFields = document.getElementById('bundle-testnet-fields');
+  if (testnetFields) testnetFields.style.display = mode === 'testnet' ? '' : 'none';
+}
+
+async function loadBundleKeychainKeys() {
+  try {
+    const res = await fetch(`${API}/keychain/keys`);
+    const data = await res.json();
+    const keys = data.keys || [];
+    const selectors = ['bundle-deployer-key', 'bundle-committer-key', 'bundle-proof-coordinator-key', 'bundle-bridge-owner-key'];
+    selectors.forEach((selId, i) => {
+      const sel = document.getElementById(selId);
+      if (!sel) return;
+      const currentVal = sel.value;
+      const defaultLabel = i === 0 ? 'Select key...' : 'Same as Deployer';
+      sel.innerHTML = `<option value="">${defaultLabel}</option>` + keys.map(k => `<option value="${k}">${k}</option>`).join('');
+      if (currentVal) sel.value = currentVal;
+    });
+  } catch (e) { console.warn('[bundle] Failed to load keychain keys:', e.message); }
+}
+
+function refreshBundleKeychainKeys() {
+  loadBundleKeychainKeys();
+}
+
+async function onBundleKeychainKeyChange() {
+  const sel = document.getElementById('bundle-deployer-key');
+  if (!sel || !sel.value) {
+    document.getElementById('bundle-deployer-addr').value = '';
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/keychain/keys/${encodeURIComponent(sel.value)}`);
+    const data = await res.json();
+    if (data.address) {
+      document.getElementById('bundle-deployer-addr').value = data.address;
+      // Update role defaults
+      ['committer', 'proof-coordinator', 'bridge-owner'].forEach(role => {
+        const roleSel = document.getElementById(`bundle-${role}-key`);
+        const roleAddr = document.getElementById(`bundle-${role}-addr`);
+        if (roleSel && !roleSel.value && roleAddr) {
+          roleAddr.value = data.address;
+          roleAddr.style.color = '#9ca3af';
+        }
+      });
+    }
+  } catch (e) { console.warn('[bundle] keychain key change:', e.message); }
+}
+
+async function onBundleRoleKeyChange(role) {
+  const sel = document.getElementById(`bundle-${role}-key`);
+  const addrEl = document.getElementById(`bundle-${role}-addr`);
+  if (!sel || !addrEl) return;
+
+  if (!sel.value) {
+    const deployerAddr = document.getElementById('bundle-deployer-addr')?.value || '';
+    addrEl.value = deployerAddr || '= Deployer';
+    addrEl.style.color = '#9ca3af';
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/keychain/keys/${encodeURIComponent(sel.value)}`);
+    const data = await res.json();
+    if (data.address) {
+      addrEl.value = data.address;
+      addrEl.style.color = '#4b5563';
+    }
+  } catch (e) { console.warn(`[bundle] role key change (${role}):`, e.message); }
+}
+
+async function checkBundleTestnetBalance() {
+  const rpcUrl = document.getElementById('bundle-testnet-rpc')?.value;
+  const deployerAddr = document.getElementById('bundle-deployer-addr')?.value;
+  if (!rpcUrl || !deployerAddr) {
+    document.getElementById('bundle-balance-check').innerHTML = '<span style="color:#f87171;font-size:11px">Please set RPC URL and deployer key first.</span>';
+    return;
+  }
+
+  const roles = [
+    { role: 'deployer', address: deployerAddr, statusId: 'bundle-balance-deployer' },
+    { role: 'committer', address: document.getElementById('bundle-committer-addr')?.value || deployerAddr, statusId: 'bundle-balance-committer' },
+    { role: 'proof-coordinator', address: document.getElementById('bundle-proof-coordinator-addr')?.value || deployerAddr, statusId: 'bundle-balance-proof-coordinator' },
+    { role: 'bridge-owner', address: document.getElementById('bundle-bridge-owner-addr')?.value || deployerAddr, statusId: 'bundle-balance-bridge-owner' },
+  ];
+
+  for (const { role, address, statusId } of roles) {
+    const statusEl = document.getElementById(statusId);
+    if (!statusEl) continue;
+    if (!address || address === '= Deployer') { statusEl.innerHTML = ''; continue; }
+    statusEl.innerHTML = '<span style="font-size:10px;color:#888">Checking...</span>';
+    try {
+      const res = await fetch(`${API}/deployments/testnet/check-balance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rpcUrl, address, role }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        statusEl.innerHTML = `<span style="font-size:10px;color:#f87171">${data.error}</span>`;
+      } else {
+        const color = data.sufficient ? '#22c55e' : '#f87171';
+        statusEl.innerHTML = `<span style="font-size:10px;color:${color}">${Number(data.balanceEth).toFixed(4)} ETH${data.sufficient ? ' ✓' : ' (insufficient)'}</span>`;
+      }
+    } catch {
+      statusEl.innerHTML = '<span style="font-size:10px;color:#f87171">Check failed</span>';
+    }
+  }
+}
+
+async function handleBundleDeploy() {
+  if (!bundleDeploymentId) return;
+  const btn = document.getElementById('bundle-deploy-btn');
+  const errorEl = document.getElementById('bundle-error');
+  if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = ''; }
+
+  // Build config update
+  const config = { mode: bundleMode, chainforgeBundle: true };
+
+  if (bundleMode === 'testnet') {
+    const rpcUrl = document.getElementById('bundle-testnet-rpc')?.value?.trim();
+    if (!rpcUrl) {
+      if (errorEl) { errorEl.textContent = 'L1 RPC URL is required for testnet deployment.'; errorEl.style.display = ''; }
+      return;
+    }
+    const deployerKey = document.getElementById('bundle-deployer-key')?.value;
+    if (!deployerKey) {
+      if (errorEl) { errorEl.textContent = 'Deployer key is required for testnet deployment.'; errorEl.style.display = ''; }
+      return;
+    }
+    config.l1RpcUrl = rpcUrl;
+    config.deployerKey = deployerKey;
+    config.committerKey = document.getElementById('bundle-committer-key')?.value || deployerKey;
+    config.proofCoordinatorKey = document.getElementById('bundle-proof-coordinator-key')?.value || deployerKey;
+    config.bridgeOwnerKey = document.getElementById('bundle-bridge-owner-key')?.value || deployerKey;
+  }
+
+  // Merge existing config (preserve bundlePrograms etc.)
+  try {
+    const depRes = await fetch(`${API}/deployments/${bundleDeploymentId}`);
+    const dep = await depRes.json();
+    if (dep?.deployment?.config) {
+      const existing = typeof dep.deployment.config === 'string' ? JSON.parse(dep.deployment.config) : dep.deployment.config;
+      config.bundlePrograms = existing.bundlePrograms;
+      config.bundleContracts = existing.bundleContracts;
+    }
+  } catch (e) { console.warn('[bundle] merge config:', e.message); }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Deploying...'; }
+
+  try {
+    // Update deployment config
+    const updateRes = await fetch(`${API}/deployments/${bundleDeploymentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+    if (!updateRes.ok) {
+      const err = await updateRes.json();
+      throw new Error(err.error || 'Failed to update deployment config');
+    }
+
+    // Start provisioning
+    const provRes = await fetch(`${API}/deployments/${bundleDeploymentId}/provision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!provRes.ok) {
+      const err = await provRes.json();
+      throw new Error(err.error || 'Failed to start provisioning');
+    }
+
+    // Switch to Step 3 (deploy progress) — reuse existing progress UI
+    showView('launch');
+    document.getElementById('launch-step1').style.display = 'none';
+    document.getElementById('launch-step2').style.display = 'none';
+    document.getElementById('launch-step3').style.display = '';
+    launchDeploymentId = bundleDeploymentId;
+    startDeployProgress(bundleDeploymentId);
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.style.display = ''; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Deploy Chain'; }
+  }
+}
+
 const initialView = urlParams.get('view');
 const detailId = urlParams.get('detail');
 loadDeployments().then(() => {
-  if (detailId) {
+  if (detailId && initialView === 'bundle-deploy') {
+    showBundleDeploy(detailId);
+  } else if (detailId) {
     showDeploymentDetail(detailId);
   } else if (editId) {
     editConfiguredDeploy(editId);

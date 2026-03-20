@@ -381,7 +381,7 @@ function getActiveProvisions() {
  * Ensure the deployment has a unique L2 chain ID and write a
  * deployment-specific genesis file with that chain ID.
  */
-async function ensureChainIds(deployment, deployDir, { includeL1 = false } = {}) {
+async function ensureChainIds(deployment, deployDir, { includeL1 = false, isBundle = false } = {}) {
   const { id, program_slug: programSlug } = deployment;
 
   // L2 Chain ID
@@ -390,7 +390,26 @@ async function ensureChainIds(deployment, deployDir, { includeL1 = false } = {})
     l2ChainId = getNextAvailableL2ChainId();
     updateDeployment(id, { chain_id: l2ChainId });
   }
-  const customGenesisPath = await writeCustomGenesis(programSlug, l2ChainId, id, deployDir);
+
+  let customGenesisPath;
+  const resolvedDeployDir = deployDir || getDeploymentDir(id);
+  const bundleGenesisPath = path.join(resolvedDeployDir, "l2.json");
+
+  if (isBundle && fs.existsSync(bundleGenesisPath)) {
+    // ChainForge bundle: genesis already written by from-bundle endpoint
+    // Update chainId in the existing genesis to match deployment's chain ID
+    try {
+      const genesis = JSON.parse(fs.readFileSync(bundleGenesisPath, "utf-8"));
+      genesis.config.chainId = l2ChainId;
+      fs.writeFileSync(bundleGenesisPath, JSON.stringify(genesis, null, 2), "utf-8");
+    } catch (e) {
+      emit(id, "log", { message: `Warning: could not update chainId in bundle genesis: ${e.message}` });
+    }
+    customGenesisPath = bundleGenesisPath;
+    emit(id, "log", { message: `Using ChainForge bundle genesis: ${bundleGenesisPath}` });
+  } else {
+    customGenesisPath = await writeCustomGenesis(programSlug, l2ChainId, id, deployDir);
+  }
   emit(id, "log", { message: `L2 Chain ID: ${l2ChainId}` });
 
   // L1 Chain ID (local deployments only — each gets its own L1 node)
@@ -448,13 +467,25 @@ async function provision(deployment) {
   let dumpFixtures = false;
   let forceRebuild = false;
   let forceRedeploy = false;
+  let bundleProgramsToml = null;
+  let isBundle = false;
   try {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     deployDir = config.deployDir || null;
     dumpFixtures = !!config.dumpFixtures;
     forceRebuild = !!config.forceRebuild;
     forceRedeploy = !!config.forceRedeploy;
-  } catch {}
+    isBundle = !!config.chainforgeBundle;
+    // Check for ChainForge bundle programs.toml (same config parse)
+    if (isBundle) {
+      const resolvedDir = deployDir || getDeploymentDir(id);
+      const bundleTomlPath = path.join(resolvedDir, "programs.toml");
+      if (fs.existsSync(bundleTomlPath)) {
+        bundleProgramsToml = bundleTomlPath;
+        emit(id, "log", { message: `Using ChainForge bundle programs.toml: ${bundleTomlPath}` });
+      }
+    }
+  } catch (e) { console.warn("[deploy] Failed to check bundle programs.toml:", e.message); }
 
   const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
   const projectName = `tokamak-${id.slice(0, 8)}`;
@@ -477,12 +508,12 @@ async function provision(deployment) {
   provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration..." });
 
-  const { customGenesisPath, l2ChainId, customL1GenesisPath } = await ensureChainIds(deployment, deployDir, { includeL1: true });
+  const { customGenesisPath, l2ChainId, customL1GenesisPath } = await ensureChainIds(deployment, deployDir, { includeL1: true, isBundle });
 
   let composeFile = null;
   try {
     const gpu = docker.hasNvidiaGpu();
-    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures, customGenesisPath, l2ChainId, customL1GenesisPath });
+    const composeContent = generateComposeFile({ programSlug, l1Port, l2Port, proofCoordPort, metricsPort: toolsMetricsPort, projectName, gpu, dumpFixtures, customGenesisPath, l2ChainId, customL1GenesisPath, bundleProgramsToml });
     composeFile = writeComposeFile(id, composeContent, deployDir);
 
     // Check for existing images to skip rebuild (unless forceRebuild)
@@ -1054,11 +1085,24 @@ async function provisionTestnet(deployment) {
 
   let deployDir = null;
   let testnetConfig = {};
+  let isBundle = false;
   try {
     const config = deployment.config ? JSON.parse(deployment.config) : {};
     deployDir = config.deployDir || null;
-    testnetConfig = config.testnet || {};
-  } catch {}
+    isBundle = !!config.chainforgeBundle;
+    if (isBundle) {
+      // ChainForge bundle stores testnet config at top level
+      testnetConfig = {
+        l1RpcUrl: config.l1RpcUrl,
+        keychainKeyName: config.deployerKey,
+        committerKeychainKey: config.committerKey,
+        proofCoordinatorKeychainKey: config.proofCoordinatorKey,
+        bridgeOwnerKeychainKey: config.bridgeOwnerKey,
+      };
+    } else {
+      testnetConfig = config.testnet || {};
+    }
+  } catch (e) { console.warn("[deploy] Failed to parse testnet config:", e.message); }
 
   const l1RpcUrl = testnetConfig.l1RpcUrl;
   if (!l1RpcUrl) {
@@ -1132,7 +1176,18 @@ async function provisionTestnet(deployment) {
   provisionInfo.phase = "building";
   emit(id, "phase", { phase: "building", message: "Generating Docker Compose configuration (testnet mode)..." });
 
-  const { customGenesisPath, l2ChainId } = await ensureChainIds(deployment, deployDir);
+  const { customGenesisPath, l2ChainId } = await ensureChainIds(deployment, deployDir, { isBundle });
+
+  // Check for ChainForge bundle programs.toml
+  let bundleProgramsToml = null;
+  if (isBundle) {
+    const testnetResolvedDir = deployDir || getDeploymentDir(id);
+    const testnetBundleTomlPath = path.join(testnetResolvedDir, "programs.toml");
+    if (fs.existsSync(testnetBundleTomlPath)) {
+      bundleProgramsToml = testnetBundleTomlPath;
+      emit(id, "log", { message: `Using ChainForge bundle programs.toml: ${testnetBundleTomlPath}` });
+    }
+  }
 
   let composeFile = null;
   const contractLogLines = []; // Track deployer logs for address recovery on cancel
@@ -1155,7 +1210,7 @@ async function provisionTestnet(deployment) {
       programSlug, l2Port, proofCoordPort, metricsPort: toolsMetricsPort,
       projectName, l1RpcUrl, gpu,
       ...addresses,
-      customGenesisPath, l2ChainId,
+      customGenesisPath, l2ChainId, bundleProgramsToml,
     });
     composeFile = writeComposeFile(id, composeContent, deployDir);
 

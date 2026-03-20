@@ -398,6 +398,67 @@ router.post("/", (req, res) => {
   }
 });
 
+// POST /api/deployments/from-bundle — create deployment from ChainForge bundle
+router.post("/from-bundle", async (req, res) => {
+  try {
+    const { name, chainId, genesis, programsToml, programs, contracts, programSlug } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: "name is required" });
+    }
+    if (!genesis) {
+      return res.status(400).json({ error: "genesis is required" });
+    }
+    if (!programsToml) {
+      return res.status(400).json({ error: "programsToml is required" });
+    }
+
+    // Validate genesis is valid JSON
+    try {
+      const parsed = typeof genesis === "string" ? JSON.parse(genesis) : genesis;
+      if (!parsed || typeof parsed !== "object") throw new Error("not an object");
+    } catch (e) {
+      return res.status(400).json({ error: `Invalid genesis JSON: ${e.message}` });
+    }
+
+    // Validate programsToml is non-empty string
+    if (typeof programsToml !== "string" || !programsToml.trim()) {
+      return res.status(400).json({ error: "programsToml must be a non-empty string" });
+    }
+
+    // Determine program slug from bundle or default to evm-l2
+    const slug = programSlug && /^[a-z0-9_-]{1,64}$/.test(programSlug) ? programSlug : "evm-l2";
+
+    const id = uuidv4();
+    const now = Date.now();
+
+    // Store chainforgeBundle flag + programs metadata in config
+    const config = JSON.stringify({
+      chainforgeBundle: true,
+      bundlePrograms: programs || [],
+      bundleContracts: contracts || {},
+    });
+
+    db.prepare(`
+      INSERT INTO deployments (id, program_slug, stack_type, name, chain_id, config, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, slug, "ethrex", name.trim(), chainId || null, config, now);
+
+    // Write genesis.json and programs.toml to deployment dir
+    const deployDir = getDeploymentDir(id);
+    fs.mkdirSync(deployDir, { recursive: true });
+
+    const genesisContent = typeof genesis === 'string' ? genesis : JSON.stringify(genesis, null, 2);
+    fs.writeFileSync(path.join(deployDir, "l2.json"), genesisContent, "utf-8");
+    fs.writeFileSync(path.join(deployDir, "programs.toml"), programsToml, "utf-8");
+
+    const deployment = db.prepare("SELECT * FROM deployments WHERE id = ?").get(id);
+    const configUrl = `/index.html?view=bundle-deploy&detail=${id}`;
+    res.status(201).json({ deployment, configUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/deployments — list all local deployments
 router.get("/", (req, res) => {
   try {
