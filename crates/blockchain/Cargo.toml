@@ -30,7 +30,7 @@ bytes.workspace = true
 hex.workspace = true
 rustc-hash.workspace = true
 crossbeam.workspace = true
-tokio = { workspace = true, features = ["time", "rt", "sync", "macros", "io-util", "net"] }
+tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
@@ -57,6 +57,8 @@ eip-8025 = [
     "dep:ethrex-guest-program",
     "dep:ethrex-prover",
     "ethrex-prover?/eip-8025",
+    "tokio/io-util",
+    "tokio/net",
 ]
 
 [lints.clippy]
