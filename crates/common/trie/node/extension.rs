@@ -272,7 +272,6 @@ impl ExtensionNode {
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
                             .child
-                            .clone()
                             .compute_hash(&NativeCrypto)
                             .finalize(&NativeCrypto),
                         extension_node_hash: self
