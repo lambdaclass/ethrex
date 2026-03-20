@@ -46,8 +46,8 @@ const DB_SCHEMA: [&str; 22] = [
     "CREATE TABLE IF NOT EXISTS verify_txs (batch INT PRIMARY KEY, verify_tx BLOB)",
     "CREATE TABLE IF NOT EXISTS operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0) ON CONFLICT(_id) DO NOTHING",
-    "CREATE TABLE IF NOT EXISTS latest_sent (_id INT PRIMARY KEY, batch INT)",
-    "INSERT INTO latest_sent VALUES (0, 0) ON CONFLICT(_id) DO NOTHING",
+    "CREATE TABLE IF NOT EXISTS latest_sent (_id INT PRIMARY KEY, batch INT, verified_at INT DEFAULT 0)",
+    "INSERT INTO latest_sent VALUES (0, 0, 0) ON CONFLICT(_id) DO NOTHING",
     "CREATE TABLE IF NOT EXISTS batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE IF NOT EXISTS block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE IF NOT EXISTS batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
@@ -107,6 +107,15 @@ impl SQLStore {
             .map(|v| (*v, empty_param.clone()))
             .collect();
         self.execute_in_tx(queries, None).await?;
+
+        // Migration: add verified_at column to latest_sent if missing (existing DBs)
+        let _ = self
+            .execute(
+                "ALTER TABLE latest_sent ADD COLUMN verified_at INT DEFAULT 0",
+                (),
+            )
+            .await;
+
         Ok(())
     }
 
@@ -749,50 +758,51 @@ impl StoreEngineRollup for SQLStore {
         Ok(row.next().await?.is_some())
     }
 
-    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        let mut rows = self.query("SELECT * from latest_sent", ()).await?;
+    // NOTE: table is named `latest_sent` for backward compatibility with pre-refactor DBs.
+    async fn get_latest_verified_batch_proof(&self) -> Result<(u64, u64), RollupStoreError> {
+        let mut rows = self
+            .query("SELECT batch, verified_at FROM latest_sent", ())
+            .await?;
         if let Some(row) = rows.next().await? {
-            return read_from_row_int(&row, 1);
+            let batch = read_from_row_int(&row, 0)?;
+            let verified_at = read_from_row_int(&row, 1)?;
+            return Ok((batch, verified_at));
         }
         Err(RollupStoreError::Custom(
             "missing latest_sent row".to_string(),
         ))
     }
 
-    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+    async fn set_latest_verified_batch_proof(
+        &self,
+        batch_number: u64,
+        verified_at: u64,
+    ) -> Result<(), RollupStoreError> {
         self.execute(
-            "INSERT OR REPLACE INTO latest_sent (_id, batch) VALUES (0, ?1)",
-            [batch_number],
+            "INSERT OR REPLACE INTO latest_sent (_id, batch, verified_at) VALUES (0, ?1, ?2)",
+            (batch_number, verified_at),
         )
         .await?;
         Ok(())
     }
 
-    async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError> {
+    async fn get_latest_sent_to_aligned(&self) -> Result<u64, RollupStoreError> {
         let mut rows = self
-            .query(
-                "SELECT batch, sent_at FROM latest_sent_to_aligned WHERE _id = 0",
-                (),
-            )
+            .query("SELECT batch FROM latest_sent_to_aligned WHERE _id = 0", ())
             .await?;
         if let Some(row) = rows.next().await? {
-            let batch = read_from_row_int(&row, 0)?;
-            let sent_at = read_from_row_int(&row, 1)?;
-            return Ok((batch, sent_at));
+            return read_from_row_int(&row, 0);
         }
         Err(RollupStoreError::Custom(
             "missing latest_sent_to_aligned row".to_string(),
         ))
     }
 
-    async fn set_latest_sent_to_aligned(
-        &self,
-        batch_number: u64,
-        timestamp: u64,
-    ) -> Result<(), RollupStoreError> {
+    async fn set_latest_sent_to_aligned(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        // sent_at is vestigial (timeout uses verified_at from latest_sent); kept for schema compat.
         self.execute(
-            "INSERT OR REPLACE INTO latest_sent_to_aligned (_id, batch, sent_at) VALUES (0, ?1, ?2)",
-            (batch_number, timestamp),
+            "INSERT OR REPLACE INTO latest_sent_to_aligned (_id, batch, sent_at) VALUES (0, ?1, 0)",
+            [batch_number],
         )
         .await?;
         Ok(())

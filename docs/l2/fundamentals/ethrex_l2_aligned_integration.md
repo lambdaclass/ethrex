@@ -518,7 +518,7 @@ AlignedProofAggregatorService.verifyProofInclusion()
 ### Key Metrics
 
 - `batch_verification_gas`: Gas used per batch verification
-- `latest_sent_batch_proof`: Last batch proof submitted to Aligned
+- `latest_verified_batch_proof`: Last batch proof verified on-chain
 - `last_verified_batch`: Last batch verified on L1
 
 ### Log Messages

@@ -68,14 +68,13 @@ impl Store {
             verify_tx: None,
         })
         .await?;
-        // Sets the latest sent batch proof to 0
-        if self.get_latest_sent_batch_proof().await.is_err() {
-            // If not set, we initialize it to 0
-            self.set_latest_sent_batch_proof(0).await?;
+        // Sets the latest verified batch proof to 0
+        if self.get_latest_verified_batch_proof().await.is_err() {
+            self.set_latest_verified_batch_proof(0, 0).await?;
         };
         // Initialize the aligned cursor if not set
         if self.get_latest_sent_to_aligned().await.is_err() {
-            self.set_latest_sent_to_aligned(0, 0).await?;
+            self.set_latest_sent_to_aligned(0).await?;
         };
         Ok(())
     }
@@ -360,33 +359,33 @@ impl Store {
         self.engine.get_signature_by_batch(batch_number).await
     }
 
-    /// Returns the latest sent batch proof
-    pub async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        self.engine.get_latest_sent_batch_proof().await
+    /// Returns `(batch_number, verified_at_secs)` for the latest batch verified on-chain.
+    pub async fn get_latest_verified_batch_proof(&self) -> Result<(u64, u64), RollupStoreError> {
+        self.engine.get_latest_verified_batch_proof().await
     }
 
-    /// Sets the latest sent batch proof
-    pub async fn set_latest_sent_batch_proof(
+    /// Records that `batch_number` was verified on-chain at `verified_at` (unix secs).
+    pub async fn set_latest_verified_batch_proof(
         &self,
         batch_number: u64,
+        verified_at: u64,
     ) -> Result<(), RollupStoreError> {
-        self.engine.set_latest_sent_batch_proof(batch_number).await
+        self.engine
+            .set_latest_verified_batch_proof(batch_number, verified_at)
+            .await
     }
 
-    /// Returns `(batch_number, timestamp_secs)` for the latest proof sent to Aligned gateway.
-    pub async fn get_latest_sent_to_aligned(&self) -> Result<(u64, u64), RollupStoreError> {
+    /// Returns the batch number for the latest proof sent to the Aligned gateway.
+    pub async fn get_latest_sent_to_aligned(&self) -> Result<u64, RollupStoreError> {
         self.engine.get_latest_sent_to_aligned().await
     }
 
-    /// Records that `batch_number` was sent to Aligned at `timestamp` (unix secs).
+    /// Records that `batch_number` was sent to the Aligned gateway.
     pub async fn set_latest_sent_to_aligned(
         &self,
         batch_number: u64,
-        timestamp: u64,
     ) -> Result<(), RollupStoreError> {
-        self.engine
-            .set_latest_sent_to_aligned(batch_number, timestamp)
-            .await
+        self.engine.set_latest_sent_to_aligned(batch_number).await
     }
 
     /// Returns the account updates yielded from executing a block

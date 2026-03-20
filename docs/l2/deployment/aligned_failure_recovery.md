@@ -111,7 +111,7 @@ If automatic resubmission resolves the issue, no manual intervention is needed. 
 
 ```sql
 -- Check the latest batch sent to Aligned gateway (SQL storage)
-SELECT batch, sent_at FROM latest_sent_to_aligned WHERE _id = 0;
+SELECT batch FROM latest_sent_to_aligned WHERE _id = 0;
 ```
 
 **Check if the proof exists locally:**
@@ -175,13 +175,13 @@ The proof still exists in the database - the system just thinks it was already s
 
 ```sql
 -- Reset to the batch before the lost one (SQL storage)
--- Setting sent_at to 0 signals a reset; L1ProofSender will resend batch N on the next iteration
-UPDATE latest_sent_to_aligned SET batch = <BATCH_NUMBER - 1>, sent_at = 0 WHERE _id = 0;
+-- L1ProofSender will resend batch N on the next iteration
+UPDATE latest_sent_to_aligned SET batch = <BATCH_NUMBER - 1> WHERE _id = 0;
 ```
 
 For example, if batch 5 was lost:
 ```sql
-UPDATE latest_sent_to_aligned SET batch = 4, sent_at = 0 WHERE _id = 0;
+UPDATE latest_sent_to_aligned SET batch = 4 WHERE _id = 0;
 ```
 
 > **Note**: It's safe to resend a proof even if Aligned didn't actually lose it. Aligned treats each submission with a different nonce as a separate entry, so the SDK will return `Ok` and queue the proof again. If the original proof was already aggregated, the L1ProofVerifier will find it when checking the commitment (which is deterministic based on vk + public inputs). The only downside is paying an extra aggregation fee for the duplicate submission.

@@ -267,12 +267,8 @@ impl L1ProofVerifier {
             && data.starts_with(ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR)
         {
             warn!("Deleting invalid ALIGNED proof");
-            // Reset aligned cursor first so the sender retries from the right
-            // batch even if proof deletion partially fails below.
-            let last_verified = first_batch_number.saturating_sub(1);
-            self.rollup_store
-                .set_latest_sent_to_aligned(last_verified, 0)
-                .await?;
+            // Delete the invalid proofs. The sender will detect the stale
+            // verified_at timestamp and reset its own aligned cursor.
             for batch_number in first_batch_number..=last_batch_number {
                 for proof_type in &self.needed_proof_types {
                     self.rollup_store
@@ -283,6 +279,11 @@ impl L1ProofVerifier {
         }
         let verify_tx_hash = send_verify_tx_result?;
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| ProofVerifierError::InternalError(e.to_string()))?
+            .as_secs();
+
         // store the verify transaction hash for each batch that was aggregated.
         for batch_number in first_batch_number..=last_batch_number {
             self.rollup_store
@@ -290,9 +291,10 @@ impl L1ProofVerifier {
                 .await?;
         }
 
-        // Advance main cursor now that on-chain verification succeeded
+        // Advance verified cursor now that on-chain verification succeeded.
+        // Only the verifier writes this cursor; the sender reads it for timeout detection.
         self.rollup_store
-            .set_latest_sent_batch_proof(last_batch_number)
+            .set_latest_verified_batch_proof(last_batch_number, now)
             .await?;
 
         // Clean up checkpoint directories for verified batches

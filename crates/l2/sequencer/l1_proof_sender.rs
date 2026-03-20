@@ -191,66 +191,54 @@ impl L1ProofSender {
             get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
 
         if self.aligned_mode {
-            let (mut latest_sent_to_aligned, mut sent_at) =
-                self.rollup_store.get_latest_sent_to_aligned().await?;
+            let mut latest_sent_to_aligned = self.rollup_store.get_latest_sent_to_aligned().await?;
+
+            // Read the verified cursor (written only by the Verifier) for timeout detection.
+            let (_, verified_at) = self.rollup_store.get_latest_verified_batch_proof().await?;
 
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| ProofSenderError::UnexpectedError(e.to_string()))?
                 .as_secs();
 
-            // Sync aligned cursor if on-chain verification advanced past it
-            if latest_sent_to_aligned < last_verified_batch {
-                self.rollup_store
-                    .set_latest_sent_to_aligned(last_verified_batch, now)
-                    .await?;
-                latest_sent_to_aligned = last_verified_batch;
-                sent_at = now;
-            }
-
             // Time-based resubmission: if we sent a proof but verification hasn't
             // advanced after the timeout, reset cursor to resend.
-            // The `sent_at > 0` guard is defense-in-depth: when the verifier
-            // resets the cursor to `last_verified` on proof failure, the primary
-            // mechanism is the cursor position itself (making the `>` check false),
-            // so the normal path at the bottom of this block handles the re-send.
-            // The `sent_at > 0` guard prevents spurious timeout triggers if the
-            // cursor is ever at a non-reset position with a zero timestamp.
+            // The `verified_at > 0` guard prevents spurious timeout triggers on
+            // initial startup before any batch has been verified on-chain.
             if latest_sent_to_aligned > last_verified_batch
-                && sent_at > 0
-                && now.saturating_sub(sent_at) > self.resubmission_timeout_secs
+                && verified_at > 0
+                && now.saturating_sub(verified_at) > self.resubmission_timeout_secs
             {
                 error!(
                     latest_sent_to_aligned,
                     last_verified_batch,
-                    elapsed_secs = now.saturating_sub(sent_at),
+                    elapsed_secs = now.saturating_sub(verified_at),
                     "Aligned verification timed out, attempting resubmission"
                 );
-                // Reset cursor to last_verified so the normal path retries
-                // the stuck batch on the next tick if this attempt fails.
                 self.rollup_store
-                    .set_latest_sent_to_aligned(last_verified_batch, now)
+                    .set_latest_sent_to_aligned(last_verified_batch)
                     .await?;
-                let batch_to_send = last_verified_batch + 1;
-                return self
-                    .verify_and_send_proofs_aligned(batch_to_send, now)
-                    .await;
+                latest_sent_to_aligned = last_verified_batch;
+            }
+
+            // Sync aligned cursor if on-chain verification advanced past it
+            if latest_sent_to_aligned < last_verified_batch {
+                self.rollup_store
+                    .set_latest_sent_to_aligned(last_verified_batch)
+                    .await?;
+                latest_sent_to_aligned = last_verified_batch;
             }
 
             let batch_to_send = latest_sent_to_aligned + 1;
-            // Use the existing sent_at so the timeout measures from when the
-            // first unverified batch was sent, not the latest one. If sent_at
-            // is 0 (verifier reset or initial state), start a fresh baseline.
-            let ts = if sent_at > 0 { sent_at } else { now };
-            return self.verify_and_send_proofs_aligned(batch_to_send, ts).await;
+            return self.verify_and_send_proofs_aligned(batch_to_send).await;
         }
 
-        let latest_sent_batch_db = self.rollup_store.get_latest_sent_batch_proof().await?;
+        let (latest_verified_db, _) = self.rollup_store.get_latest_verified_batch_proof().await?;
 
         // If the DB is behind on-chain, sync it up to avoid stalling the proof coordinator
-        if latest_sent_batch_db < last_verified_batch {
+        if latest_verified_db < last_verified_batch {
             self.rollup_store
-                .set_latest_sent_batch_proof(last_verified_batch)
+                .set_latest_verified_batch_proof(last_verified_batch, 0)
                 .await?;
         }
 
@@ -302,7 +290,6 @@ impl L1ProofSender {
     async fn verify_and_send_proofs_aligned(
         &self,
         batch_to_send: u64,
-        sent_at: u64,
     ) -> Result<(), ProofSenderError> {
         let last_committed_batch =
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
@@ -329,12 +316,10 @@ impl L1ProofSender {
         if missing_proof_types.is_empty() {
             self.send_proof_to_aligned(batch_to_send, proofs.values())
                 .await?;
-            // Only advance the aligned cursor, NOT the main cursor.
-            // Main cursor is advanced by the verifier after on-chain verification.
-            // Preserve the caller's sent_at so the resubmission timeout measures
-            // from when the first unverified batch was sent, not the latest one.
+            // Only advance the aligned cursor, NOT the verified cursor.
+            // The verified cursor is advanced by the verifier after on-chain verification.
             self.rollup_store
-                .set_latest_sent_to_aligned(batch_to_send, sent_at)
+                .set_latest_sent_to_aligned(batch_to_send)
                 .await?;
         } else {
             let missing_proof_types: Vec<String> = missing_proof_types
@@ -578,11 +563,14 @@ impl L1ProofSender {
         Ok(())
     }
 
-    /// Updates `latest_sent_batch_proof` in the store and removes the
+    /// Updates `latest_verified_batch_proof` in the store and removes the
     /// checkpoint directory for the previous batch.
+    /// Used in non-aligned mode where sending = verifying.
+    /// Aligned mode: checkpoint cleanup is handled by the verifier instead.
     async fn finalize_batch_proof(&self, batch_number: u64) -> Result<(), ProofSenderError> {
+        // verified_at=0: non-aligned mode doesn't use the timeout mechanism.
         self.rollup_store
-            .set_latest_sent_batch_proof(batch_number)
+            .set_latest_verified_batch_proof(batch_number, 0)
             .await?;
         remove_batch_checkpoint(&self.checkpoints_dir, batch_number);
         Ok(())
