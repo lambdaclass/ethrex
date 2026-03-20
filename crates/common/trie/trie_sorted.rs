@@ -179,6 +179,8 @@ where
     };
     let mut total_buffer_wait = std::time::Duration::ZERO;
     let mut flush_count: u64 = 0;
+    let mut total_inflight: u64 = 0;
+    let mut max_inflight: u64 = 0;
     let t_trie_total = std::time::Instant::now();
     let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
@@ -204,6 +206,9 @@ where
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
             // We wait to get a new buffer to avoid writing too much
+            let inflight = BUFFER_COUNT - buffer_receiver.len() as u64;
+            total_inflight += inflight;
+            max_inflight = max_inflight.max(inflight);
             let t_wait = std::time::Instant::now();
             nodes_to_write = buffer_receiver
                 .recv()
@@ -344,14 +349,18 @@ where
     let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
     let elapsed = t_trie_total.elapsed();
     if elapsed.as_secs() > 5 {
+        let avg_inflight = if flush_count > 0 { total_inflight as f64 / flush_count as f64 } else { 0.0 };
         tracing::info!(
-            "[PROFILE] trie_from_sorted: total={:?}, buffer_wait={:?} ({:.1}%), flushes={}, cpu={:?} ({:.1}%)",
+            "[PROFILE] trie_from_sorted: total={:?}, buffer_wait={:?} ({:.1}%), flushes={}, cpu={:?} ({:.1}%), inflight_avg={:.1}/{}, inflight_max={}",
             elapsed,
             total_buffer_wait,
             total_buffer_wait.as_secs_f64() / elapsed.as_secs_f64() * 100.0,
             flush_count,
             elapsed - total_buffer_wait,
             (elapsed - total_buffer_wait).as_secs_f64() / elapsed.as_secs_f64() * 100.0,
+            avg_inflight,
+            BUFFER_COUNT,
+            max_inflight,
         );
     }
     Ok(hash)
