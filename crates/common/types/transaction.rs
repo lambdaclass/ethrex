@@ -1,4 +1,9 @@
-use std::{cmp::min, fmt::Display, num::NonZeroUsize, sync::Mutex};
+use std::{
+    cmp::min,
+    fmt::Display,
+    num::NonZeroUsize,
+    sync::{LazyLock, Mutex},
+};
 
 use crate::utils::keccak;
 use bytes::Bytes;
@@ -9,15 +14,16 @@ pub use mempool::MempoolTransaction;
 
 const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 
-lazy_static::lazy_static! {
-    /// Global cache mapping transaction hash → recovered sender address.
-    /// Populated by all code paths that call `recover_signer` (p2p, RPC, etc.)
-    /// so that subsequent lookups (e.g. during `engine_newPayloadV4`) avoid
-    /// redundant secp256k1 recovery (~200µs per tx).
-    /// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
-    static ref GLOBAL_SIGNER_CACHE: Mutex<LruCache<H256, Address>> =
-        Mutex::new(LruCache::new(NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero")));
-}
+/// Global cache mapping transaction hash → recovered sender address.
+/// Populated by all code paths that call `recover_signer` (p2p, RPC, etc.)
+/// so that subsequent lookups (e.g. during `engine_newPayloadV4`) avoid
+/// redundant secp256k1 recovery (~200µs per tx).
+/// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
+static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
+    Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
+    ))
+});
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
