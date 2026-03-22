@@ -5,7 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256, constants::EMPTY_KECCACK_HASH, serde_utils};
+use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -58,25 +58,11 @@ impl RpcHandler for GetBalanceRequest {
                 "Could not resolve block number".to_owned(),
             ));
         };
-        let Some(block_hash) = context
+        let balance = context
             .storage
-            .get_canonical_block_hash(block_number)
+            .get_account_info(block_number, self.address)
             .await?
-        else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block hash".to_owned(),
-            ));
-        };
-
-        let state = context
-            .blockchain
-            .binary_trie_state
-            .read()
-            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
-        let balance = state
-            .get_account_state_at(&self.address, block_hash)
-            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
-            .map(|acc| acc.balance)
+            .map(|info| info.balance)
             .unwrap_or_default();
 
         serde_json::to_value(format!("{balance:#x}"))
@@ -108,37 +94,11 @@ impl RpcHandler for GetCodeRequest {
                 "Could not resolve block number".to_owned(),
             ));
         };
-        let Some(block_hash) = context
+        let code = context
             .storage
-            .get_canonical_block_hash(block_number)
+            .get_code_by_account_address(block_number, self.address)
             .await?
-        else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block hash".to_owned(),
-            ));
-        };
-
-        let state = context
-            .blockchain
-            .binary_trie_state
-            .read()
-            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
-
-        // Get account to find code_hash, then look up the code.
-        let code = state
-            .get_account_state_at(&self.address, block_hash)
-            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
-            .and_then(|acc| {
-                if acc.code_hash == *EMPTY_KECCACK_HASH {
-                    None
-                } else {
-                    state
-                        .get_account_code_at(&acc.code_hash, block_hash)
-                        .ok()
-                        .flatten()
-                }
-            })
-            .map(|c| c)
+            .map(|c| c.bytecode)
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))
@@ -172,24 +132,9 @@ impl RpcHandler for GetStorageAtRequest {
                 "Could not resolve block number".to_owned(),
             ));
         };
-        let Some(block_hash) = context
+        let storage_value = context
             .storage
-            .get_canonical_block_hash(block_number)
-            .await?
-        else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block hash".to_owned(),
-            ));
-        };
-
-        let state = context
-            .blockchain
-            .binary_trie_state
-            .read()
-            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
-        let storage_value = state
-            .get_storage_slot_at(&self.address, self.storage_slot, block_hash)
-            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
+            .get_storage_at(block_number, self.address, self.storage_slot)?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{storage_value:#x}"))
@@ -231,24 +176,10 @@ impl RpcHandler for GetTransactionCountRequest {
                     return serde_json::to_value("0x0")
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 };
-                let Some(block_hash) = context
+                context
                     .storage
-                    .get_canonical_block_hash(block_number)
+                    .get_nonce_by_account_address(block_number, self.address)
                     .await?
-                else {
-                    return serde_json::to_value("0x0")
-                        .map_err(|error| RpcErr::Internal(error.to_string()));
-                };
-
-                let state = context
-                    .blockchain
-                    .binary_trie_state
-                    .read()
-                    .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
-                state
-                    .get_account_state_at(&self.address, block_hash)
-                    .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
-                    .map(|acc| acc.nonce)
                     .unwrap_or_default()
             }
         };

@@ -1,24 +1,21 @@
-//! Integration test: verify BinaryTrieState + BinaryTrieVmDb work together
-//! for EIP-7864 block execution.
+//! Integration test: verify BinaryTrieState works correctly for EIP-7864
+//! block execution state management.
 //!
 //! Tests the full state lifecycle:
 //! 1. Genesis initialization
-//! 2. VmDatabase reads from binary trie state
+//! 2. State reads from binary trie
 //! 3. AccountUpdate application (simulating post-execution writes)
 //! 4. State root computation and determinism
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use ethrex_binary_trie::state::BinaryTrieState;
-use ethrex_blockchain::binary_trie_db::BinaryTrieVmDb;
 use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    types::{AccountInfo, AccountUpdate, ChainConfig, Code, GenesisAccount},
+    types::{AccountInfo, AccountUpdate, Code, GenesisAccount},
 };
-use ethrex_vm::VmDatabase;
 
 fn addr(b: u8) -> Address {
     let mut a = [0u8; 20];
@@ -30,7 +27,7 @@ fn slot(n: u64) -> H256 {
     H256(U256::from(n).to_big_endian())
 }
 
-/// Full lifecycle: genesis → VM reads → updates → root changes
+/// Full lifecycle: genesis → state reads → updates → root changes
 #[test]
 fn test_full_state_lifecycle() {
     // 1. Genesis with two accounts.
@@ -60,16 +57,13 @@ fn test_full_state_lifecycle() {
     state.apply_genesis(&accounts).unwrap();
     let root_after_genesis = state.state_root();
 
-    // 2. Wrap in VmDb and verify reads.
-    let state_arc = Arc::new(RwLock::new(state));
-    let vm_db = BinaryTrieVmDb::new(state_arc.clone(), ChainConfig::default());
-
-    let alice_state = vm_db.get_account_state(alice).unwrap().unwrap();
+    // 2. Verify reads from the base state.
+    let alice_state = state.get_account_state(&alice).unwrap();
     assert_eq!(alice_state.balance, U256::from(10_000_000u64));
     assert_eq!(alice_state.nonce, 0);
     assert_eq!(alice_state.code_hash, *EMPTY_KECCACK_HASH);
 
-    let bob_state = vm_db.get_account_state(bob).unwrap().unwrap();
+    let bob_state = state.get_account_state(&bob).unwrap();
     assert_eq!(bob_state.balance, U256::zero());
 
     // 3. Simulate a transfer: Alice sends 1M to Bob, nonce increments.
@@ -91,14 +85,10 @@ fn test_full_state_lifecycle() {
     });
 
     // 4. Apply updates.
-    {
-        let mut state = state_arc.write().unwrap();
-        state.apply_account_update(&alice_update).unwrap();
-        state.apply_account_update(&bob_update).unwrap();
-    }
+    state.apply_account_update(&alice_update).unwrap();
+    state.apply_account_update(&bob_update).unwrap();
 
     // 5. Verify state changed.
-    let mut state = state_arc.write().unwrap();
     let root_after_transfer = state.state_root();
     assert_ne!(root_after_genesis, root_after_transfer);
 
@@ -159,21 +149,18 @@ fn test_contract_deployment_lifecycle() {
     state.apply_account_update(&deployer_update).unwrap();
     state.apply_account_update(&contract_update).unwrap();
 
-    // Verify via VmDb.
-    let state_arc = Arc::new(RwLock::new(state));
-    let vm_db = BinaryTrieVmDb::new(state_arc, ChainConfig::default());
-
-    let contract_state = vm_db.get_account_state(contract).unwrap().unwrap();
+    // Verify via direct state reads.
+    let contract_state = state.get_account_state(&contract).unwrap();
     assert_eq!(contract_state.code_hash, code_hash);
 
-    let retrieved_code = vm_db.get_account_code(code_hash).unwrap();
-    assert_eq!(retrieved_code.bytecode, bytecode);
+    let retrieved_code = state.get_account_code(&code_hash).unwrap();
+    assert_eq!(retrieved_code, bytecode);
 
-    let meta = vm_db.get_code_metadata(code_hash).unwrap();
-    assert_eq!(meta.length, bytecode.len() as u64);
+    let code_size = state.get_code_size(&contract);
+    assert_eq!(code_size as usize, bytecode.len());
 }
 
-/// Storage operations via AccountUpdate + VmDb reads
+/// Storage operations via AccountUpdate and direct reads
 #[test]
 fn test_storage_lifecycle() {
     let mut state = BinaryTrieState::new();
@@ -199,40 +186,34 @@ fn test_storage_lifecycle() {
     update.added_storage.insert(slot(100), U256::from(777u64)); // main storage area (slot >= 64)
     state.apply_account_update(&update).unwrap();
 
-    // Read via VmDb.
-    let state_arc = Arc::new(RwLock::new(state));
-    let vm_db = BinaryTrieVmDb::new(state_arc.clone(), ChainConfig::default());
-
+    // Read directly from state.
     assert_eq!(
-        vm_db.get_storage_slot(contract, slot(0)).unwrap(),
+        state.get_storage_slot(&contract, slot(0)),
         Some(U256::from(42u64))
     );
     assert_eq!(
-        vm_db.get_storage_slot(contract, slot(1)).unwrap(),
+        state.get_storage_slot(&contract, slot(1)),
         Some(U256::from(99u64))
     );
     assert_eq!(
-        vm_db.get_storage_slot(contract, slot(100)).unwrap(),
+        state.get_storage_slot(&contract, slot(100)),
         Some(U256::from(777u64))
     );
-    assert_eq!(vm_db.get_storage_slot(contract, slot(999)).unwrap(), None);
+    assert_eq!(state.get_storage_slot(&contract, slot(999)), None);
 
     // Verify storage_root is non-empty.
-    let contract_state = vm_db.get_account_state(contract).unwrap().unwrap();
+    let contract_state = state.get_account_state(&contract).unwrap();
     assert_ne!(contract_state.storage_root, *EMPTY_TRIE_HASH);
 
     // Delete a slot (write zero).
-    {
-        let mut state = state_arc.write().unwrap();
-        let mut delete_update = AccountUpdate::new(contract);
-        delete_update.added_storage.insert(slot(0), U256::zero());
-        state.apply_account_update(&delete_update).unwrap();
-    }
+    let mut delete_update = AccountUpdate::new(contract);
+    delete_update.added_storage.insert(slot(0), U256::zero());
+    state.apply_account_update(&delete_update).unwrap();
 
-    assert_eq!(vm_db.get_storage_slot(contract, slot(0)).unwrap(), None);
+    assert_eq!(state.get_storage_slot(&contract, slot(0)), None);
     // Other slots still there.
     assert_eq!(
-        vm_db.get_storage_slot(contract, slot(1)).unwrap(),
+        state.get_storage_slot(&contract, slot(1)),
         Some(U256::from(99u64))
     );
 }

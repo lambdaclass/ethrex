@@ -591,7 +591,7 @@ impl BinaryTrieState {
 
     /// Read account state at a specific block (identified by block hash).
     ///
-    /// `H256::zero()` is a special bypass used by tests and BinaryTrieVmDb::new();
+    /// `H256::zero()` is a special bypass used by tests;
     /// it reads directly from the tip trie without consulting any diff layer.
     pub fn get_account_state_at(
         &self,

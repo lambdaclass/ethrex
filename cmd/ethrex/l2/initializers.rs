@@ -194,7 +194,7 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis.clone()).await?;
+    let mut store = init_store(&datadir, genesis.clone()).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
@@ -226,6 +226,7 @@ pub async fn init_l2(
     let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
         ethrex_binary_trie::state::BinaryTrieState::new(),
     ));
+    store.set_binary_trie_state(binary_trie_state.clone());
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone(), binary_trie_state);
 
     regenerate_state(&store, &rollup_store, &blockchain, None).await?;

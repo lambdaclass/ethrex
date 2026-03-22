@@ -9,7 +9,7 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256, U256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
@@ -349,9 +349,8 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        let vm_db = context
-            .blockchain
-            .binary_trie_vm_db_for_block(header.hash(), header.number);
+        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone())
+            .map_err(|e| RpcErr::Internal(e.to_string()))?;
         let mut vm = context.blockchain.new_evm(vm_db)?;
 
         // Run transaction and obtain access list
@@ -577,7 +576,8 @@ fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = blockchain.binary_trie_vm_db_for_block(block_header.hash(), block_header.number);
+    let vm_db = StoreVmDatabase::new(storage, block_header.clone())
+        .map_err(|e| RpcErr::Internal(e.to_string()))?;
     let mut vm = blockchain.new_evm(vm_db)?;
 
     match vm.simulate_tx_from_generic(transaction, block_header)? {

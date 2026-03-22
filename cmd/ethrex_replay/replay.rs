@@ -6,10 +6,10 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use ethrex_binary_trie::state::BinaryTrieState;
-use ethrex_blockchain::binary_trie_db::BinaryTrieVmDb;
+use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
     H256,
-    types::{Block, BlockNumber, ChainConfig, Genesis},
+    types::{Block, BlockNumber, Genesis},
     validation::{validate_gas_used, validate_receipts_root},
 };
 use ethrex_crypto::NativeCrypto;
@@ -22,8 +22,6 @@ pub struct BlockReplayer {
     store: Store,
     /// Binary trie state (in-memory, or RocksDB-backed when a path is configured).
     state: Arc<RwLock<BinaryTrieState>>,
-    /// Chain configuration (from genesis).
-    chain_config: ChainConfig,
     /// Block hashes for BLOCKHASH opcode (last 256 entries).
     block_hashes: BTreeMap<BlockNumber, H256>,
     /// Flush binary trie state to disk every this many blocks (0 = never).
@@ -47,8 +45,6 @@ impl BlockReplayer {
         trie_db_path: Option<&std::path::Path>,
         checkpoint_interval: u64,
     ) -> Result<Self> {
-        let chain_config = genesis.config;
-
         // Register genesis block hash so that block 1 can call BLOCKHASH(0).
         let genesis_block = genesis.get_block();
         let genesis_hash = genesis_block.hash();
@@ -98,10 +94,13 @@ impl BlockReplayer {
             (state, block_hashes)
         };
 
+        let state = Arc::new(RwLock::new(state));
+        // Wire the binary trie into the store so StoreVmDatabase reads delegate to it.
+        let mut store = store;
+        store.set_binary_trie_state(state.clone());
         Ok(Self {
             store,
-            state: Arc::new(RwLock::new(state)),
-            chain_config,
+            state,
             block_hashes,
             checkpoint_interval,
         })
@@ -235,8 +234,15 @@ impl BlockReplayer {
     fn execute_block(&mut self, block: &Block) -> Result<[u8; 32]> {
         // Build the VmDb adapter reading state as of the parent block.
         let parent_hash = block.header.parent_hash;
-        let vm_db = BinaryTrieVmDb::new_at(self.state.clone(), self.chain_config, parent_hash);
-        vm_db.add_block_hashes(self.block_hashes.iter().map(|(&n, &h)| (n, h)));
+        let parent_header = self
+            .store
+            .get_block_header_by_hash(parent_hash)
+            .context("store error reading parent header")?
+            .with_context(|| format!("parent header not found: {parent_hash:?}"))?;
+        let block_hash_cache = self.block_hashes.clone();
+        let vm_db =
+            StoreVmDatabase::new_with_block_hash_cache(self.store.clone(), parent_header, block_hash_cache)
+                .context("Failed to create StoreVmDatabase")?;
 
         // Create the EVM and execute the block.
         let mut evm = Evm::new_for_l1(vm_db, Arc::new(NativeCrypto));

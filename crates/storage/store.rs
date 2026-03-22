@@ -177,6 +177,12 @@ pub struct Store {
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
 
+    /// Binary trie state for EIP-7864 state reads.
+    ///
+    /// When set, account and storage reads delegate to the binary trie instead
+    /// of the MPT. Set via `set_binary_trie_state` after the store is created.
+    binary_trie_state: Option<Arc<RwLock<ethrex_binary_trie::state::BinaryTrieState>>>,
+
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
@@ -1522,6 +1528,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            binary_trie_state: None,
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
@@ -1610,6 +1617,15 @@ impl Store {
         Ok(store)
     }
 
+    /// Attach a binary trie state so that account/storage reads delegate to it
+    /// instead of the MPT. Must be called before any state reads.
+    pub fn set_binary_trie_state(
+        &mut self,
+        state: Arc<RwLock<ethrex_binary_trie::state::BinaryTrieState>>,
+    ) {
+        self.binary_trie_state = Some(state);
+    }
+
     pub async fn get_account_info(
         &self,
         block_number: BlockNumber,
@@ -1626,6 +1642,17 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
+        if let Some(ref bts) = self.binary_trie_state {
+            let state = bts.read().map_err(|_| StoreError::LockError)?;
+            return Ok(state
+                .get_account_state_at(&address, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie error: {e}")))?
+                .map(|s| AccountInfo {
+                    code_hash: s.code_hash,
+                    balance: s.balance,
+                    nonce: s.nonce,
+                }));
+        }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1641,6 +1668,45 @@ impl Store {
             balance: account_state.balance,
             nonce: account_state.nonce,
         }))
+    }
+
+    /// Read account state at a specific block hash, delegating to the binary trie.
+    pub fn get_account_state_by_block_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        if let Some(ref bts) = self.binary_trie_state {
+            let state = bts.read().map_err(|_| StoreError::LockError)?;
+            return state
+                .get_account_state_at(&address, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie error: {e}")));
+        }
+        // MPT fallback: look up state root from the block header.
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        self.get_account_state_by_root(header.state_root, address)
+    }
+
+    /// Read a storage slot at a specific block hash, delegating to the binary trie.
+    pub fn get_storage_at_by_block_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        if let Some(ref bts) = self.binary_trie_state {
+            let state = bts.read().map_err(|_| StoreError::LockError)?;
+            return state
+                .get_storage_slot_at(&address, storage_key, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie error: {e}")));
+        }
+        // MPT fallback.
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        self.get_storage_at_root(header.state_root, address, storage_key)
     }
 
     pub fn get_account_state_by_acc_hash(
@@ -1681,6 +1747,20 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+        if let Some(ref bts) = self.binary_trie_state {
+            use ethrex_common::constants::EMPTY_KECCACK_HASH;
+            let state = bts.read().map_err(|_| StoreError::LockError)?;
+            let account = state
+                .get_account_state_at(&address, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie error: {e}")))?;
+            let Some(account) = account else {
+                return Ok(None);
+            };
+            if account.code_hash == *EMPTY_KECCACK_HASH {
+                return Ok(None);
+            }
+            return self.get_account_code(account.code_hash);
+        }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1700,6 +1780,13 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+        if let Some(ref bts) = self.binary_trie_state {
+            let state = bts.read().map_err(|_| StoreError::LockError)?;
+            return Ok(state
+                .get_account_state_at(&address, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie error: {e}")))?
+                .map(|s| s.nonce));
+        }
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -2155,6 +2242,16 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        if let Some(ref bts) = self.binary_trie_state {
+            let Some(header) = self.get_block_header(block_number)? else {
+                return Ok(None);
+            };
+            let block_hash = header.hash();
+            let state = bts.read().map_err(|_| StoreError::LockError)?;
+            return state
+                .get_storage_slot_at(&address, storage_key, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie error: {e}")));
+        }
         match self.get_block_header(block_number)? {
             Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
             None => Ok(None),

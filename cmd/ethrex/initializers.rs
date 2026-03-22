@@ -507,7 +507,7 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis.clone()).await {
+    let mut store = match init_store(&datadir, genesis.clone()).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -532,6 +532,9 @@ pub async fn init_l1(
 
     let binary_trie_state = init_binary_trie_state(&datadir, &genesis)?;
     let binary_trie_state_for_shutdown = binary_trie_state.clone();
+
+    // Wire the binary trie into the store so Store read methods delegate to it.
+    store.set_binary_trie_state(binary_trie_state.clone());
 
     let blockchain = init_blockchain(
         store.clone(),

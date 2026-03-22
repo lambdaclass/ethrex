@@ -44,7 +44,6 @@ pub async fn build_payload(
         payload,
         store,
         &blockchain.options.r#type,
-        blockchain.binary_trie_state.clone(),
     )?;
 
     fill_transactions(

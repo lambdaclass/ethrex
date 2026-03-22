@@ -42,7 +42,6 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
-pub mod binary_trie_db;
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
@@ -110,7 +109,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use binary_trie_db::BinaryTrieVmDb;
+use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
@@ -371,36 +370,31 @@ impl Blockchain {
         }
     }
 
-    /// Create a `BinaryTrieVmDb` that reads state as of `parent_hash`.
-    pub fn binary_trie_vm_db_for_block(
+    /// Create a `StoreVmDatabase` that reads state as of `parent_hash`.
+    fn vm_db_for_block(
         &self,
         parent_hash: H256,
-        parent_number: u64,
-    ) -> BinaryTrieVmDb {
-        BinaryTrieVmDb::make_for_block(
-            self.binary_trie_state.clone(),
-            &self.storage,
-            parent_hash,
-            parent_number,
-        )
+    ) -> Result<StoreVmDatabase, EvmError> {
+        let header = self
+            .storage
+            .get_block_header_by_hash(parent_hash)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .ok_or_else(|| EvmError::DB(format!("parent header not found: {parent_hash:?}")))?;
+        StoreVmDatabase::new(self.storage.clone(), header)
     }
 
-    /// Create a `BinaryTrieVmDb` with a pre-built block hash cache
-    /// merged with historical hashes from the store.
-    fn binary_trie_vm_db_with_hash_cache(
+    /// Create a `StoreVmDatabase` with a pre-built block hash cache.
+    fn vm_db_with_hash_cache(
         &self,
         block_hash_cache: BTreeMap<BlockNumber, H256>,
         parent_hash: H256,
-        parent_number: u64,
-    ) -> BinaryTrieVmDb {
-        let vm_db = BinaryTrieVmDb::make_for_block(
-            self.binary_trie_state.clone(),
-            &self.storage,
-            parent_hash,
-            parent_number,
-        );
-        vm_db.add_block_hashes(block_hash_cache);
-        vm_db
+    ) -> Result<StoreVmDatabase, EvmError> {
+        let header = self
+            .storage
+            .get_block_header_by_hash(parent_hash)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .ok_or_else(|| EvmError::DB(format!("parent header not found: {parent_hash:?}")))?;
+        StoreVmDatabase::new_with_block_hash_cache(self.storage.clone(), header, block_hash_cache)
     }
 
     /// Apply account updates to the binary trie with a diff layer and optionally flush.
@@ -446,7 +440,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number);
+        let vm_db = self.vm_db_for_block(parent_header.hash())?;
         let mut vm = self.new_evm(vm_db)?;
 
         let (execution_result, bal) = vm.execute_block(block)?;
@@ -486,7 +480,7 @@ impl Blockchain {
         let parent_header = find_parent_header(&block.header, &self.storage)?;
 
         // Create VM and execute block with BAL recording
-        let vm_db = self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number);
+        let vm_db = self.vm_db_for_block(parent_header.hash())?;
         let mut vm = self.new_evm(vm_db)?;
 
         let (_execution_result, bal) = vm.execute_block(block)?;
@@ -1271,7 +1265,7 @@ impl Blockchain {
                 .ok_or(ChainError::ParentNotFound)?;
 
             let vm_db: DynVmDatabase =
-                Box::new(self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number));
+                Box::new(self.vm_db_for_block(parent_header.hash()).map_err(ChainError::EvmError)?);
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match &self.options.r#type {
@@ -1416,7 +1410,7 @@ impl Blockchain {
                 .ok_or(ChainError::ParentNotFound)?;
 
             let vm_db: DynVmDatabase =
-                Box::new(self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number));
+                Box::new(self.vm_db_for_block(parent_header.hash()).map_err(ChainError::EvmError)?);
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
@@ -2121,7 +2115,7 @@ impl Blockchain {
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
             let vm_db: DynVmDatabase =
-                Box::new(self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number));
+                Box::new(self.vm_db_for_block(parent_header.hash())?);
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
@@ -2139,7 +2133,7 @@ impl Blockchain {
             };
             (vm, Some(logger))
         } else {
-            let vm_db = self.binary_trie_vm_db_for_block(parent_header.hash(), parent_header.number);
+            let vm_db = self.vm_db_for_block(parent_header.hash())?;
             let vm = self.new_evm(vm_db)?;
             (vm, None)
         };
@@ -2464,11 +2458,9 @@ impl Blockchain {
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
-        let vm_db = self.binary_trie_vm_db_with_hash_cache(
-            block_hash_cache,
-            parent_header.hash(),
-            parent_header.number,
-        );
+        let vm_db = self
+            .vm_db_with_hash_cache(block_hash_cache, parent_header.hash())
+            .map_err(|e| (e.into(), None))?;
         let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
 
         let blocks_len = blocks.len();
