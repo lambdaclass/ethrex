@@ -155,15 +155,16 @@ function generateComposeFile(opts) {
   let proverExtraEnv = "";
   let proverExtraVolumes = "";
   let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
-  if (profile.proverBackend === "sp1" || bundleProgramsToml) {
+  if (programsTomlSource) {
     proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
-    proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
-      - PROVER_CLIENT_TIMED=true
+    proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml`;
+    proverExtraVolumes = `      - ${programsTomlSource}:/etc/ethrex/programs.toml`;
+  }
+  if (profile.proverBackend === "sp1") {
+    proverExtraEnv += (proverExtraEnv ? "\n" : "") + `      - PROVER_CLIENT_TIMED=true
       - DOCKER_HOST=\${DOCKER_HOST:-unix:///var/run/docker.sock}
       - HOME=\${HOME}`;
-    const proverTomlSource = bundleProgramsToml || `${ETHREX_ROOT}/crates/l2/${profile.programsToml}`;
-    proverExtraVolumes = `      - ${proverTomlSource}:/etc/ethrex/programs.toml
-      - /var/run/docker.sock:/var/run/docker.sock
+    proverExtraVolumes += (proverExtraVolumes ? "\n" : "") + `      - /var/run/docker.sock:/var/run/docker.sock
       - \${HOME}/.sp1:\${HOME}/.sp1
       - /tmp:/tmp`;
   }
@@ -903,15 +904,16 @@ function generateTestnetComposeFile(opts) {
   let proverExtraEnv = "";
   let proverExtraVolumes = "";
   let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
-  if (profile.proverBackend === "sp1" || bundleProgramsToml) {
+  if (testnetTomlSource) {
     proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
-    proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
-      - PROVER_CLIENT_TIMED=true
+    proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml`;
+    proverExtraVolumes = `      - ${testnetTomlSource}:/etc/ethrex/programs.toml`;
+  }
+  if (profile.proverBackend === "sp1") {
+    proverExtraEnv += (proverExtraEnv ? "\n" : "") + `      - PROVER_CLIENT_TIMED=true
       - DOCKER_HOST=\${DOCKER_HOST:-unix:///var/run/docker.sock}
       - HOME=\${HOME}`;
-    const testnetProverToml = bundleProgramsToml || `${ETHREX_ROOT}/crates/l2/${profile.programsToml}`;
-    proverExtraVolumes = `      - ${testnetProverToml}:/etc/ethrex/programs.toml
-      - /var/run/docker.sock:/var/run/docker.sock
+    proverExtraVolumes += (proverExtraVolumes ? "\n" : "") + `      - /var/run/docker.sock:/var/run/docker.sock
       - \${HOME}/.sp1:\${HOME}/.sp1
       - /tmp:/tmp`;
   }
