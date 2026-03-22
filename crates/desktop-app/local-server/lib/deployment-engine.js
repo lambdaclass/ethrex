@@ -88,6 +88,21 @@ const deploymentEvents = new Map();
 // Active provision registry -- tracks which deployments have a running provision()
 const activeProvisions = new Map(); // id -> { startedAt, phase, abortController }
 
+/**
+ * Resolve ChainForge bundle programs.toml path if present.
+ * Returns the absolute path to programs.toml, or null if not a bundle or file doesn't exist.
+ */
+function findBundleProgramsToml(isBundle, deployDir, id, emit) {
+  if (!isBundle) return null;
+  const resolvedDir = deployDir || getDeploymentDir(id);
+  const tomlPath = path.join(resolvedDir, "programs.toml");
+  if (fs.existsSync(tomlPath)) {
+    if (emit) emit(id, "log", { message: `Using ChainForge bundle programs.toml: ${tomlPath}` });
+    return tomlPath;
+  }
+  return null;
+}
+
 const PHASES = [
   "configured",
   "checking_docker",
@@ -476,15 +491,7 @@ async function provision(deployment) {
     forceRebuild = !!config.forceRebuild;
     forceRedeploy = !!config.forceRedeploy;
     isBundle = !!config.chainforgeBundle;
-    // Check for ChainForge bundle programs.toml (same config parse)
-    if (isBundle) {
-      const resolvedDir = deployDir || getDeploymentDir(id);
-      const bundleTomlPath = path.join(resolvedDir, "programs.toml");
-      if (fs.existsSync(bundleTomlPath)) {
-        bundleProgramsToml = bundleTomlPath;
-        emit(id, "log", { message: `Using ChainForge bundle programs.toml: ${bundleTomlPath}` });
-      }
-    }
+    bundleProgramsToml = findBundleProgramsToml(isBundle, deployDir, id, emit);
   } catch (e) { console.warn("[deploy] Failed to check bundle programs.toml:", e.message); }
 
   const { l1Port, l2Port, proofCoordPort, toolsL1ExplorerPort, toolsL2ExplorerPort, toolsBridgeUIPort, toolsDbPort, toolsMetricsPort } = await getNextAvailablePorts();
@@ -1179,15 +1186,7 @@ async function provisionTestnet(deployment) {
   const { customGenesisPath, l2ChainId } = await ensureChainIds(deployment, deployDir, { isBundle });
 
   // Check for ChainForge bundle programs.toml
-  let bundleProgramsToml = null;
-  if (isBundle) {
-    const testnetResolvedDir = deployDir || getDeploymentDir(id);
-    const testnetBundleTomlPath = path.join(testnetResolvedDir, "programs.toml");
-    if (fs.existsSync(testnetBundleTomlPath)) {
-      bundleProgramsToml = testnetBundleTomlPath;
-      emit(id, "log", { message: `Using ChainForge bundle programs.toml: ${testnetBundleTomlPath}` });
-    }
-  }
+  const bundleProgramsToml = findBundleProgramsToml(isBundle, deployDir, id, emit);
 
   let composeFile = null;
   const contractLogLines = []; // Track deployer logs for address recovery on cancel
