@@ -424,9 +424,6 @@ impl Blockchain {
         let root = state.state_root();
         debug!("Binary trie root after block {block_number}: {}", H256::from(root));
         state
-            .persist_diff(block_hash)
-            .map_err(|e| ChainError::Custom(format!("binary trie persist_diff error: {e}")))?;
-        state
             .flush_if_needed(block_number, block_hash)
             .map_err(|e| ChainError::Custom(format!("binary trie flush error: {e}")))?;
         Ok(())
@@ -1357,32 +1354,12 @@ impl Blockchain {
             block_headers.push(encoded);
         }
 
-        // Reconstruct the trie at the pre-state of the first block by
-        // cloning from the flush-point base trie and replaying persisted diffs.
-        // NOTE: When periodic snapshots are implemented, this will load from
-        // the nearest snapshot instead of the flush-point base.
-        let parent_hash = first_block.header.parent_hash;
-        let mut reconstructed = {
-            let state = self
-                .binary_trie_state
-                .read()
-                .map_err(|e| ChainError::Custom(format!("binary trie lock error: {e}")))?;
-            state
-                .reconstruct_at_block(parent_hash)
-                .map_err(|e| ChainError::WitnessGeneration(format!("trie reconstruction failed: {e}")))?
-        };
-        // Merkelise so node hashes are cached for proof generation.
-        reconstructed.state_root();
-
-        reconstructed
-            .generate_witness(
-                first_block.header.number,
-                first_block.hash(),
-                &accessed_accounts,
-                &accessed_codes,
-                block_headers,
-            )
-            .map_err(|e| ChainError::WitnessGeneration(format!("proof generation failed: {e}")))
+        // Without trie reconstruction, we cannot generate correct pre-state proofs
+        // for already-processed blocks. Use precompute_witnesses=true to generate
+        // witnesses during block processing.
+        Err(ChainError::WitnessGeneration(
+            "debug_executionWitness requires precompute_witnesses=true for correct pre-state proofs".to_string(),
+        ))
     }
 
     #[allow(dead_code)]

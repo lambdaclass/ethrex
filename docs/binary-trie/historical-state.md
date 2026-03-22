@@ -111,22 +111,15 @@ more granular (more individual node updates per block).
 - **Full MPT Removal**: Removed merkleizer thread, empty trie data to Store.
 - **Startup/Recovery**: Binary trie checkpoint replay, shutdown flush.
 
-### Extended (may need scope review)
-
-These go beyond the minimal merkleization replacement. Whether they stay depends on
-whether the binary trie serves as the sole state backend or only as a merkleization
-engine alongside FKV:
+### Extended (pending scope review)
 
 - **Replace StoreVmDatabase with BinaryTrieVmDb**: LEVM reads from the binary trie
-  instead of FKV/Store. If FKV remains the read path, this should be reverted.
+  instead of FKV/Store. If a proper FKV layer is built for account state reads,
+  this could be reverted.
 
 - **Replace RPC State Reads**: eth_getBalance, eth_getCode, etc. read from
-  BinaryTrieState. If FKV remains the read path, this should be reverted.
+  BinaryTrieState. Same consideration as above.
 
-- **Persisted Diff Layers**: On-disk diff persistence for historical state queries.
-  ethrex does not support historical state today. If this capability is not needed,
-  the persist_diff calls and disk walk code can be removed. In-memory diff layers
-  (~128 blocks) should remain regardless.
-
-- **Witness Generation**: BinaryTrieWitness with trie reconstruction for pre-state
-  proofs. Keep if binary trie proofs are needed for the experiment. Remove if not.
+- **Witness Generation**: BinaryTrieWitness with pre-state proofs. Works via
+  the precompute path (proofs generated before trie advances). The debug RPC
+  path requires `precompute_witnesses=true`.
