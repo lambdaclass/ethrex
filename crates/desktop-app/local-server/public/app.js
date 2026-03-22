@@ -4910,7 +4910,7 @@ async function loadBundleKeychainKeys() {
       if (!sel) return;
       const currentVal = sel.value;
       const defaultLabel = i === 0 ? 'Select key...' : 'Same as Deployer';
-      sel.innerHTML = `<option value="">${defaultLabel}</option>` + keys.map(k => `<option value="${k}">${k}</option>`).join('');
+      sel.innerHTML = `<option value="">${defaultLabel}</option>` + keys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
       if (currentVal) sel.value = currentVal;
     });
   } catch (e) { console.warn('[bundle] Failed to load keychain keys:', e.message); }
