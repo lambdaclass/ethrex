@@ -33,21 +33,26 @@ Block execution (LEVM)
   reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)  [UNCHANGED]
 
 After execution:
-  AccountUpdates --> Store.apply_account_updates_batch()
+  AccountUpdates --> Store.apply_account_updates_batch()             [SAME CALL SITE]
                        |
                        +--> BinaryTrieState.apply_account_update()
                        |      --> unified binary trie (single tree, blake3)
                        |      --> state_root() computes root
                        |
                        +--> NodeStore (dirty/warm/clean node cache)
-                              --> flush_if_needed() every ~128 blocks
-                              --> persist to BINARY_TRIE_NODES CF
-
+                       |      --> flush_if_needed() every ~128 blocks
+                       |      --> persist to BINARY_TRIE_NODES CF
+                       |
                     store_block()
                        |
                        +--> FKV tables (account state, storage)     [UNCHANGED]
                        +--> ACCOUNT_CODES table                     [UNCHANGED]
 ```
+
+The call flow is the same as main: `apply_account_updates_batch()` handles trie
+updates, `store_block()` handles FKV and code writes. The function name and call
+sites are identical -- only the internal implementation changed from MPT to binary trie.
+`BinaryTrieState` lives on `Store` (same as `TrieLayerCache` on main), not on `Blockchain`.
 
 ## What was removed
 
@@ -59,8 +64,7 @@ After execution:
 | 16-shard parallel merkleizer thread | Single-threaded binary trie `apply_account_update` |
 | `handle_merkleization` / `handle_merkleization_bal` | Removed; binary trie `apply_account_updates_batch()` on Store handles updates |
 | `BranchNode[16]` root assembly | Binary trie `state_root()` |
-| MPT body of `apply_account_updates_batch()` | Binary trie body (updates `BinaryTrieState`, flushes NodeStore) |
-| `binary_trie_state` field on `Blockchain` | Moved to `Store`; accessed via `store.binary_trie_state()` |
+| MPT body of `apply_account_updates_batch()` | Binary trie body (updates `BinaryTrieState`, flushes NodeStore). Same function name, same call sites. |
 | RLP node encoding + keccak hashing | Raw concatenation + blake3 |
 
 ## What was NOT changed
@@ -70,7 +74,7 @@ After execution:
 | LEVM | Zero code changes. The EVM is completely unaware of the trie backend. |
 | `StoreVmDatabase` | Still the sole VM read path, reads from FKV. LEVM only touches FKV, never the trie. |
 | FKV tables (`ACCOUNT_FLATKEYVALUE`, `STORAGE_FLATKEYVALUE`) | Intact. Updated every block, O(1) reads. The tables, key format, and read logic are identical to main. |
-| FKV write path | FKV writes moved from `apply_account_updates_batch()` into `store_block()` but the data written is the same: `keccak(address) -> AccountState` and `keccak(address) \|\| keccak(slot) -> value`. This is a plumbing change, not a data change. |
+| FKV write path | On main, FKV writes happen inside `apply_account_updates_batch()`. On this branch, they happen in `store_block()`. The data written is the same: `keccak(address) -> AccountState` and `keccak(address) \|\| keccak(slot) -> value`. |
 | `ACCOUNT_CODES` table | Code stored by hash, read by VM. Unchanged. |
 | Block/header/receipt storage | Unchanged |
 | `Store` interface | Still the single entry point for all state access |
