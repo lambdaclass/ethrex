@@ -276,22 +276,11 @@ async fn batch_cross_batch_blockhash_regression() {
     //           43     60 01 90    03  40       60 00 55     00
     let deploy_code = {
         let runtime = vec![0x43, 0x60, 0x01, 0x90, 0x03, 0x40, 0x60, 0x00, 0x55, 0x00];
-        let mut init = Vec::new();
-        // PUSH<len> <runtime> PUSH1 0 RETURN
-        init.push(0x60 + 0); // PUSH1
-        init.push(runtime.len() as u8);
-        init.push(0x60); // PUSH1
-        init.push(0x00); // offset 0
-        init.push(0x39); // CODECOPY — but we need the runtime in memory first
-
-        // Simpler: use PUSH bytes directly
-        // PUSH10 <runtime_bytes> PUSH1 0 MSTORE PUSH1 10 PUSH1 22 RETURN
-        // Actually let's just use a minimal init code:
-        // Copy runtime to memory and return it
         let rt_len = runtime.len();
-        init.clear();
-        // PUSH1 rt_len  PUSH1 (init_len) PUSH1 0 CODECOPY  PUSH1 rt_len PUSH1 0 RETURN
-        let init_len = 12; // we'll verify this
+        // Init code: CODECOPY runtime into memory, then RETURN it.
+        // PUSH1 rt_len  PUSH1 init_len  PUSH1 0  CODECOPY  PUSH1 rt_len  PUSH1 0  RETURN
+        let init_len = 12;
+        let mut init = Vec::new();
         init.push(0x60);
         init.push(rt_len as u8); // PUSH1 rt_len
         init.push(0x60);
