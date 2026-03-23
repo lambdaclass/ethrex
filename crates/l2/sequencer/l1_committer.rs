@@ -48,6 +48,7 @@ use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
+use ethrex_storage::AccountUpdatesList;
 use ethrex_storage::EngineType;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
@@ -805,18 +806,10 @@ impl L1Committer {
                 // the first block of the batch. Therefore, we need to apply the
                 // account updates of each block as we go, to be able to continue
                 // re-executing the next blocks in the batch.
-                let code_updates: Vec<_> = account_updates
-                    .iter()
-                    .filter_map(|u| {
-                        u.info.as_ref().and_then(|info| {
-                            u.code.as_ref().map(|code| (info.code_hash, code.clone()))
-                        })
-                    })
-                    .collect();
+                let account_updates_list = AccountUpdatesList::from_updates(&account_updates);
                 checkpoint_blockchain.store_block(
                     potential_batch_block.clone(),
-                    code_updates,
-                    account_updates.clone(),
+                    account_updates_list,
                     BlockExecutionResult {
                         receipts,
                         requests: vec![],

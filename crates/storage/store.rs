@@ -262,16 +262,41 @@ pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
 /// Collection of account state changes from block execution.
 ///
-/// Contains all the data needed to update the state trie after
-/// executing a block: account updates, storage updates, and code deployments.
+/// Returned by `apply_account_updates_batch` after applying updates to the
+/// binary trie. Contains the data needed by `store_block` to write FKV
+/// tables and contract code.
 pub struct AccountUpdatesList {
-    /// Root hash of the state trie after applying these updates.
-    pub state_trie_hash: H256,
-    /// State trie node updates (path -> RLP-encoded node).
-    pub state_updates: Vec<(Nibbles, Vec<u8>)>,
-    /// Storage trie updates per account.
-    pub storage_updates: StorageUpdates,
     /// New contract bytecode deployments.
+    pub code_updates: Vec<(H256, Code)>,
+    /// Account updates to write to FKV tables for O(1) state reads.
+    pub flat_updates: Vec<AccountUpdate>,
+}
+
+impl AccountUpdatesList {
+    /// Extract code updates and flat updates from a slice of AccountUpdates.
+    /// Used when the binary trie path is not involved (e.g., MPT witness generation).
+    pub fn from_updates(updates: &[AccountUpdate]) -> Self {
+        let code_updates = updates
+            .iter()
+            .filter_map(|u| {
+                u.info
+                    .as_ref()
+                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
+            })
+            .collect();
+        Self {
+            code_updates,
+            flat_updates: updates.to_vec(),
+        }
+    }
+}
+
+/// MPT-specific return type for `apply_account_updates_from_trie_batch`.
+/// Used by EF tests and MPT witness generation paths.
+pub struct MptUpdatesList {
+    pub state_trie_hash: H256,
+    pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    pub storage_updates: StorageUpdates,
     pub code_updates: Vec<(H256, Code)>,
 }
 
@@ -1905,7 +1930,7 @@ impl Store {
         block_hash: BlockHash,
         block_number: u64,
         account_updates: &[AccountUpdate],
-    ) -> Result<(), StoreError> {
+    ) -> Result<AccountUpdatesList, StoreError> {
         let bts = self
             .binary_trie_state
             .as_ref()
@@ -1913,10 +1938,16 @@ impl Store {
         let mut state = bts
             .write()
             .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
+        let mut code_updates = Vec::new();
         for update in account_updates {
             state
                 .apply_account_update(update)
                 .map_err(|e| StoreError::Custom(format!("binary trie update error: {e}")))?;
+            if let Some(info) = &update.info {
+                if let Some(code) = &update.code {
+                    code_updates.push((info.code_hash, code.clone()));
+                }
+            }
         }
         let root = state.state_root();
         tracing::debug!(
@@ -1926,7 +1957,10 @@ impl Store {
         state
             .flush_if_needed(block_number, block_hash)
             .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
-        Ok(())
+        Ok(AccountUpdatesList {
+            code_updates,
+            flat_updates: account_updates.to_vec(),
+        })
     }
 
     /// Performs the same actions as apply_account_updates_from_trie
@@ -1936,7 +1970,7 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
         mut storage_tries: StorageTries,
-    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
+    ) -> Result<(StorageTries, MptUpdatesList), StoreError> {
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
@@ -2015,14 +2049,14 @@ impl Store {
         let (state_trie_hash, state_updates) =
             state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
-        let account_updates_list = AccountUpdatesList {
+        let mpt_updates = MptUpdatesList {
             state_trie_hash,
             state_updates,
             storage_updates: ret_storage_updates,
             code_updates,
         };
 
-        Ok((storage_tries, account_updates_list))
+        Ok((storage_tries, mpt_updates))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root

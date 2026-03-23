@@ -228,23 +228,12 @@ impl BlockProducer {
         let block_hash = block.hash();
 
         // Apply account updates to the binary trie.
-        self.store
-            .apply_account_updates_batch(block_hash, block_number, &account_updates)?;
+        let account_updates_list =
+            self.store
+                .apply_account_updates_batch(block_hash, block_number, &account_updates)?;
         self.store_fee_config_by_block(block.header.number).await?;
-        let code_updates: Vec<_> = account_updates
-            .iter()
-            .filter_map(|u| {
-                u.info
-                    .as_ref()
-                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
-            })
-            .collect();
-        self.blockchain.store_block(
-            block,
-            code_updates,
-            account_updates.clone(),
-            execution_result,
-        )?;
+        self.blockchain
+            .store_block(block, account_updates_list, execution_result)?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count

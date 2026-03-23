@@ -80,7 +80,9 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, UpdateBatch, error::StoreError, hash_address, hash_key};
+use ethrex_storage::{
+    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
+};
 use ethrex_trie::{Node, NodeRef, Trie};
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
@@ -115,7 +117,6 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     Vec<AccountUpdate>,      // accumulated updates (always present)
-    Vec<(H256, Code)>,       // code updates
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
     usize,                   // max queue length
     [Instant; 6],            // timing instants
@@ -482,16 +483,10 @@ impl Blockchain {
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
                         let mut all_updates: FxHashMap<Address, AccountUpdate> =
                             FxHashMap::default();
-                        let mut code_updates: Vec<(H256, Code)> = Vec::new();
                         for updates in rx {
                             let current_length = queue_length_ref.fetch_sub(1, Ordering::Acquire);
                             *max_queue_length_ref = current_length.max(*max_queue_length_ref);
                             for update in updates {
-                                if let Some(info) = &update.info {
-                                    if let Some(code) = &update.code {
-                                        code_updates.push((info.code_hash, code.clone()));
-                                    }
-                                }
                                 match all_updates.entry(update.address) {
                                     Entry::Vacant(e) => {
                                         e.insert(update);
@@ -504,7 +499,7 @@ impl Blockchain {
                         }
                         let accumulated: Vec<AccountUpdate> = all_updates.into_values().collect();
                         let accumulator_end_instant = Instant::now();
-                        Ok((accumulated, code_updates, accumulator_end_instant))
+                        Ok((accumulated, accumulator_end_instant))
                     })
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn accumulator thread: {e}"))
@@ -524,7 +519,7 @@ impl Blockchain {
                     .unwrap_or(Duration::ZERO);
                 Ok((execution_result, accumulator_result, warmer_duration))
             })?;
-        let (accumulated_updates, code_updates, accumulator_end_instant) = accumulator_result?;
+        let (accumulated_updates, accumulator_end_instant) = accumulator_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
         let exec_accumulate_end_instant = Instant::now();
@@ -532,7 +527,6 @@ impl Blockchain {
         Ok((
             execution_result,
             accumulated_updates,
-            code_updates,
             produced_bal,
             max_queue_length,
             [
@@ -889,25 +883,11 @@ impl Blockchain {
                     used_storage_tries,
                 )?;
 
-            // Extract code updates from account updates
-            let code_updates: Vec<(H256, Code)> = account_updates
-                .iter()
-                .filter_map(|u| {
-                    u.info
-                        .as_ref()
-                        .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
-                })
-                .collect();
-
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(
-                block.clone(),
-                code_updates,
-                account_updates.clone(),
-                execution_result,
-            )?;
+            let account_updates_list = AccountUpdatesList::from_updates(&account_updates);
+            self.store_block(block.clone(), account_updates_list, execution_result)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1378,8 +1358,7 @@ impl Blockchain {
     pub fn store_block(
         &self,
         block: Block,
-        code_updates: Vec<(H256, Code)>,
-        flat_updates: Vec<AccountUpdate>,
+        account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
         let update_batch = UpdateBatch {
@@ -1387,9 +1366,9 @@ impl Blockchain {
             storage_updates: vec![],
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
-            code_updates,
+            code_updates: account_updates_list.code_updates,
             batch_mode: false,
-            flat_updates,
+            flat_updates: account_updates_list.flat_updates,
         };
 
         self.storage
@@ -1402,20 +1381,11 @@ impl Blockchain {
         let (res, updates) = self.execute_block(&block)?;
         let executed = Instant::now();
 
-        // Apply account updates to the binary trie
-        self.storage
+        // Apply the account updates over the last block's state and compute the new state root
+        let account_updates_list = self
+            .storage
             .apply_account_updates_batch(block.hash(), block.header.number, &updates)
             .map_err(ChainError::StoreError)?;
-
-        // Extract code updates from account updates
-        let code_updates: Vec<(H256, Code)> = updates
-            .iter()
-            .filter_map(|u| {
-                u.info
-                    .as_ref()
-                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
-            })
-            .collect();
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1425,7 +1395,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, code_updates, updates, res);
+        let result = self.store_block(block, account_updates_list, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1514,7 +1484,6 @@ impl Blockchain {
         let (
             res,
             accumulated_updates,
-            code_updates,
             produced_bal,
             merkle_queue_length,
             instants,
@@ -1546,11 +1515,12 @@ impl Blockchain {
         }
 
         // Apply account updates to binary trie (advances trie to post-execution state).
-        self.storage
+        let account_updates_list = self
+            .storage
             .apply_account_updates_batch(block.hash(), block_number, &accumulated_updates)
             .map_err(ChainError::StoreError)?;
 
-        let result = self.store_block(block, code_updates, accumulated_updates, res);
+        let result = self.store_block(block, account_updates_list, res);
 
         let stored = Instant::now();
 
@@ -1899,29 +1869,19 @@ impl Blockchain {
         // last_block.hash(). State reads at intermediate batch block hashes are
         // unsupported and will fall through to the base trie (stale data).
         // Acceptable during initial sync where intermediate blocks are not reorged.
-        self.storage
+        let account_updates_list = self
+            .storage
             .apply_account_updates_batch(last_block.hash(), last_block_number, &account_updates)
             .map_err(|e| (ChainError::StoreError(e), None))?;
 
-        // Extract code updates from account updates
-        let code_updates: Vec<(H256, Code)> = account_updates
-            .iter()
-            .filter_map(|u| {
-                u.info
-                    .as_ref()
-                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
-            })
-            .collect();
-
-        let flat_updates = account_updates;
         let update_batch = UpdateBatch {
             account_updates: vec![],
             storage_updates: vec![],
             blocks,
             receipts: all_receipts,
-            code_updates,
+            code_updates: account_updates_list.code_updates,
             batch_mode: true,
-            flat_updates,
+            flat_updates: account_updates_list.flat_updates,
         };
 
         self.storage
