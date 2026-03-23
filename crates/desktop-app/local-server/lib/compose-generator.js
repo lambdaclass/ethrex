@@ -104,32 +104,86 @@ function generateComposeFile(opts) {
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
-  // Unique image names per deployment: tokamak-appchain:{programSlug}-{projectName}
+  // Bundle deployments: detect VK files and register custom programs
+  // Bundle deployments need SP1 for ZK proof generation
+  // Bundle deployments always use SP1 for ZK proof
+  let bundleSp1Enabled = bundleProgramsToml ? true : profile.sp1Enabled;
+  let bundleVkPath = null;
+  let bundleRegisterPrograms = profile.registerGuestPrograms || null;
+  if (bundleProgramsToml) {
+    const bundleDir = path.dirname(bundleProgramsToml);
+    const programsDir = path.join(bundleDir, 'programs');
+    if (fs.existsSync(programsDir)) {
+      const progDirs = fs.readdirSync(programsDir).filter(d => fs.statSync(path.join(programsDir, d)).isDirectory());
+      // Find VK and enable SP1
+      for (const pid of progDirs) {
+        const vkFile = path.join(programsDir, pid, 'sp1', 'vk');
+        if (fs.existsSync(vkFile)) {
+          bundleSp1Enabled = true;
+          bundleVkPath = `/etc/ethrex/programs/${pid}/sp1/vk`;
+          break;
+        }
+      }
+      if (progDirs.length > 0) {
+        bundleRegisterPrograms = progDirs.join(',');
+      }
+    }
+    // If no programs dir but we have a programs.toml, parse enabled programs from it
+    if (!bundleRegisterPrograms) {
+      try {
+        const tomlContent = fs.readFileSync(bundleProgramsToml, 'utf8');
+        const enabledMatch = tomlContent.match(/enabled_programs\s*=\s*\[([^\]]*)\]/);
+        if (enabledMatch) {
+          const progs = enabledMatch[1].match(/"([^"]+)"/g);
+          if (progs) {
+            const progNames = progs.map(p => p.replace(/"/g, ''));
+            // Filter out evm-l2 (pre-registered), add typeId suffix for known programs
+            const TYPE_IDS = { 'zk-dex': 2, 'tokamon': 3, 'bridge': 4 };
+            const toRegister = progNames
+              .filter(p => p !== 'evm-l2')
+              .map(p => TYPE_IDS[p] ? `${p}:${TYPE_IDS[p]}` : p);
+            if (toRegister.length > 0) {
+              bundleRegisterPrograms = toRegister.join(',');
+            }
+          }
+        }
+      } catch (e) { /* ignore parse errors */ }
+    }
+  }
+
+  // Image and build config — use Dockerfile.sp1 for bundle deployments with SP1
   const l1Image = `tokamak-appchain:l1-${projectName}`;
   const l2Image = `tokamak-appchain:${programSlug}-${projectName}`;
+  const effectiveDockerfile = bundleSp1Enabled ? "Dockerfile.sp1" : profile.dockerfile;
+  const effectiveBuildFeatures = bundleSp1Enabled ? "--features l2,l2-sql,sp1" : profile.buildFeatures;
+  const effectiveProverBackend = bundleSp1Enabled ? "sp1" : profile.proverBackend;
 
-  // Build section for L2 image
-  const buildSection = profile.dockerfile
+  // Bundle deployments include bridge guest program for fast proof
+  const effectiveGuestPrograms = bundleSp1Enabled
+    ? (bundleRegisterPrograms ? `evm-l2,${bundleRegisterPrograms}` : 'evm-l2,bridge')
+    : profile.guestPrograms;
+
+  const buildSection = effectiveDockerfile
     ? `    build:
       context: ${ETHREX_ROOT}
-      dockerfile: ${profile.dockerfile}
+      dockerfile: ${effectiveDockerfile}
       args:
-        - BUILD_FLAGS=${profile.buildFeatures}${profile.guestPrograms ? `\n        - GUEST_PROGRAMS=${profile.guestPrograms}` : ""}`
+        - BUILD_FLAGS=${effectiveBuildFeatures}${effectiveGuestPrograms ? `\n        - GUEST_PROGRAMS=${effectiveGuestPrograms}` : ""}`
     : `    build:
       context: ${ETHREX_ROOT}
       args:
-        - BUILD_FLAGS=${profile.buildFeatures}`;
+        - BUILD_FLAGS=${effectiveBuildFeatures}`;
 
-  // L1 build
   const l1Build = `    build: ${ETHREX_ROOT}`;
 
-  // Genesis sources: use custom genesis if provided, otherwise stock
   const genesisSource = customGenesisPath || `${ETHREX_ROOT}/fixtures/genesis/${profile.genesisFile}`;
   const l1GenesisSource = customL1GenesisPath || `${ETHREX_ROOT}/fixtures/genesis/l1.json`;
 
-  // Deployer env vars (ETHREX_L2_SP1 is set in the base template from profile.sp1Enabled)
+  // Deployer env vars
   let deployerExtraEnv = "";
-  if (profile.registerGuestPrograms) {
+  if (bundleRegisterPrograms) {
+    deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${bundleRegisterPrograms}\n`;
+  } else if (profile.registerGuestPrograms) {
     deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${profile.registerGuestPrograms}\n`;
   }
   if (profile.guestPrograms) {
@@ -139,9 +193,18 @@ function generateComposeFile(opts) {
   if (l2ChainId) {
     deployerExtraEnv += `      - ETHREX_L2_CHAIN_ID=${l2ChainId}\n`;
   }
+  if (bundleVkPath) {
+    deployerExtraEnv += `      - ETHREX_SP1_VERIFICATION_KEY_PATH=${bundleVkPath}\n`;
+  }
 
   // No extra deployer genesis volume needed — main mount line already uses genesisSource
   let deployerExtraVolumes = "";
+  // Mount dynamic programs dir into deployer for VK access
+  const dynamicProgramsDir = bundleProgramsToml ? path.dirname(bundleProgramsToml) + '/programs' : null;
+  const hasDynamicPrograms = dynamicProgramsDir && fs.existsSync(dynamicProgramsDir);
+  if (hasDynamicPrograms) {
+    deployerExtraVolumes += `      - ${dynamicProgramsDir}:/etc/ethrex/programs:ro\n`;
+  }
 
   // L2 extra config
   let l2ExtraVolumes = "";
@@ -151,16 +214,22 @@ function generateComposeFile(opts) {
     l2ExtraVolumes += `      - ${programsTomlSource}:/etc/ethrex/programs.toml\n`;
   }
 
+  // Check dynamic ELF directory (already declared above in deployer section)
+
   // Prover config
   let proverExtraEnv = "";
   let proverExtraVolumes = "";
-  let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
+  // effectiveProverBackend already set above
+  let proverCommand = `l2 prover --backend ${effectiveProverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
   if (programsTomlSource) {
     proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
     proverExtraEnv = `      - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml`;
     proverExtraVolumes = `      - ${programsTomlSource}:/etc/ethrex/programs.toml`;
   }
-  if (profile.proverBackend === "sp1") {
+  if (hasDynamicPrograms) {
+    proverExtraVolumes += (proverExtraVolumes ? "\n" : "") + `      - ${dynamicProgramsDir}:/etc/ethrex/programs:ro`;
+  }
+  if (effectiveProverBackend === "sp1") {
     proverExtraEnv += (proverExtraEnv ? "\n" : "") + `      - PROVER_CLIENT_TIMED=true
       - DOCKER_HOST=\${DOCKER_HOST:-unix:///var/run/docker.sock}
       - HOME=\${HOME}`;
@@ -171,7 +240,7 @@ function generateComposeFile(opts) {
   if (dumpFixtures) {
     proverExtraEnv += (proverExtraEnv ? "\n" : "") + `      - ETHREX_DUMP_FIXTURES=/tmp/fixtures`;
     // SP1 already has /tmp:/tmp; exec backend needs the volume
-    if (profile.proverBackend !== "sp1") {
+    if (effectiveProverBackend !== "sp1") {
       proverExtraVolumes += (proverExtraVolumes ? "\n" : "") + `      - /tmp/fixtures:/tmp/fixtures`;
     }
   }
@@ -214,13 +283,13 @@ ${deployerExtraVolumes}    environment:
       - ETHREX_DEPLOYER_ENV_FILE_PATH=/env/.env
       - ETHREX_DEPLOYER_GENESIS_L1_PATH=${workdir}/fixtures/genesis/l1.json
       - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${workdir}/fixtures/keys/private_keys_l1.txt
-      - ETHREX_DEPLOYER_DEPLOY_RICH=${profile.deployRich}
+      - ETHREX_DEPLOYER_DEPLOY_RICH=${bundleProgramsToml ? 'false' : profile.deployRich}
       - ETHREX_DEPLOYER_RECEIPT_INTERVAL_SECS=2
       - ETHREX_L2_RISC0=false
-      - ETHREX_L2_SP1=${profile.sp1Enabled}
+      - ETHREX_L2_SP1=${bundleSp1Enabled}
       - ETHREX_L2_TDX=false
       - ETHREX_DEPLOYER_ALIGNED=false
-      - ETHREX_SP1_VERIFICATION_KEY_PATH=${workdir}/riscv32im-succinct-zkvm-vk-bn254
+      - ETHREX_SP1_VERIFICATION_KEY_PATH=${bundleVkPath || `${workdir}/riscv32im-succinct-zkvm-vk-bn254`}
       - ETHREX_RISC0_VERIFICATION_KEY_PATH=${workdir}/riscv32im-risc0-vk
       - ETHREX_ON_CHAIN_PROPOSER_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
       - ETHREX_BRIDGE_OWNER=0x4417092b70a3e5f10dc504d0947dd256b965fc62
@@ -473,14 +542,15 @@ function thanosServices({ projectName, l2Port, l2ChainId, l1RpcUrl, bindAddr, pr
  * @returns {string} docker-compose.yaml content
  */
 function generateRemoteComposeFile(opts) {
-  const { programSlug: rawSlug, l1Port, l2Port, proofCoordPort = 3900, projectName, dataDir, l2ChainId, bindAddress = "0.0.0.0", customL2GenesisPath, customL1GenesisPath } = opts;
+  const { programSlug: rawSlug, l1Port, l2Port, proofCoordPort = 3900, projectName, dataDir, l2ChainId, bindAddress = "0.0.0.0", customL2GenesisPath, customL1GenesisPath, bundleProgramsToml } = opts;
   const programSlug = sanitizeSlug(rawSlug);
   const profile = getAppProfile(programSlug);
   const workdir = "/usr/local/bin";
 
   const l1Image = PULL_IMAGES["tokamak-appchain:l1"];
   // Map profile to the correct pre-built image name for remote
-  const remoteImageKey = profile.sp1Enabled ? "tokamak-appchain:sp1" : "tokamak-appchain:l2";
+  // Bundle deployments with programs.toml use SP1 image (needs prover with programs config)
+  const remoteImageKey = (profile.sp1Enabled || bundleProgramsToml) ? "tokamak-appchain:sp1" : "tokamak-appchain:l2";
   const l2Image = PULL_IMAGES[remoteImageKey];
 
   const l2GenesisContainer = profile.genesisFile !== "l2.json"
@@ -510,6 +580,11 @@ function generateRemoteComposeFile(opts) {
     deployerL2GenesisPath = `/custom-genesis/${profile.genesisFile}`;
   }
 
+  // Mount bundle programs.toml into L2 container if present
+  if (bundleProgramsToml) {
+    l2ExtraVolumes += `      - ${bundleProgramsToml}:/etc/ethrex/programs.toml:ro\n`;
+  }
+
   // Deployer extra env (ETHREX_L2_SP1 is set in the base template from profile.sp1Enabled)
   let deployerExtraEnv = "";
   if (profile.registerGuestPrograms) deployerExtraEnv += `      - ETHREX_REGISTER_GUEST_PROGRAMS=${profile.registerGuestPrograms}\n`;
@@ -522,15 +597,18 @@ function generateRemoteComposeFile(opts) {
   // Prover config
   let proverExtraEnv = "";
   let proverExtraVolumes = "";
-  let proverCommand = `l2 prover --backend ${profile.proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
-  if (profile.proverBackend === "sp1") {
+  const usesSp1 = profile.proverBackend === "sp1" || !!bundleProgramsToml;
+  const proverBackend = usesSp1 ? "sp1" : profile.proverBackend;
+  let proverCommand = `l2 prover --backend ${proverBackend} --proof-coordinators tcp://tokamak-app-l2:3900`;
+  if (usesSp1) {
+    const tomlSource = bundleProgramsToml || `${dataDir}/programs.toml`;
     proverCommand += ` --programs-config /etc/ethrex/programs.toml`;
     proverExtraEnv = `    environment:
       - ETHREX_PROGRAMS_CONFIG=/etc/ethrex/programs.toml
       - PROVER_CLIENT_TIMED=true
       - DOCKER_HOST=unix:///var/run/docker.sock`;
     proverExtraVolumes = `    volumes:
-      - ${dataDir}/programs.toml:/etc/ethrex/programs.toml
+      - ${tomlSource}:/etc/ethrex/programs.toml
       - /var/run/docker.sock:/var/run/docker.sock
       - /tmp:/tmp`;
   }
@@ -643,6 +721,10 @@ ${proverExtraVolumes}
       - tokamak-app-l2
 `;
 
+  // Add platform: linux/amd64 for Apple Silicon (pre-built images are amd64 only)
+  if (process.arch === 'arm64') {
+    return yaml.replace(/^(\s+image:\s+"[^"]+")/gm, '$1\n    platform: linux/amd64');
+  }
   return yaml;
 }
 

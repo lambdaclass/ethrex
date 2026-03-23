@@ -78,6 +78,14 @@ pub static ZKVM_SP1_TOKAMON_ELF: &[u8] =
 #[cfg(any(clippy, not(feature = "sp1")))]
 pub const ZKVM_SP1_TOKAMON_ELF: &[u8] = &[];
 
+// Bridge guest program ELFs (per-backend).
+
+#[cfg(all(not(clippy), feature = "sp1"))]
+pub static ZKVM_SP1_BRIDGE_ELF: &[u8] =
+    include_bytes!("../bin/sp1-bridge/out/riscv32im-succinct-zkvm-elf");
+#[cfg(any(clippy, not(feature = "sp1")))]
+pub const ZKVM_SP1_BRIDGE_ELF: &[u8] = &[];
+
 /// Report cycles used in a code block when running inside SP1 zkVM.
 ///
 /// When the feature "sp1-cycles" is enabled, it will print start and end cycle

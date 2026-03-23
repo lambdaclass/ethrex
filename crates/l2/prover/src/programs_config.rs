@@ -13,6 +13,11 @@ pub struct ProgramsConfig {
     /// List of program_ids to register.  Only these programs will be available.
     #[serde(default = "default_enabled")]
     pub enabled_programs: Vec<String>,
+    /// Directory containing dynamic guest program ELF binaries.
+    /// Expected layout: `<programs_dir>/<program_id>/sp1/elf`
+    /// Programs found here are loaded at runtime without recompilation.
+    #[serde(default)]
+    pub programs_dir: Option<String>,
 }
 
 fn default_program() -> String {
@@ -24,6 +29,7 @@ fn default_enabled() -> Vec<String> {
         "evm-l2".to_string(),
         "zk-dex".to_string(),
         "tokamon".to_string(),
+        "bridge".to_string(),
     ]
 }
 
@@ -32,6 +38,7 @@ impl Default for ProgramsConfig {
         Self {
             default_program: default_program(),
             enabled_programs: default_enabled(),
+            programs_dir: None,
         }
     }
 }

@@ -47,9 +47,14 @@ fn main() {
         #[cfg(all(not(clippy), feature = "sp1"))]
         build_sp1_guest_program("sp1-tokamon");
     } else {
-        // Ensure placeholder ELF exists so `include_bytes!` doesn't fail
-        // when tokamon isn't in the build list.
         ensure_elf_placeholder("./bin/sp1-tokamon");
+    }
+
+    if programs.contains(&"bridge".to_string()) {
+        #[cfg(all(not(clippy), feature = "sp1"))]
+        build_sp1_guest_program("sp1-bridge");
+    } else {
+        ensure_elf_placeholder("./bin/sp1-bridge");
     }
 }
 
@@ -290,11 +295,18 @@ fn build_sp1_guest_program(name: &str) {
     let out_dir = format!("{bin_dir}/out");
     let elf_name = "riscv32im-succinct-zkvm-elf";
 
+    let features = if cfg!(feature = "l2") {
+        vec!["l2".to_string()]
+    } else {
+        vec![]
+    };
+
     sp1_build::build_program_with_args(
         &bin_dir,
         sp1_build::BuildArgs {
             output_directory: Some(out_dir.clone()),
             elf_name: Some(elf_name.to_string()),
+            features,
             docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
             tag: "v5.0.8".to_string(),
             workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),

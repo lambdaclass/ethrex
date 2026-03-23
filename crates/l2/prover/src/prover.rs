@@ -10,7 +10,8 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_guest_program::programs::{EvmL2GuestProgram, TokammonGuestProgram, ZkDexGuestProgram};
+use ethrex_guest_program::programs::dynamic::DynamicGuestProgram;
+use ethrex_guest_program::programs::{BridgeGuestProgram, EvmL2GuestProgram, TokammonGuestProgram, ZkDexGuestProgram};
 use ethrex_l2::sequencer::utils::get_git_commit_hash;
 use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat, ProverType};
 
@@ -23,6 +24,7 @@ use crate::registry::GuestProgramRegistry;
 ///
 /// If `config_path` is `None`, all built-in programs are registered.
 /// Otherwise, only the programs listed in the config file are registered.
+/// Dynamic programs are loaded from `programs_dir` if specified in config.
 fn create_registry(config_path: Option<&str>) -> GuestProgramRegistry {
     let config = config_path
         .map(|p| {
@@ -35,15 +37,54 @@ fn create_registry(config_path: Option<&str>) -> GuestProgramRegistry {
 
     let mut registry = GuestProgramRegistry::new(&config.default_program);
 
-    let all_programs: Vec<(String, Arc<dyn ethrex_guest_program::traits::GuestProgram>)> = vec![
+    // Built-in programs (compiled into the binary)
+    let builtin_programs: Vec<(String, Arc<dyn ethrex_guest_program::traits::GuestProgram>)> = vec![
         ("evm-l2".to_string(), Arc::new(EvmL2GuestProgram)),
         ("zk-dex".to_string(), Arc::new(ZkDexGuestProgram)),
         ("tokamon".to_string(), Arc::new(TokammonGuestProgram)),
+        ("bridge".to_string(), Arc::new(BridgeGuestProgram)),
     ];
 
-    for (id, program) in all_programs {
+    let builtin_ids: Vec<String> = builtin_programs.iter().map(|(id, _)| id.clone()).collect();
+
+    for (id, program) in builtin_programs {
         if config.enabled_programs.contains(&id) {
             registry.register(program);
+        }
+    }
+
+    // Dynamic programs — loaded from filesystem at runtime
+    // Expected layout: <programs_dir>/<program_id>/sp1/elf
+    if let Some(ref dir) = config.programs_dir {
+        let dir_path = std::path::Path::new(dir);
+        if dir_path.is_dir() {
+            for program_id in &config.enabled_programs {
+                // Skip built-in programs (already registered above)
+                if builtin_ids.contains(program_id) {
+                    continue;
+                }
+                let prog_dir = dir_path.join(program_id);
+                if !prog_dir.is_dir() {
+                    warn!("Dynamic program dir not found: {}", prog_dir.display());
+                    continue;
+                }
+                // Resolve type_id: known programs get fixed IDs, others get 10+
+                let type_id = ethrex_l2_common::resolve_program_type_id(program_id);
+                let type_id = if type_id > 0 { type_id } else { 10 }; // community programs start at 10
+
+                match DynamicGuestProgram::from_dir(program_id, type_id, &prog_dir) {
+                    Ok(prog) => {
+                        let backends = prog.loaded_backends();
+                        info!("Loaded dynamic program: {} (type_id={}, backends={:?})", program_id, type_id, backends);
+                        registry.register(Arc::new(prog));
+                    }
+                    Err(e) => {
+                        warn!("Failed to load dynamic program {}: {}", program_id, e);
+                    }
+                }
+            }
+        } else {
+            warn!("programs_dir does not exist: {}", dir);
         }
     }
 

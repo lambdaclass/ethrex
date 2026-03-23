@@ -19,6 +19,7 @@ pub fn resolve_program_type_id(program_id: &str) -> u8 {
         "evm-l2" => 1,
         "zk-dex" => 2,
         "tokamon" => 3,
+        "bridge" => 4,
         _ => 0,
     }
 }
