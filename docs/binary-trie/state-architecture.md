@@ -68,11 +68,12 @@ and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 |---|---|
 | `ACCOUNT_TRIE_NODES` table | `BINARY_TRIE_NODES` CF |
 | `STORAGE_TRIE_NODES` table | Not needed (unified tree, no per-account storage tries) |
-| `TrieLayerCache` (in-memory trie node diff layers) | `NodeStore` dirty/warm/clean tiers |
-| 16-shard parallel merkleizer thread | Single-threaded binary trie `apply_account_update` |
-| `handle_merkleization` / `handle_merkleization_bal` | Removed; binary trie `apply_account_updates_batch()` on Store handles updates |
+| `TrieLayerCache` (in-memory trie node diff layers) | `NodeStore` dirty/warm/clean tiers (same role, different node format) |
+| 16-shard parallel MPT merkleization | Binary trie `apply_account_update` (single tree, incremental) |
+| `handle_merkleization` / `handle_merkleization_bal` | Merkleizer thread now calls `BinaryTrieState.apply_account_update()` directly |
 | `BranchNode[16]` root assembly | Binary trie `state_root()` |
-| MPT body of `apply_account_updates_batch()` | Binary trie body (updates `BinaryTrieState`, flushes NodeStore). Same function name, same call sites. |
+| MPT body of `apply_account_updates_batch()` | Binary trie body. Same function name, same call sites. |
+| `AccountUpdatesList` MPT fields (`state_trie_hash`, `state_updates`, `storage_updates`) | Replaced with `code_updates` + `flat_updates`. MPT fields moved to `MptUpdatesList` for EF tests. |
 | RLP node encoding + keccak hashing | Raw concatenation + blake3 |
 
 ## What was NOT changed
@@ -85,8 +86,9 @@ and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 | FKV write path | FKV writes happen in `store_block()` on both branches. The data written is the same: `keccak(address) -> AccountState` and `keccak(address) \|\| keccak(slot) -> value`. |
 | `ACCOUNT_CODES` table | Code stored by hash, read by VM. Unchanged. |
 | Block/header/receipt storage | Unchanged |
-| `Store` interface | Still the single entry point for all state access |
-| Node-level caching | `TrieLayerCache` (MPT node diff layers) replaced by `NodeStore` dirty/warm/clean tiers. Same role (cache uncommitted trie nodes in memory, flush periodically), different node format. |
+| `Store` interface | Still the single entry point for all state access. `BinaryTrieState` lives on Store (same as `TrieLayerCache` on main). |
+| Pipeline structure | 3 concurrent threads: warmer, executor, merkleizer. Same structure, merkleizer internals changed. |
+| `Blockchain` struct | Identical to main: `storage`, `mempool`, `is_synced`, `options`, `payloads`. No trie state. |
 | Transaction pool, p2p, RPC layer | Unchanged |
 | Consensus validation (except state root) | Unchanged |
 
@@ -103,7 +105,7 @@ and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 | Key space | Separate account trie + per-account storage tries | Single unified tree for accounts, storage, and code chunks |
 | Hash function | Keccak-256 | Blake3 |
 | Node encoding | RLP before hashing | Raw concatenation (`hash(left \|\| right)`) |
-| Merkleization | 16 parallel shard workers | Single-threaded, incremental (only rehash dirty paths) |
+| Merkleization | 16 parallel shard workers | Pipelined merkleizer thread, incremental (only rehash dirty paths) |
 | Proof size | ~8-10 RLP nodes (1-4 KB) | ~25 sibling hashes (~800 bytes) |
 | ZK-friendliness | Poor (RLP + keccak hard to prove) | Good (binary + blake3 circuit-friendly) |
 | State root in headers | MPT root (consensus-valid) | Binary trie root (NOT validated against header, header has MPT root) |
