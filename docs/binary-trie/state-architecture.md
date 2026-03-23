@@ -66,13 +66,21 @@ After execution:
 
 | Component | Notes |
 |---|---|
-| `StoreVmDatabase` | Still the sole VM read path, reads from FKV |
-| FKV tables (`ACCOUNT_FLATKEYVALUE`, `STORAGE_FLATKEYVALUE`) | Updated every block, O(1) reads |
-| `ACCOUNT_CODES` table | Code stored by hash, read by VM |
+| LEVM | Zero code changes. The EVM is completely unaware of the trie backend. |
+| `StoreVmDatabase` | Still the sole VM read path, reads from FKV. LEVM only touches FKV, never the trie. |
+| FKV tables (`ACCOUNT_FLATKEYVALUE`, `STORAGE_FLATKEYVALUE`) | Intact. Updated every block, O(1) reads. The tables, key format, and read logic are identical to main. |
+| FKV write path | FKV writes moved from `apply_account_updates_batch()` into `store_block()` but the data written is the same: `keccak(address) -> AccountState` and `keccak(address) \|\| keccak(slot) -> value`. This is a plumbing change, not a data change. |
+| `ACCOUNT_CODES` table | Code stored by hash, read by VM. Unchanged. |
 | Block/header/receipt storage | Unchanged |
 | `Store` interface | Still the single entry point for all state access |
+| Node-level caching | `TrieLayerCache` (MPT node diff layers) replaced by `NodeStore` dirty/warm/clean tiers. Same role (cache uncommitted trie nodes in memory, flush periodically), different node format. |
 | Transaction pool, p2p, RPC layer | Unchanged |
 | Consensus validation (except state root) | Unchanged |
+
+### Not added
+
+- No historical state diffs beyond the in-memory node cache window
+- No periodic state snapshots
 
 ## Key differences: Binary Trie vs MPT
 
