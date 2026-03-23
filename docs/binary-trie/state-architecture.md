@@ -11,51 +11,56 @@ are unchanged. The binary trie is a drop-in replacement for the MPT's merkleizat
 ### Main branch (MPT)
 
 ```
-Block execution (LEVM)
-  reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)
+Pipeline (3 concurrent threads):
+  [warmer]     prefetches state into cache
+  [executor]   runs LEVM, sends Vec<AccountUpdate> batches via channel -->
+  [merkleizer] receives batches, applies to MPT (16-shard parallel),
+               computes state root, returns AccountUpdatesList
 
-After execution:
-  let account_updates_list = Store.apply_account_updates_batch(&updates)
-                                     |
-                                     +--> MPT state trie (16-shard parallel merkleization)
-                                     +--> MPT storage tries (per-account)
-                                     +--> returns AccountUpdatesList (trie nodes + code)
+Non-pipeline (add_block):
+  execute_block() -> updates
+  Store.apply_account_updates_batch(&updates) -> AccountUpdatesList
 
+Both paths then:
   store_block(block, account_updates_list, result)
-                |
-                +--> FKV tables (account state, storage)
-                +--> ACCOUNT_CODES table
-                +--> TrieLayerCache (in-memory node cache, flush every ~128 blocks)
-                       --> persist to ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES
+    +--> FKV tables (account state, storage)
+    +--> ACCOUNT_CODES table
+    +--> TrieLayerCache (in-memory node cache, flush every ~128 blocks)
+           --> persist to ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES
+
+Reads:
+  StoreVmDatabase --> FKV tables (O(1) RocksDB gets)
 ```
 
 ### This branch (Binary Trie)
 
 ```
-Block execution (LEVM)
-  reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)  [UNCHANGED]
+Pipeline (3 concurrent threads):                                    [SAME STRUCTURE]
+  [warmer]     prefetches state into cache                          [UNCHANGED]
+  [executor]   runs LEVM, sends Vec<AccountUpdate> batches -->      [UNCHANGED]
+  [merkleizer] receives batches, applies to binary trie,
+               computes state root, returns AccountUpdatesList
 
-After execution:
-  let account_updates_list = Store.apply_account_updates_batch(&updates)  [SAME CALL SITE]
-                                     |
-                                     +--> BinaryTrieState.apply_account_update()
-                                     |      --> unified binary trie (single tree, blake3)
-                                     |      --> state_root() computes root
-                                     +--> NodeStore (dirty/warm/clean node cache)
-                                     |      --> flush_if_needed() every ~128 blocks
-                                     |      --> persist to BINARY_TRIE_NODES CF
-                                     +--> returns AccountUpdatesList (code + flat updates)
+Non-pipeline (add_block):                                           [SAME STRUCTURE]
+  execute_block() -> updates
+  Store.apply_account_updates_batch(&updates) -> AccountUpdatesList [SAME CALL SITE]
 
-  store_block(block, account_updates_list, result)                        [SAME CALL SITE]
-                |
-                +--> FKV tables (account state, storage)                  [UNCHANGED]
-                +--> ACCOUNT_CODES table                                  [UNCHANGED]
+Both paths then:
+  store_block(block, account_updates_list, result)                  [SAME CALL SITE]
+    +--> FKV tables (account state, storage)                        [UNCHANGED]
+    +--> ACCOUNT_CODES table                                        [UNCHANGED]
+    +--> flush_binary_trie_if_needed (every ~128 blocks)
+           --> persist to BINARY_TRIE_NODES CF
+
+Reads:
+  StoreVmDatabase --> FKV tables (O(1) RocksDB gets)               [UNCHANGED]
 ```
 
-The call flow is identical: `apply_account_updates_batch()` computes the state root
-and returns `AccountUpdatesList`, then `store_block()` writes FKV and code. Only the
-internals of `apply_account_updates_batch` changed (MPT -> binary trie). Both
-`BinaryTrieState` and `TrieLayerCache` live on `Store`, not on `Blockchain`.
+The pipeline structure is identical: warmer, executor, and merkleizer threads run
+concurrently. The merkleizer applies trie updates as batches arrive from the executor,
+overlapping merkleization with execution. The only change is the merkleizer's internals
+(MPT 16-shard parallel -> binary trie single-tree incremental). Both `BinaryTrieState`
+and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 
 ## What was removed
 
