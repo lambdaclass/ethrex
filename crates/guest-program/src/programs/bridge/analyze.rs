@@ -59,10 +59,11 @@ pub fn analyze_bridge_transactions(
                 continue;
             }
 
-            // Non-privileged: recover sender
-            if let Ok(sender) = tx.sender() {
-                accounts.insert(sender);
-            }
+            // Non-privileged: recover sender (required for nonce/balance)
+            let sender = tx
+                .sender()
+                .map_err(|e| format!("sender recovery failed: {e}"))?;
+            accounts.insert(sender);
 
             let to_addr = match tx.to() {
                 TxKind::Call(addr) => addr,

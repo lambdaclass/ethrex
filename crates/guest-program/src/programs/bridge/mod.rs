@@ -43,6 +43,10 @@ impl GuestProgram for BridgeGuestProgram {
         4 // Bridge
     }
 
+    fn version(&self) -> &str {
+        "0.1.0"
+    }
+
     fn serialize_input(&self, raw_input: &[u8]) -> Result<Vec<u8>, GuestProgramError> {
         #[cfg(feature = "l2")]
         {
