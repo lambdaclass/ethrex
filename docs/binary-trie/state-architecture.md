@@ -1,158 +1,135 @@
-# Binary Trie: State Architecture
+# Binary Trie State Architecture: Changes from MPT
 
-## Overview
+## What changed
 
-ethrex uses a layered state architecture with clear separation between the read path
-(optimized for speed) and the merkleization path (optimized for cryptographic integrity).
+This branch replaces the MPT (Merkle Patricia Trie) with an EIP-7864 binary trie for
+state root computation and proof generation. The read path (FKV) and write path (Store)
+are unchanged. The binary trie is a drop-in replacement for the MPT's merkleization role.
 
-```
-                          ┌─────────────────────┐
-                          │   Block Execution    │
-                          │       (LEVM)         │
-                          └──────────┬──────────┘
-                                     │ reads
-                          ┌──────────▼──────────┐
-                          │       Store          │
-                          │  (single interface)  │
-                          └──────────┬──────────┘
-                                     │reads
-                             ┌───────▼───────┐
-                             │     FKV       │
-                             │  (RocksDB)    │
-                             │   O(1) get    │
-                             └───────────────┘
+## Architecture comparison
 
-                          ┌─────────────────────┐
-                          │    Binary Trie       │
-                          │  (merkleization +    │
-                          │   proof generation)  │
-                          └─────────────────────┘
-```
-
-## Layers
-
-### Flat Key-Value Store (FKV)
-
-The FKV is the primary disk-backed read path for account state and storage values.
-It stores denormalized, ready-to-read values in flat RocksDB tables:
-
-- `ACCOUNT_FLATKEYVALUE`: `keccak(address) → RLP(AccountState)`
-- `STORAGE_FLATKEYVALUE`: `keccak(address) || keccak(slot) → RLP(value)`
-
-Every account update writes to the FKV as part of the block's write transaction.
-The FKV is always current -- there is no background scan or lazy population.
-
-Reads are O(1): a single RocksDB point get by key. No trie traversal.
-
-The FKV key space (`keccak(address)`) is independent of the binary trie's internal
-key space (`tree_key(address)`). This decoupling means the trie structure can change
-without affecting the read path.
-
-### Binary Trie
-
-The binary trie (EIP-7864) is used exclusively for:
-
-1. **Merkleization**: Computing the state root after each block. Account updates are
-   applied to the trie, and `state_root()` returns the root hash.
-2. **Proof generation**: `get_proof(key)` returns sibling hashes from root to leaf
-   for any state key. Used by `eth_getProof` and witness generation.
-
-The binary trie is NOT used for execution reads. LEVM never traverses the trie.
-
-The trie has its own node cache (dirty/warm/clean) that keeps hot nodes in memory
-for efficient tree operations during merkleization. These caches serve the trie's
-internal needs and are separate from the FKV read cache.
-
-### Store (RocksDB)
-
-Store is the single interface for all state access. It holds:
-
-- Block headers, bodies, receipts
-- Contract code (`ACCOUNT_CODES` table)
-- FKV tables (account state and storage)
-- Binary trie nodes (managed by NodeStore)
-
-All reads go through Store. Store reads directly from the FKV.
-Callers never interact with the binary trie or FKV directly.
-
-## Read Path
+### Main branch (MPT)
 
 ```
-Store.get_account_info(block_number, address)
-  │
-  ├─ resolve block_number → block_hash
-  │
-  └─ read from ACCOUNT_FLATKEYVALUE
-       → key: keccak(address)
-       → single RocksDB get, O(1)
+Block execution (LEVM)
+  reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)
+
+After execution:
+  AccountUpdates --> Store.apply_account_updates_batch()
+                       |
+                       +--> FKV tables (account state, storage)
+                       +--> ACCOUNT_CODES table
+                       +--> MPT state trie (16-shard parallel merkleization)
+                       +--> MPT storage tries (per-account)
+                       |
+                       +--> TrieLayerCache (in-memory diff layers, 128-block window)
+                              --> flush to ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES
 ```
 
-Storage reads follow the same pattern via `STORAGE_FLATKEYVALUE`.
-
-Code reads use `ACCOUNT_CODES` table keyed by code hash.
-
-## Write Path
+### This branch (Binary Trie)
 
 ```
-Block execution produces Vec<AccountUpdate>
-  │
-  ├─ Write to FKV tables (in the block's write transaction)
-  │    → ACCOUNT_FLATKEYVALUE: keccak(address) → RLP(AccountState)
-  │    → STORAGE_FLATKEYVALUE: keccak(address) || keccak(slot) → RLP(value)
-  │
-  ├─ Write to binary trie (apply_account_update)
-  │    → Updates trie nodes for merkleization
-  │    → state_root() computes binary trie root
-  │
-  └─ Write code to ACCOUNT_CODES table
+Block execution (LEVM)
+  reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)  [UNCHANGED]
+
+After execution:
+  AccountUpdates --> store_block()
+                       |
+                       +--> FKV tables (account state, storage)     [UNCHANGED]
+                       +--> ACCOUNT_CODES table                     [UNCHANGED]
+                       |
+                    apply_binary_trie_updates()
+                       |
+                       +--> BinaryTrieState.apply_account_update()
+                       |      --> unified binary trie (single tree, blake3)
+                       |      --> state_root() computes root
+                       |
+                       +--> NodeStore (dirty/warm/clean node cache)
+                              --> flush_if_needed() every ~128 blocks
+                              --> persist to BINARY_TRIE_NODES CF
 ```
 
-## Merkleization Path
+## What was removed
+
+| MPT component | Replacement |
+|---|---|
+| `ACCOUNT_TRIE_NODES` table | `BINARY_TRIE_NODES` CF |
+| `STORAGE_TRIE_NODES` table | Not needed (unified tree, no per-account storage tries) |
+| `TrieLayerCache` (in-memory trie node diff layers) | `NodeStore` dirty/warm/clean tiers |
+| 16-shard parallel merkleizer thread | Single-threaded binary trie `apply_account_update` |
+| `handle_merkleization` / `handle_merkleization_bal` | Accumulator thread (collects updates, no MPT work) |
+| `BranchNode[16]` root assembly | Binary trie `state_root()` |
+| `apply_account_updates_batch()` (MPT state writes) | `apply_binary_trie_updates()` |
+| RLP node encoding + keccak hashing | Raw concatenation + blake3 |
+
+## What was NOT changed
+
+| Component | Notes |
+|---|---|
+| `StoreVmDatabase` | Still the sole VM read path, reads from FKV |
+| FKV tables (`ACCOUNT_FLATKEYVALUE`, `STORAGE_FLATKEYVALUE`) | Updated every block, O(1) reads |
+| `ACCOUNT_CODES` table | Code stored by hash, read by VM |
+| Block/header/receipt storage | Unchanged |
+| `Store` interface | Still the single entry point for all state access |
+| Transaction pool, p2p, RPC layer | Unchanged |
+| Consensus validation (except state root) | Unchanged |
+
+## Key differences: Binary Trie vs MPT
+
+| Aspect | MPT | Binary Trie |
+|---|---|---|
+| Tree structure | 16-way branching (BranchNode, ExtensionNode, LeafNode) | Binary (InternalNode with left/right, StemNode with 256 leaves) |
+| Key space | Separate account trie + per-account storage tries | Single unified tree for accounts, storage, and code chunks |
+| Hash function | Keccak-256 | Blake3 |
+| Node encoding | RLP before hashing | Raw concatenation (`hash(left \|\| right)`) |
+| Merkleization | 16 parallel shard workers | Single-threaded, incremental (only rehash dirty paths) |
+| Proof size | ~8-10 RLP nodes (1-4 KB) | ~25 sibling hashes (~800 bytes) |
+| ZK-friendliness | Poor (RLP + keccak hard to prove) | Good (binary + blake3 circuit-friendly) |
+| State root in headers | MPT root (consensus-valid) | Binary trie root (NOT validated against header, header has MPT root) |
+| Flush strategy | `TrieLayerCache` chains layers by state root hash | `NodeStore` uses stable NodeIds, dirty/warm/clean rotation |
+
+## Binary trie key mapping
+
+All state is mapped into 32-byte keys in a single tree:
 
 ```
-After block execution:
-  │
-  ├─ apply_account_update(update)
-  │    → Inserts/updates leaves in the binary trie
-  │    → basic_data, code_hash, code_chunks, storage_slot keys
-  │
-  ├─ state_root()
-  │    → Computes hashes bottom-up (blake3)
-  │    → Caches hashes in nodes for incremental reuse
-  │    → Returns 32-byte root
-  │
-  └─ flush_if_needed(block_number, block_hash)
-       → Every ~128 blocks, persist dirty nodes to disk
-       → Rotate node caches (dirty → warm → clean)
+tree_key(address, tree_index, sub_index):
+  stem = blake3(zero_pad(address) || big_endian(tree_index))[:31]
+  key  = stem || sub_index
 ```
 
-## Binary Trie Structure
+| State type | tree_index | sub_index |
+|---|---|---|
+| Account basic_data | 0 | 0 |
+| Account code_hash | 0 | 1 |
+| Header storage slots (0-63) | 0 | 64 + slot |
+| Code chunks | (128 + chunk_id) / 256 | (128 + chunk_id) % 256 |
+| Main storage slots (>= 64) | (2^248 + slot) / 256 | (2^248 + slot) % 256 |
 
-The binary trie uses a unified key space for all state types:
+The basic_data leaf packs version (1B), code_size (3B), nonce (8B), balance (16B) into 32 bytes.
 
-| State type | Tree key | Notes |
-|-----------|----------|-------|
-| Account basic data | `tree_key(address, 0)` | Packed: nonce, balance, code_size |
-| Account code hash | `tree_key(address, 1)` | keccak256 of bytecode |
-| Code chunks | `tree_key(address, 2+i)` | 31-byte chunks of bytecode |
-| Storage slots | `tree_key(address, 64+slot)` | Individual storage values |
+## State root handling
 
-All state lives in one tree. No separate account trie and per-account storage tries.
-This simplifies merkleization (one root) and proof generation (one proof path per key).
+The binary trie produces a different state root than the MPT. Block headers on the
+canonical chain contain MPT state roots. This branch:
 
-Node types:
-- **InternalNode** (73 bytes): Two children (left/right) + cached hash
-- **StemNode** (~450 bytes avg): 31-byte stem + up to 256 leaf values in a sparse map
+- Skips `state_root == header.state_root` validation
+- Computes and logs the binary trie root per block
+- Equivalence between binary trie and MPT roots is proven externally by the zkVM
+  proving layer (recursive verification, not direct mathematical proof)
 
-## Binary Trie vs MPT
+## NodeStore: trie node persistence
 
-| Dimension | Binary Trie | MPT |
-|-----------|------------|-----|
-| Tree structure | Binary (2 children) | 16-way branching |
-| Hash function | Blake3 | Keccak256 |
-| Key space | Unified (accounts + storage + code) | Separate account + storage tries |
-| Proof size | ~25 sibling hashes (~800 bytes) | ~8-10 RLP nodes (1-4 KB) |
-| Merkleization | Single-threaded, O(depth) per key | 16-worker parallel |
-| ZK-friendliness | Binary + blake3 (circuit-friendly) | 16-way + keccak (expensive) |
-| Execution reads | Not used (FKV) | Not used (FKV) |
-| Node size | InternalNode 73B, StemNode ~450B | Branch up to 532B |
+The `NodeStore` replaces `TrieLayerCache` for managing in-memory trie nodes:
+
+| `TrieLayerCache` (MPT) | `NodeStore` (Binary Trie) |
+|---|---|
+| Content-addressed nodes (keyed by hash) | Stable NodeIds (u64, monotonically allocated) |
+| Layers chained by state root hash | Three tiers: dirty, warm, clean (LRU) |
+| Bloom filter for layer lookup | Direct HashMap lookup by NodeId |
+| Background flush via trie worker thread | `flush_if_needed()` called inline after block |
+
+Flush cycle (every ~128 blocks):
+1. Write dirty nodes + metadata to `BINARY_TRIE_NODES` via atomic `WriteBatch`
+2. Rotate: dirty -> warm -> evict old warm to clean LRU
+3. Clean LRU evicts to disk on capacity
