@@ -64,18 +64,16 @@ overlapping merkleization with execution. The only change is the merkleizer's in
 (MPT 16-shard parallel -> binary trie single-tree incremental). Both `BinaryTrieState`
 and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 
-## What was removed
+## What was replaced
 
-| MPT component | Replacement |
+| MPT component | Binary trie replacement |
 |---|---|
 | `ACCOUNT_TRIE_NODES` table | `BINARY_TRIE_NODES` CF |
-| `STORAGE_TRIE_NODES` table | Not needed (unified tree, no per-account storage tries) |
-| `TrieLayerCache` (in-memory trie node diff layers) | `NodeStore` dirty/warm/clean tiers (same role, different node format) |
-| 16-shard parallel MPT merkleization | Binary trie `apply_account_update` (single tree, incremental) |
-| `handle_merkleization` / `handle_merkleization_bal` | Replaced by `Store.handle_merkleization()` which applies updates via `BinaryTrieState.apply_account_update()`. |
-| `BranchNode[16]` root assembly | Binary trie `state_root()` |
-| MPT body of `apply_account_updates_batch()` | Binary trie body. Same function name, same call sites. |
-| `AccountUpdatesList` MPT fields (`state_trie_hash`, `state_updates`, `storage_updates`) | Replaced with `code_updates` + `flat_updates`. MPT fields moved to `MptUpdatesList` for EF tests. |
+| `STORAGE_TRIE_NODES` table | Removed (unified tree, no per-account storage tries) |
+| `TrieLayerCache` | `NodeStore` dirty/warm/clean tiers (same role, different node format) |
+| `handle_merkleization` / `handle_merkleization_bal` | `Store::handle_merkleization()` -- applies updates via `BinaryTrieState.apply_account_update()`, computes root via `state_root()` |
+| `apply_account_updates_batch()` body | Calls `handle_merkleization()` + `flush_binary_trie_if_needed()`. Same function name, same call sites. |
+| `AccountUpdatesList` fields | MPT fields (`state_trie_hash`, `state_updates`, `storage_updates`) replaced with `code_updates` + `flat_updates`. MPT fields moved to `MptUpdatesList` for EF tests. |
 | RLP node encoding + keccak hashing | Raw concatenation + blake3 |
 
 ## What was NOT changed
