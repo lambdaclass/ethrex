@@ -1,4 +1,5 @@
-use ethrex_common::{H160, types::Fork, types::Fork::*};
+use ethrex_common::{H160, H256, types::Fork, types::Fork::*};
+use std::sync::OnceLock;
 
 pub use ethrex_common::constants::SYSTEM_ADDRESS;
 
@@ -71,3 +72,30 @@ pub const PRAGUE_SYSTEM_CONTRACTS: [SystemContract; 2] = [
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
     CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
 ];
+
+/// Bytecode for the modexp EVMified precompile (EIP-8200).
+/// Compiled from Solidity by the eth-act/evmification project.
+pub const MODEXP_EVM_BYTECODE: &[u8] = include_bytes!("bytecode/modexp_deployed.bin");
+
+/// Address of the modexp precompile (0x05), which becomes an EVMified
+/// contract at Osaka.
+pub const MODEXP_EVMIFIED_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x05,
+]);
+
+/// Returns the precomputed Code and code_hash for the modexp EVMified bytecode.
+/// Computed once (keccak + jump target scan) then cached for all subsequent blocks.
+pub fn modexp_evmified_code() -> &'static (H256, ethrex_common::types::Code) {
+    static CACHE: OnceLock<(H256, ethrex_common::types::Code)> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        use bytes::Bytes;
+        use ethrex_common::types::Code;
+        use ethrex_common::utils::keccak;
+
+        let bytecode = Bytes::from_static(MODEXP_EVM_BYTECODE);
+        let code_hash = keccak(&bytecode);
+        let code = Code::from_bytecode_unchecked(bytecode, code_hash);
+        (code_hash, code)
+    })
+}

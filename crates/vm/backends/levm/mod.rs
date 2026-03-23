@@ -2062,6 +2062,27 @@ impl LEVM {
             //eip 2935: stores parent block hash in system contract
             Self::process_block_hash_history(block_header, db, vm_type, crypto)?;
         }
+
+        if fork >= Fork::Osaka {
+            // EIP-8200: deploy EVM bytecode at EVMified precompile addresses
+            Self::deploy_evmified_precompiles(db)?;
+        }
+
+        Ok(())
+    }
+
+    /// EIP-8200: Deploy EVM bytecode at precompile addresses that are being EVMified.
+    /// At Osaka, this replaces the modexp precompile at 0x05 with Solidity bytecode.
+    fn deploy_evmified_precompiles(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        use crate::system_contracts::{MODEXP_EVMIFIED_ADDRESS, modexp_evmified_code};
+
+        let (code_hash, code) = modexp_evmified_code();
+
+        db.codes.entry(*code_hash).or_insert_with(|| code.clone());
+
+        let account = db.get_account_mut(MODEXP_EVMIFIED_ADDRESS)?;
+        account.info.code_hash = *code_hash;
+
         Ok(())
     }
 }
