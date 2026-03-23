@@ -1924,11 +1924,27 @@ impl Store {
             .map(|s| s.nonce))
     }
 
-    /// Applies account updates to the binary trie and flushes if needed.
+    /// Applies account updates to the binary trie, computes state root, and flushes if needed.
+    ///
+    /// Used by non-pipeline paths (`add_block`, `add_blocks_in_batch`).
+    /// The pipeline path calls `handle_merkleization` + `flush_binary_trie_if_needed` separately.
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
         block_number: u64,
+        account_updates: &[AccountUpdate],
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let result = self.handle_merkleization(account_updates)?;
+        self.flush_binary_trie_if_needed(block_number, block_hash)?;
+        Ok(result)
+    }
+
+    /// Apply account updates to the binary trie and compute the state root.
+    ///
+    /// Called from the merkleizer pipeline thread during pipelined block execution.
+    /// Does NOT flush -- call `flush_binary_trie_if_needed` separately after storing.
+    pub fn handle_merkleization(
+        &self,
         account_updates: &[AccountUpdate],
     ) -> Result<AccountUpdatesList, StoreError> {
         let bts = self
@@ -1950,13 +1966,7 @@ impl Store {
             }
         }
         let root = state.state_root();
-        tracing::debug!(
-            "Binary trie root after block {block_number}: {}",
-            ethrex_common::H256::from(root)
-        );
-        state
-            .flush_if_needed(block_number, block_hash)
-            .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
+        tracing::debug!("Binary trie root: {}", ethrex_common::H256::from(root));
         Ok(AccountUpdatesList {
             code_updates,
             flat_updates: account_updates.to_vec(),

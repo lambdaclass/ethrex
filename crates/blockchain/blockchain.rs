@@ -480,7 +480,7 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
-                let binary_trie_state = self.storage.binary_trie_state();
+                let storage_ref = &self.storage;
                 let merkleizer_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
@@ -505,37 +505,9 @@ impl Blockchain {
                         // Apply trie updates in-thread (pipelined with execution) unless
                         // witness pre-computation is enabled, which needs the pre-state trie.
                         let (account_updates_list, trie_done) = if !precompute_witnesses {
-                            if let Some(bts) = binary_trie_state {
-                                let mut state = bts.write().map_err(|_| {
-                                    ChainError::Custom("binary trie lock poisoned".to_string())
-                                })?;
-                                let mut code_updates = Vec::new();
-                                for update in &flat_updates {
-                                    state.apply_account_update(update).map_err(|e| {
-                                        ChainError::Custom(format!("binary trie update error: {e}"))
-                                    })?;
-                                    if let Some(info) = &update.info {
-                                        if let Some(code) = &update.code {
-                                            code_updates.push((info.code_hash, code.clone()));
-                                        }
-                                    }
-                                }
-                                let root = state.state_root();
-                                debug!(
-                                    "Binary trie root (pipeline): {}",
-                                    ethrex_common::H256::from(root)
-                                );
-                                drop(state);
-                                (
-                                    AccountUpdatesList {
-                                        code_updates,
-                                        flat_updates,
-                                    },
-                                    true,
-                                )
-                            } else {
-                                // No binary trie configured; fall back to accumulate-only.
-                                (AccountUpdatesList::from_updates(&flat_updates), false)
+                            match storage_ref.handle_merkleization(&flat_updates) {
+                                Ok(list) => (list, true),
+                                Err(_) => (AccountUpdatesList::from_updates(&flat_updates), false),
                             }
                         } else {
                             // precompute_witnesses=true: skip in-thread trie apply so the
