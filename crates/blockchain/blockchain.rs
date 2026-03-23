@@ -61,6 +61,7 @@ use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
+use ethrex_binary_trie::state::BinaryTrieState;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -88,7 +89,6 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
-use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -348,10 +348,7 @@ impl Blockchain {
 
     /// Like `default_with_store` but also populates the binary trie and FKV from genesis.
     /// Use this in tests that execute blocks.
-    pub fn default_with_genesis(
-        store: Store,
-        genesis: &ethrex_common::types::Genesis,
-    ) -> Self {
+    pub fn default_with_genesis(store: Store, genesis: &ethrex_common::types::Genesis) -> Self {
         let mut state = BinaryTrieState::new();
         state
             .apply_genesis(&genesis.alloc)
@@ -375,10 +372,7 @@ impl Blockchain {
     }
 
     /// Create a `StoreVmDatabase` that reads state as of `parent_hash`.
-    fn vm_db_for_block(
-        &self,
-        parent_hash: H256,
-    ) -> Result<StoreVmDatabase, EvmError> {
+    fn vm_db_for_block(&self, parent_hash: H256) -> Result<StoreVmDatabase, EvmError> {
         let header = self
             .storage
             .get_block_header_by_hash(parent_hash)
@@ -420,7 +414,10 @@ impl Blockchain {
                 .map_err(|e| ChainError::Custom(format!("binary trie update error: {e}")))?;
         }
         let root = state.state_root();
-        debug!("Binary trie root after block {block_number}: {}", H256::from(root));
+        debug!(
+            "Binary trie root after block {block_number}: {}",
+            H256::from(root)
+        );
         // Note: binary trie state roots will not match the MPT state roots in block
         // headers downloaded from the network. State root validation is intentionally
         // skipped until the network transitions to binary trie state roots.
@@ -612,8 +609,7 @@ impl Blockchain {
                             FxHashMap::default();
                         let mut code_updates: Vec<(H256, Code)> = Vec::new();
                         for updates in rx {
-                            let current_length =
-                                queue_length_ref.fetch_sub(1, Ordering::Acquire);
+                            let current_length = queue_length_ref.fetch_sub(1, Ordering::Acquire);
                             *max_queue_length_ref = current_length.max(*max_queue_length_ref);
                             for update in updates {
                                 if let Some(info) = &update.info {
@@ -631,8 +627,7 @@ impl Blockchain {
                                 }
                             }
                         }
-                        let accumulated: Vec<AccountUpdate> =
-                            all_updates.into_values().collect();
+                        let accumulated: Vec<AccountUpdate> = all_updates.into_values().collect();
                         let accumulator_end_instant = Instant::now();
                         Ok((accumulated, code_updates, accumulator_end_instant))
                     })
@@ -760,8 +755,7 @@ impl Blockchain {
 
         // Accumulator for raw account updates.
         // Always populated: needed for binary trie updates and optionally for witness generation.
-        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-            Some(FxHashMap::default());
+        let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> = Some(FxHashMap::default());
 
         for updates in rx {
             let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -941,8 +935,7 @@ impl Blockchain {
         }
 
         // Extract raw account updates for binary trie and optional witness generation.
-        let accumulated_updates =
-            Some(all_updates.values().cloned().collect::<Vec<_>>());
+        let accumulated_updates = Some(all_updates.values().cloned().collect::<Vec<_>>());
 
         // Extract code updates and build work items with pre-hashed addresses
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
@@ -1271,8 +1264,10 @@ impl Blockchain {
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
 
-            let vm_db: DynVmDatabase =
-                Box::new(self.vm_db_for_block(parent_header.hash()).map_err(ChainError::EvmError)?);
+            let vm_db: DynVmDatabase = Box::new(
+                self.vm_db_for_block(parent_header.hash())
+                    .map_err(ChainError::EvmError)?,
+            );
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
             let mut vm = match &self.options.r#type {
@@ -1297,14 +1292,17 @@ impl Blockchain {
             };
 
             // Re-execute the block with the logger to record state accesses.
-            vm.execute_block(block)
-                .map_err(|e| ChainError::WitnessGeneration(format!("block re-execution failed: {e}")))?;
+            vm.execute_block(block).map_err(|e| {
+                ChainError::WitnessGeneration(format!("block re-execution failed: {e}"))
+            })?;
 
             // Merge accessed accounts and storage slots.
             let state_accessed = logger
                 .state_accessed
                 .lock()
-                .map_err(|_| ChainError::WitnessGeneration("Failed to lock state_accessed".to_string()))?
+                .map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock state_accessed".to_string())
+                })?
                 .clone();
             for (addr, keys) in state_accessed {
                 let entry = accessed_accounts.entry(addr).or_default();
@@ -1315,7 +1313,9 @@ impl Blockchain {
             let code_accessed = logger
                 .code_accessed
                 .lock()
-                .map_err(|_| ChainError::WitnessGeneration("Failed to lock code_accessed".to_string()))?
+                .map_err(|_| {
+                    ChainError::WitnessGeneration("Failed to lock code_accessed".to_string())
+                })?
                 .clone();
             for code_hash in code_accessed {
                 accessed_codes.insert(code_hash);
@@ -1325,7 +1325,11 @@ impl Blockchain {
             let block_hashes = logger
                 .block_hashes_accessed
                 .lock()
-                .map_err(|_| ChainError::WitnessGeneration("Failed to lock block_hashes_accessed".to_string()))?
+                .map_err(|_| {
+                    ChainError::WitnessGeneration(
+                        "Failed to lock block_hashes_accessed".to_string(),
+                    )
+                })?
                 .clone();
             accessed_block_hashes.extend(block_hashes);
         }
@@ -1363,8 +1367,7 @@ impl Blockchain {
         ))
     }
 
-    #[allow(dead_code)]
-    async fn generate_witness_for_blocks_with_fee_configs_mpt(
+    pub async fn generate_witness_for_blocks_with_fee_configs_mpt(
         &self,
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
@@ -1416,8 +1419,10 @@ impl Blockchain {
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
 
-            let vm_db: DynVmDatabase =
-                Box::new(self.vm_db_for_block(parent_header.hash()).map_err(ChainError::EvmError)?);
+            let vm_db: DynVmDatabase = Box::new(
+                self.vm_db_for_block(parent_header.hash())
+                    .map_err(ChainError::EvmError)?,
+            );
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
@@ -1547,16 +1552,21 @@ impl Blockchain {
             let code_updates: Vec<(H256, Code)> = account_updates
                 .iter()
                 .filter_map(|u| {
-                    u.info.as_ref().and_then(|info| {
-                        u.code.as_ref().map(|code| (info.code_hash, code.clone()))
-                    })
+                    u.info
+                        .as_ref()
+                        .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
                 })
                 .collect();
 
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), code_updates, account_updates.clone(), execution_result)?;
+            self.store_block(
+                block.clone(),
+                code_updates,
+                account_updates.clone(),
+                execution_result,
+            )?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1713,7 +1723,9 @@ impl Blockchain {
         let accessed_accounts = logger
             .state_accessed
             .lock()
-            .map_err(|_| ChainError::WitnessGeneration("Failed to lock state_accessed".to_string()))?
+            .map_err(|_| {
+                ChainError::WitnessGeneration("Failed to lock state_accessed".to_string())
+            })?
             .clone();
         let code_hashes = logger
             .code_accessed
@@ -1723,7 +1735,9 @@ impl Blockchain {
         let block_hashes_accessed = logger
             .block_hashes_accessed
             .lock()
-            .map_err(|_| ChainError::WitnessGeneration("Failed to lock block_hashes_accessed".to_string()))?
+            .map_err(|_| {
+                ChainError::WitnessGeneration("Failed to lock block_hashes_accessed".to_string())
+            })?
             .clone();
 
         let accessed_codes: HashSet<H256> = code_hashes.into_iter().collect();
@@ -2046,9 +2060,9 @@ impl Blockchain {
         let code_updates: Vec<(H256, Code)> = updates
             .iter()
             .filter_map(|u| {
-                u.info.as_ref().and_then(|info| {
-                    u.code.as_ref().map(|code| (info.code_hash, code.clone()))
-                })
+                u.info
+                    .as_ref()
+                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
             })
             .collect();
 
@@ -2123,8 +2137,7 @@ impl Blockchain {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
-            let vm_db: DynVmDatabase =
-                Box::new(self.vm_db_for_block(parent_header.hash())?);
+            let vm_db: DynVmDatabase = Box::new(self.vm_db_for_block(parent_header.hash())?);
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
@@ -2174,8 +2187,9 @@ impl Blockchain {
                 parent_header,
                 logger,
             )?;
-            let json_bytes = serde_json::to_vec(&witness)
-                .map_err(|e| ChainError::WitnessGeneration(format!("Failed to serialize witness: {e}")))?;
+            let json_bytes = serde_json::to_vec(&witness).map_err(|e| {
+                ChainError::WitnessGeneration(format!("Failed to serialize witness: {e}"))
+            })?;
             self.storage
                 .store_witness_bytes(block_hash, block_number, json_bytes)?;
         }
@@ -2549,9 +2563,9 @@ impl Blockchain {
         let code_updates: Vec<(H256, Code)> = account_updates
             .iter()
             .filter_map(|u| {
-                u.info.as_ref().and_then(|info| {
-                    u.code.as_ref().map(|code| (info.code_hash, code.clone()))
-                })
+                u.info
+                    .as_ref()
+                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
             })
             .collect();
 

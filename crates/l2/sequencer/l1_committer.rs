@@ -805,17 +805,18 @@ impl L1Committer {
                 // the first block of the batch. Therefore, we need to apply the
                 // account updates of each block as we go, to be able to continue
                 // re-executing the next blocks in the batch.
-                let account_updates_list = checkpoint_store
-                    .apply_account_updates_batch(
-                        potential_batch_block.header.parent_hash,
-                        &account_updates,
-                    )?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "no account updated".to_owned(),
-                    ))?;
+                let code_updates: Vec<_> = account_updates
+                    .iter()
+                    .filter_map(|u| {
+                        u.info.as_ref().and_then(|info| {
+                            u.code.as_ref().map(|code| (info.code_hash, code.clone()))
+                        })
+                    })
+                    .collect();
                 checkpoint_blockchain.store_block(
                     potential_batch_block.clone(),
-                    account_updates_list,
+                    code_updates,
+                    account_updates.clone(),
                     BlockExecutionResult {
                         receipts,
                         requests: vec![],
@@ -1050,7 +1051,7 @@ impl L1Committer {
             self.generate_one_time_checkpoint(batch.number).await?;
 
         let result = one_time_checkpoint_blockchain
-            .generate_witness_for_blocks_with_fee_configs(&blocks, Some(&fee_configs))
+            .generate_witness_for_blocks_with_fee_configs_mpt(&blocks, Some(&fee_configs))
             .await
             .map_err(CommitterError::FailedToGenerateBatchWitness);
 

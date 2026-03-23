@@ -274,7 +274,7 @@ impl BlockReplayer {
                 block.header.number, execution_result.block_gas_used, block.header.gas_used
             )
         })?;
-        validate_receipts_root(&block.header, &execution_result.receipts)
+        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)
             .with_context(|| format!("receipts root mismatch at block {}", block.header.number))?;
 
         // Collect state changes and apply them to the binary trie.

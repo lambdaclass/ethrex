@@ -16,6 +16,7 @@ use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountInfo, AccountUpdate, Code, GenesisAccount},
 };
+use ethrex_crypto::NativeCrypto;
 
 fn addr(b: u8) -> Address {
     let mut a = [0u8; 20];
@@ -126,7 +127,7 @@ fn test_contract_deployment_lifecycle() {
     let bytecode = Bytes::from(vec![
         0x60u8, 0x00, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
     ]); // PUSH 0, PUSH 0, MSTORE, PUSH 32, PUSH 0, RETURN
-    let code = Code::from_bytecode(bytecode.clone());
+    let code = Code::from_bytecode(bytecode.clone(), &NativeCrypto);
     let code_hash = code.hash;
 
     // Deployer update: nonce++, balance decreases.

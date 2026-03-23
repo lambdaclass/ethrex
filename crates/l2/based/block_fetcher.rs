@@ -277,6 +277,7 @@ impl BlockFetcher {
             latest_hash_on_batch,
             latest_hash_on_batch,
             latest_hash_on_batch,
+            &self.blockchain.binary_trie_state,
         )
         .await?;
 

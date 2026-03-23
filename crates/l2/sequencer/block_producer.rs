@@ -233,8 +233,20 @@ impl BlockProducer {
         let block_number = block.header.number;
         let block_hash = block.hash();
         self.store_fee_config_by_block(block.header.number).await?;
-        self.blockchain
-            .store_block(block, account_updates_list, execution_result)?;
+        let code_updates: Vec<_> = account_updates
+            .iter()
+            .filter_map(|u| {
+                u.info
+                    .as_ref()
+                    .and_then(|info| u.code.as_ref().map(|code| (info.code_hash, code.clone())))
+            })
+            .collect();
+        self.blockchain.store_block(
+            block,
+            code_updates,
+            account_updates.clone(),
+            execution_result,
+        )?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count
@@ -246,7 +258,14 @@ impl BlockProducer {
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+        apply_fork_choice(
+            &self.store,
+            block_hash,
+            block_hash,
+            block_hash,
+            &self.blockchain.binary_trie_state,
+        )
+        .await?;
 
         metrics!(
             METRICS_BLOCKS.set_block_number(block_number);

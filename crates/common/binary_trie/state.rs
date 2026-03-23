@@ -1395,6 +1395,7 @@ mod tests {
         types::{AccountInfo, AccountUpdate, Code, GenesisAccount},
         utils::keccak,
     };
+    use ethrex_crypto::NativeCrypto;
 
     use super::BinaryTrieState;
 
@@ -1541,7 +1542,7 @@ mod tests {
         state.apply_genesis(&accounts).unwrap();
 
         let bytecode = Bytes::from(vec![0x5Bu8; 62]); // 62 JUMPDEST bytes → 2 chunks
-        let code = Code::from_bytecode(bytecode.clone());
+        let code = Code::from_bytecode(bytecode.clone(), &NativeCrypto);
         let code_hash = code.hash;
 
         let mut update = AccountUpdate::new(addr);
@@ -1783,7 +1784,7 @@ mod tests {
 
         // Replace with 31-byte code (1 chunk).
         let small_code = Bytes::from(vec![0x00u8; 31]);
-        let new_code = Code::from_bytecode(small_code.clone());
+        let new_code = Code::from_bytecode(small_code.clone(), &NativeCrypto);
         let mut update = AccountUpdate::new(addr);
         update.info = Some(AccountInfo {
             code_hash: new_code.hash,
