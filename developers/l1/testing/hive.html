@@ -249,7 +249,7 @@
 </li>
 <li><strong><a href="https://github.com/ethereum/execution-spec-tests">ethereum/execution-spec-tests</a></strong> - Test fixtures and vectors
 <ul>
-<li>Current version: <code>bal@v5.4.0</code> (Amsterdam fork support)</li>
+<li>Current version: <code>bal@v5.5.1</code> (Amsterdam fork support)</li>
 </ul>
 </li>
 <li><strong><a href="https://github.com/ethereum/execution-specs">ethereum/execution-specs</a></strong> - Fork specifications
@@ -429,7 +429,7 @@ HIVE_BRANCH ?= master
 <p>The workflow uses fork-specific fixtures to ensure comprehensive test coverage:</p>
 <pre><code class="language-yaml"># Amsterdam tests use fixtures_bal (includes BAL-specific tests)
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.4.0/fixtures_bal.tar.gz"
+  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz"
   FLAGS+=" --sim.buildarg branch=devnets/bal/3"
 else
   # Other forks use fixtures_develop (comprehensive coverage including static tests)
@@ -447,7 +447,7 @@ fi
 https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
 
 # .fixtures_url_amsterdam
-https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.4.0/fixtures_bal.tar.gz
+https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz
 </code></pre>
 <p><strong>Note</strong>: The CI workflow uses <code>fixtures_bal</code> with <code>branch=devnets/bal/3</code> for Amsterdam tests, and <code>fixtures_develop</code> with <code>branch=forks/osaka</code> for other forks.</p>
 <h2 id="updating-repository-versions"><a class="header" href="#updating-repository-versions">Updating Repository Versions</a></h2>
