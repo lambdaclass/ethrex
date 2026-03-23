@@ -73,7 +73,7 @@ and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 | `TrieLayerCache` | `NodeStore` dirty/warm/clean tiers (same role, different node format) |
 | `handle_merkleization` / `handle_merkleization_bal` | `Store::handle_merkleization()` -- applies updates via `BinaryTrieState.apply_account_update()`, computes root via `state_root()` |
 | `apply_account_updates_batch()` body | Calls `handle_merkleization()` + `flush_binary_trie_if_needed()`. Same function name, same call sites. |
-| `AccountUpdatesList` fields | MPT fields (`state_trie_hash`, `state_updates`, `storage_updates`) replaced with `code_updates` + `flat_updates`. MPT fields moved to `MptUpdatesList` for EF tests. |
+| `AccountUpdatesList` fields | MPT fields (`state_trie_hash`, `state_updates`, `storage_updates`) replaced with `code_updates` + `flat_updates`. |
 | RLP node encoding + keccak hashing | Raw concatenation + blake3 |
 
 ## What was NOT changed
