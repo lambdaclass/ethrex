@@ -14,12 +14,13 @@ are unchanged. The binary trie is a drop-in replacement for the MPT's merkleizat
 Pipeline (3 concurrent threads):
   [warmer]     prefetches state into cache
   [executor]   runs LEVM, sends Vec<AccountUpdate> batches via channel -->
-  [merkleizer] receives batches, applies to MPT (16-shard parallel),
+  [merkleizer] calls handle_merkleization() -- applies to MPT (16-shard parallel),
                computes state root, returns AccountUpdatesList
 
 Non-pipeline (add_block):
   execute_block() -> updates
   Store.apply_account_updates_batch(&updates) -> AccountUpdatesList
+    (internally calls handle_merkleization + flush)
 
 Both paths then:
   store_block(block, account_updates_list, result)
@@ -38,12 +39,13 @@ Reads:
 Pipeline (3 concurrent threads):                                    [SAME STRUCTURE]
   [warmer]     prefetches state into cache                          [UNCHANGED]
   [executor]   runs LEVM, sends Vec<AccountUpdate> batches -->      [UNCHANGED]
-  [merkleizer] receives batches, applies to binary trie,
-               computes state root, returns AccountUpdatesList
+  [merkleizer] calls handle_merkleization() -- applies to binary    [SAME FUNCTION]
+               trie, computes state root, returns AccountUpdatesList
 
 Non-pipeline (add_block):                                           [SAME STRUCTURE]
   execute_block() -> updates
   Store.apply_account_updates_batch(&updates) -> AccountUpdatesList [SAME CALL SITE]
+    (internally calls handle_merkleization + flush)
 
 Both paths then:
   store_block(block, account_updates_list, result)                  [SAME CALL SITE]
