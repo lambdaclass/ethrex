@@ -375,7 +375,13 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
                 .p2p_addr
                 .as_deref()
                 .map(|a| a.parse().expect("Failed to parse p2p address"))
-                .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+                .unwrap_or_else(|| {
+                    if external.is_ipv6() {
+                        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+                    } else {
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                    }
+                });
             (bind, external)
         }
         (Some(addr), None) => {
@@ -396,7 +402,6 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         external_addr,
         tcp_port,
         udp_port,
-        public_key: local_public_key,
     };
 
     // TODO Find a proper place to show node information

@@ -34,7 +34,6 @@ pub struct NetworkConfig {
     pub external_addr: IpAddr,
     pub tcp_port: u16,
     pub udp_port: u16,
-    pub public_key: H512,
 }
 
 impl NetworkConfig {
@@ -56,7 +55,6 @@ impl NetworkConfig {
             external_addr: node.ip,
             tcp_port: node.tcp_port,
             udp_port: node.udp_port,
-            public_key: node.public_key,
         }
     }
 }

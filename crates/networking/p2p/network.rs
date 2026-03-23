@@ -183,6 +183,7 @@ pub async fn start_network(
 
 pub(crate) async fn serve_p2p_requests(context: P2PContext) {
     let tcp_addr = context.network_config.bind_tcp_addr();
+    let external_tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {
@@ -199,7 +200,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        if tcp_addr == peer_addr {
+        if external_tcp_addr == peer_addr {
             // Ignore connections from self
             continue;
         }
