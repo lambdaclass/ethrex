@@ -346,7 +346,7 @@ impl Blockchain {
         }
     }
 
-    /// Like `default_with_store` but also populates the binary trie from genesis.
+    /// Like `default_with_store` but also populates the binary trie and FKV from genesis.
     /// Use this in tests that execute blocks.
     pub fn default_with_genesis(
         store: Store,
@@ -360,6 +360,10 @@ impl Blockchain {
         // at the genesis parent hash fall through to the base correctly.
         let genesis_hash = genesis.get_block().hash();
         state.set_diff_base(genesis_hash, 0);
+        // Populate FKV so reads at genesis state don't fall through to an empty table.
+        store
+            .populate_fkv_from_genesis(&genesis.alloc)
+            .expect("failed to populate FKV from genesis");
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
@@ -1549,7 +1553,7 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), code_updates, execution_result)?;
+            self.store_block(block.clone(), code_updates, account_updates.clone(), execution_result)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -2004,6 +2008,7 @@ impl Blockchain {
         &self,
         block: Block,
         code_updates: Vec<(H256, Code)>,
+        flat_updates: Vec<AccountUpdate>,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
         let update_batch = UpdateBatch {
@@ -2013,6 +2018,7 @@ impl Blockchain {
             blocks: vec![block],
             code_updates,
             batch_mode: false,
+            flat_updates,
         };
 
         self.storage
@@ -2051,7 +2057,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, code_updates, res);
+        let result = self.store_block(block, code_updates, updates, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -2179,7 +2185,7 @@ impl Blockchain {
             block.header.parent_hash,
         )?;
 
-        let result = self.store_block(block, code_updates, res);
+        let result = self.store_block(block, code_updates, accumulated_updates, res);
 
         let stored = Instant::now();
 
@@ -2546,6 +2552,7 @@ impl Blockchain {
             })
             .collect();
 
+        let flat_updates = account_updates;
         let update_batch = UpdateBatch {
             account_updates: vec![],
             storage_updates: vec![],
@@ -2553,6 +2560,7 @@ impl Blockchain {
             receipts: all_receipts,
             code_updates,
             batch_mode: true,
+            flat_updates,
         };
 
         self.storage

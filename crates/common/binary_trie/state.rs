@@ -587,6 +587,42 @@ impl BinaryTrieState {
         None
     }
 
+    // ── Diff-layer-only reads (FKV fallback path) ─────────────────────
+
+    /// Look up account in diff layers only, without falling through to the base trie.
+    ///
+    /// Returns:
+    /// - `Some(Some(state))` — found in a diff layer.
+    /// - `Some(None)` — explicitly deleted in a diff layer.
+    /// - `None` — not in any diff layer; caller should fall through to FKV.
+    pub fn diff_lookup_account(&self, address: &Address, block_hash: H256) -> Option<Option<AccountState>> {
+        if block_hash.is_zero() {
+            return None;
+        }
+        match self.diff_tree.get_account(address, block_hash) {
+            DiffLookup::Found(state) => Some(Some(state)),
+            DiffLookup::Deleted => Some(None),
+            DiffLookup::NotModified | DiffLookup::NotInMemory => None,
+        }
+    }
+
+    /// Look up storage in diff layers only, without falling through to the base trie.
+    ///
+    /// Returns:
+    /// - `Some(Some(val))` — found in a diff layer.
+    /// - `Some(None)` — explicitly zeroed/deleted in a diff layer.
+    /// - `None` — not in any diff layer; caller should fall through to FKV.
+    pub fn diff_lookup_storage(&self, address: &Address, key: H256, block_hash: H256) -> Option<Option<U256>> {
+        if block_hash.is_zero() {
+            return None;
+        }
+        match self.diff_tree.get_storage(address, key, block_hash) {
+            DiffLookup::Found(val) => Some(Some(val)),
+            DiffLookup::Deleted => Some(None),
+            DiffLookup::NotModified | DiffLookup::NotInMemory => None,
+        }
+    }
+
     // ── Diff-layer-aware reads (for historical state) ─────────────────
 
     /// Read account state at a specific block (identified by block hash).

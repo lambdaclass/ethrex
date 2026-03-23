@@ -536,6 +536,17 @@ pub async fn init_l1(
     // Wire the binary trie into the store so Store read methods delegate to it.
     store.set_binary_trie_state(binary_trie_state.clone());
 
+    // Populate FKV tables from genesis if not already done.
+    if store
+        .fkv_account_table_is_empty()
+        .map_err(|e| eyre::eyre!("Failed to check FKV state: {e}"))?
+    {
+        info!("Populating FKV tables from genesis");
+        store
+            .populate_fkv_from_genesis(&genesis.alloc)
+            .map_err(|e| eyre::eyre!("Failed to populate FKV from genesis: {e}"))?;
+    }
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
