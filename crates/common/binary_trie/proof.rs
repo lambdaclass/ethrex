@@ -543,7 +543,11 @@ mod tests {
         let root = merkelize(&mut trie);
 
         let proof1 = trie.get_proof(k1).unwrap();
-        assert!(proof1.stem_depth > 7, "should be deep: {}", proof1.stem_depth);
+        assert!(
+            proof1.stem_depth > 7,
+            "should be deep: {}",
+            proof1.stem_depth
+        );
         assert!(proof1.verify(root, k1));
 
         let proof2 = trie.get_proof(k2).unwrap();

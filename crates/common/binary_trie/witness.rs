@@ -83,10 +83,7 @@ fn serialize_hash<S: Serializer>(bytes: &[u8; 32], s: S) -> Result<S::Ok, S::Err
     s.serialize_str(&format!("0x{}", hex::encode(bytes)))
 }
 
-fn serialize_optional_hash<S: Serializer>(
-    opt: &Option<[u8; 32]>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
+fn serialize_optional_hash<S: Serializer>(opt: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error> {
     match opt {
         Some(bytes) => s.serialize_some(&format!("0x{}", hex::encode(bytes))),
         None => s.serialize_none(),

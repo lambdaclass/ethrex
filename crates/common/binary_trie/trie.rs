@@ -47,11 +47,7 @@ impl BinaryTrie {
 
     /// Look up a value using a specific root and disk-only reads.
     /// Used for reading base (flushed) state, bypassing dirty/warm caches.
-    pub fn get_from_base(
-        &self,
-        base_root: Option<NodeId>,
-        key: [u8; 32],
-    ) -> Option<[u8; 32]> {
+    pub fn get_from_base(&self, base_root: Option<NodeId>, key: [u8; 32]) -> Option<[u8; 32]> {
         let (stem, sub_index) = split_key(&key);
         get_node_from_base(&self.store, base_root, &stem, sub_index)
     }
@@ -73,13 +69,17 @@ impl BinaryTrie {
     }
 
     /// Write all dirty/freed trie nodes and metadata into a caller-supplied
-    /// `WriteBatch`. Clears the dirty and freed sets after writing.
+    /// Write dirty and freed nodes to the given CF in a caller-supplied `WriteBatch`.
     ///
     /// Used by `BinaryTrieState::flush` to combine trie, code_store, and
     /// storage_keys into a single atomic RocksDB write.
     #[cfg(feature = "rocksdb")]
-    pub fn flush_to_batch(&mut self, batch: &mut rocksdb::WriteBatch) {
-        self.store.flush_to_batch(batch, self.root);
+    pub fn flush_to_batch(
+        &mut self,
+        batch: &mut rocksdb::WriteBatch,
+        nodes_cf: &impl rocksdb::AsColumnFamilyRef,
+    ) {
+        self.store.flush_to_batch(batch, nodes_cf, self.root);
     }
 }
 

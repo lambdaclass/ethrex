@@ -16,23 +16,17 @@ use crate::node::{Node, NodeId};
 /// gives roughly 2M * ~250 bytes avg ≈ ~500 MB.
 const DEFAULT_CLEAN_CACHE_CAP: usize = 2_000_000;
 
-// Key prefixes for RocksDB storage
-#[cfg(any(test, feature = "rocksdb"))]
-const NODE_PREFIX: u8 = 0x01;
+// Meta keys for RocksDB storage (stored alongside nodes in BINARY_TRIE_NODES CF).
+// The 0xFF prefix ensures they don't collide with u64 node IDs (8 bytes, no prefix).
 #[cfg(feature = "rocksdb")]
-const META_PREFIX: u8 = 0xFF;
+const META_ROOT: &[u8] = &[0xFF, b'R'];
 #[cfg(feature = "rocksdb")]
-const META_ROOT: &[u8] = &[META_PREFIX, b'R'];
-#[cfg(feature = "rocksdb")]
-const META_NEXT_ID: &[u8] = &[META_PREFIX, b'N'];
+const META_NEXT_ID: &[u8] = &[0xFF, b'N'];
 
-/// Returns a 9-byte key for a node: `NODE_PREFIX || id as little-endian u64`.
+/// Returns an 8-byte key for a node: raw `id` as little-endian u64.
 #[cfg(any(test, feature = "rocksdb"))]
-fn node_key(id: NodeId) -> [u8; 9] {
-    let mut key = [0u8; 9];
-    key[0] = NODE_PREFIX;
-    key[1..].copy_from_slice(&id.to_le_bytes());
-    key
+fn node_key(id: NodeId) -> [u8; 8] {
+    id.to_le_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +180,10 @@ pub struct NodeStore {
     freed: FxHashSet<NodeId>,
     next_id: NodeId,
     #[cfg(feature = "rocksdb")]
-    db: Option<std::sync::Arc<rocksdb::DB>>,
+    db: Option<std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>>,
+    /// Name of the column family used for nodes and metadata.
+    #[cfg(feature = "rocksdb")]
+    pub nodes_cf: &'static str,
 }
 
 impl NodeStore {
@@ -203,20 +200,33 @@ impl NodeStore {
             next_id: 1,
             #[cfg(feature = "rocksdb")]
             db: None,
+            #[cfg(feature = "rocksdb")]
+            nodes_cf: "",
         }
     }
 
-    /// Open a persistent NodeStore backed by RocksDB.
+    /// Open a persistent NodeStore backed by a shared RocksDB instance.
     ///
-    /// Reads `next_id` from the `META_NEXT_ID` key. If absent, starts at 1.
+    /// Reads `next_id` from the `META_NEXT_ID` key in `nodes_cf`. If absent, starts at 1.
     #[cfg(feature = "rocksdb")]
-    pub fn open(db: std::sync::Arc<rocksdb::DB>) -> Result<Self, BinaryTrieError> {
-        let next_id = match db
-            .get(META_NEXT_ID)
-            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
-        {
-            Some(bytes) if bytes.len() >= 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
-            _ => 1,
+    pub fn open(
+        db: std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
+        nodes_cf: &'static str,
+    ) -> Result<Self, BinaryTrieError> {
+        let next_id = {
+            let cf = db
+                .cf_handle(nodes_cf)
+                .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{nodes_cf}' not found")))?;
+            match db
+                .get_cf(&cf, META_NEXT_ID)
+                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
+            {
+                Some(bytes) if bytes.len() >= 8 => {
+                    u64::from_le_bytes(bytes[..8].try_into().unwrap())
+                }
+                _ => 1,
+            }
+            // cf is dropped here, releasing the borrow on db
         };
 
         Ok(Self {
@@ -229,6 +239,7 @@ impl NodeStore {
             freed: FxHashSet::default(),
             next_id,
             db: Some(db),
+            nodes_cf,
         })
     }
 
@@ -236,7 +247,8 @@ impl NodeStore {
     #[cfg(feature = "rocksdb")]
     pub fn load_root(&self) -> Option<NodeId> {
         let db = self.db.as_ref()?;
-        let bytes = db.get(META_ROOT).ok()??;
+        let cf = db.cf_handle(self.nodes_cf)?;
+        let bytes = db.get_cf(&cf, META_ROOT).ok()??;
         if bytes.len() < 8 {
             return None;
         }
@@ -392,62 +404,40 @@ impl NodeStore {
         self.freed.insert(id);
     }
 
-    /// Flush all dirty and freed nodes to RocksDB, writing the root and
-    /// next_id metadata atomically via a `WriteBatch`.
-    ///
-    /// After flushing, dirty nodes are demoted to the clean cache and the
-    /// freed set is cleared.
-    #[cfg(feature = "rocksdb")]
-    pub fn flush(&mut self, root: Option<NodeId>) -> Result<(), BinaryTrieError> {
-        let db = match self.db.as_ref() {
-            Some(db) => db.clone(),
-            None => return Ok(()), // In-memory only — nothing to flush.
-        };
-
-        let mut batch = rocksdb::WriteBatch::default();
-        self.write_to_batch(&mut batch, root);
-
-        db.write(batch)
-            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
-
-        self.rotate_generations();
-        self.freed.clear();
-        Ok(())
-    }
-
     /// Write dirty and freed nodes plus metadata into a caller-supplied
     /// `WriteBatch`. Used by `BinaryTrieState::flush` to build a single atomic
     /// batch that also contains code_store and storage_keys entries.
     ///
+    /// All writes go to `nodes_cf` via CF-aware `put_cf`/`delete_cf`.
     /// After writing, performs generational rotation (dirty → warm → LRU).
     #[cfg(feature = "rocksdb")]
-    pub fn flush_to_batch(&mut self, batch: &mut rocksdb::WriteBatch, root: Option<NodeId>) {
-        self.write_to_batch(batch, root);
-        self.rotate_generations();
-        self.freed.clear();
-    }
-
-    /// Internal helper: writes dirty nodes, freed deletions, and metadata into `batch`.
-    #[cfg(feature = "rocksdb")]
-    fn write_to_batch(&self, batch: &mut rocksdb::WriteBatch, root: Option<NodeId>) {
+    pub fn flush_to_batch(
+        &mut self,
+        batch: &mut rocksdb::WriteBatch,
+        nodes_cf: &impl rocksdb::AsColumnFamilyRef,
+        root: Option<NodeId>,
+    ) {
         // Write all dirty nodes.
         for (id, node) in &self.dirty_nodes {
             let key = node_key(*id);
             let bytes = serialize_node(node);
-            batch.put(key, bytes);
+            batch.put_cf(nodes_cf, key, bytes);
         }
 
         // Delete all freed nodes.
         for &id in &self.freed {
-            batch.delete(node_key(id));
+            batch.delete_cf(nodes_cf, node_key(id));
         }
 
         // Write root metadata.
         let root_bytes = root.unwrap_or(0).to_le_bytes();
-        batch.put(META_ROOT, root_bytes);
+        batch.put_cf(nodes_cf, META_ROOT, root_bytes);
 
         // Write next_id metadata.
-        batch.put(META_NEXT_ID, self.next_id.to_le_bytes());
+        batch.put_cf(nodes_cf, META_NEXT_ID, self.next_id.to_le_bytes());
+
+        self.rotate_generations();
+        self.freed.clear();
     }
 
     /// Strip subtree caches from all dirty nodes to reduce memory.
@@ -515,9 +505,12 @@ impl NodeStore {
     #[cfg(feature = "rocksdb")]
     fn load_from_db(&self, id: NodeId) -> Result<Node, BinaryTrieError> {
         let db = self.db.as_ref().ok_or(BinaryTrieError::NodeNotFound(id))?;
+        let cf = db.cf_handle(self.nodes_cf).ok_or_else(|| {
+            BinaryTrieError::StoreError(format!("CF '{}' not found", self.nodes_cf))
+        })?;
         let key = node_key(id);
         match db
-            .get(&key)
+            .get_cf(&cf, &key)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
         {
             Some(bytes) => deserialize_node(&bytes),
@@ -814,14 +807,14 @@ mod tests {
     }
 
     #[test]
-    fn node_key_has_correct_prefix_and_encoding() {
+    fn node_key_encoding() {
+        // Node keys are now raw u64 LE (8 bytes, no prefix).
         let key = node_key(1);
-        assert_eq!(key[0], NODE_PREFIX);
-        assert_eq!(&key[1..], &1u64.to_le_bytes());
+        assert_eq!(key.len(), 8);
+        assert_eq!(&key[..], &1u64.to_le_bytes());
 
         let key_max = node_key(u64::MAX);
-        assert_eq!(key_max[0], NODE_PREFIX);
-        assert_eq!(&key_max[1..], &u64::MAX.to_le_bytes());
+        assert_eq!(&key_max[..], &u64::MAX.to_le_bytes());
     }
 
     // --- memory-only NodeStore integrated operations ---

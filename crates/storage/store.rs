@@ -5,10 +5,10 @@ use crate::{
     api::{
         StorageBackend, StorageReadView,
         tables::{
-            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, BLOCK_NUMBERS, BODIES,
+            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
+            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE,
+            STORAGE_FLATKEYVALUE, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -19,6 +19,12 @@ use crate::{
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
 };
+
+// Legacy MPT table names — CFs removed from TABLES but still referenced by old MPT code paths.
+// These CFs are no longer registered and will be auto-dropped from existing databases.
+// The code paths that write to them are no longer exercised; kept here to avoid breaking changes.
+const ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -1514,13 +1520,12 @@ impl Store {
                 //
                 // Exception: if storage was fully cleared and nothing was re-added,
                 // the account has no storage and we can use EMPTY_TRIE_HASH.
-                let storage_root =
-                    if update.removed_storage && update.added_storage.is_empty() {
-                        *EMPTY_TRIE_HASH
-                    } else {
-                        // Storage may exist (from this update or earlier blocks).
-                        H256::from_low_u64_be(1)
-                    };
+                let storage_root = if update.removed_storage && update.added_storage.is_empty() {
+                    *EMPTY_TRIE_HASH
+                } else {
+                    // Storage may exist (from this update or earlier blocks).
+                    H256::from_low_u64_be(1)
+                };
                 let account_state = AccountState {
                     nonce: info.nonce,
                     balance: info.balance,
@@ -1710,6 +1715,20 @@ impl Store {
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
+    }
+
+    /// Return a cloned handle to the underlying RocksDB instance.
+    ///
+    /// Returns `None` if the store is backed by the in-memory engine.
+    /// Used to share the DB handle with `BinaryTrieState`.
+    #[cfg(feature = "rocksdb")]
+    pub fn db_handle(
+        &self,
+    ) -> Option<std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>> {
+        self.backend
+            .as_any()
+            .downcast_ref::<RocksDBBackend>()
+            .map(|b| b.db_handle())
     }
 
     /// Attach a binary trie state so that account/storage reads delegate to it

@@ -1,6 +1,8 @@
-use crate::api::tables::{
-    ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-};
+use crate::api::tables::{ACCOUNT_FLATKEYVALUE, STORAGE_FLATKEYVALUE};
+
+// Legacy MPT table names — CFs removed from TABLES but still referenced by old MPT code paths.
+const ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;

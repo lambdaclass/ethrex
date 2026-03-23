@@ -176,12 +176,8 @@ impl DiffTree {
     }
 }
 
-// Key prefixes for code_store and storage_keys in RocksDB.
-// 0x01 is used by NodeStore for trie nodes; 0xFF for trie metadata.
-#[cfg(feature = "rocksdb")]
-const CODE_PREFIX: u8 = 0x02;
-#[cfg(feature = "rocksdb")]
-const STORAGE_KEYS_PREFIX: u8 = 0x03;
+// Meta keys stored in BINARY_TRIE_NODES CF (alongside node IDs).
+// The 0xFF prefix ensures they don't collide with 8-byte u64 node keys.
 #[cfg(feature = "rocksdb")]
 const META_BLOCK_KEY: &[u8] = &[0xFF, b'B'];
 #[cfg(feature = "rocksdb")]
@@ -226,9 +222,17 @@ pub struct BinaryTrieState {
     /// `&self` (concurrent reads from executor threads).
     storage_keys: Mutex<FxHashMap<Address, FxHashSet<H256>>>,
 
-    /// Shared RocksDB handle (present only when opened with `open()`).
+    /// Shared RocksDB handle (present only when opened with `open_with_db()`).
     #[cfg(feature = "rocksdb")]
-    db: Option<Arc<rocksdb::DB>>,
+    db: Option<Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>>,
+
+    /// Column family name for code (code_hash -> bytecode).
+    #[cfg(feature = "rocksdb")]
+    code_cf: &'static str,
+
+    /// Column family name for storage key tracking (address -> packed H256 list).
+    #[cfg(feature = "rocksdb")]
+    storage_keys_cf: &'static str,
 
     /// Code hashes written since the last `flush()`.
     #[cfg(feature = "rocksdb")]
@@ -259,6 +263,10 @@ impl BinaryTrieState {
             #[cfg(feature = "rocksdb")]
             db: None,
             #[cfg(feature = "rocksdb")]
+            code_cf: "",
+            #[cfg(feature = "rocksdb")]
+            storage_keys_cf: "",
+            #[cfg(feature = "rocksdb")]
             dirty_codes: FxHashSet::default(),
             #[cfg(feature = "rocksdb")]
             dirty_storage_keys: FxHashSet::default(),
@@ -281,38 +289,30 @@ impl BinaryTrieState {
             || self.diff_tree.layers.contains_key(&block_hash)
     }
 
-    /// Open a persistent `BinaryTrieState` from a RocksDB path.
+    /// Open a persistent `BinaryTrieState` using a shared RocksDB instance.
+    ///
+    /// All reads/writes use the named column families `nodes_cf`, `code_cf`,
+    /// and `storage_keys_cf`, which must already exist in `db`.
     ///
     /// If the database already contains data (the trie root is present),
     /// the trie nodes, code store, and storage keys are loaded from it.
     /// If the database is new/empty, an empty state is returned — the
     /// caller is responsible for applying genesis.
     #[cfg(feature = "rocksdb")]
-    pub fn open(path: &std::path::Path) -> Result<Self, BinaryTrieError> {
-        let mut opts = rocksdb::Options::default();
-        opts.create_if_missing(true);
-
-        // Limit RocksDB memory usage: 256MB block cache, small write buffers.
-        let mut block_opts = rocksdb::BlockBasedOptions::default();
-        block_opts.set_block_cache(&rocksdb::Cache::new_lru_cache(256 * 1024 * 1024));
-        block_opts.set_cache_index_and_filter_blocks(true);
-        opts.set_block_based_table_factory(&block_opts);
-        opts.set_write_buffer_size(32 * 1024 * 1024); // 32MB
-        opts.set_max_write_buffer_number(2);
-
-        let db = Arc::new(
-            rocksdb::DB::open(&opts, path)
-                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?,
-        );
-
-        let store = NodeStore::open(Arc::clone(&db))?;
+    pub fn open_with_db(
+        db: Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
+        nodes_cf: &'static str,
+        code_cf: &'static str,
+        storage_keys_cf: &'static str,
+    ) -> Result<Self, BinaryTrieError> {
+        let store = NodeStore::open(Arc::clone(&db), nodes_cf)?;
         let root = store.load_root();
         let trie = BinaryTrie { store, root };
 
         let (code_store, storage_keys) = if root.is_some() {
             // Existing database — load side structures.
-            let code_store = load_code_store(&db)?;
-            let storage_keys = load_storage_keys(&db)?;
+            let code_store = load_code_store(&db, code_cf)?;
+            let storage_keys = load_storage_keys(&db, storage_keys_cf)?;
             (code_store, storage_keys)
         } else {
             (FxHashMap::default(), FxHashMap::default())
@@ -323,17 +323,23 @@ impl BinaryTrieState {
 
         // Restore the diff tree base_hash from disk so that disk-backed
         // backward walks know where to stop and fall through to the base trie.
-        let base_hash = db
-            .get(META_BASE_HASH_KEY)
-            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
-            .and_then(|bytes| {
-                if bytes.len() >= 32 {
-                    Some(H256::from_slice(&bytes[..32]))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(H256::zero());
+        // Use a scope to ensure the CF handle is dropped before `db` is moved below.
+        let base_hash = {
+            let nodes_cf_handle = db
+                .cf_handle(nodes_cf)
+                .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{nodes_cf}' not found")))?;
+            db.get_cf(&nodes_cf_handle, META_BASE_HASH_KEY)
+                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
+                .and_then(|bytes| {
+                    if bytes.len() >= 32 {
+                        Some(H256::from_slice(&bytes[..32]))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(H256::zero())
+            // nodes_cf_handle dropped here
+        };
 
         let mut diff_tree = DiffTree::new();
         diff_tree.base_hash = base_hash;
@@ -345,6 +351,8 @@ impl BinaryTrieState {
             code_store: Mutex::new(code_store),
             storage_keys: Mutex::new(storage_keys),
             db: Some(db),
+            code_cf,
+            storage_keys_cf,
             dirty_codes: FxHashSet::default(),
             dirty_storage_keys: FxHashSet::default(),
             blocks_since_flush: 0,
@@ -364,7 +372,8 @@ impl BinaryTrieState {
     #[cfg(feature = "rocksdb")]
     pub fn checkpoint_block(&self) -> Option<u64> {
         let db = self.db.as_ref()?;
-        let bytes = db.get(META_BLOCK_KEY).ok()??;
+        let cf = db.cf_handle(self.trie.store.nodes_cf)?;
+        let bytes = db.get_cf(&cf, META_BLOCK_KEY).ok()??;
         if bytes.len() < 8 {
             return None;
         }
@@ -383,48 +392,54 @@ impl BinaryTrieState {
             .ok_or_else(|| BinaryTrieError::StoreError("no DB configured".into()))?
             .clone();
 
+        let nodes_cf = db.cf_handle(self.trie.store.nodes_cf).ok_or_else(|| {
+            BinaryTrieError::StoreError(format!("CF '{}' not found", self.trie.store.nodes_cf))
+        })?;
+        let code_cf = db.cf_handle(self.code_cf).ok_or_else(|| {
+            BinaryTrieError::StoreError(format!("CF '{}' not found", self.code_cf))
+        })?;
+        let storage_keys_cf = db.cf_handle(self.storage_keys_cf).ok_or_else(|| {
+            BinaryTrieError::StoreError(format!("CF '{}' not found", self.storage_keys_cf))
+        })?;
+
         let mut batch = rocksdb::WriteBatch::default();
 
-        // 1. Flush trie nodes (dirty + freed nodes, root, next_id).
-        self.trie.flush_to_batch(&mut batch);
+        // 1. Flush trie nodes (dirty + freed nodes, root, next_id) into nodes_cf.
+        self.trie.flush_to_batch(&mut batch, &nodes_cf);
 
-        // 2. Write dirty code_store entries (prefix 0x02 || code_hash).
+        // 2. Write dirty code_store entries: raw code_hash (32 bytes) as key.
         {
             let code_store = self.code_store.lock().unwrap();
             for hash in &self.dirty_codes {
-                let mut key = vec![CODE_PREFIX];
-                key.extend_from_slice(hash.as_bytes());
                 if let Some(code) = code_store.get(hash) {
-                    batch.put(&key, code.as_ref());
+                    batch.put_cf(&code_cf, hash.as_bytes(), code.as_ref());
                 } else {
                     // Code was removed — delete the entry.
-                    batch.delete(&key);
+                    batch.delete_cf(&code_cf, hash.as_bytes());
                 }
             }
         }
 
-        // 3. Write dirty storage_keys entries (prefix 0x03 || address).
+        // 3. Write dirty storage_keys entries: raw address (20 bytes) as key.
         {
             let storage_keys = self.storage_keys.lock().unwrap();
             for addr in &self.dirty_storage_keys {
-                let mut key = vec![STORAGE_KEYS_PREFIX];
-                key.extend_from_slice(addr.as_bytes());
                 if let Some(keys) = storage_keys.get(addr) {
                     let mut value = Vec::with_capacity(keys.len() * 32);
                     for k in keys {
                         value.extend_from_slice(k.as_bytes());
                     }
-                    batch.put(&key, &value);
+                    batch.put_cf(&storage_keys_cf, addr.as_bytes(), &value);
                 } else {
                     // Account's storage was fully cleared — delete the entry.
-                    batch.delete(&key);
+                    batch.delete_cf(&storage_keys_cf, addr.as_bytes());
                 }
             }
         }
 
-        // 4. Write checkpoint block number and base block hash.
-        batch.put(META_BLOCK_KEY, block_number.to_le_bytes());
-        batch.put(META_BASE_HASH_KEY, block_hash.as_bytes());
+        // 4. Write checkpoint block number and base block hash into nodes_cf (meta).
+        batch.put_cf(&nodes_cf, META_BLOCK_KEY, block_number.to_le_bytes());
+        batch.put_cf(&nodes_cf, META_BASE_HASH_KEY, block_hash.as_bytes());
 
         db.write(batch)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
@@ -573,15 +588,15 @@ impl BinaryTrieState {
         }
         #[cfg(feature = "rocksdb")]
         if let Some(db) = self.db.as_ref() {
-            let mut key = vec![CODE_PREFIX];
-            key.extend_from_slice(code_hash.as_bytes());
-            if let Ok(Some(bytes)) = db.get(&key) {
-                let code = Bytes::copy_from_slice(&bytes);
-                self.code_store
-                    .lock()
-                    .unwrap()
-                    .insert(*code_hash, code.clone());
-                return Some(code);
+            if let Some(cf) = db.cf_handle(self.code_cf) {
+                if let Ok(Some(bytes)) = db.get_cf(&cf, code_hash.as_bytes()) {
+                    let code = Bytes::copy_from_slice(&bytes);
+                    self.code_store
+                        .lock()
+                        .unwrap()
+                        .insert(*code_hash, code.clone());
+                    return Some(code);
+                }
             }
         }
         None
@@ -595,7 +610,11 @@ impl BinaryTrieState {
     /// - `Some(Some(state))` — found in a diff layer.
     /// - `Some(None)` — explicitly deleted in a diff layer.
     /// - `None` — not in any diff layer; caller should fall through to FKV.
-    pub fn diff_lookup_account(&self, address: &Address, block_hash: H256) -> Option<Option<AccountState>> {
+    pub fn diff_lookup_account(
+        &self,
+        address: &Address,
+        block_hash: H256,
+    ) -> Option<Option<AccountState>> {
         if block_hash.is_zero() {
             return None;
         }
@@ -612,7 +631,12 @@ impl BinaryTrieState {
     /// - `Some(Some(val))` — found in a diff layer.
     /// - `Some(None)` — explicitly zeroed/deleted in a diff layer.
     /// - `None` — not in any diff layer; caller should fall through to FKV.
-    pub fn diff_lookup_storage(&self, address: &Address, key: H256, block_hash: H256) -> Option<Option<U256>> {
+    pub fn diff_lookup_storage(
+        &self,
+        address: &Address,
+        key: H256,
+        block_hash: H256,
+    ) -> Option<Option<U256>> {
         if block_hash.is_zero() {
             return None;
         }
@@ -987,8 +1011,8 @@ impl BinaryTrieState {
         block_headers: Vec<Vec<u8>>,
     ) -> Result<crate::witness::BinaryTrieWitness, BinaryTrieError> {
         use crate::key_mapping::{
-            get_tree_key_for_basic_data, get_tree_key_for_code_hash,
-            get_tree_key_for_storage_slot, unpack_basic_data,
+            get_tree_key_for_basic_data, get_tree_key_for_code_hash, get_tree_key_for_storage_slot,
+            unpack_basic_data,
         };
         use crate::witness::{
             AccountWitnessEntry, BinaryTrieWitness, CodeWitnessEntry, ProofEntry,
@@ -1026,10 +1050,7 @@ impl BinaryTrieState {
             // Extract pre-state values from the proof leaves.
             let (balance, nonce, code_hash) = if let Some(ref basic_data) = bd_proof.value {
                 let (_version, _code_size, nonce, balance) = unpack_basic_data(basic_data);
-                let code_hash = ch_proof
-                    .value
-                    .map(H256)
-                    .unwrap_or(*EMPTY_KECCACK_HASH);
+                let code_hash = ch_proof.value.map(H256).unwrap_or(*EMPTY_KECCACK_HASH);
                 (balance, nonce, code_hash)
             } else {
                 (U256::zero(), 0, *EMPTY_KECCACK_HASH)
@@ -1120,9 +1141,10 @@ impl BinaryTrieState {
         let Some(db) = self.db.as_ref() else {
             return false;
         };
-        let mut key = vec![STORAGE_KEYS_PREFIX];
-        key.extend_from_slice(address.as_bytes());
-        if let Ok(Some(value)) = db.get(&key) {
+        let Some(cf) = db.cf_handle(self.storage_keys_cf) else {
+            return false;
+        };
+        if let Ok(Some(value)) = db.get_cf(&cf, address.as_bytes()) {
             if !value.is_empty() {
                 let mut keys = FxHashSet::default();
                 let mut offset = 0usize;
@@ -1255,51 +1277,47 @@ impl BinaryTrieState {
 // RocksDB helper loaders (used by `open`)
 // ---------------------------------------------------------------------------
 
-/// Load the code_store from RocksDB by iterating over keys with prefix 0x02.
+/// Load the code_store from a dedicated CF by iterating over all entries.
+/// Keys are raw code_hash (32 bytes); values are raw bytecode.
 #[cfg(feature = "rocksdb")]
-fn load_code_store(db: &rocksdb::DB) -> Result<FxHashMap<H256, Bytes>, BinaryTrieError> {
-    let prefix = [CODE_PREFIX];
+fn load_code_store(
+    db: &rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>,
+    code_cf: &str,
+) -> Result<FxHashMap<H256, Bytes>, BinaryTrieError> {
+    let cf = db
+        .cf_handle(code_cf)
+        .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{code_cf}' not found")))?;
     let mut map = FxHashMap::default();
-    // Use a forward iterator starting at the prefix byte, with manual stop.
-    // We don't use prefix_iterator because no prefix extractor is configured.
-    let iter = db.iterator(rocksdb::IteratorMode::From(
-        &prefix,
-        rocksdb::Direction::Forward,
-    ));
+    let iter = db.full_iterator_cf(&cf, rocksdb::IteratorMode::Start);
     for item in iter {
         let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
-        if key.first() != Some(&CODE_PREFIX) {
-            break;
-        }
-        if key.len() < 1 + 32 {
+        if key.len() < 32 {
             continue;
         }
-        let hash = H256::from_slice(&key[1..33]);
+        let hash = H256::from_slice(&key[..32]);
         map.insert(hash, Bytes::copy_from_slice(&value));
     }
     Ok(map)
 }
 
-/// Load the storage_keys from RocksDB by iterating over keys with prefix 0x03.
+/// Load storage_keys from a dedicated CF by iterating over all entries.
+/// Keys are raw address (20 bytes); values are packed H256 storage keys.
 #[cfg(feature = "rocksdb")]
 fn load_storage_keys(
-    db: &rocksdb::DB,
+    db: &rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>,
+    storage_keys_cf: &str,
 ) -> Result<FxHashMap<Address, FxHashSet<H256>>, BinaryTrieError> {
-    let prefix = [STORAGE_KEYS_PREFIX];
+    let cf = db
+        .cf_handle(storage_keys_cf)
+        .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{storage_keys_cf}' not found")))?;
     let mut map: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
-    let iter = db.iterator(rocksdb::IteratorMode::From(
-        &prefix,
-        rocksdb::Direction::Forward,
-    ));
+    let iter = db.full_iterator_cf(&cf, rocksdb::IteratorMode::Start);
     for item in iter {
         let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
-        if key.first() != Some(&STORAGE_KEYS_PREFIX) {
-            break;
-        }
-        if key.len() < 1 + 20 {
+        if key.len() < 20 {
             continue;
         }
-        let addr = Address::from_slice(&key[1..21]);
+        let addr = Address::from_slice(&key[..20]);
         let mut keys = FxHashSet::default();
         let mut offset = 0usize;
         while offset + 32 <= value.len() {
@@ -1317,7 +1335,6 @@ impl Default for BinaryTrieState {
         Self::new()
     }
 }
-
 
 /// Write an account update into a diff layer.
 /// `account_state` is the post-update account state (from trie or constructed).
@@ -1894,6 +1911,11 @@ mod tests {
     mod witness_tests {
         use super::*;
         use std::collections::{HashMap, HashSet};
+        use std::sync::Arc;
+
+        const NODES_CF: &str = "binary_trie_nodes";
+        const CODE_CF: &str = "binary_trie_code";
+        const STORAGE_KEYS_CF: &str = "binary_trie_storage_keys";
 
         fn make_address(b: u8) -> Address {
             let mut a = [0u8; 20];
@@ -1905,10 +1927,33 @@ mod tests {
             tempfile::tempdir().expect("failed to create tempdir")
         }
 
+        /// Open a test RocksDB with the 3 binary trie column families.
+        fn open_test_db(
+            dir: &tempfile::TempDir,
+        ) -> Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>> {
+            let mut opts = rocksdb::Options::default();
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+            let cfs = vec![
+                rocksdb::ColumnFamilyDescriptor::new(NODES_CF, opts.clone()),
+                rocksdb::ColumnFamilyDescriptor::new(CODE_CF, opts.clone()),
+                rocksdb::ColumnFamilyDescriptor::new(STORAGE_KEYS_CF, opts.clone()),
+            ];
+            Arc::new(
+                rocksdb::DBWithThreadMode::open_cf_descriptors(&opts, dir.path(), cfs)
+                    .expect("failed to open test RocksDB"),
+            )
+        }
+
+        fn open_test_state(dir: &tempfile::TempDir) -> BinaryTrieState {
+            let db = open_test_db(dir);
+            BinaryTrieState::open_with_db(db, NODES_CF, CODE_CF, STORAGE_KEYS_CF).unwrap()
+        }
+
         #[test]
         fn test_generate_witness_basic() {
             let dir = tempdir();
-            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+            let mut state = open_test_state(&dir);
 
             let addr = make_address(0xAA);
             let mut accounts = BTreeMap::new();
@@ -1953,7 +1998,7 @@ mod tests {
         #[test]
         fn test_generate_witness_with_storage() {
             let dir = tempdir();
-            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+            let mut state = open_test_state(&dir);
 
             let addr = make_address(0xBB);
             let slot_key = U256::from(7u64);
@@ -1997,7 +2042,7 @@ mod tests {
         #[test]
         fn test_generate_witness_with_code() {
             let dir = tempdir();
-            let mut state = BinaryTrieState::open(dir.path()).unwrap();
+            let mut state = open_test_state(&dir);
 
             let addr = make_address(0xCC);
             let bytecode = Bytes::from(vec![0x60u8, 0x00, 0x56]);
@@ -2038,6 +2083,5 @@ mod tests {
             // Account entry should have the code_hash.
             assert_eq!(witness.account_proofs[0].code_hash, code_hash);
         }
-
     }
 }

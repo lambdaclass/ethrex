@@ -115,11 +115,13 @@ fn eip7864_proofs_verify_against_reference_roots() {
 
         // Prove every inserted key and verify against the reference root.
         for (key, value) in &keys {
-            let proof = trie
-                .get_proof(*key)
-                .unwrap_or_else(|e| {
-                    panic!("get_proof failed for vector '{}', key {}: {e}", vector.name, hex::encode(key))
-                });
+            let proof = trie.get_proof(*key).unwrap_or_else(|e| {
+                panic!(
+                    "get_proof failed for vector '{}', key {}: {e}",
+                    vector.name,
+                    hex::encode(key)
+                )
+            });
             assert_eq!(
                 proof.value,
                 Some(*value),

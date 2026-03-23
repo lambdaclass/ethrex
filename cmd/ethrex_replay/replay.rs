@@ -37,22 +37,36 @@ impl BlockReplayer {
     /// last 256 blocks are reconstructed from the store.  If no checkpoint
     /// exists, genesis allocations are applied and replay starts from block 1.
     ///
-    /// When `trie_db_path` is `None`, state is kept in memory only (original
-    /// behaviour).
+    /// When `persistent` is `true`, the binary trie state is stored in the same
+    /// RocksDB as the store (using the store's DB handle). When `false`, state
+    /// is kept in memory only.
     pub async fn new(
         genesis: Genesis,
         store: Store,
-        trie_db_path: Option<&std::path::Path>,
+        persistent: bool,
         checkpoint_interval: u64,
     ) -> Result<Self> {
+        use ethrex_storage::api::tables::{
+            BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS,
+        };
+
         // Register genesis block hash so that block 1 can call BLOCKHASH(0).
         let genesis_block = genesis.get_block();
         let genesis_hash = genesis_block.hash();
 
-        let (state, block_hashes) = if let Some(path) = trie_db_path {
-            info!("Opening binary trie DB at {}", path.display());
-            let mut state =
-                BinaryTrieState::open(path).context("Failed to open binary trie RocksDB")?;
+        let (state, block_hashes) = if persistent {
+            let db = store.db_handle().context(
+                "Failed to get RocksDB handle from Store (persistent mode requires RocksDB)",
+            )?;
+
+            info!("Opening persistent binary trie state in Store's RocksDB");
+            let mut state = BinaryTrieState::open_with_db(
+                db,
+                BINARY_TRIE_NODES,
+                BINARY_TRIE_CODE,
+                BINARY_TRIE_STORAGE_KEYS,
+            )
+            .context("Failed to open binary trie state")?;
 
             let mut block_hashes = BTreeMap::new();
             block_hashes.insert(0u64, genesis_hash);
@@ -240,9 +254,12 @@ impl BlockReplayer {
             .context("store error reading parent header")?
             .with_context(|| format!("parent header not found: {parent_hash:?}"))?;
         let block_hash_cache = self.block_hashes.clone();
-        let vm_db =
-            StoreVmDatabase::new_with_block_hash_cache(self.store.clone(), parent_header, block_hash_cache)
-                .context("Failed to create StoreVmDatabase")?;
+        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
+            self.store.clone(),
+            parent_header,
+            block_hash_cache,
+        )
+        .context("Failed to create StoreVmDatabase")?;
 
         // Create the EVM and execute the block.
         let mut evm = Evm::new_for_l1(vm_db, Arc::new(NativeCrypto));

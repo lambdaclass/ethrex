@@ -171,10 +171,18 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
 }
 
 /// Opens or creates the binary trie state, applying genesis if empty.
+///
+/// For the persistent path, `store` must be a RocksDB-backed Store. The binary
+/// trie uses the same RocksDB instance via a shared `Arc<DB>` handle.
 pub fn init_binary_trie_state(
+    store: &Store,
     datadir: &Path,
     genesis: &Genesis,
 ) -> eyre::Result<Arc<std::sync::RwLock<BinaryTrieState>>> {
+    use ethrex_storage::api::tables::{
+        BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS,
+    };
+
     let genesis_hash = genesis.get_block().hash();
 
     if is_memory_datadir(datadir) {
@@ -187,29 +195,57 @@ pub fn init_binary_trie_state(
         return Ok(Arc::new(std::sync::RwLock::new(state)));
     }
 
-    let binary_trie_path = datadir.join("binary_trie");
-    let mut state = BinaryTrieState::open(&binary_trie_path)
-        .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
-
-    if !state.has_data() {
-        info!("Initializing binary trie from genesis");
-        state
-            .apply_genesis(&genesis.alloc)
-            .map_err(|e| eyre::eyre!("Failed to apply genesis to binary trie: {e}"))?;
-        state
-            .flush(0, genesis_hash)
-            .map_err(|e| eyre::eyre!("Failed to flush binary trie after genesis: {e}"))?;
-        info!("Binary trie genesis applied and flushed");
-    } else if let Some(checkpoint) = state.checkpoint_block() {
-        // On resume, set diff base to genesis hash.
-        // base_root was already loaded from disk by open().
-        // TODO: persist block hash alongside block number in META_BLOCK_KEY
-        // so we can use the exact checkpoint hash here.
-        state.set_diff_base(genesis_hash, checkpoint);
-        info!("Binary trie resuming from checkpoint block {checkpoint}");
+    // Check for an orphaned legacy binary_trie directory (no longer used).
+    let legacy_path = datadir.join("binary_trie");
+    if legacy_path.exists() {
+        warn!(
+            "Found orphaned binary_trie directory at {:?}. \
+             The binary trie is now stored inside the main RocksDB. \
+             You can safely delete this directory.",
+            legacy_path
+        );
     }
 
-    Ok(Arc::new(std::sync::RwLock::new(state)))
+    #[cfg(feature = "rocksdb")]
+    {
+        let db = store
+            .db_handle()
+            .ok_or_else(|| eyre::eyre!("Failed to get RocksDB handle from Store"))?;
+
+        let mut state = BinaryTrieState::open_with_db(
+            db,
+            BINARY_TRIE_NODES,
+            BINARY_TRIE_CODE,
+            BINARY_TRIE_STORAGE_KEYS,
+        )
+        .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
+
+        if !state.has_data() {
+            info!("Initializing binary trie from genesis");
+            state
+                .apply_genesis(&genesis.alloc)
+                .map_err(|e| eyre::eyre!("Failed to apply genesis to binary trie: {e}"))?;
+            state
+                .flush(0, genesis_hash)
+                .map_err(|e| eyre::eyre!("Failed to flush binary trie after genesis: {e}"))?;
+            info!("Binary trie genesis applied and flushed");
+        } else if let Some(checkpoint) = state.checkpoint_block() {
+            // On resume, set diff base to genesis hash.
+            // TODO: persist block hash alongside block number in META_BLOCK_KEY
+            // so we can use the exact checkpoint hash here.
+            state.set_diff_base(genesis_hash, checkpoint);
+            info!("Binary trie resuming from checkpoint block {checkpoint}");
+        }
+
+        Ok(Arc::new(std::sync::RwLock::new(state)))
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        let _ = store;
+        Err(eyre::eyre!(
+            "rocksdb feature required for persistent binary trie"
+        ))
+    }
 }
 
 pub fn init_blockchain(
@@ -524,13 +560,15 @@ pub async fn init_l1(
 
     // Binary trie does not support snap sync -- it must replay from genesis.
     if opts.syncmode == SyncMode::Snap {
-        warn!("Snap sync is not supported with binary trie. The node will replay blocks from genesis or the last checkpoint. State sync from peers is disabled.");
+        warn!(
+            "Snap sync is not supported with binary trie. The node will replay blocks from genesis or the last checkpoint. State sync from peers is disabled."
+        );
     }
 
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
-    let binary_trie_state = init_binary_trie_state(&datadir, &genesis)?;
+    let binary_trie_state = init_binary_trie_state(&store, &datadir, &genesis)?;
     let binary_trie_state_for_shutdown = binary_trie_state.clone();
 
     // Wire the binary trie into the store so Store read methods delegate to it.

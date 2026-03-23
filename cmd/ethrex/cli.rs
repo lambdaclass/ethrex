@@ -723,9 +723,9 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
-    let binary_trie_state =
-        init_binary_trie_state(datadir, &genesis).map_err(|e| ChainError::Custom(e.to_string()))?;
-    let mut store = init_store(datadir, genesis).await?;
+    let mut store = init_store(datadir, genesis.clone()).await?;
+    let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
+        .map_err(|e| ChainError::Custom(e.to_string()))?;
     store.set_binary_trie_state(binary_trie_state.clone());
     let blockchain = init_blockchain(store.clone(), blockchain_opts, binary_trie_state);
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -844,9 +844,9 @@ pub async fn import_blocks_bench(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let binary_trie_state =
-        init_binary_trie_state(datadir, &genesis).map_err(|e| ChainError::Custom(e.to_string()))?;
-    let mut store = init_store(datadir, genesis).await?;
+    let mut store = init_store(datadir, genesis.clone()).await?;
+    let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
+        .map_err(|e| ChainError::Custom(e.to_string()))?;
     store.set_binary_trie_state(binary_trie_state.clone());
     let blockchain = init_blockchain(store.clone(), blockchain_opts, binary_trie_state);
     regenerate_head_state(&store, &blockchain).await.unwrap();
