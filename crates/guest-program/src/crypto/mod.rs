@@ -5,7 +5,6 @@ pub mod risc0;
 #[cfg(any(
     feature = "sp1",
     feature = "risc0",
-    feature = "zisk",
     feature = "openvm"
 ))]
 mod shared;
