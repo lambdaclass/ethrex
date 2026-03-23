@@ -70,7 +70,7 @@ and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 | `STORAGE_TRIE_NODES` table | Not needed (unified tree, no per-account storage tries) |
 | `TrieLayerCache` (in-memory trie node diff layers) | `NodeStore` dirty/warm/clean tiers (same role, different node format) |
 | 16-shard parallel MPT merkleization | Binary trie `apply_account_update` (single tree, incremental) |
-| `handle_merkleization` / `handle_merkleization_bal` | Merkleizer thread now calls `BinaryTrieState.apply_account_update()` directly |
+| `handle_merkleization` / `handle_merkleization_bal` | Removed. The merkleizer thread applies updates via `BinaryTrieState.apply_account_update()` instead. |
 | `BranchNode[16]` root assembly | Binary trie `state_root()` |
 | MPT body of `apply_account_updates_batch()` | Binary trie body. Same function name, same call sites. |
 | `AccountUpdatesList` MPT fields (`state_trie_hash`, `state_updates`, `storage_updates`) | Replaced with `code_updates` + `flat_updates`. MPT fields moved to `MptUpdatesList` for EF tests. |
