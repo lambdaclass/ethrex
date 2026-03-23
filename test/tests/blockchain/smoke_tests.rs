@@ -66,7 +66,6 @@ async fn test_small_to_long_reorg() {
         block_2.hash(),
         genesis_header.hash(),
         genesis_header.hash(),
-        &blockchain.binary_trie_state,
     )
     .await
     .unwrap();
@@ -91,15 +90,9 @@ async fn test_sync_not_supported_yet() {
     let block_1 = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1 = block_1.hash();
     blockchain.add_block(block_1.clone()).unwrap();
-    apply_fork_choice(
-        &store,
-        hash_1,
-        H256::zero(),
-        H256::zero(),
-        &blockchain.binary_trie_state,
-    )
-    .await
-    .unwrap();
+    apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
+        .await
+        .unwrap();
 
     // Build a child, then change its parent, making it effectively a pending block.
     let mut block_2 = new_block(&store, &block_1.header, &blockchain).await;
@@ -111,14 +104,7 @@ async fn test_sync_not_supported_yet() {
     // block 2 should now be pending.
     assert!(store.get_pending_block(hash_2).await.unwrap().is_some());
 
-    let fc_result = apply_fork_choice(
-        &store,
-        hash_2,
-        H256::zero(),
-        H256::zero(),
-        &blockchain.binary_trie_state,
-    )
-    .await;
+    let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero()).await;
     assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
 
     // block 2 should still be pending.
@@ -150,15 +136,9 @@ async fn test_reorg_from_long_to_short_chain() {
     blockchain
         .add_block(block_1b.clone())
         .expect("Could not add block 1b.");
-    apply_fork_choice(
-        &store,
-        hash_1b,
-        genesis_hash,
-        genesis_hash,
-        &blockchain.binary_trie_state,
-    )
-    .await
-    .unwrap();
+    apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash)
+        .await
+        .unwrap();
     let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
 
     assert_ne!(retrieved_1a, retrieved_1b);
@@ -172,15 +152,9 @@ async fn test_reorg_from_long_to_short_chain() {
     blockchain
         .add_block(block_2.clone())
         .expect("Could not add block 2.");
-    apply_fork_choice(
-        &store,
-        hash_2,
-        genesis_hash,
-        genesis_hash,
-        &blockchain.binary_trie_state,
-    )
-    .await
-    .unwrap();
+    apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+        .await
+        .unwrap();
     let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
 
@@ -197,7 +171,6 @@ async fn test_reorg_from_long_to_short_chain() {
         block_1a.hash(),
         genesis_header.hash(),
         genesis_header.hash(),
-        &blockchain.binary_trie_state,
     )
     .await
     .unwrap();
@@ -238,27 +211,14 @@ async fn new_head_with_canonical_ancestor_should_skip() {
     assert!(!is_canonical(&store, 2, hash_2).await.unwrap());
 
     // Make that chain the canonical one.
-    apply_fork_choice(
-        &store,
-        hash_2,
-        genesis_hash,
-        genesis_hash,
-        &blockchain.binary_trie_state,
-    )
-    .await
-    .unwrap();
+    apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+        .await
+        .unwrap();
 
     assert!(is_canonical(&store, 1, hash_1).await.unwrap());
     assert!(is_canonical(&store, 2, hash_2).await.unwrap());
 
-    let result = apply_fork_choice(
-        &store,
-        hash_1,
-        hash_1,
-        hash_1,
-        &blockchain.binary_trie_state,
-    )
-    .await;
+    let result = apply_fork_choice(&store, hash_1, hash_1, hash_1).await;
 
     assert!(matches!(
         result,
@@ -304,15 +264,9 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
     );
 
     // Make that chain the canonical one.
-    apply_fork_choice(
-        &store,
-        hash_2,
-        genesis_hash,
-        genesis_hash,
-        &blockchain.binary_trie_state,
-    )
-    .await
-    .unwrap();
+    apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+        .await
+        .unwrap();
 
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
 
@@ -327,15 +281,9 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
 
     // if we apply fork choice to the new one, then we should
-    apply_fork_choice(
-        &store,
-        hash_b,
-        genesis_hash,
-        genesis_hash,
-        &blockchain.binary_trie_state,
-    )
-    .await
-    .unwrap();
+    apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash)
+        .await
+        .unwrap();
 
     // The latest block should now be the new head.
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);

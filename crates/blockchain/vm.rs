@@ -52,10 +52,7 @@ impl StoreVmDatabase {
         })
     }
 
-    fn get_cached_account_state(
-        &self,
-        address: Address,
-    ) -> Result<Option<AccountState>, EvmError> {
+    fn get_cached_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         if let Some(cached) = self
             .account_state_cache
             .read()

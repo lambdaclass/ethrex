@@ -3900,6 +3900,7 @@ dependencies = [
  "blake3",
  "bytes",
  "ethrex-common",
+ "ethrex-crypto",
  "hex",
  "lru 0.12.5",
  "rocksdb",

@@ -46,9 +46,7 @@ impl BlockReplayer {
         persistent: bool,
         checkpoint_interval: u64,
     ) -> Result<Self> {
-        use ethrex_storage::api::tables::{
-            BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS,
-        };
+        use ethrex_storage::api::tables::{BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
 
         // Register genesis block hash so that block 1 can call BLOCKHASH(0).
         let genesis_block = genesis.get_block();
@@ -60,13 +58,9 @@ impl BlockReplayer {
             )?;
 
             info!("Opening persistent binary trie state in Store's RocksDB");
-            let mut state = BinaryTrieState::open_with_db(
-                db,
-                BINARY_TRIE_NODES,
-                BINARY_TRIE_CODE,
-                BINARY_TRIE_STORAGE_KEYS,
-            )
-            .context("Failed to open binary trie state")?;
+            let mut state =
+                BinaryTrieState::open_with_db(db, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
+                    .context("Failed to open binary trie state")?;
 
             let mut block_hashes = BTreeMap::new();
             block_hashes.insert(0u64, genesis_hash);
@@ -197,10 +191,10 @@ impl BlockReplayer {
 
                 // Log memory stats so we can spot unbounded growth.
                 if let Ok(state) = self.state.read() {
-                    let (clean, warm, dirty, freed, codes, storage_addrs) = state.memory_stats();
+                    let (clean, warm, dirty, freed, storage_addrs) = state.memory_stats();
                     info!(
                         "  mem: clean={clean} warm={warm} dirty={dirty} freed={freed} \
-                         codes={codes} storage_addrs={storage_addrs}"
+                         storage_addrs={storage_addrs}"
                     );
                 }
             }

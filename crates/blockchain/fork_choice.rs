@@ -1,12 +1,10 @@
-use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_common::{
     H256,
     types::{BlockHash, BlockHeader, BlockNumber},
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
-use std::sync::{Arc, RwLock};
-use tracing::{error, warn};
+use tracing::error;
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -27,7 +25,6 @@ pub async fn apply_fork_choice(
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
-    binary_trie_state: &Arc<RwLock<BinaryTrieState>>,
 ) -> Result<BlockHeader, InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
@@ -101,27 +98,11 @@ pub async fn apply_fork_choice(
         ));
     }
 
-    let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
+    let Some(_link_header) = store.get_block_header_by_hash(link_block_hash)? else {
         // Probably unreachable, but we return this error just in case.
         error!("Link block not found although it was just retrieved from the DB");
         return Err(InvalidForkChoice::UnlinkedHead);
     };
-
-    // If the state can't be constructed from the binary trie, we ignore it and log a warning.
-    // TODO(#5564): handle arbitrary reorgs
-    let state_reachable = binary_trie_state
-        .read()
-        .map(|s| s.has_state_for_block(link_block_hash, link_header.number))
-        .unwrap_or(false);
-    if !state_reachable {
-        warn!(
-            link_block=%link_block_hash,
-            link_number=%link_header.number,
-            head_number=%head.number,
-            "FCU head state not reachable from binary trie state. Ignoring fork choice update. This is expected if the consensus client is currently syncing. Otherwise, if consensus is synced and this is a consistent message it can be fixed by removing the DB and re-syncing the execution client."
-        );
-        return Err(InvalidForkChoice::StateNotReachable);
-    }
 
     // Finished all validations.
 

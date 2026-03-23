@@ -353,10 +353,6 @@ impl Blockchain {
         state
             .apply_genesis(&genesis.alloc)
             .expect("failed to apply genesis to binary trie");
-        // Set the diff tree base to the genesis block hash so reads
-        // at the genesis parent hash fall through to the base correctly.
-        let genesis_hash = genesis.get_block().hash();
-        state.set_diff_base(genesis_hash, 0);
         // Populate FKV so reads at genesis state don't fall through to an empty table.
         store
             .populate_fkv_from_genesis(&genesis.alloc)
@@ -395,22 +391,21 @@ impl Blockchain {
         StoreVmDatabase::new_with_block_hash_cache(self.storage.clone(), header, block_hash_cache)
     }
 
-    /// Apply account updates to the binary trie with a diff layer and optionally flush.
+    /// Apply account updates to the binary trie and optionally flush.
     fn apply_binary_trie_updates(
         &self,
         updates: &[AccountUpdate],
         block_number: u64,
         block_hash: H256,
-        parent_hash: H256,
+        _parent_hash: H256,
     ) -> Result<(), ChainError> {
         let mut state = self
             .binary_trie_state
             .write()
             .map_err(|e| ChainError::Custom(format!("binary trie lock error: {e}")))?;
-        state.begin_block(block_hash, parent_hash, block_number);
         for update in updates {
             state
-                .apply_account_update_for_block(update, block_hash)
+                .apply_account_update(update)
                 .map_err(|e| ChainError::Custom(format!("binary trie update error: {e}")))?;
         }
         let root = state.state_root();
@@ -1765,6 +1760,15 @@ impl Blockchain {
         // The trie is at pre-execution state (caller has NOT yet called
         // apply_binary_trie_updates). state_root() was called after the
         // previous block, so node hashes are cached for proof generation.
+
+        // Fetch code bytes from the store for each accessed code hash.
+        let mut codes = std::collections::HashMap::new();
+        for code_hash in &accessed_codes {
+            if let Ok(Some(code)) = self.storage.get_account_code(*code_hash) {
+                codes.insert(*code_hash, code.bytecode);
+            }
+        }
+
         let state = self
             .binary_trie_state
             .read()
@@ -1775,6 +1779,7 @@ impl Blockchain {
                 block.hash(),
                 &accessed_accounts,
                 &accessed_codes,
+                &codes,
                 block_headers,
             )
             .map_err(|e| ChainError::WitnessGeneration(format!("proof generation failed: {e}")))

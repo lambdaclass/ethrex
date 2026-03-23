@@ -457,14 +457,8 @@ pub async fn process_blocks_on_queue(
                 );
             })?;
 
-        apply_fork_choice(
-            &established.storage,
-            block_hash,
-            block_hash,
-            block_hash,
-            &established.blockchain.binary_trie_state,
-        )
-        .await
+        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
+            .await
             .map_err(|e| {
                 PeerConnectionError::BlockchainError(ChainError::Custom(format!(
                     "Error adding new block {} with hash {:?}, error: {e}",

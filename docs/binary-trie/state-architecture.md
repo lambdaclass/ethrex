@@ -15,13 +15,12 @@ ethrex uses a layered state architecture with clear separation between the read 
                           │       Store          │
                           │  (single interface)  │
                           └──────────┬──────────┘
-                             ┌───────┴───────┐
-                        reads│               │reads
-                    ┌────────▼───┐     ┌─────▼────────┐
-                    │ Diff Layers │     │     FKV      │
-                    │ (in-memory) │     │  (RocksDB)   │
-                    │ ~128 blocks │     │   O(1) get   │
-                    └────────────┘     └──────────────┘
+                                     │reads
+                             ┌───────▼───────┐
+                             │     FKV       │
+                             │  (RocksDB)    │
+                             │   O(1) get    │
+                             └───────────────┘
 
                           ┌─────────────────────┐
                           │    Binary Trie       │
@@ -49,18 +48,6 @@ The FKV key space (`keccak(address)`) is independent of the binary trie's intern
 key space (`tree_key(address)`). This decoupling means the trie structure can change
 without affecting the read path.
 
-### In-Memory Diff Layers
-
-The diff layer tree holds state changes for the most recent ~128 blocks. It supports
-branching for reorg handling (multiple blocks can share the same parent).
-
-Reads check the diff layers first. If the value was modified in a recent block, it is
-returned directly from memory without touching disk. If not found in any diff layer,
-the read falls through to the FKV on disk.
-
-The diff layers are flushed periodically (every ~128 blocks). After flush, the FKV
-on disk is up to date and the in-memory layers for flushed blocks are pruned.
-
 ### Binary Trie
 
 The binary trie (EIP-7864) is used exclusively for:
@@ -85,8 +72,8 @@ Store is the single interface for all state access. It holds:
 - FKV tables (account state and storage)
 - Binary trie nodes (managed by NodeStore)
 
-All reads go through Store. Store checks diff layers first, then falls through to
-FKV. Callers never interact with the binary trie or FKV directly.
+All reads go through Store. Store reads directly from the FKV.
+Callers never interact with the binary trie or FKV directly.
 
 ## Read Path
 
@@ -95,15 +82,14 @@ Store.get_account_info(block_number, address)
   │
   ├─ resolve block_number → block_hash
   │
-  ├─ check diff layers for (address, block_hash)
-  │    → if found: return value from memory
-  │
   └─ read from ACCOUNT_FLATKEYVALUE
        → key: keccak(address)
        → single RocksDB get, O(1)
 ```
 
 Storage reads follow the same pattern via `STORAGE_FLATKEYVALUE`.
+
+Code reads use `ACCOUNT_CODES` table keyed by code hash.
 
 ## Write Path
 
@@ -114,14 +100,11 @@ Block execution produces Vec<AccountUpdate>
   │    → ACCOUNT_FLATKEYVALUE: keccak(address) → RLP(AccountState)
   │    → STORAGE_FLATKEYVALUE: keccak(address) || keccak(slot) → RLP(value)
   │
-  ├─ Write to binary trie (apply_account_update_for_block)
+  ├─ Write to binary trie (apply_account_update)
   │    → Updates trie nodes for merkleization
   │    → state_root() computes binary trie root
   │
-  ├─ Write code to ACCOUNT_CODES table
-  │
-  └─ Record in diff layers (begin_block + per-update recording)
-       → Available for fast in-memory reads of recent state
+  └─ Write code to ACCOUNT_CODES table
 ```
 
 ## Merkleization Path
@@ -129,9 +112,9 @@ Block execution produces Vec<AccountUpdate>
 ```
 After block execution:
   │
-  ├─ apply_account_update_for_block(update, block_hash)
+  ├─ apply_account_update(update)
   │    → Inserts/updates leaves in the binary trie
-  │    → basic_data, code_hash, storage_slot keys
+  │    → basic_data, code_hash, code_chunks, storage_slot keys
   │
   ├─ state_root()
   │    → Computes hashes bottom-up (blake3)

@@ -154,9 +154,6 @@ fn test_contract_deployment_lifecycle() {
     let contract_state = state.get_account_state(&contract).unwrap();
     assert_eq!(contract_state.code_hash, code_hash);
 
-    let retrieved_code = state.get_account_code(&code_hash).unwrap();
-    assert_eq!(retrieved_code, bytecode);
-
     let code_size = state.get_code_size(&contract);
     assert_eq!(code_size as usize, bytecode.len());
 }

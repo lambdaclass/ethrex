@@ -179,11 +179,7 @@ pub fn init_binary_trie_state(
     datadir: &Path,
     genesis: &Genesis,
 ) -> eyre::Result<Arc<std::sync::RwLock<BinaryTrieState>>> {
-    use ethrex_storage::api::tables::{
-        BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS,
-    };
-
-    let genesis_hash = genesis.get_block().hash();
+    use ethrex_storage::api::tables::{BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
 
     if is_memory_datadir(datadir) {
         let mut state = BinaryTrieState::new();
@@ -191,7 +187,6 @@ pub fn init_binary_trie_state(
         state
             .apply_genesis(&genesis.alloc)
             .map_err(|e| eyre::eyre!("Failed to apply genesis to binary trie: {e}"))?;
-        state.set_diff_base(genesis_hash, 0);
         return Ok(Arc::new(std::sync::RwLock::new(state)));
     }
 
@@ -219,18 +214,12 @@ pub fn init_binary_trie_state(
             .db_handle()
             .ok_or_else(|| eyre::eyre!("Failed to get RocksDB handle from Store"))?;
 
-        let mut state = BinaryTrieState::open_with_db(
-            db,
-            BINARY_TRIE_NODES,
-            BINARY_TRIE_CODE,
-            BINARY_TRIE_STORAGE_KEYS,
-        )
-        .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
+        let mut state =
+            BinaryTrieState::open_with_db(db, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
+                .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
 
         if let Some(checkpoint) = state.checkpoint_block() {
-            // base_hash was already restored from META_BASE_HASH_KEY by open_with_db.
-            // Only set base_block which is not separately persisted on disk.
-            state.set_diff_base_block(checkpoint);
+            state.set_last_flushed_block(checkpoint);
             info!("Binary trie resuming from checkpoint block {checkpoint}");
         }
 

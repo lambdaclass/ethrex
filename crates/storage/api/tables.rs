@@ -60,10 +60,6 @@ pub const SNAP_STATE: &str = "snap_state";
 /// - Meta keys use `0xFF` prefix: `[0xFF, b'R']` (root), `[0xFF, b'N']` (next_id), etc.
 pub const BINARY_TRIE_NODES: &str = "binary_trie_nodes";
 
-/// Binary trie code store column family: [`[u8; 32]`] => [`Vec<u8>`]
-/// - raw `code_hash` (32 bytes) => bytecode
-pub const BINARY_TRIE_CODE: &str = "binary_trie_code";
-
 /// Binary trie storage key tracking column family: [`[u8; 20]`] => [`Vec<u8>`]
 /// - raw `address` (20 bytes) => packed list of H256 storage keys
 pub const BINARY_TRIE_STORAGE_KEYS: &str = "binary_trie_storage_keys";
@@ -105,7 +101,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 20] = [
+pub const TABLES: [&str; 19] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -124,6 +120,5 @@ pub const TABLES: [&str; 20] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     BINARY_TRIE_NODES,
-    BINARY_TRIE_CODE,
     BINARY_TRIE_STORAGE_KEYS,
 ];

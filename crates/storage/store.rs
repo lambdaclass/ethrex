@@ -1786,21 +1786,9 @@ impl Store {
 
     pub fn get_account_info_by_hash(
         &self,
-        block_hash: BlockHash,
+        _block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        // Check diff layers first (covers recent blocks not yet flushed to FKV).
-        if let Some(ref bts) = self.binary_trie_state {
-            let state = bts.read().map_err(|_| StoreError::LockError)?;
-            if let Some(result) = state.diff_lookup_account(&address, block_hash) {
-                return Ok(result.map(|s| AccountInfo {
-                    code_hash: s.code_hash,
-                    balance: s.balance,
-                    nonce: s.nonce,
-                }));
-            }
-        }
-        // Fall through to FKV for flushed state.
         let hashed_address = hash_address_fixed(&address);
         let read_tx = self.backend.begin_read()?;
         match read_tx.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())? {
@@ -1816,20 +1804,12 @@ impl Store {
         }
     }
 
-    /// Read account state at a specific block hash, delegating to the binary trie then FKV.
+    /// Read account state at a specific block hash, delegating to FKV.
     pub fn get_account_state_by_block_hash(
         &self,
-        block_hash: BlockHash,
+        _block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        // Check diff layers first (covers recent blocks not yet flushed to FKV).
-        if let Some(ref bts) = self.binary_trie_state {
-            let state = bts.read().map_err(|_| StoreError::LockError)?;
-            if let Some(result) = state.diff_lookup_account(&address, block_hash) {
-                return Ok(result);
-            }
-        }
-        // Fall through to FKV for flushed state.
         let hashed_address = hash_address_fixed(&address);
         let read_tx = self.backend.begin_read()?;
         match read_tx.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())? {
@@ -1838,21 +1818,13 @@ impl Store {
         }
     }
 
-    /// Read a storage slot at a specific block hash, delegating to the binary trie then FKV.
+    /// Read a storage slot at a specific block hash, delegating to FKV.
     pub fn get_storage_at_by_block_hash(
         &self,
-        block_hash: BlockHash,
+        _block_hash: BlockHash,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        // Check diff layers first (covers recent blocks not yet flushed to FKV).
-        if let Some(ref bts) = self.binary_trie_state {
-            let state = bts.read().map_err(|_| StoreError::LockError)?;
-            if let Some(result) = state.diff_lookup_storage(&address, storage_key, block_hash) {
-                return Ok(result);
-            }
-        }
-        // Fall through to FKV for flushed state.
         let hashed_address = hash_address_fixed(&address);
         let hashed_key = hash_key_fixed(&storage_key);
         let mut fkv_key = Vec::with_capacity(64);
@@ -2118,9 +2090,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         #[cfg(feature = "rocksdb")]
         {
-            use crate::api::tables::{
-                BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS,
-            };
+            use crate::api::tables::{BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
             use ethrex_binary_trie::state::BinaryTrieState;
 
             let Some(db) = self.db_handle() else {
@@ -2128,13 +2098,9 @@ impl Store {
                 return Ok(());
             };
 
-            let mut state = BinaryTrieState::open_with_db(
-                db,
-                BINARY_TRIE_NODES,
-                BINARY_TRIE_CODE,
-                BINARY_TRIE_STORAGE_KEYS,
-            )
-            .map_err(|e| StoreError::Custom(format!("Failed to open binary trie: {e}")))?;
+            let mut state =
+                BinaryTrieState::open_with_db(db, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
+                    .map_err(|e| StoreError::Custom(format!("Failed to open binary trie: {e}")))?;
 
             state.apply_genesis(genesis_accounts).map_err(|e| {
                 StoreError::Custom(format!("Failed to apply genesis to binary trie: {e}"))

@@ -258,14 +258,7 @@ impl BlockProducer {
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(
-            &self.store,
-            block_hash,
-            block_hash,
-            block_hash,
-            &self.blockchain.binary_trie_state,
-        )
-        .await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         metrics!(
             METRICS_BLOCKS.set_block_number(block_number);

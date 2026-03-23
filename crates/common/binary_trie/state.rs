@@ -5,7 +5,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(feature = "rocksdb")]
 use std::sync::Arc;
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
@@ -24,157 +23,7 @@ use crate::{
         unpack_basic_data,
     },
     merkle::merkelize,
-    node::NodeId,
 };
-
-// ── Diff layer types ──────────────────────────────────────────────────
-
-/// Result of looking up a value in the diff tree.
-pub enum DiffLookup<T> {
-    /// Value found in a diff layer.
-    Found(T),
-    /// Explicitly deleted in a diff layer.
-    Deleted,
-    /// Walked all the way to the base without finding the key.
-    /// Safe to read from the base trie.
-    NotModified,
-    /// Block hash not found in the in-memory diff tree.
-    /// Caller must try loading from disk or return an error.
-    NotInMemory,
-}
-
-/// State changes from a single block.
-#[derive(Default)]
-pub struct StateDiff {
-    /// Accounts modified: address -> post-state. None = account deleted.
-    pub accounts: FxHashMap<Address, Option<AccountState>>,
-    /// Storage slots modified: (address, key) -> post-value. None = zeroed.
-    pub storage: FxHashMap<(Address, H256), Option<U256>>,
-    /// Code deployed: code_hash -> bytecode.
-    pub code: FxHashMap<H256, Bytes>,
-    /// Addresses whose storage was fully cleared (SELFDESTRUCT).
-    /// Acts as a blanket tombstone: any storage slot not explicitly re-set
-    /// in this layer's `storage` map is treated as deleted. Individual
-    /// per-slot tombstones are NOT needed when this flag is set.
-    pub storage_cleared: FxHashSet<Address>,
-}
-
-/// A node in the diff layer tree.
-struct DiffTreeNode {
-    parent_hash: H256,
-    block_number: u64,
-    diff: StateDiff,
-}
-
-/// Tree of per-block state diffs for recent blocks.
-///
-/// Supports branching: multiple blocks can share the same parent.
-/// Reads walk from the target block backwards through parent links
-/// until the value is found or we reach the base.
-pub struct DiffTree {
-    layers: FxHashMap<H256, DiffTreeNode>,
-    /// Block hash of the base. State at the base is in the flushed trie on disk.
-    pub base_hash: H256,
-    /// Block number of the base.
-    pub base_block: u64,
-}
-
-impl DiffTree {
-    pub fn new() -> Self {
-        Self {
-            layers: FxHashMap::default(),
-            base_hash: H256::zero(),
-            base_block: 0,
-        }
-    }
-
-    /// Look up an account at a specific block.
-    pub fn get_account(&self, addr: &Address, at: H256) -> DiffLookup<AccountState> {
-        let mut current = at;
-        loop {
-            if current == self.base_hash {
-                return DiffLookup::NotModified;
-            }
-            match self.layers.get(&current) {
-                Some(node) => match node.diff.accounts.get(addr) {
-                    Some(Some(state)) => return DiffLookup::Found(state.clone()),
-                    Some(None) => return DiffLookup::Deleted,
-                    None => current = node.parent_hash,
-                },
-                None => return DiffLookup::NotInMemory,
-            }
-        }
-    }
-
-    /// Look up a storage slot at a specific block.
-    pub fn get_storage(&self, addr: &Address, key: H256, at: H256) -> DiffLookup<U256> {
-        let mut current = at;
-        loop {
-            if current == self.base_hash {
-                return DiffLookup::NotModified;
-            }
-            match self.layers.get(&current) {
-                Some(node) => {
-                    // Check explicit storage entry first.
-                    match node.diff.storage.get(&(*addr, key)) {
-                        Some(Some(val)) => return DiffLookup::Found(*val),
-                        Some(None) => return DiffLookup::Deleted,
-                        None => {
-                            // If this layer cleared all storage for the address,
-                            // any slot not explicitly re-set is deleted.
-                            if node.diff.storage_cleared.contains(addr) {
-                                return DiffLookup::Deleted;
-                            }
-                            current = node.parent_hash;
-                        }
-                    }
-                }
-                None => return DiffLookup::NotInMemory,
-            }
-        }
-    }
-
-    /// Look up code at a specific block.
-    pub fn get_code(&self, code_hash: &H256, at: H256) -> DiffLookup<Bytes> {
-        let mut current = at;
-        loop {
-            if current == self.base_hash {
-                return DiffLookup::NotModified;
-            }
-            match self.layers.get(&current) {
-                Some(node) => match node.diff.code.get(code_hash) {
-                    Some(code) => return DiffLookup::Found(code.clone()),
-                    None => current = node.parent_hash,
-                },
-                None => return DiffLookup::NotInMemory,
-            }
-        }
-    }
-
-    /// Insert a new diff layer.
-    pub fn add_layer(
-        &mut self,
-        block_hash: H256,
-        parent_hash: H256,
-        block_number: u64,
-        diff: StateDiff,
-    ) {
-        self.layers.insert(
-            block_hash,
-            DiffTreeNode {
-                parent_hash,
-                block_number,
-                diff,
-            },
-        );
-    }
-
-    /// Remove layers older than `cutoff_block`.
-    pub fn prune_before(&mut self, cutoff_block: u64) {
-        self.layers
-            .retain(|_, node| node.block_number > cutoff_block);
-    }
-}
 
 // Meta keys stored in BINARY_TRIE_NODES CF (alongside node IDs).
 // The 0xFF prefix ensures they don't collide with 8-byte u64 node keys.
@@ -193,26 +42,6 @@ pub struct BinaryTrieState {
     /// The underlying binary trie holding all state leaves.
     trie: BinaryTrie,
 
-    /// Tree of per-block state diffs for recent blocks.
-    diff_tree: DiffTree,
-
-    /// Trie root at the last flush. Used for base reads when a value
-    /// isn't found in any diff layer.
-    base_root: Option<NodeId>,
-
-    /// Code by keccak256 hash — for fast `get_account_code` lookups.
-    /// Code is also chunked in the trie, but reconstructing from chunks
-    /// on every CALL would be expensive.
-    ///
-    /// INVARIANT: every non-empty code_hash leaf in the trie must have a
-    /// corresponding entry here. This is maintained by `apply_genesis` and
-    /// `apply_account_update`. Any future deserialization or state-loading
-    /// path must also populate this map, or `get_account_code` will fail.
-    ///
-    /// Wrapped in a Mutex so `get_account_code` can populate the cache with
-    /// `&self` (concurrent reads from executor threads).
-    code_store: Mutex<FxHashMap<H256, Bytes>>,
-
     /// Tracks which storage keys each account has written.
     /// Needed for `removed_storage` (SELFDESTRUCT) since the binary trie
     /// has no prefix-enumeration — we can't discover all storage keys
@@ -226,17 +55,9 @@ pub struct BinaryTrieState {
     #[cfg(feature = "rocksdb")]
     db: Option<Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>>,
 
-    /// Column family name for code (code_hash -> bytecode).
-    #[cfg(feature = "rocksdb")]
-    code_cf: &'static str,
-
     /// Column family name for storage key tracking (address -> packed H256 list).
     #[cfg(feature = "rocksdb")]
     storage_keys_cf: &'static str,
-
-    /// Code hashes written since the last `flush()`.
-    #[cfg(feature = "rocksdb")]
-    dirty_codes: FxHashSet<H256>,
 
     /// Addresses whose storage_keys entry has changed since the last `flush()`.
     #[cfg(feature = "rocksdb")]
@@ -250,113 +71,69 @@ pub struct BinaryTrieState {
     /// Default 128, matching MPT's `DB_COMMIT_THRESHOLD`.
     #[cfg(feature = "rocksdb")]
     flush_threshold: u64,
+
+    /// Block number of the last successful flush.
+    last_flushed_block: u64,
 }
 
 impl BinaryTrieState {
     pub fn new() -> Self {
         Self {
             trie: BinaryTrie::new(),
-            diff_tree: DiffTree::new(),
-            base_root: None,
-            code_store: Mutex::new(FxHashMap::default()),
             storage_keys: Mutex::new(FxHashMap::default()),
             #[cfg(feature = "rocksdb")]
             db: None,
             #[cfg(feature = "rocksdb")]
-            code_cf: "",
-            #[cfg(feature = "rocksdb")]
             storage_keys_cf: "",
-            #[cfg(feature = "rocksdb")]
-            dirty_codes: FxHashSet::default(),
             #[cfg(feature = "rocksdb")]
             dirty_storage_keys: FxHashSet::default(),
             #[cfg(feature = "rocksdb")]
             blocks_since_flush: 0,
             #[cfg(feature = "rocksdb")]
             flush_threshold: 128,
+            last_flushed_block: 0,
         }
     }
 
     /// Check if state is available for the given block.
-    ///
-    /// Returns true if:
-    /// - The block is the current flushed base (its state is in the on-disk trie), OR
-    /// - The block number is at or before the base block (historical, already flushed), OR
-    /// - A diff layer exists for the block hash (recent, in-memory).
-    pub fn has_state_for_block(&self, block_hash: H256, block_number: u64) -> bool {
-        block_hash == self.diff_tree.base_hash
-            || block_number <= self.diff_tree.base_block
-            || self.diff_tree.layers.contains_key(&block_hash)
+    pub fn has_state_for_block(&self, _block_hash: H256, block_number: u64) -> bool {
+        block_number <= self.last_flushed_block
     }
 
     /// Open a persistent `BinaryTrieState` using a shared RocksDB instance.
     ///
-    /// All reads/writes use the named column families `nodes_cf`, `code_cf`,
-    /// and `storage_keys_cf`, which must already exist in `db`.
+    /// All reads/writes use the named column families `nodes_cf` and
+    /// `storage_keys_cf`, which must already exist in `db`.
     ///
     /// If the database already contains data (the trie root is present),
-    /// the trie nodes, code store, and storage keys are loaded from it.
+    /// the trie nodes and storage keys are loaded from it.
     /// If the database is new/empty, an empty state is returned — the
     /// caller is responsible for applying genesis.
     #[cfg(feature = "rocksdb")]
     pub fn open_with_db(
         db: Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
         nodes_cf: &'static str,
-        code_cf: &'static str,
         storage_keys_cf: &'static str,
     ) -> Result<Self, BinaryTrieError> {
         let store = NodeStore::open(Arc::clone(&db), nodes_cf)?;
         let root = store.load_root();
         let trie = BinaryTrie { store, root };
 
-        let (code_store, storage_keys) = if root.is_some() {
-            // Existing database — load side structures.
-            let code_store = load_code_store(&db, code_cf)?;
-            let storage_keys = load_storage_keys(&db, storage_keys_cf)?;
-            (code_store, storage_keys)
+        let storage_keys = if root.is_some() {
+            load_storage_keys(&db, storage_keys_cf)?
         } else {
-            (FxHashMap::default(), FxHashMap::default())
+            FxHashMap::default()
         };
-
-        // The flushed root on disk IS the base for diff layers.
-        let base_root = root;
-
-        // Restore the diff tree base_hash from disk so that disk-backed
-        // backward walks know where to stop and fall through to the base trie.
-        // Use a scope to ensure the CF handle is dropped before `db` is moved below.
-        let base_hash = {
-            let nodes_cf_handle = db
-                .cf_handle(nodes_cf)
-                .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{nodes_cf}' not found")))?;
-            db.get_cf(&nodes_cf_handle, META_BASE_HASH_KEY)
-                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
-                .and_then(|bytes| {
-                    if bytes.len() >= 32 {
-                        Some(H256::from_slice(&bytes[..32]))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(H256::zero())
-            // nodes_cf_handle dropped here
-        };
-
-        let mut diff_tree = DiffTree::new();
-        diff_tree.base_hash = base_hash;
 
         Ok(Self {
             trie,
-            diff_tree,
-            base_root,
-            code_store: Mutex::new(code_store),
             storage_keys: Mutex::new(storage_keys),
             db: Some(db),
-            code_cf,
             storage_keys_cf,
-            dirty_codes: FxHashSet::default(),
             dirty_storage_keys: FxHashSet::default(),
             blocks_since_flush: 0,
             flush_threshold: 128,
+            last_flushed_block: 0,
         })
     }
 
@@ -382,7 +159,7 @@ impl BinaryTrieState {
 
     /// Persist the current state and record `block_number` as the checkpoint.
     ///
-    /// All dirty trie nodes, code entries, and storage_keys entries are written
+    /// All dirty trie nodes and storage_keys entries are written
     /// atomically in a single `WriteBatch`. On success the dirty sets are cleared.
     #[cfg(feature = "rocksdb")]
     pub fn flush(&mut self, block_number: u64, block_hash: H256) -> Result<(), BinaryTrieError> {
@@ -395,9 +172,6 @@ impl BinaryTrieState {
         let nodes_cf = db.cf_handle(self.trie.store.nodes_cf).ok_or_else(|| {
             BinaryTrieError::StoreError(format!("CF '{}' not found", self.trie.store.nodes_cf))
         })?;
-        let code_cf = db.cf_handle(self.code_cf).ok_or_else(|| {
-            BinaryTrieError::StoreError(format!("CF '{}' not found", self.code_cf))
-        })?;
         let storage_keys_cf = db.cf_handle(self.storage_keys_cf).ok_or_else(|| {
             BinaryTrieError::StoreError(format!("CF '{}' not found", self.storage_keys_cf))
         })?;
@@ -407,20 +181,7 @@ impl BinaryTrieState {
         // 1. Flush trie nodes (dirty + freed nodes, root, next_id) into nodes_cf.
         self.trie.flush_to_batch(&mut batch, &nodes_cf);
 
-        // 2. Write dirty code_store entries: raw code_hash (32 bytes) as key.
-        {
-            let code_store = self.code_store.lock().unwrap();
-            for hash in &self.dirty_codes {
-                if let Some(code) = code_store.get(hash) {
-                    batch.put_cf(&code_cf, hash.as_bytes(), code.as_ref());
-                } else {
-                    // Code was removed — delete the entry.
-                    batch.delete_cf(&code_cf, hash.as_bytes());
-                }
-            }
-        }
-
-        // 3. Write dirty storage_keys entries: raw address (20 bytes) as key.
+        // 2. Write dirty storage_keys entries: raw address (20 bytes) as key.
         {
             let storage_keys = self.storage_keys.lock().unwrap();
             for addr in &self.dirty_storage_keys {
@@ -437,25 +198,14 @@ impl BinaryTrieState {
             }
         }
 
-        // 4. Write checkpoint block number and base block hash into nodes_cf (meta).
+        // 3. Write checkpoint block number into nodes_cf (meta).
         batch.put_cf(&nodes_cf, META_BLOCK_KEY, block_number.to_le_bytes());
         batch.put_cf(&nodes_cf, META_BASE_HASH_KEY, block_hash.as_bytes());
 
         db.write(batch)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
 
-        // Sliding-window eviction: keep only the entries that were dirty
-        // (recently modified = likely hot), drop everything else.  On a cache
-        // miss, entries are reloaded from RocksDB on demand.
-        {
-            let mut code_store = self.code_store.lock().unwrap();
-            let evicted: FxHashMap<H256, Bytes> = self
-                .dirty_codes
-                .iter()
-                .filter_map(|h| code_store.remove_entry(h))
-                .collect();
-            *code_store = evicted;
-        }
+        // Sliding-window eviction for storage_keys.
         {
             let mut storage_keys = self.storage_keys.lock().unwrap();
             let evicted: FxHashMap<Address, FxHashSet<H256>> = self
@@ -466,16 +216,9 @@ impl BinaryTrieState {
             *storage_keys = evicted;
         }
 
-        self.dirty_codes.clear();
         self.dirty_storage_keys.clear();
         self.blocks_since_flush = 0;
-
-        // Update diff tree base: after flush, disk trie matches current root.
-        self.base_root = self.trie.root;
-        let cutoff = block_number.saturating_sub(self.flush_threshold);
-        self.diff_tree.prune_before(cutoff);
-        self.diff_tree.base_hash = block_hash;
-        self.diff_tree.base_block = block_number;
+        self.last_flushed_block = block_number;
 
         Ok(())
     }
@@ -499,16 +242,13 @@ impl BinaryTrieState {
         }
     }
 
-    /// No-op when RocksDB is not enabled. Prunes old diff layers to bound memory.
+    /// No-op when RocksDB is not enabled.
     #[cfg(not(feature = "rocksdb"))]
     pub fn flush_if_needed(
         &mut self,
-        block_number: u64,
+        _block_number: u64,
         _block_hash: H256,
     ) -> Result<bool, BinaryTrieError> {
-        // Issue 10: prune diff layers even without rocksdb to prevent unbounded growth.
-        let cutoff = block_number.saturating_sub(128);
-        self.diff_tree.prune_before(cutoff);
         Ok(false)
     }
 
@@ -516,6 +256,11 @@ impl BinaryTrieState {
     #[cfg(feature = "rocksdb")]
     pub fn set_flush_threshold(&mut self, threshold: u64) {
         self.flush_threshold = threshold;
+    }
+
+    /// Set the last flushed block number (used when resuming from a checkpoint).
+    pub fn set_last_flushed_block(&mut self, block_number: u64) {
+        self.last_flushed_block = block_number;
     }
 
     /// Compute the binary trie state root via merkelization.
@@ -576,188 +321,6 @@ impl BinaryTrieState {
         self.trie.get(tree_key).map(|v| U256::from_big_endian(&v))
     }
 
-    /// Look up code by its keccak256 hash.
-    ///
-    /// Checks the in-memory cache first; on a miss, reloads from RocksDB.
-    pub fn get_account_code(&self, code_hash: &H256) -> Option<Bytes> {
-        {
-            let cache = self.code_store.lock().unwrap();
-            if let Some(code) = cache.get(code_hash) {
-                return Some(code.clone());
-            }
-        }
-        #[cfg(feature = "rocksdb")]
-        if let Some(db) = self.db.as_ref() {
-            if let Some(cf) = db.cf_handle(self.code_cf) {
-                if let Ok(Some(bytes)) = db.get_cf(&cf, code_hash.as_bytes()) {
-                    let code = Bytes::copy_from_slice(&bytes);
-                    self.code_store
-                        .lock()
-                        .unwrap()
-                        .insert(*code_hash, code.clone());
-                    return Some(code);
-                }
-            }
-        }
-        None
-    }
-
-    // ── Diff-layer-only reads (FKV fallback path) ─────────────────────
-
-    /// Look up account in diff layers only, without falling through to the base trie.
-    ///
-    /// Returns:
-    /// - `Some(Some(state))` — found in a diff layer.
-    /// - `Some(None)` — explicitly deleted in a diff layer.
-    /// - `None` — not in any diff layer; caller should fall through to FKV.
-    pub fn diff_lookup_account(
-        &self,
-        address: &Address,
-        block_hash: H256,
-    ) -> Option<Option<AccountState>> {
-        if block_hash.is_zero() {
-            return None;
-        }
-        match self.diff_tree.get_account(address, block_hash) {
-            DiffLookup::Found(state) => Some(Some(state)),
-            DiffLookup::Deleted => Some(None),
-            DiffLookup::NotModified | DiffLookup::NotInMemory => None,
-        }
-    }
-
-    /// Look up storage in diff layers only, without falling through to the base trie.
-    ///
-    /// Returns:
-    /// - `Some(Some(val))` — found in a diff layer.
-    /// - `Some(None)` — explicitly zeroed/deleted in a diff layer.
-    /// - `None` — not in any diff layer; caller should fall through to FKV.
-    pub fn diff_lookup_storage(
-        &self,
-        address: &Address,
-        key: H256,
-        block_hash: H256,
-    ) -> Option<Option<U256>> {
-        if block_hash.is_zero() {
-            return None;
-        }
-        match self.diff_tree.get_storage(address, key, block_hash) {
-            DiffLookup::Found(val) => Some(Some(val)),
-            DiffLookup::Deleted => Some(None),
-            DiffLookup::NotModified | DiffLookup::NotInMemory => None,
-        }
-    }
-
-    // ── Diff-layer-aware reads (for historical state) ─────────────────
-
-    /// Read account state at a specific block (identified by block hash).
-    ///
-    /// `H256::zero()` is a special bypass used by tests;
-    /// it reads directly from the tip trie without consulting any diff layer.
-    pub fn get_account_state_at(
-        &self,
-        address: &Address,
-        block_hash: H256,
-    ) -> Result<Option<AccountState>, BinaryTrieError> {
-        if block_hash.is_zero() {
-            return Ok(self.get_account_state(address));
-        }
-        match self.diff_tree.get_account(address, block_hash) {
-            DiffLookup::Found(state) => Ok(Some(state)),
-            DiffLookup::Deleted => Ok(None),
-            DiffLookup::NotModified => Ok(self.get_account_state_from_base(address)),
-            DiffLookup::NotInMemory => Ok(None),
-        }
-    }
-
-    /// Read a storage slot at a specific block.
-    ///
-    /// `H256::zero()` bypasses diff layers and reads from the tip trie.
-    pub fn get_storage_slot_at(
-        &self,
-        address: &Address,
-        key: H256,
-        block_hash: H256,
-    ) -> Result<Option<U256>, BinaryTrieError> {
-        if block_hash.is_zero() {
-            return Ok(self.get_storage_slot(address, key));
-        }
-        match self.diff_tree.get_storage(address, key, block_hash) {
-            DiffLookup::Found(val) => Ok(Some(val)),
-            DiffLookup::Deleted => Ok(None),
-            DiffLookup::NotModified => Ok(self.get_storage_slot_from_base(address, key)),
-            DiffLookup::NotInMemory => Ok(None),
-        }
-    }
-
-    /// Look up code at a specific block.
-    ///
-    /// `H256::zero()` bypasses diff layers and reads from the tip trie.
-    pub fn get_account_code_at(
-        &self,
-        code_hash: &H256,
-        block_hash: H256,
-    ) -> Result<Option<Bytes>, BinaryTrieError> {
-        if block_hash.is_zero() {
-            return Ok(self.get_account_code(code_hash));
-        }
-        match self.diff_tree.get_code(code_hash, block_hash) {
-            DiffLookup::Found(code) => Ok(Some(code)),
-            // Code is never deleted in practice.
-            DiffLookup::Deleted => Ok(None),
-            DiffLookup::NotModified => Ok(self.get_account_code(code_hash)),
-            DiffLookup::NotInMemory => Ok(None),
-        }
-    }
-
-    /// Read account from the base (flushed) trie.
-    fn get_account_state_from_base(&self, address: &Address) -> Option<AccountState> {
-        if self.base_root.is_none() {
-            // No flush yet -- tip trie IS the base.
-            return self.get_account_state(address);
-        }
-
-        let basic_data_key = get_tree_key_for_basic_data(address);
-        let basic_data = self.trie.get_from_base(self.base_root, basic_data_key)?;
-
-        let (_version, _code_size, nonce, balance) = unpack_basic_data(&basic_data);
-
-        let code_hash_key = get_tree_key_for_code_hash(address);
-        let code_hash = self
-            .trie
-            .get_from_base(self.base_root, code_hash_key)
-            .map(H256)
-            .unwrap_or(*EMPTY_KECCACK_HASH);
-
-        let has_storage = self.has_storage_keys(address);
-        let storage_root = if has_storage {
-            H256::from_low_u64_be(1)
-        } else {
-            *EMPTY_TRIE_HASH
-        };
-
-        Some(AccountState {
-            nonce,
-            balance,
-            storage_root,
-            code_hash,
-        })
-    }
-
-    /// Read a storage slot from the base (flushed) trie.
-    fn get_storage_slot_from_base(&self, address: &Address, key: H256) -> Option<U256> {
-        if self.base_root.is_none() {
-            return self.get_storage_slot(address, key);
-        }
-
-        let storage_key = U256::from_big_endian(key.as_bytes());
-        let tree_key = get_tree_key_for_storage_slot(address, storage_key);
-        self.trie
-            .get_from_base(self.base_root, tree_key)
-            .map(|v| U256::from_big_endian(&v))
-    }
-
-    // ── End diff-layer-aware reads ─────────────────────────────────────
-
     /// Get code size from basic_data. Returns 0 if account doesn't exist.
     pub fn get_code_size(&self, address: &Address) -> u32 {
         let basic_data_key = get_tree_key_for_basic_data(address);
@@ -769,88 +332,6 @@ impl BinaryTrieState {
             None => 0,
         }
     }
-
-    // ── Diff-layer write operations ──────────────────────────────────────
-
-    /// Set the diff tree's base block (the state that's fully in the trie).
-    /// Call after genesis init or after opening from disk.
-    pub fn set_diff_base(&mut self, block_hash: H256, block_number: u64) {
-        self.diff_tree.base_hash = block_hash;
-        self.diff_tree.base_block = block_number;
-    }
-
-    /// Set only the diff tree's base block number, leaving base_hash unchanged.
-    /// Use this when reopening from disk: base_hash is already restored by
-    /// `open_with_db` from `META_BASE_HASH_KEY`, so only the block number needs setting.
-    pub fn set_diff_base_block(&mut self, block_number: u64) {
-        self.diff_tree.base_block = block_number;
-    }
-
-    /// Create a new diff layer for a block.
-    /// Must be called before `apply_account_update_for_block`.
-    pub fn begin_block(&mut self, block_hash: H256, parent_hash: H256, block_number: u64) {
-        self.diff_tree
-            .add_layer(block_hash, parent_hash, block_number, StateDiff::default());
-    }
-
-    /// Record an account update in the diff layer WITHOUT modifying the trie.
-    /// Use this for speculative operations (payload building) where the trie
-    /// shouldn't be advanced but the diff tree needs the state for future reads.
-    pub fn record_diff_only(
-        &mut self,
-        update: &AccountUpdate,
-        block_hash: H256,
-    ) -> Result<(), BinaryTrieError> {
-        // Build account state from the update info directly (can't read from
-        // trie since it may not reflect the parent's state for speculative ops).
-        let account_state = update.info.as_ref().map(|info| AccountState {
-            nonce: info.nonce,
-            balance: info.balance,
-            code_hash: info.code_hash,
-            // Conservative sentinel: the VM uses storage_root != EMPTY_TRIE_HASH
-            // to decide whether to call get_storage_slot. Always returning non-empty
-            // is safe (get_storage_slot handles the empty case correctly).
-            storage_root: H256::from_low_u64_be(1),
-        });
-
-        let layer = self
-            .diff_tree
-            .layers
-            .get_mut(&block_hash)
-            .expect("begin_block must be called before record_diff_only");
-
-        write_diff_layer(&mut layer.diff, update, account_state);
-        Ok(())
-    }
-
-    /// Apply an account update and record it in the diff layer for `block_hash`.
-    /// Call `begin_block` first.
-    pub fn apply_account_update_for_block(
-        &mut self,
-        update: &AccountUpdate,
-        block_hash: H256,
-    ) -> Result<(), BinaryTrieError> {
-        // 1. Apply to the trie (keeps trie at tip for state_root/get_proof).
-        self.apply_account_update(update)?;
-
-        // 2. Read post-update state BEFORE taking a mutable ref to diff_tree.
-        let account_state = if !update.removed {
-            self.get_account_state(&update.address)
-        } else {
-            None
-        };
-
-        let layer = self
-            .diff_tree
-            .layers
-            .get_mut(&block_hash)
-            .expect("begin_block must be called before apply_account_update_for_block");
-
-        write_diff_layer(&mut layer.diff, update, account_state);
-        Ok(())
-    }
-
-    // ── End diff-layer write operations ────────────────────────────────
 
     /// Apply a single AccountUpdate to the trie (no diff layer recording).
     pub fn apply_account_update(&mut self, update: &AccountUpdate) -> Result<(), BinaryTrieError> {
@@ -883,7 +364,7 @@ impl BinaryTrieState {
 
             // If code changed but info wasn't provided (defensive — LEVM always
             // sends both together), update the code_hash leaf directly so the trie
-            // stays consistent with code_store.
+            // stays consistent.
             if update.info.is_none() {
                 self.trie
                     .insert(get_tree_key_for_code_hash(address), code.hash.0)?;
@@ -944,19 +425,13 @@ impl BinaryTrieState {
             self.trie
                 .insert(get_tree_key_for_code_hash(address), code_hash.0)?;
 
-            // Write code chunks and store for fast lookup.
+            // Write code chunks for merkleization.
             if !genesis.code.is_empty() {
                 let chunks = chunkify_code(&genesis.code);
                 for (i, chunk) in chunks.iter().enumerate() {
                     self.trie
                         .insert(get_tree_key_for_code_chunk(address, i as u64), *chunk)?;
                 }
-                self.code_store
-                    .lock()
-                    .unwrap()
-                    .insert(code_hash, genesis.code.clone());
-                #[cfg(feature = "rocksdb")]
-                self.dirty_codes.insert(code_hash);
             }
 
             // Write storage slots.
@@ -982,14 +457,13 @@ impl BinaryTrieState {
 
     /// Return sizes of the main in-memory collections for diagnostics.
     ///
-    /// Returns `(clean_cache, warm, dirty_nodes, freed, code_store, storage_keys_accounts)`.
-    pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize, usize) {
+    /// Returns `(clean_cache, warm, dirty_nodes, freed, storage_keys_accounts)`.
+    pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize) {
         (
             self.trie.store.clean_cache_len(),
             self.trie.store.warm_len(),
             self.trie.store.dirty_len(),
             self.trie.store.freed_len(),
-            self.code_store.lock().unwrap().len(),
             self.storage_keys.lock().unwrap().len(),
         )
     }
@@ -1008,6 +482,7 @@ impl BinaryTrieState {
     /// - `block_number` / `block_hash`: identifies the block
     /// - `accessed_accounts`: map of address -> list of storage keys accessed
     /// - `accessed_codes`: set of code hashes whose bytecode was accessed
+    /// - `codes`: map of code_hash -> bytecode (from the Store's ACCOUNT_CODES table)
     /// - `block_headers`: RLP-encoded headers needed for BLOCKHASH opcode
     pub fn generate_witness(
         &self,
@@ -1015,6 +490,7 @@ impl BinaryTrieState {
         block_hash: H256,
         accessed_accounts: &std::collections::HashMap<Address, Vec<H256>>,
         accessed_codes: &std::collections::HashSet<H256>,
+        codes: &std::collections::HashMap<ethrex_common::H256, bytes::Bytes>,
         block_headers: Vec<Vec<u8>>,
     ) -> Result<crate::witness::BinaryTrieWitness, BinaryTrieError> {
         use crate::key_mapping::{
@@ -1103,10 +579,10 @@ impl BinaryTrieState {
             }
         }
 
-        let mut codes = Vec::new();
+        let mut witness_codes = Vec::new();
         for code_hash in accessed_codes {
-            if let Some(bytecode) = self.get_account_code(code_hash) {
-                codes.push(CodeWitnessEntry {
+            if let Some(bytecode) = codes.get(code_hash) {
+                witness_codes.push(CodeWitnessEntry {
                     code_hash: *code_hash,
                     bytecode: bytecode.to_vec(),
                 });
@@ -1119,7 +595,7 @@ impl BinaryTrieState {
             pre_state_root,
             account_proofs,
             storage_proofs,
-            codes,
+            codes: witness_codes,
             block_headers,
         })
     }
@@ -1196,7 +672,7 @@ impl BinaryTrieState {
         Ok(())
     }
 
-    /// Write code: chunkify into trie leaves + store in code_store.
+    /// Write code: chunkify into trie leaves for merkleization.
     fn write_code(&mut self, address: &Address, code: &Code) -> Result<(), BinaryTrieError> {
         // Remove old code chunks if code_size changed.
         let old_code_size = self.get_code_size(address);
@@ -1221,14 +697,6 @@ impl BinaryTrieState {
                 .insert(get_tree_key_for_code_chunk(address, i as u64), *chunk)?;
         }
 
-        // Store in code_store for fast lookup.
-        self.code_store
-            .lock()
-            .unwrap()
-            .insert(code.hash, code.bytecode.clone());
-        #[cfg(feature = "rocksdb")]
-        self.dirty_codes.insert(code.hash);
-
         Ok(())
     }
 
@@ -1252,9 +720,6 @@ impl BinaryTrieState {
 
         // Remove all tracked storage.
         self.clear_account_storage(address)?;
-
-        // Note: code_store entries are keyed by hash. We intentionally do not remove
-        // them on account deletion — other accounts may share the same bytecode.
 
         Ok(())
     }
@@ -1283,29 +748,6 @@ impl BinaryTrieState {
 // ---------------------------------------------------------------------------
 // RocksDB helper loaders (used by `open`)
 // ---------------------------------------------------------------------------
-
-/// Load the code_store from a dedicated CF by iterating over all entries.
-/// Keys are raw code_hash (32 bytes); values are raw bytecode.
-#[cfg(feature = "rocksdb")]
-fn load_code_store(
-    db: &rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>,
-    code_cf: &str,
-) -> Result<FxHashMap<H256, Bytes>, BinaryTrieError> {
-    let cf = db
-        .cf_handle(code_cf)
-        .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{code_cf}' not found")))?;
-    let mut map = FxHashMap::default();
-    let iter = db.full_iterator_cf(&cf, rocksdb::IteratorMode::Start);
-    for item in iter {
-        let (key, value) = item.map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
-        if key.len() < 32 {
-            continue;
-        }
-        let hash = H256::from_slice(&key[..32]);
-        map.insert(hash, Bytes::copy_from_slice(&value));
-    }
-    Ok(map)
-}
 
 /// Load storage_keys from a dedicated CF by iterating over all entries.
 /// Keys are raw address (20 bytes); values are packed H256 storage keys.
@@ -1340,47 +782,6 @@ fn load_storage_keys(
 impl Default for BinaryTrieState {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Write an account update into a diff layer.
-/// `account_state` is the post-update account state (from trie or constructed).
-/// Handles removed accounts, cleared storage, code, and storage slots.
-fn write_diff_layer(
-    diff: &mut StateDiff,
-    update: &AccountUpdate,
-    account_state: Option<AccountState>,
-) {
-    let addr = update.address;
-
-    if update.removed {
-        diff.accounts.insert(addr, None);
-        diff.storage_cleared.insert(addr);
-        return;
-    }
-
-    if update.removed_storage {
-        diff.storage_cleared.insert(addr);
-        // Always record the account when storage is cleared so that
-        // account-state and storage-state queries are consistent.
-        if account_state.is_some() {
-            diff.accounts.insert(addr, account_state.clone());
-        }
-    }
-
-    if let Some(info) = &update.info {
-        diff.accounts.insert(addr, account_state);
-        if let Some(code) = &update.code {
-            diff.code.insert(info.code_hash, code.bytecode.clone());
-        }
-    }
-
-    for (key, value) in &update.added_storage {
-        if value.is_zero() {
-            diff.storage.insert((addr, *key), None);
-        } else {
-            diff.storage.insert((addr, *key), Some(*value));
-        }
     }
 }
 
@@ -1454,7 +855,7 @@ mod tests {
         assert_eq!(account_state.storage_root, *EMPTY_TRIE_HASH);
     }
 
-    // 4. Genesis with contract; verify code_hash and code retrieval.
+    // 4. Genesis with contract; verify code_hash (no code retrieval from state).
     #[test]
     fn test_apply_genesis_with_code() {
         let mut state = BinaryTrieState::new();
@@ -1468,9 +869,6 @@ mod tests {
 
         let account_state = state.get_account_state(&addr).unwrap();
         assert_eq!(account_state.code_hash, expected_hash);
-
-        let retrieved = state.get_account_code(&expected_hash).unwrap();
-        assert_eq!(retrieved, bytecode);
     }
 
     // 5. Genesis with storage slots; verify read-back.
@@ -1556,9 +954,6 @@ mod tests {
 
         let account_state = state.get_account_state(&addr).unwrap();
         assert_eq!(account_state.code_hash, code_hash);
-
-        let retrieved = state.get_account_code(&code_hash).unwrap();
-        assert_eq!(retrieved, bytecode);
 
         assert_eq!(state.get_code_size(&addr), 62);
     }
@@ -1744,13 +1139,6 @@ mod tests {
         assert_eq!(state1.state_root(), state2.state_root());
     }
 
-    // Extra: get_account_code returns None for unknown hash.
-    #[test]
-    fn test_get_account_code_unknown_hash() {
-        let mut state = BinaryTrieState::new();
-        assert!(state.get_account_code(&H256::zero()).is_none());
-    }
-
     // Extra: FxHashMap usage in AccountUpdate compiles fine with our apply.
     #[test]
     fn test_apply_account_update_empty_update() {
@@ -1803,10 +1191,6 @@ mod tests {
             state.trie.get(chunk1_key).is_none(),
             "stale chunk 1 should have been removed"
         );
-
-        // Verify new code is retrievable.
-        let retrieved = state.get_account_code(&new_code.hash).unwrap();
-        assert_eq!(retrieved, small_code);
     }
 
     // Two accounts sharing bytecode: removing one doesn't break the other.
@@ -1827,8 +1211,7 @@ mod tests {
         let update = AccountUpdate::removed(addr1);
         state.apply_account_update(&update).unwrap();
 
-        // Second account's code is still accessible.
-        assert!(state.get_account_code(&code_hash).is_some());
+        // Second account's code_hash is still in the trie.
         let acct2 = state.get_account_state(&addr2).unwrap();
         assert_eq!(acct2.code_hash, code_hash);
     }
@@ -1922,7 +1305,6 @@ mod tests {
         use std::sync::Arc;
 
         const NODES_CF: &str = "binary_trie_nodes";
-        const CODE_CF: &str = "binary_trie_code";
         const STORAGE_KEYS_CF: &str = "binary_trie_storage_keys";
 
         fn make_address(b: u8) -> Address {
@@ -1935,7 +1317,7 @@ mod tests {
             tempfile::tempdir().expect("failed to create tempdir")
         }
 
-        /// Open a test RocksDB with the 3 binary trie column families.
+        /// Open a test RocksDB with the 2 binary trie column families.
         fn open_test_db(
             dir: &tempfile::TempDir,
         ) -> Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>> {
@@ -1944,7 +1326,6 @@ mod tests {
             opts.create_missing_column_families(true);
             let cfs = vec![
                 rocksdb::ColumnFamilyDescriptor::new(NODES_CF, opts.clone()),
-                rocksdb::ColumnFamilyDescriptor::new(CODE_CF, opts.clone()),
                 rocksdb::ColumnFamilyDescriptor::new(STORAGE_KEYS_CF, opts.clone()),
             ];
             Arc::new(
@@ -1955,7 +1336,7 @@ mod tests {
 
         fn open_test_state(dir: &tempfile::TempDir) -> BinaryTrieState {
             let db = open_test_db(dir);
-            BinaryTrieState::open_with_db(db, NODES_CF, CODE_CF, STORAGE_KEYS_CF).unwrap()
+            BinaryTrieState::open_with_db(db, NODES_CF, STORAGE_KEYS_CF).unwrap()
         }
 
         #[test]
@@ -1979,7 +1360,6 @@ mod tests {
 
             let genesis_hash = H256::from_low_u64_be(0x1234);
             state.flush(0, genesis_hash).unwrap();
-            state.set_diff_base(genesis_hash, 0);
             state.state_root(); // re-cache hashes after flush
 
             // Generate witness: account was accessed, no storage.
@@ -1987,7 +1367,14 @@ mod tests {
             accessed.insert(addr, vec![]);
             let block_hash = H256::from_low_u64_be(0x5678);
             let witness = state
-                .generate_witness(1, block_hash, &accessed, &HashSet::new(), vec![])
+                .generate_witness(
+                    1,
+                    block_hash,
+                    &accessed,
+                    &HashSet::new(),
+                    &HashMap::new(),
+                    vec![],
+                )
                 .unwrap();
 
             assert_eq!(witness.block_number, 1);
@@ -2029,14 +1416,20 @@ mod tests {
 
             let genesis_hash = H256::from_low_u64_be(0xAAAA);
             state.flush(0, genesis_hash).unwrap();
-            state.set_diff_base(genesis_hash, 0);
             state.state_root(); // re-cache hashes after flush
 
             let mut accessed = HashMap::new();
             accessed.insert(addr, vec![slot_h256]);
             let block_hash = H256::from_low_u64_be(0xBBBB);
             let witness = state
-                .generate_witness(1, block_hash, &accessed, &HashSet::new(), vec![])
+                .generate_witness(
+                    1,
+                    block_hash,
+                    &accessed,
+                    &HashSet::new(),
+                    &HashMap::new(),
+                    vec![],
+                )
                 .unwrap();
 
             assert_eq!(witness.storage_proofs.len(), 1);
@@ -2071,7 +1464,6 @@ mod tests {
 
             let genesis_hash = H256::from_low_u64_be(0xCCCC);
             state.flush(0, genesis_hash).unwrap();
-            state.set_diff_base(genesis_hash, 0);
             state.state_root(); // re-cache hashes after flush
 
             let mut accessed = HashMap::new();
@@ -2079,9 +1471,13 @@ mod tests {
             let mut accessed_codes = HashSet::new();
             accessed_codes.insert(code_hash);
 
+            // Supply the code via the codes map (simulating Store lookup).
+            let mut codes = HashMap::new();
+            codes.insert(code_hash, bytecode.clone());
+
             let block_hash = H256::from_low_u64_be(0xDDDD);
             let witness = state
-                .generate_witness(1, block_hash, &accessed, &accessed_codes, vec![])
+                .generate_witness(1, block_hash, &accessed, &accessed_codes, &codes, vec![])
                 .unwrap();
 
             assert_eq!(witness.codes.len(), 1);

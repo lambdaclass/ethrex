@@ -34,9 +34,7 @@ fn workspace_root() -> PathBuf {
 
 /// Load the execution-api genesis, inject `sender` with a large balance,
 /// and return an in-memory store together with the chain id.
-async fn setup_store(
-    sender: Address,
-) -> (Store, u64, ethrex_common::types::Genesis) {
+async fn setup_store(sender: Address) -> (Store, u64, ethrex_common::types::Genesis) {
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
     let reader = BufReader::new(file);
