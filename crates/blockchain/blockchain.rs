@@ -116,11 +116,12 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 // Result type for execute_block_pipeline
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
-    Vec<AccountUpdate>,      // accumulated updates (always present)
+    AccountUpdatesList, // updates (trie applied in-thread when precompute_witnesses=false)
+    bool,               // trie_done_in_pipeline: true if merkleizer applied trie updates
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
-    usize,                   // max queue length
-    [Instant; 6],            // timing instants
-    Duration,                // warmer duration
+    usize,              // max queue length
+    [Instant; 6],       // timing instants
+    Duration,           // warmer duration
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -381,6 +382,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
+        precompute_witnesses: bool,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -408,7 +410,7 @@ impl Blockchain {
 
         let cancelled = AtomicBool::new(false);
 
-        let (execution_result, accumulator_result, warmer_duration) =
+        let (execution_result, merkleizer_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
@@ -478,8 +480,9 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
-                let accumulator_handle = std::thread::Builder::new()
-                    .name("block_executor_accumulator".to_string())
+                let binary_trie_state = self.storage.binary_trie_state();
+                let merkleizer_handle = std::thread::Builder::new()
+                    .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
                         let mut all_updates: FxHashMap<Address, AccountUpdate> =
                             FxHashMap::default();
@@ -497,36 +500,78 @@ impl Blockchain {
                                 }
                             }
                         }
-                        let accumulated: Vec<AccountUpdate> = all_updates.into_values().collect();
-                        let accumulator_end_instant = Instant::now();
-                        Ok((accumulated, accumulator_end_instant))
+                        let flat_updates: Vec<AccountUpdate> = all_updates.into_values().collect();
+
+                        // Apply trie updates in-thread (pipelined with execution) unless
+                        // witness pre-computation is enabled, which needs the pre-state trie.
+                        let (account_updates_list, trie_done) = if !precompute_witnesses {
+                            if let Some(bts) = binary_trie_state {
+                                let mut state = bts.write().map_err(|_| {
+                                    ChainError::Custom("binary trie lock poisoned".to_string())
+                                })?;
+                                let mut code_updates = Vec::new();
+                                for update in &flat_updates {
+                                    state.apply_account_update(update).map_err(|e| {
+                                        ChainError::Custom(format!("binary trie update error: {e}"))
+                                    })?;
+                                    if let Some(info) = &update.info {
+                                        if let Some(code) = &update.code {
+                                            code_updates.push((info.code_hash, code.clone()));
+                                        }
+                                    }
+                                }
+                                let root = state.state_root();
+                                debug!(
+                                    "Binary trie root (pipeline): {}",
+                                    ethrex_common::H256::from(root)
+                                );
+                                drop(state);
+                                (
+                                    AccountUpdatesList {
+                                        code_updates,
+                                        flat_updates,
+                                    },
+                                    true,
+                                )
+                            } else {
+                                // No binary trie configured; fall back to accumulate-only.
+                                (AccountUpdatesList::from_updates(&flat_updates), false)
+                            }
+                        } else {
+                            // precompute_witnesses=true: skip in-thread trie apply so the
+                            // caller can generate pre-state proofs first.
+                            (AccountUpdatesList::from_updates(&flat_updates), false)
+                        };
+
+                        let merkleizer_end_instant = Instant::now();
+                        Ok((account_updates_list, trie_done, merkleizer_end_instant))
                     })
                     .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn accumulator thread: {e}"))
+                        ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
                     })?;
                 let execution_result = execution_handle.join().unwrap_or_else(|_| {
                     Err(ChainError::Custom("execution thread panicked".to_string()))
                 });
-                let accumulator_result = accumulator_handle.join().unwrap_or_else(|_| {
-                    Err(ChainError::Custom(
-                        "accumulator thread panicked".to_string(),
-                    ))
+                let merkleizer_result = merkleizer_handle.join().unwrap_or_else(|_| {
+                    Err(ChainError::Custom("merkleizer thread panicked".to_string()))
                 });
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
-                Ok((execution_result, accumulator_result, warmer_duration))
+                Ok((execution_result, merkleizer_result, warmer_duration))
             })?;
-        let (accumulated_updates, accumulator_end_instant) = accumulator_result?;
+        let (account_updates_list, trie_done_in_pipeline, merkleizer_end_instant) =
+            merkleizer_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
-        let exec_accumulate_end_instant = Instant::now();
+        let exec_merkleize_end_instant = Instant::now();
 
         Ok((
             execution_result,
-            accumulated_updates,
+            account_updates_list,
+            trie_done_in_pipeline,
             produced_bal,
             max_queue_length,
             [
@@ -534,8 +579,8 @@ impl Blockchain {
                 block_validated_instant,
                 exec_merkle_start,
                 exec_end_instant,
-                accumulator_end_instant,
-                exec_accumulate_end_instant,
+                merkleizer_end_instant,
+                exec_merkleize_end_instant,
             ],
             warmer_duration,
         ))
@@ -1483,12 +1528,21 @@ impl Blockchain {
 
         let (
             res,
-            accumulated_updates,
+            account_updates_list,
+            trie_done_in_pipeline,
             produced_bal,
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+        ) = {
+            self.execute_block_pipeline(
+                &block,
+                &parent_header,
+                &mut vm,
+                bal,
+                self.options.precompute_witnesses && self.is_synced(),
+            )?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1499,10 +1553,12 @@ impl Blockchain {
 
         // Generate witness BEFORE applying trie updates, so proofs are
         // against the pre-execution state root.
+        // Note: this path only runs when precompute_witnesses=true, in which case
+        // trie_done_in_pipeline=false and the trie is still at pre-execution state.
         if let Some(ref logger) = logger {
             let block_hash = block.hash();
             let witness = self.generate_witness_from_account_updates(
-                accumulated_updates.clone(),
+                account_updates_list.flat_updates.clone(),
                 &block,
                 parent_header,
                 logger,
@@ -1514,11 +1570,23 @@ impl Blockchain {
                 .store_witness_bytes(block_hash, block_number, json_bytes)?;
         }
 
-        // Apply account updates to binary trie (advances trie to post-execution state).
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(block.hash(), block_number, &accumulated_updates)
-            .map_err(ChainError::StoreError)?;
+        // If the merkleizer thread did not apply trie updates in-pipeline
+        // (precompute_witnesses path), do it now sequentially.
+        let account_updates_list = if !trie_done_in_pipeline {
+            self.storage
+                .apply_account_updates_batch(
+                    block.hash(),
+                    block_number,
+                    &account_updates_list.flat_updates,
+                )
+                .map_err(ChainError::StoreError)?
+        } else {
+            // Trie already advanced in the merkleizer thread; only flush if needed.
+            self.storage
+                .flush_binary_trie_if_needed(block_number, block.hash())
+                .map_err(ChainError::StoreError)?;
+            account_updates_list
+        };
 
         let result = self.store_block(block, account_updates_list, res);
 

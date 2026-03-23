@@ -1963,6 +1963,28 @@ impl Store {
         })
     }
 
+    /// Flushes the binary trie to disk if the flush interval has been reached.
+    ///
+    /// Used by the pipeline path after the merkleizer thread has already applied
+    /// account updates and computed the state root in-thread.
+    pub fn flush_binary_trie_if_needed(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        let bts = self
+            .binary_trie_state
+            .as_ref()
+            .ok_or_else(|| StoreError::Custom("binary trie state not initialized".to_string()))?;
+        let mut state = bts
+            .write()
+            .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
+        state
+            .flush_if_needed(block_number, block_hash)
+            .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
+        Ok(())
+    }
+
     /// Performs the same actions as apply_account_updates_from_trie
     ///  but also returns the used storage tries with witness recorded
     pub fn apply_account_updates_from_trie_with_witness(
