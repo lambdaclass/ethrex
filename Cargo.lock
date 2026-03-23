@@ -4335,25 +4335,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-replay"
-version = "9.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "ethrex-binary-trie",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-storage",
- "ethrex-vm",
- "hex",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.22",
-]
-
-[[package]]
 name = "ethrex-rlp"
 version = "9.0.0"
 dependencies = [

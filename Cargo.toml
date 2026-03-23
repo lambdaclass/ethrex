@@ -26,7 +26,6 @@ members = [
   "crates/common/config",
   "tooling/repl",
   "test",
-  "cmd/ethrex_replay",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
