@@ -15,15 +15,18 @@ Block execution (LEVM)
   reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)
 
 After execution:
-  AccountUpdates --> Store.apply_account_updates_batch()
-                       |
-                       +--> FKV tables (account state, storage)
-                       +--> ACCOUNT_CODES table
-                       +--> MPT state trie (16-shard parallel merkleization)
-                       +--> MPT storage tries (per-account)
-                       |
-                       +--> TrieLayerCache (in-memory diff layers, 128-block window)
-                              --> flush to ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES
+  let account_updates_list = Store.apply_account_updates_batch(&updates)
+                                     |
+                                     +--> MPT state trie (16-shard parallel merkleization)
+                                     +--> MPT storage tries (per-account)
+                                     +--> returns AccountUpdatesList (trie nodes + code)
+
+  store_block(block, account_updates_list, result)
+                |
+                +--> FKV tables (account state, storage)
+                +--> ACCOUNT_CODES table
+                +--> TrieLayerCache (in-memory node cache, flush every ~128 blocks)
+                       --> persist to ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES
 ```
 
 ### This branch (Binary Trie)
@@ -33,26 +36,26 @@ Block execution (LEVM)
   reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)  [UNCHANGED]
 
 After execution:
-  AccountUpdates --> Store.apply_account_updates_batch()             [SAME CALL SITE]
-                       |
-                       +--> BinaryTrieState.apply_account_update()
-                       |      --> unified binary trie (single tree, blake3)
-                       |      --> state_root() computes root
-                       |
-                       +--> NodeStore (dirty/warm/clean node cache)
-                       |      --> flush_if_needed() every ~128 blocks
-                       |      --> persist to BINARY_TRIE_NODES CF
-                       |
-                    store_block()
-                       |
-                       +--> FKV tables (account state, storage)     [UNCHANGED]
-                       +--> ACCOUNT_CODES table                     [UNCHANGED]
+  let account_updates_list = Store.apply_account_updates_batch(&updates)  [SAME CALL SITE]
+                                     |
+                                     +--> BinaryTrieState.apply_account_update()
+                                     |      --> unified binary trie (single tree, blake3)
+                                     |      --> state_root() computes root
+                                     +--> NodeStore (dirty/warm/clean node cache)
+                                     |      --> flush_if_needed() every ~128 blocks
+                                     |      --> persist to BINARY_TRIE_NODES CF
+                                     +--> returns AccountUpdatesList (code + flat updates)
+
+  store_block(block, account_updates_list, result)                        [SAME CALL SITE]
+                |
+                +--> FKV tables (account state, storage)                  [UNCHANGED]
+                +--> ACCOUNT_CODES table                                  [UNCHANGED]
 ```
 
-The call flow is the same as main: `apply_account_updates_batch()` handles trie
-updates, `store_block()` handles FKV and code writes. The function name and call
-sites are identical -- only the internal implementation changed from MPT to binary trie.
-`BinaryTrieState` lives on `Store` (same as `TrieLayerCache` on main), not on `Blockchain`.
+The call flow is identical: `apply_account_updates_batch()` computes the state root
+and returns `AccountUpdatesList`, then `store_block()` writes FKV and code. Only the
+internals of `apply_account_updates_batch` changed (MPT -> binary trie). Both
+`BinaryTrieState` and `TrieLayerCache` live on `Store`, not on `Blockchain`.
 
 ## What was removed
 
@@ -74,7 +77,7 @@ sites are identical -- only the internal implementation changed from MPT to bina
 | LEVM | Zero code changes. The EVM is completely unaware of the trie backend. |
 | `StoreVmDatabase` | Still the sole VM read path, reads from FKV. LEVM only touches FKV, never the trie. |
 | FKV tables (`ACCOUNT_FLATKEYVALUE`, `STORAGE_FLATKEYVALUE`) | Intact. Updated every block, O(1) reads. The tables, key format, and read logic are identical to main. |
-| FKV write path | On main, FKV writes happen inside `apply_account_updates_batch()`. On this branch, they happen in `store_block()`. The data written is the same: `keccak(address) -> AccountState` and `keccak(address) \|\| keccak(slot) -> value`. |
+| FKV write path | FKV writes happen in `store_block()` on both branches. The data written is the same: `keccak(address) -> AccountState` and `keccak(address) \|\| keccak(slot) -> value`. |
 | `ACCOUNT_CODES` table | Code stored by hash, read by VM. Unchanged. |
 | Block/header/receipt storage | Unchanged |
 | `Store` interface | Still the single entry point for all state access |
