@@ -2328,6 +2328,14 @@ impl Store {
         // Populate FKV tables so state reads can use O(1) RocksDB gets.
         self.populate_fkv_from_genesis(&genesis.alloc)?;
 
+        // Store genesis account code (system contracts, etc.)
+        for account in genesis.alloc.values() {
+            if !account.code.is_empty() {
+                let code = Code::from_bytecode(account.code.clone(), &NativeCrypto);
+                self.add_account_code(code).await?;
+            }
+        }
+
         // Initialize binary trie from genesis.
         self.setup_genesis_binary_trie(&genesis.alloc, genesis_hash)?;
 
