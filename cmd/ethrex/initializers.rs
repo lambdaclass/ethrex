@@ -234,13 +234,9 @@ pub fn init_binary_trie_state(
     }
 }
 
-pub fn init_blockchain(
-    store: Store,
-    blockchain_opts: BlockchainOptions,
-    binary_trie_state: Arc<std::sync::RwLock<BinaryTrieState>>,
-) -> Arc<Blockchain> {
+pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm (binary trie)");
-    Blockchain::new(store, blockchain_opts, binary_trie_state).into()
+    Blockchain::new(store, blockchain_opts).into()
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -581,7 +577,6 @@ pub async fn init_l1(
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },
-        binary_trie_state,
     );
 
     regenerate_head_state(&store, &blockchain).await?;
@@ -807,8 +802,10 @@ pub async fn regenerate_head_state(
 
     // Determine the binary trie's checkpoint block.
     let checkpoint = {
-        let state = blockchain
-            .binary_trie_state
+        let bts = store
+            .binary_trie_state()
+            .ok_or_else(|| eyre::eyre!("binary trie state not initialized"))?;
+        let state = bts
             .read()
             .map_err(|e| eyre::eyre!("binary trie lock error: {e}"))?;
         state.checkpoint_block().unwrap_or(0)

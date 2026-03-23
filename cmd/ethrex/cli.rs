@@ -726,8 +726,8 @@ pub async fn import_blocks(
     let mut store = init_store(datadir, genesis.clone()).await?;
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
         .map_err(|e| ChainError::Custom(e.to_string()))?;
-    store.set_binary_trie_state(binary_trie_state.clone());
-    let blockchain = init_blockchain(store.clone(), blockchain_opts, binary_trie_state);
+    store.set_binary_trie_state(binary_trie_state);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -847,8 +847,8 @@ pub async fn import_blocks_bench(
     let mut store = init_store(datadir, genesis.clone()).await?;
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
         .map_err(|e| ChainError::Custom(e.to_string()))?;
-    store.set_binary_trie_state(binary_trie_state.clone());
-    let blockchain = init_blockchain(store.clone(), blockchain_opts, binary_trie_state);
+    store.set_binary_trie_state(binary_trie_state);
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
 

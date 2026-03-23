@@ -1899,87 +1899,34 @@ impl Store {
             .map(|s| s.nonce))
     }
 
-    /// Applies account updates based on the block's latest storage state
-    /// and returns the new state root after the updates have been applied.
+    /// Applies account updates to the binary trie and flushes if needed.
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
+        block_number: u64,
         account_updates: &[AccountUpdate],
-    ) -> Result<Option<AccountUpdatesList>, StoreError> {
-        let Some(mut state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(self.apply_account_updates_from_trie_batch(
-            &mut state_trie,
-            account_updates,
-        )?))
-    }
-
-    pub fn apply_account_updates_from_trie_batch<'a>(
-        &self,
-        state_trie: &mut Trie,
-        account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
-    ) -> Result<AccountUpdatesList, StoreError> {
-        let mut ret_storage_updates = Vec::new();
-        let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit(&NativeCrypto);
+    ) -> Result<(), StoreError> {
+        let bts = self
+            .binary_trie_state
+            .as_ref()
+            .ok_or_else(|| StoreError::Custom("binary trie state not initialized".to_string()))?;
+        let mut state = bts
+            .write()
+            .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
         for update in account_updates {
-            let hashed_address = hash_address_fixed(&update.address);
-            if update.removed {
-                // Remove account from trie
-                state_trie.remove(hashed_address.as_bytes())?;
-                continue;
-            }
-            // Add or update AccountState in the trie
-            // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(hashed_address.as_bytes())? {
-                Some(encoded_state) => AccountState::decode(&encoded_state)?,
-                None => AccountState::default(),
-            };
-            if update.removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
-            }
-            if let Some(info) = &update.info {
-                account_state.nonce = info.nonce;
-                account_state.balance = info.balance;
-                account_state.code_hash = info.code_hash;
-                // Store updated code in DB
-                if let Some(code) = &update.code {
-                    code_updates.push((info.code_hash, code.clone()));
-                }
-            }
-            // Store the added storage in the account's storage trie and compute its new root
-            if !update.added_storage.is_empty() {
-                let mut storage_trie =
-                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
-                    if storage_value.is_zero() {
-                        storage_trie.remove(&hashed_key)?;
-                    } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                    }
-                }
-                let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
-                account_state.storage_root = storage_hash;
-                ret_storage_updates.push((hashed_address, storage_updates));
-            }
-            state_trie.insert(
-                hashed_address.as_bytes().to_vec(),
-                account_state.encode_to_vec(),
-            )?;
+            state
+                .apply_account_update(update)
+                .map_err(|e| StoreError::Custom(format!("binary trie update error: {e}")))?;
         }
-        let (state_trie_hash, state_updates) =
-            state_trie.collect_changes_since_last_hash(&NativeCrypto);
-
-        Ok(AccountUpdatesList {
-            state_trie_hash,
-            state_updates,
-            storage_updates: ret_storage_updates,
-            code_updates,
-        })
+        let root = state.state_root();
+        tracing::debug!(
+            "Binary trie root after block {block_number}: {}",
+            ethrex_common::H256::from(root)
+        );
+        state
+            .flush_if_needed(block_number, block_hash)
+            .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
+        Ok(())
     }
 
     /// Performs the same actions as apply_account_updates_from_trie

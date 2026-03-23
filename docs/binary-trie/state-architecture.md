@@ -33,12 +33,7 @@ Block execution (LEVM)
   reads via --> StoreVmDatabase --> FKV tables (O(1) RocksDB gets)  [UNCHANGED]
 
 After execution:
-  AccountUpdates --> store_block()
-                       |
-                       +--> FKV tables (account state, storage)     [UNCHANGED]
-                       +--> ACCOUNT_CODES table                     [UNCHANGED]
-                       |
-                    apply_binary_trie_updates()
+  AccountUpdates --> Store.apply_account_updates_batch()
                        |
                        +--> BinaryTrieState.apply_account_update()
                        |      --> unified binary trie (single tree, blake3)
@@ -47,6 +42,11 @@ After execution:
                        +--> NodeStore (dirty/warm/clean node cache)
                               --> flush_if_needed() every ~128 blocks
                               --> persist to BINARY_TRIE_NODES CF
+
+                    store_block()
+                       |
+                       +--> FKV tables (account state, storage)     [UNCHANGED]
+                       +--> ACCOUNT_CODES table                     [UNCHANGED]
 ```
 
 ## What was removed
@@ -57,9 +57,10 @@ After execution:
 | `STORAGE_TRIE_NODES` table | Not needed (unified tree, no per-account storage tries) |
 | `TrieLayerCache` (in-memory trie node diff layers) | `NodeStore` dirty/warm/clean tiers |
 | 16-shard parallel merkleizer thread | Single-threaded binary trie `apply_account_update` |
-| `handle_merkleization` / `handle_merkleization_bal` | Accumulator thread (collects updates, no MPT work) |
+| `handle_merkleization` / `handle_merkleization_bal` | Removed; binary trie `apply_account_updates_batch()` on Store handles updates |
 | `BranchNode[16]` root assembly | Binary trie `state_root()` |
-| `apply_account_updates_batch()` (MPT state writes) | `apply_binary_trie_updates()` |
+| MPT body of `apply_account_updates_batch()` | Binary trie body (updates `BinaryTrieState`, flushes NodeStore) |
+| `binary_trie_state` field on `Blockchain` | Moved to `Store`; accessed via `store.binary_trie_state()` |
 | RLP node encoding + keccak hashing | Raw concatenation + blake3 |
 
 ## What was NOT changed

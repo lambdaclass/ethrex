@@ -1156,7 +1156,7 @@ impl L1Committer {
             info!("Creating genesis checkpoint at path {path:?}");
         }
 
-        let checkpoint_store = {
+        let mut checkpoint_store = {
             let mut checkpoint_store_inner = Store::new(path, engine_type)?;
 
             checkpoint_store_inner.add_initial_state(genesis).await?;
@@ -1170,14 +1170,11 @@ impl L1Committer {
         // one for each block is fetched from the rollup store during head state regeneration.
         blockchain_opts.r#type = BlockchainType::L2(L2Config::default());
 
-        let binary_trie_state = Arc::new(std::sync::RwLock::new(
+        checkpoint_store.set_binary_trie_state(Arc::new(std::sync::RwLock::new(
             ethrex_binary_trie::state::BinaryTrieState::new(),
-        ));
-        let checkpoint_blockchain = Arc::new(Blockchain::new(
-            checkpoint_store.clone(),
-            blockchain_opts,
-            binary_trie_state,
-        ));
+        )));
+        let checkpoint_blockchain =
+            Arc::new(Blockchain::new(checkpoint_store.clone(), blockchain_opts));
 
         regenerate_state(
             &checkpoint_store,

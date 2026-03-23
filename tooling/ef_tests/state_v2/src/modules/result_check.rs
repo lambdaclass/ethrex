@@ -120,11 +120,11 @@ pub fn post_state_root(
     initial_block_hash: H256,
     store: Store,
 ) -> H256 {
-    let ret_account_updates_batch = store
-        .apply_account_updates_batch(initial_block_hash, account_updates)
+    let mut state_trie = store.state_trie(initial_block_hash).unwrap().unwrap();
+    store
+        .apply_account_updates_from_trie_batch(&mut state_trie, account_updates)
         .unwrap()
-        .unwrap();
-    ret_account_updates_batch.state_trie_hash
+        .state_trie_hash
 }
 
 /// Used when the test case expected an exception. Verifies first if it, indeed, failed

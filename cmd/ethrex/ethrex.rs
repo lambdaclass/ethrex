@@ -4,15 +4,10 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
-use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
 use ethrex_storage::Store;
 use serde::Deserialize;
-use std::{
-    path::Path,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -43,7 +38,6 @@ async fn server_shutdown(
     cancel_token: &CancellationToken,
     peer_table: PeerTable,
     local_node_record: NodeRecord,
-    binary_trie_state: &Arc<RwLock<BinaryTrieState>>,
     store: &Store,
 ) {
     info!("Server shut down started...");
@@ -51,12 +45,14 @@ async fn server_shutdown(
 
     // Force-flush the binary trie to minimize replay on next startup.
     if !is_memory_datadir(datadir) {
-        if let Ok(mut state) = binary_trie_state.write() {
-            // Use the actual head block number and hash for a correct flush.
-            let head_number = store.get_latest_block_number_sync();
-            if let Ok(Some(head_hash)) = store.get_canonical_block_hash_sync(head_number) {
-                let _ = state.flush(head_number, head_hash);
-                info!("Binary trie flushed at block {head_number} on shutdown");
+        if let Some(bts) = store.binary_trie_state() {
+            if let Ok(mut state) = bts.write() {
+                // Use the actual head block number and hash for a correct flush.
+                let head_number = store.get_latest_block_number_sync();
+                if let Ok(Some(head_hash)) = store.get_canonical_block_hash_sync(head_number) {
+                    let _ = state.flush(head_number, head_hash);
+                    info!("Binary trie flushed at block {head_number} on shutdown");
+                }
             }
         }
 
@@ -192,12 +188,15 @@ async fn main() -> eyre::Result<()> {
 
     log_global_allocator();
 
+    // binary_trie_state is already set on the store; we only need the store for shutdown.
+    drop(binary_trie_state);
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &binary_trie_state, &store).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &binary_trie_state, &store).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
         }
     }
 

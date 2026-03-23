@@ -223,11 +223,10 @@ pub async fn init_l2(
         precompute_witnesses: opts.node_opts.precompute_witnesses,
     };
 
-    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+    store.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
         ethrex_binary_trie::state::BinaryTrieState::new(),
-    ));
-    store.set_binary_trie_state(binary_trie_state.clone());
-    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone(), binary_trie_state);
+    )));
+    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
 
     regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 

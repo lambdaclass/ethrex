@@ -7,7 +7,6 @@ use std::{
 use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain, BlockchainType,
-    error::ChainError,
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
     validate_block_pre_execution,
@@ -224,14 +223,13 @@ impl BlockProducer {
             block_gas_used: block.header.gas_used,
         };
 
-        let account_updates_list = self
-            .store
-            .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+
+        // Apply account updates to the binary trie.
+        self.store
+            .apply_account_updates_batch(block_hash, block_number, &account_updates)?;
         self.store_fee_config_by_block(block.header.number).await?;
         let code_updates: Vec<_> = account_updates
             .iter()

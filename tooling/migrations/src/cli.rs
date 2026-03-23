@@ -65,7 +65,7 @@ async fn migrate_libmdbx_to_rocksdb(
         .await
         .expect("Cannot load libmdbx store state");
 
-    let new_store = ethrex_storage::Store::new_from_genesis(
+    let mut new_store = ethrex_storage::Store::new_from_genesis(
         new_storage_path,
         ethrex_storage::EngineType::RocksDB,
         genesis_path
@@ -96,10 +96,10 @@ async fn migrate_libmdbx_to_rocksdb(
         r#type: BlockchainType::L2(L2Config::default()),
         ..Default::default()
     };
-    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+    new_store.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
         ethrex_binary_trie::state::BinaryTrieState::new(),
-    ));
-    let blockchain = Blockchain::new(new_store.clone(), blockchain_opts, binary_trie_state);
+    )));
+    let blockchain = Blockchain::new(new_store.clone(), blockchain_opts);
 
     let block_bodies = old_store
         .get_block_bodies(last_known_block + 1, last_block_number)

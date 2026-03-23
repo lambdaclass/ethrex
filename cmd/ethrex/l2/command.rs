@@ -393,7 +393,7 @@ impl Command {
                 let rollup_store_type = ethrex_storage_rollup::EngineTypeRollup::InMemory;
 
                 // Init stores
-                let store = Store::new_from_genesis(
+                let mut store = Store::new_from_genesis(
                     &store_path,
                     store_type,
                     genesis.to_str().expect("Invalid genesis path"),
@@ -455,10 +455,10 @@ impl Command {
                         r#type: blockchain_type,
                         ..Default::default()
                     };
-                    let binary_trie_state = std::sync::Arc::new(std::sync::RwLock::new(
+                    store.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
                         ethrex_binary_trie::state::BinaryTrieState::new(),
-                    ));
-                    let blockchain = Blockchain::new(store.clone(), opts, binary_trie_state);
+                    )));
+                    let blockchain = Blockchain::new(store.clone(), opts);
 
                     for (i, block) in blocks.iter().enumerate() {
                         // Update blockchain with the block's fee config
