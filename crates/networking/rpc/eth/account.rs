@@ -219,24 +219,18 @@ impl RpcHandler for GetProofRequest {
             return Ok(Value::Null);
         };
 
-        // Read account state from binary trie to populate the response fields.
-        let state = context
-            .blockchain
-            .binary_trie_state
-            .read()
-            .map_err(|e| RpcErr::Internal(format!("lock error: {e}")))?;
-        let account = state
-            .get_account_state_at(&self.address, block_hash)
-            .map_err(|e| RpcErr::Internal(format!("binary trie error: {e}")))?
-            .unwrap_or_default();
+        // Read account state from Store (FKV-backed, always available regardless of diff window).
+        let account_info = storage
+            .get_account_info_by_hash(block_hash, self.address)
+            .map_err(|e| RpcErr::Internal(format!("storage error: {e}")))?;
 
-        // Storage slot values.
+        // Storage slot values from Store (FKV-backed).
         let storage_proof: Vec<StorageProof> = self
             .storage_keys
             .iter()
             .map(|key| {
-                let value = state
-                    .get_storage_slot_at(&self.address, *key, block_hash)
+                let value = storage
+                    .get_storage_at_by_block_hash(block_hash, self.address, *key)
                     .unwrap_or(None)
                     .unwrap_or_default();
                 StorageProof {
@@ -249,15 +243,19 @@ impl RpcHandler for GetProofRequest {
             })
             .collect();
 
+        let (balance, code_hash, nonce) = account_info
+            .map(|info| (info.balance, info.code_hash, info.nonce))
+            .unwrap_or_default();
+
         let account_proof = AccountProof {
             // Binary trie proofs use sibling hashes, not MPT-encoded nodes.
             // Proof data is not yet wired into this RPC handler.
             account_proof: vec![],
             address: self.address,
-            balance: account.balance,
-            code_hash: account.code_hash,
-            nonce: account.nonce,
-            storage_hash: account.storage_root,
+            balance,
+            code_hash,
+            nonce,
+            storage_hash: H256::zero(),
             storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))

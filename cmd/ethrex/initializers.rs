@@ -228,7 +228,9 @@ pub fn init_binary_trie_state(
         .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
 
         if let Some(checkpoint) = state.checkpoint_block() {
-            state.set_diff_base(genesis_hash, checkpoint);
+            // base_hash was already restored from META_BASE_HASH_KEY by open_with_db.
+            // Only set base_block which is not separately persisted on disk.
+            state.set_diff_base_block(checkpoint);
             info!("Binary trie resuming from checkpoint block {checkpoint}");
         }
 
@@ -521,6 +523,7 @@ pub async fn init_l1(
     PeerTable,
     NodeRecord,
     Arc<std::sync::RwLock<BinaryTrieState>>,
+    Store,
 )> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
@@ -667,6 +670,7 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
         binary_trie_state_for_shutdown,
+        store,
     ))
 }
 

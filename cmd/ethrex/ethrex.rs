@@ -6,6 +6,7 @@ use ethrex::{
 };
 use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
+use ethrex_storage::Store;
 use serde::Deserialize;
 use std::{
     path::Path,
@@ -43,6 +44,7 @@ async fn server_shutdown(
     peer_table: PeerTable,
     local_node_record: NodeRecord,
     binary_trie_state: &Arc<RwLock<BinaryTrieState>>,
+    store: &Store,
 ) {
     info!("Server shut down started...");
     cancel_token.cancel();
@@ -50,13 +52,11 @@ async fn server_shutdown(
     // Force-flush the binary trie to minimize replay on next startup.
     if !is_memory_datadir(datadir) {
         if let Ok(mut state) = binary_trie_state.write() {
-            if let Some(checkpoint) = state.checkpoint_block() {
-                // Flush at current checkpoint + blocks_since_flush.
-                // We don't have the exact head block number here, so we
-                // flush with the checkpoint number (flush is idempotent if
-                // no dirty data exists).
-                let _ = state.flush(checkpoint, ethrex_common::H256::zero());
-                info!("Binary trie flushed at shutdown");
+            // Use the actual head block number and hash for a correct flush.
+            let head_number = store.get_latest_block_number_sync();
+            if let Ok(Some(head_hash)) = store.get_canonical_block_hash_sync(head_number) {
+                let _ = state.flush(head_number, head_hash);
+                info!("Binary trie flushed at block {head_number} on shutdown");
             }
         }
 
@@ -185,7 +185,7 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
-    let (datadir, cancel_token, peer_table, local_node_record, binary_trie_state) =
+    let (datadir, cancel_token, peer_table, local_node_record, binary_trie_state, store) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
@@ -194,10 +194,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &binary_trie_state).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &binary_trie_state, &store).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &binary_trie_state).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &binary_trie_state, &store).await;
         }
     }
 

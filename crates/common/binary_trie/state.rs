@@ -779,6 +779,13 @@ impl BinaryTrieState {
         self.diff_tree.base_block = block_number;
     }
 
+    /// Set only the diff tree's base block number, leaving base_hash unchanged.
+    /// Use this when reopening from disk: base_hash is already restored by
+    /// `open_with_db` from `META_BASE_HASH_KEY`, so only the block number needs setting.
+    pub fn set_diff_base_block(&mut self, block_number: u64) {
+        self.diff_tree.base_block = block_number;
+    }
+
     /// Create a new diff layer for a block.
     /// Must be called before `apply_account_update_for_block`.
     pub fn begin_block(&mut self, block_hash: H256, parent_hash: H256, block_number: u64) {

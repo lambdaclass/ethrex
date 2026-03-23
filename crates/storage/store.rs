@@ -995,6 +995,16 @@ impl Store {
         Ok(self.latest_block_header.get().number)
     }
 
+    /// Obtain latest block number synchronously (reads from in-memory cache).
+    pub fn get_latest_block_number_sync(&self) -> BlockNumber {
+        self.latest_block_header.get().number
+    }
+
+    /// Obtain latest block hash synchronously (reads from in-memory cache).
+    pub fn get_latest_block_hash_sync(&self) -> BlockHash {
+        self.latest_block_header.get().hash()
+    }
+
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,
@@ -1423,7 +1433,7 @@ impl Store {
 
         // Pre-collect storage keys to delete for accounts with storage cleared.
         // Done before the write tx because the read view and write batch are separate.
-        let storage_keys_to_delete: Vec<(H256, Vec<Vec<u8>>)> = {
+        let storage_keys_to_delete: rustc_hash::FxHashMap<H256, Vec<Vec<u8>>> = {
             let read_view = db.begin_read()?;
             flat_updates
                 .iter()
@@ -1488,24 +1498,20 @@ impl Store {
             if update.removed {
                 // Delete account entry and all its storage from FKV.
                 tx.delete(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?;
-                // Storage keys were collected before the write tx.
-                for (addr_hash, keys) in &storage_keys_to_delete {
-                    if *addr_hash == hashed_address {
-                        for key in keys {
-                            tx.delete(STORAGE_FLATKEYVALUE, key)?;
-                        }
+                // Storage keys were collected before the write tx (O(1) lookup).
+                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
+                    for key in keys {
+                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
                     }
                 }
                 continue;
             }
 
             if update.removed_storage {
-                // Delete all existing storage for this account (SELFDESTRUCT).
-                for (addr_hash, keys) in &storage_keys_to_delete {
-                    if *addr_hash == hashed_address {
-                        for key in keys {
-                            tx.delete(STORAGE_FLATKEYVALUE, key)?;
-                        }
+                // Delete all existing storage for this account (SELFDESTRUCT, O(1) lookup).
+                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
+                    for key in keys {
+                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
                     }
                 }
             }
@@ -1549,6 +1555,26 @@ impl Store {
                     tx.delete(STORAGE_FLATKEYVALUE, &fkv_key)?;
                 } else {
                     tx.put(STORAGE_FLATKEYVALUE, &fkv_key, &value.encode_to_vec())?;
+                }
+            }
+
+            // If storage was added but info wasn't updated, ensure the FKV entry's
+            // storage_root sentinel is set so LEVM knows the account has storage.
+            // We must read via a separate read view since the write batch has no get().
+            if update.info.is_none() && !update.added_storage.is_empty() && !update.removed {
+                let read_view = db.begin_read()?;
+                if let Some(bytes) =
+                    read_view.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?
+                {
+                    let mut account_state = AccountState::decode(&bytes)?;
+                    if account_state.storage_root == *EMPTY_TRIE_HASH {
+                        account_state.storage_root = H256::from_low_u64_be(1);
+                        tx.put(
+                            ACCOUNT_FLATKEYVALUE,
+                            hashed_address.as_bytes(),
+                            &account_state.encode_to_vec(),
+                        )?;
+                    }
                 }
             }
         }
@@ -2092,8 +2118,10 @@ impl Store {
     ) -> Result<(), StoreError> {
         #[cfg(feature = "rocksdb")]
         {
+            use crate::api::tables::{
+                BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS,
+            };
             use ethrex_binary_trie::state::BinaryTrieState;
-            use crate::api::tables::{BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
 
             let Some(db) = self.db_handle() else {
                 // In-memory mode: binary trie genesis is handled in init_binary_trie_state.
@@ -2108,9 +2136,9 @@ impl Store {
             )
             .map_err(|e| StoreError::Custom(format!("Failed to open binary trie: {e}")))?;
 
-            state
-                .apply_genesis(genesis_accounts)
-                .map_err(|e| StoreError::Custom(format!("Failed to apply genesis to binary trie: {e}")))?;
+            state.apply_genesis(genesis_accounts).map_err(|e| {
+                StoreError::Custom(format!("Failed to apply genesis to binary trie: {e}"))
+            })?;
 
             state
                 .flush(0, genesis_hash)
