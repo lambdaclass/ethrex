@@ -208,6 +208,13 @@ pub fn init_binary_trie_state(
 
     #[cfg(feature = "rocksdb")]
     {
+        // If Store already initialized the binary trie during add_initial_state
+        // (genesis case), reuse it.
+        if let Some(existing) = store.binary_trie_state() {
+            info!("Binary trie already initialized (from genesis)");
+            return Ok(existing);
+        }
+
         let db = store
             .db_handle()
             .ok_or_else(|| eyre::eyre!("Failed to get RocksDB handle from Store"))?;
@@ -220,19 +227,7 @@ pub fn init_binary_trie_state(
         )
         .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
 
-        if !state.has_data() {
-            info!("Initializing binary trie from genesis");
-            state
-                .apply_genesis(&genesis.alloc)
-                .map_err(|e| eyre::eyre!("Failed to apply genesis to binary trie: {e}"))?;
-            state
-                .flush(0, genesis_hash)
-                .map_err(|e| eyre::eyre!("Failed to flush binary trie after genesis: {e}"))?;
-            info!("Binary trie genesis applied and flushed");
-        } else if let Some(checkpoint) = state.checkpoint_block() {
-            // On resume, set diff base to genesis hash.
-            // TODO: persist block hash alongside block number in META_BLOCK_KEY
-            // so we can use the exact checkpoint hash here.
+        if let Some(checkpoint) = state.checkpoint_block() {
             state.set_diff_base(genesis_hash, checkpoint);
             info!("Binary trie resuming from checkpoint block {checkpoint}");
         }

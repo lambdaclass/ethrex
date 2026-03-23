@@ -421,6 +421,9 @@ impl Blockchain {
         }
         let root = state.state_root();
         debug!("Binary trie root after block {block_number}: {}", H256::from(root));
+        // Note: binary trie state roots will not match the MPT state roots in block
+        // headers downloaded from the network. State root validation is intentionally
+        // skipped until the network transitions to binary trie state roots.
         state
             .flush_if_needed(block_number, block_hash)
             .map_err(|e| ChainError::Custom(format!("binary trie flush error: {e}")))?;

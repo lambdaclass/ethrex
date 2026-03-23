@@ -1740,6 +1740,13 @@ impl Store {
         self.binary_trie_state = Some(state);
     }
 
+    /// Returns the binary trie state if set.
+    pub fn binary_trie_state(
+        &self,
+    ) -> Option<Arc<RwLock<ethrex_binary_trie::state::BinaryTrieState>>> {
+        self.binary_trie_state.clone()
+    }
+
     pub async fn get_account_info(
         &self,
         block_number: BlockNumber,
@@ -2074,63 +2081,49 @@ impl Store {
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
-    pub async fn setup_genesis_state_trie(
-        &self,
-        genesis_accounts: BTreeMap<Address, GenesisAccount>,
-    ) -> Result<H256, StoreError> {
-        let mut storage_trie_nodes = vec![];
-        let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-        for (address, account) in genesis_accounts {
-            let hashed_address = hash_address(&address);
-            let h256_hashed_address = H256::from_slice(&hashed_address);
+    /// Initialize the binary trie from genesis accounts.
+    ///
+    /// Creates a BinaryTrieState from Store's DB handle, applies genesis,
+    /// flushes to disk, and sets the binary trie state on this Store.
+    fn setup_genesis_binary_trie(
+        &mut self,
+        genesis_accounts: &BTreeMap<Address, GenesisAccount>,
+        genesis_hash: H256,
+    ) -> Result<(), StoreError> {
+        #[cfg(feature = "rocksdb")]
+        {
+            use ethrex_binary_trie::state::BinaryTrieState;
+            use crate::api::tables::{BINARY_TRIE_CODE, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
 
-            // Store account code (as this won't be stored in the trie)
-            let code = Code::from_bytecode(account.code, &NativeCrypto);
-            let code_hash = code.hash;
-            self.add_account_code(code).await?;
-
-            // Store the account's storage in a clean storage trie and compute its root
-            let mut storage_trie =
-                self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
-            for (storage_key, storage_value) in account.storage {
-                if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                    storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                }
-            }
-
-            let (storage_root, storage_nodes) =
-                storage_trie.collect_changes_since_last_hash(&NativeCrypto);
-
-            storage_trie_nodes.extend(
-                storage_nodes
-                    .into_iter()
-                    .map(|(path, n)| (apply_prefix(Some(h256_hashed_address), path).into_vec(), n)),
-            );
-
-            // Add account to trie
-            let account_state = AccountState {
-                nonce: account.nonce,
-                balance: account.balance,
-                storage_root,
-                code_hash,
+            let Some(db) = self.db_handle() else {
+                // In-memory mode: binary trie genesis is handled in init_binary_trie_state.
+                return Ok(());
             };
-            genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+
+            let mut state = BinaryTrieState::open_with_db(
+                db,
+                BINARY_TRIE_NODES,
+                BINARY_TRIE_CODE,
+                BINARY_TRIE_STORAGE_KEYS,
+            )
+            .map_err(|e| StoreError::Custom(format!("Failed to open binary trie: {e}")))?;
+
+            state
+                .apply_genesis(genesis_accounts)
+                .map_err(|e| StoreError::Custom(format!("Failed to apply genesis to binary trie: {e}")))?;
+
+            state
+                .flush(0, genesis_hash)
+                .map_err(|e| StoreError::Custom(format!("Failed to flush binary trie: {e}")))?;
+
+            self.set_binary_trie_state(Arc::new(RwLock::new(state)));
+        }
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            let _ = (genesis_accounts, genesis_hash);
         }
 
-        let (state_root, account_trie_nodes) =
-            genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
-        let account_trie_nodes = account_trie_nodes
-            .into_iter()
-            .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
-            .collect::<Vec<_>>();
-
-        let mut tx = self.backend.begin_write()?;
-        tx.put_batch(ACCOUNT_TRIE_NODES, account_trie_nodes)?;
-        tx.put_batch(STORAGE_TRIE_NODES, storage_trie_nodes)?;
-        tx.commit()?;
-
-        Ok(state_root)
+        Ok(())
     }
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
@@ -2307,10 +2300,8 @@ impl Store {
         // Populate FKV tables so state reads can use O(1) RocksDB gets.
         self.populate_fkv_from_genesis(&genesis.alloc)?;
 
-        // Store genesis accounts in the MPT (used for proofs and state root computation).
-        // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
-        debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+        // Initialize binary trie from genesis.
+        self.setup_genesis_binary_trie(&genesis.alloc, genesis_hash)?;
 
         // Store genesis block
         info!(hash = %genesis_hash, "Storing genesis block");
