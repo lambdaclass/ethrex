@@ -75,7 +75,7 @@ pub const PRAGUE_SYSTEM_CONTRACTS: [SystemContract; 2] = [
 
 /// Bytecode for the modexp EVMified precompile (EIP-8200).
 /// Compiled from Solidity by the eth-act/evmification project.
-pub const MODEXP_EVM_BYTECODE: &[u8] = include_bytes!("bytecode/modexp_deployed.bin");
+pub const MODEXP_EVM_BYTECODE: &[u8] = include_bytes!("bytecode/modexp_deployed.bytecode");
 
 /// Address of the modexp precompile (0x05), which becomes an EVMified
 /// contract at Osaka.
