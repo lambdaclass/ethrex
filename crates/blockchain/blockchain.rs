@@ -1845,19 +1845,23 @@ impl Blockchain {
         // Walk the parent chain to cache the last 256 block hashes so that
         // BLOCKHASH can resolve references to blocks from previous batches
         // (they may not be canonical yet during import).
-        {
-            let mut hash = parent_header.hash();
-            let mut number = parent_header.number;
+        block_hash_cache
+            .entry(parent_header.number)
+            .or_insert_with(|| parent_header.hash());
+        let mut hash = parent_header.parent_hash;
+        let mut number = parent_header.number.saturating_sub(1);
+        let lookback = first_block_header.number.saturating_sub(256);
+        while number > lookback {
             block_hash_cache.entry(number).or_insert(hash);
-            let lookback = first_block_header.number.saturating_sub(256);
-            while number > lookback {
-                match self.storage.get_block_header_by_hash(hash) {
-                    Ok(Some(header)) => {
-                        hash = header.parent_hash;
-                        number = number.saturating_sub(1);
-                        block_hash_cache.entry(number).or_insert(hash);
-                    }
-                    _ => break,
+            match self.storage.get_block_header_by_hash(hash) {
+                Ok(Some(header)) => {
+                    hash = header.parent_hash;
+                    number = number.saturating_sub(1);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
+                    break;
                 }
             }
         }
