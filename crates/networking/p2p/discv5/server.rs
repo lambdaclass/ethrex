@@ -249,19 +249,23 @@ impl DiscoveryServer {
                     // Decryption succeeded, but verify the sender's IP matches the session IP.
                     // If the IP has changed, the session is being reused from a different address
                     // (e.g. PingMultiIP test scenario) — treat it as a new session.
-                    if let Some(session_ip) = self.session_ips.get(&src_id) {
-                        if addr.ip() != *session_ip {
-                            trace!(
-                                protocol = "discv5",
-                                from = %src_id,
-                                %addr,
-                                expected_ip = %session_ip,
-                                "IP mismatch for existing session, sending WhoAreYou"
-                            );
-                            return self
-                                .send_who_are_you(packet.header.nonce, src_id, addr)
-                                .await;
-                        }
+                    if let Some(session_ip) = self.session_ips.get(&src_id)
+                        && addr.ip() != *session_ip
+                    {
+                        trace!(
+                            protocol = "discv5",
+                            from = %src_id,
+                            %addr,
+                            expected_ip = %session_ip,
+                            "IP mismatch for existing session, sending WhoAreYou"
+                        );
+                        // Clear the rate limit for the new address so the WHOAREYOU
+                        // is not suppressed. The sender proved identity by successfully
+                        // decrypting, so this is not an amplification attack.
+                        self.whoareyou_rate_limit.remove(&(addr.ip(), src_id));
+                        return self
+                            .send_who_are_you(packet.header.nonce, src_id, addr)
+                            .await;
                     }
                     ordinary
                 }
@@ -627,7 +631,10 @@ impl DiscoveryServer {
         // Per spec, distance 0 means the node itself — include the local ENR explicitly.
         let mut nodes = self
             .peer_table
-            .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances.clone())
+            .get_nodes_at_distances(
+                self.local_node.node_id(),
+                find_node_message.distances.clone(),
+            )
             .await?;
         if find_node_message.distances.contains(&0) {
             nodes.push(self.local_node_record.clone());
