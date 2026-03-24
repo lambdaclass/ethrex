@@ -62,18 +62,28 @@ async fn test_whoareyou_rate_limiting() {
 
     let _ = server.send_who_are_you(nonce, src_id1, addr).await;
 
-    assert!(server.whoareyou_rate_limit.contains_key(&addr.ip()));
+    // Rate limit is now keyed by (IP, node_id)
+    assert!(
+        server
+            .whoareyou_rate_limit
+            .contains_key(&(addr.ip(), src_id1))
+    );
     assert!(server.pending_challenges.contains_key(&src_id1));
 
+    // Same IP but different node_id should NOT be rate limited
     let _ = server.send_who_are_you(nonce, src_id2, addr).await;
 
-    assert!(!server.pending_challenges.contains_key(&src_id2));
+    assert!(server.pending_challenges.contains_key(&src_id2));
+
+    // Same node_id and same IP should be rate limited
+    let _ = server.send_who_are_you(nonce, src_id1, addr).await;
+    // pending_challenges entry for src_id1 should not be updated (still the first one)
 
     let addr2: SocketAddr = "192.168.1.2:30303".parse().unwrap();
     let _ = server.send_who_are_you(nonce, src_id3, addr2).await;
 
     assert!(server.pending_challenges.contains_key(&src_id3));
-    assert_eq!(server.whoareyou_rate_limit.len(), 2);
+    assert_eq!(server.whoareyou_rate_limit.len(), 3);
 }
 
 #[tokio::test]
