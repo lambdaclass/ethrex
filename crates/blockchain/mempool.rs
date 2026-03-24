@@ -7,8 +7,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
-        TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
+        TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_DATA_COST_PER_TOKEN,
+        TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS,
+        TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
         TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
@@ -488,6 +489,32 @@ pub fn transaction_intrinsic_gas(
     gas = gas
         .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_GAS)
         .ok_or(MempoolError::TxGasOverflowError)?;
+
+    // EIP-7981 (Amsterdam): Add access list data cost
+    if config.is_amsterdam_activated(header.timestamp) {
+        let mut access_list_tokens: u64 = 0;
+        for (address, keys) in tx.access_list() {
+            for &byte in address.as_bytes() {
+                if byte == 0 {
+                    access_list_tokens += 1;
+                } else {
+                    access_list_tokens += 4;
+                }
+            }
+            for key in keys {
+                for &byte in key.as_bytes() {
+                    if byte == 0 {
+                        access_list_tokens += 1;
+                    } else {
+                        access_list_tokens += 4;
+                    }
+                }
+            }
+        }
+        gas = gas
+            .checked_add(access_list_tokens * TX_ACCESS_LIST_DATA_COST_PER_TOKEN)
+            .ok_or(MempoolError::TxGasOverflowError)?;
+    }
 
     Ok(gas)
 }

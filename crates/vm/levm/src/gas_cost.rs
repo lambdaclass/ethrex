@@ -7,7 +7,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{Address, H256, U256, types::Fork};
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
@@ -184,6 +184,8 @@ pub const BLOB_GAS_PER_BLOB: u64 = 131072;
 // Access lists costs
 pub const ACCESS_LIST_STORAGE_KEY_COST: u64 = 1900;
 pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
+// EIP-7981 (Amsterdam): Access list data cost per token
+pub const ACCESS_LIST_DATA_COST_PER_TOKEN: u64 = 10;
 
 // Precompile costs
 pub const ECRECOVER_COST: u64 = 3000;
@@ -597,6 +599,31 @@ pub fn selfdestruct(
     SELFDESTRUCT_STATIC
         .checked_add(dynamic_cost)
         .ok_or(OutOfGas.into())
+}
+
+/// EIP-7981: Counts the tokens in the raw bytes of access list entries (addresses + storage keys).
+/// Each zero byte = 1 token, each non-zero byte = 4 tokens (same as calldata token counting).
+pub fn tokens_in_access_list_data(access_list: &[(Address, Vec<H256>)]) -> u64 {
+    let mut tokens: u64 = 0;
+    for (address, storage_keys) in access_list {
+        for &byte in address.as_bytes() {
+            if byte == 0 {
+                tokens += 1;
+            } else {
+                tokens += 4;
+            }
+        }
+        for key in storage_keys {
+            for &byte in key.as_bytes() {
+                if byte == 0 {
+                    tokens += 1;
+                } else {
+                    tokens += 4;
+                }
+            }
+        }
+    }
+    tokens
 }
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
