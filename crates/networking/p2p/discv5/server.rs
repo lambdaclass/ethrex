@@ -840,7 +840,11 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        if let Some(last_sent) = self.whoareyou_rate_limit.get(&rate_key)
+        // Skip rate limiting for private/local IPs -- amplification attacks
+        // are not a concern on local networks, and Docker/Hive tests use the
+        // same private IP for many nodes.
+        if !Self::is_private_ip(addr.ip())
+            && let Some(last_sent) = self.whoareyou_rate_limit.get(&rate_key)
             && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
         {
             trace!(

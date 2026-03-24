@@ -53,7 +53,8 @@ async fn test_whoareyou_rate_limiting() {
     let mut server = test_server(None).await;
 
     let nonce = [0u8; 12];
-    let addr: SocketAddr = "192.168.1.1:30303".parse().unwrap();
+    // Use a public IP so rate limiting is actually exercised (private IPs are exempt).
+    let addr: SocketAddr = "8.8.8.8:30303".parse().unwrap();
     let src_id1 = H256::from_low_u64_be(1);
     let src_id2 = H256::from_low_u64_be(2);
     let src_id3 = H256::from_low_u64_be(3);
@@ -79,7 +80,7 @@ async fn test_whoareyou_rate_limiting() {
     let _ = server.send_who_are_you(nonce, src_id1, addr).await;
     // pending_challenges entry for src_id1 should not be updated (still the first one)
 
-    let addr2: SocketAddr = "192.168.1.2:30303".parse().unwrap();
+    let addr2: SocketAddr = "8.8.4.4:30303".parse().unwrap();
     let _ = server.send_who_are_you(nonce, src_id3, addr2).await;
 
     assert!(server.pending_challenges.contains_key(&src_id3));
