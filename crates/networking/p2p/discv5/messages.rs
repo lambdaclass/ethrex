@@ -113,8 +113,7 @@ pub fn is_discv5_packet(dest_id: &H256, data: &[u8]) -> bool {
         return false;
     }
     let masking_iv = &data[..IV_MASKING_SIZE];
-    let Ok(mut cipher) =
-        <Aes128Ctr64BE as KeyIvInit>::new_from_slices(&dest_id[..16], masking_iv)
+    let Ok(mut cipher) = <Aes128Ctr64BE as KeyIvInit>::new_from_slices(&dest_id[..16], masking_iv)
     else {
         return false;
     };
