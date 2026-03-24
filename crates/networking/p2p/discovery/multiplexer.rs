@@ -14,7 +14,7 @@ use spawned_concurrency::{
 use thiserror::Error;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use super::codec::DiscriminatingCodec;
 use crate::discv4::{
@@ -23,7 +23,7 @@ use crate::discv4::{
 };
 
 use crate::discv5::{
-    messages::Packet as Discv5Packet,
+    messages::{Packet as Discv5Packet, is_discv5_packet},
     server::{DiscoveryServer as Discv5Server, Discv5Message, discv5_server_protocol},
 };
 
@@ -160,8 +160,10 @@ impl DiscoveryMultiplexer {
     fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
         if is_discv4_packet(data) {
             self.route_to_discv4(data, from);
-        } else {
+        } else if is_discv5_packet(&self.local_node_id, data) {
             self.route_to_discv5(data, from);
+        } else {
+            trace!(from=?from, "Dropping unrecognized UDP packet");
         }
     }
 

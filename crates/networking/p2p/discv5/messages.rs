@@ -106,6 +106,30 @@ impl Packet {
     }
 }
 
+/// Returns true if the data looks like a valid discv5 packet destined for `dest_id`.
+/// Decrypts the static header and checks the protocol ID and version.
+pub fn is_discv5_packet(dest_id: &H256, data: &[u8]) -> bool {
+    if data.len() < MIN_PACKET_SIZE || data.len() > MAX_PACKET_SIZE {
+        return false;
+    }
+    let masking_iv = &data[..IV_MASKING_SIZE];
+    let Ok(mut cipher) =
+        <Aes128Ctr64BE as KeyIvInit>::new_from_slices(&dest_id[..16], masking_iv)
+    else {
+        return false;
+    };
+    let Ok(mut static_header): Result<[u8; STATIC_HEADER_SIZE], _> =
+        data[IV_MASKING_SIZE..STATIC_HEADER_END].try_into()
+    else {
+        return false;
+    };
+    if cipher.try_apply_keystream(&mut static_header).is_err() {
+        return false;
+    }
+    &static_header[..6] == PROTOCOL_ID
+        && u16::from_be_bytes([static_header[6], static_header[7]]) == PROTOCOL_VERSION
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketHeader {
     pub static_header: [u8; STATIC_HEADER_SIZE],
