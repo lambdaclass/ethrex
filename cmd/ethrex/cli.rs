@@ -797,7 +797,12 @@ pub async fn import_blocks(
                     blockchain
                         .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
                         .await
-                        .map_err(|(err, _)| err)?;
+                        .map_err(|(err, failure)| {
+                            if let Some(f) = failure {
+                                warn!("Batch failed at block hash {:#x}", f.failed_block_hash);
+                            }
+                            err
+                        })?;
                 }
             } else {
                 // We need to have the state of the latest 128 blocks

@@ -1475,6 +1475,8 @@ impl Store {
                 .collect::<Result<_, StoreError>>()?
         };
 
+        // Read view for looking up existing FKV entries (e.g. prior storage_root).
+        let fkv_read = db.begin_read()?;
         let mut tx = db.begin_write()?;
 
         for block in blocks {
@@ -1543,19 +1545,28 @@ impl Store {
 
             // Write account state if info was updated.
             if let Some(ref info) = update.info {
-                // Use H256::from_low_u64_be(1) as a sentinel for "account has storage",
-                // matching the binary trie's convention. The VM checks
-                // `storage_root != EMPTY_TRIE_HASH` to decide whether to call
-                // `get_storage_slot`. We conservatively always set the sentinel so the
-                // VM always looks up storage via FKV (which returns None if empty).
-                //
-                // Exception: if storage was fully cleared and nothing was re-added,
-                // the account has no storage and we can use EMPTY_TRIE_HASH.
+                // Synthesize storage_root for EVM compatibility.
+                // The VM uses `storage_root != EMPTY_TRIE_HASH` to decide if
+                // an account has storage (affects CREATE gas costs, etc.).
+                // We determine the correct value from the update delta + the
+                // existing FKV entry (which tracks prior storage state).
                 let storage_root = if update.removed_storage && update.added_storage.is_empty() {
+                    // Storage was explicitly cleared and nothing re-added.
                     *EMPTY_TRIE_HASH
-                } else {
-                    // Storage may exist (from this update or earlier blocks).
+                } else if !update.added_storage.is_empty() {
+                    // This update adds storage keys.
                     H256::from_low_u64_be(1)
+                } else {
+                    // No storage change in this update. Preserve the existing
+                    // FKV value: if the account previously had storage, keep
+                    // the sentinel; otherwise use EMPTY_TRIE_HASH.
+                    fkv_read
+                        .get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())
+                        .ok()
+                        .flatten()
+                        .and_then(|bytes| AccountState::decode(&bytes).ok())
+                        .map(|prev| prev.storage_root)
+                        .unwrap_or(*EMPTY_TRIE_HASH)
                 };
                 let account_state = AccountState {
                     nonce: info.nonce,

@@ -141,6 +141,31 @@ canonical chain contain MPT state roots. This branch:
 - Equivalence between binary trie and MPT roots is proven externally by the zkVM
   proving layer (recursive verification, not direct mathematical proof)
 
+## Known issue: `storage_root` sentinel in FKV
+
+The binary trie has no per-account storage tries, so there is no natural `storage_root`
+to store in FKV's `AccountState`. We synthesize one:
+
+- `EMPTY_TRIE_HASH` = account has no storage
+- `H256::from_low_u64_be(1)` (sentinel) = account has storage
+
+This matters because LEVM derives `has_storage` from `storage_root != EMPTY_TRIE_HASH`
+(`crates/vm/levm/src/account.rs:78`), which feeds into `is_empty_account()` and affects
+CREATE gas costs and other EVM semantics.
+
+The current FKV write path checks the update delta + existing FKV entry to determine
+the correct value. A cleaner long-term fix would be to add an explicit `has_storage: bool`
+to `LevmAccount` construction instead of deriving it from `storage_root`, removing the
+need for any sentinel. The only consumption point is line 78 in `account.rs`:
+
+```rust
+has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+```
+
+This would let `AccountState` drop `storage_root` entirely on the binary trie branch,
+since it has no meaning without per-account storage tries. The refactor is small in levm
+(~1 line) but touches `AccountState` usage across storage, blockchain, and RPC.
+
 ## NodeStore: trie node persistence
 
 The `NodeStore` replaces `TrieLayerCache` for managing in-memory trie nodes:

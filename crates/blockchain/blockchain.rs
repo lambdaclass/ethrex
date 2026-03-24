@@ -50,7 +50,7 @@ pub mod payload;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, warn};
+use ::tracing::{debug, error, info, instrument, warn};
 use constants::{
     AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
     POST_OSAKA_GAS_LIMIT_CAP,
@@ -1900,6 +1900,11 @@ impl Blockchain {
             let BlockExecutionResult { receipts, .. } = self
                 .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
+                    error!(
+                        "Failed to execute block {} (hash {:#x}): {err}",
+                        block.header.number,
+                        block.hash()
+                    );
                     (
                         err,
                         Some(BatchBlockProcessingFailure {
