@@ -14,14 +14,13 @@ use crate::{
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
-    utils::distance,
 };
 use bytes::Bytes;
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use spawned_concurrency::{
     error::GenServerError,
     tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, InitResult, send_message_on},
@@ -556,11 +555,10 @@ impl PeerTable {
     ) -> Result<Option<Session>, PeerTableError> {
         match self
             .handle
-            .call(CallMessage::GetContact { node_id })
+            .call(CallMessage::GetSessionInfo { node_id })
             .await?
         {
-            OutMessage::Contact(contact) => Ok(contact.session),
-            OutMessage::NotFound => Ok(None),
+            OutMessage::Session(session) => Ok(session),
             _ => unreachable!(),
         }
     }
@@ -763,6 +761,9 @@ struct PeerTableServer {
     discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
     store: Store,
+    /// Standalone session store, independent of contacts.
+    /// Allows sessions to be stored even before the contact's ENR is known/parseable.
+    sessions: FxHashMap<H256, Session>,
 }
 
 impl PeerTableServer {
@@ -774,6 +775,7 @@ impl PeerTableServer {
             discarded_contacts: Default::default(),
             target_peers,
             store,
+            sessions: Default::default(),
         }
     }
 
@@ -922,13 +924,17 @@ impl PeerTableServer {
         nodes.into_iter().map(|(node, _)| node).collect()
     }
 
-    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>)
+    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>).
+    /// Uses the discv5 spec log-distance: `bits(XOR)` = number of significant bits,
+    /// equivalent to `floor(log2(XOR)) + 1` for non-zero XOR. Distance 0 is reserved
+    /// for the local node itself (handled by the caller), so contacts start at distance ≥ 1.
     fn get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
         self.contacts
             .iter()
             .filter_map(|(contact_id, contact)| {
-                let d = distance(&local_node_id, contact_id) as u32;
-                if distances.contains(&d) {
+                let xor = local_node_id ^ *contact_id;
+                let spec_dist = U256::from_big_endian(xor.as_bytes()).bits() as u32;
+                if distances.contains(&spec_dist) {
                     contact.record.clone()
                 } else {
                     None
@@ -1223,6 +1229,9 @@ enum CallMessage {
     GetRandomPeer {
         capabilities: Vec<Capability>,
     },
+    GetSessionInfo {
+        node_id: H256,
+    },
 }
 
 #[derive(Debug)]
@@ -1247,6 +1256,7 @@ pub enum OutMessage {
     UnknownContact,
     IpMismatch,
     PeersData(Vec<PeerData>),
+    Session(Option<Session>),
 }
 
 #[derive(Debug, Error)]
@@ -1395,6 +1405,15 @@ impl GenServer for PeerTableServer {
                     OutMessage::NotFound
                 },
             ),
+            CallMessage::GetSessionInfo { node_id } => {
+                // Check standalone sessions map first; fall back to contact.session.
+                let session = self
+                    .sessions
+                    .get(&node_id)
+                    .cloned()
+                    .or_else(|| self.contacts.get(&node_id)?.session.clone());
+                CallResponse::Reply(OutMessage::Session(session))
+            }
         }
     }
 
@@ -1427,9 +1446,12 @@ impl GenServer for PeerTableServer {
                 self.peers.insert(new_peer_id, new_peer);
             }
             CastMessage::SetSessionInfo { node_id, session } => {
-                self.contacts
-                    .entry(node_id)
-                    .and_modify(|contact| contact.session = Some(session));
+                // Store in the standalone sessions map (always succeeds, no contact required).
+                self.sessions.insert(node_id, session.clone());
+                // Also update the contact's cached session if the contact exists.
+                if let Some(contact) = self.contacts.get_mut(&node_id) {
+                    contact.session = Some(session);
+                }
             }
             CastMessage::RemovePeer { node_id } => {
                 self.peers.swap_remove(&node_id);
