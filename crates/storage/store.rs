@@ -1598,9 +1598,8 @@ impl Store {
             // storage_root sentinel is set so LEVM knows the account has storage.
             // We must read via a separate read view since the write batch has no get().
             if update.info.is_none() && !update.added_storage.is_empty() && !update.removed {
-                let read_view = db.begin_read()?;
                 if let Some(bytes) =
-                    read_view.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?
+                    fkv_read.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?
                 {
                     let mut account_state = AccountState::decode(&bytes)?;
                     if account_state.storage_root == *EMPTY_TRIE_HASH {

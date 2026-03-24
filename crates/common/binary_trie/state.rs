@@ -205,15 +205,14 @@ impl BinaryTrieState {
         db.write(batch)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
 
-        // Sliding-window eviction for storage_keys.
+        // Evict dirty entries from in-memory cache (they're now persisted
+        // to disk and can be reloaded on demand). Non-dirty entries stay
+        // cached to avoid unnecessary RocksDB re-reads.
         {
             let mut storage_keys = self.storage_keys.lock().unwrap();
-            let evicted: FxHashMap<Address, FxHashSet<H256>> = self
-                .dirty_storage_keys
-                .iter()
-                .filter_map(|a| storage_keys.remove_entry(a))
-                .collect();
-            *storage_keys = evicted;
+            for addr in &self.dirty_storage_keys {
+                storage_keys.remove(addr);
+            }
         }
 
         self.dirty_storage_keys.clear();

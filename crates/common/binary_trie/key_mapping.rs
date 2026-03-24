@@ -127,7 +127,7 @@ pub fn pack_basic_data(version: u8, code_size: u32, nonce: u64, balance: U256) -
         code_size <= 0x00FF_FFFF,
         "code_size {code_size} exceeds 3-byte field (max 16,777,215)"
     );
-    debug_assert!(
+    assert!(
         balance <= U256::from(u128::MAX),
         "balance exceeds EIP-7864 128-bit field"
     );
