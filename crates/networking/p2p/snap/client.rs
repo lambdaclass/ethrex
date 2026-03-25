@@ -192,6 +192,8 @@ pub async fn request_account_range(
         }
 
         if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+            // Release the reservation we made before spawning the task.
+            peers.peer_table.dec_requests(peer_id)?;
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -259,12 +261,15 @@ pub async fn request_account_range(
             .expect("Should be able to update pivot")
         }
 
-        let peer_table = peers.peer_table.clone();
+        // Reserve a request slot before spawning so get_best_peer sees
+        // this peer as busy immediately, preventing spawn floods.
+        // Workers call outgoing_request directly (not make_request) to
+        // avoid a double increment. Released via dec_requests on try_recv.
+        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(request_account_range_worker(
             peer_id,
             connection,
-            peer_table,
             chunk_start,
             chunk_end,
             pivot_header.state_root,
@@ -389,6 +394,8 @@ pub async fn request_bytecodes(
                 remaining_start,
                 remaining_end,
             } = result;
+            // Release the reservation we made before spawning the task.
+            peers.peer_table.dec_requests(peer_id)?;
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -448,7 +455,8 @@ pub async fn request_bytecodes(
             .copied()
             .collect();
 
-        let peer_table = peers.peer_table.clone();
+        // Reserve a request slot before spawning (see account range comment).
+        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(async move {
             let empty_task_result = TaskResult {
@@ -467,14 +475,10 @@ pub async fn request_bytecodes(
                 hashes: hashes_to_request.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
-                PeerHandler::make_request(
-                    &peer_table,
-                    peer_id,
-                    &mut connection,
-                    request,
-                    PEER_REPLY_TIMEOUT,
-                )
+            // The caller already holds a request reservation for this peer,
+            // so call outgoing_request directly to avoid a double increment.
+            if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) = connection
+                .outgoing_request(request, PEER_REPLY_TIMEOUT)
                 .await
             {
                 if codes.is_empty() {
@@ -653,6 +657,8 @@ pub async fn request_storage_ranges(
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
             } = result;
+            // Release the reservation we made before spawning the task.
+            peers.peer_table.dec_requests(peer_id)?;
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -988,13 +994,13 @@ pub async fn request_storage_ranges(
                 chunk_storage_roots.first().unwrap_or(&H256::zero()),
             );
         }
-        let peer_table = peers.peer_table.clone();
+        // Reserve a request slot before spawning (see account range comment).
+        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(request_storage_ranges_worker(
             task,
             peer_id,
             connection,
-            peer_table,
             pivot_header.state_root,
             chunk_account_hashes,
             chunk_storage_roots,
@@ -1147,7 +1153,6 @@ pub async fn request_storage_trienodes(
 async fn request_account_range_worker(
     peer_id: H256,
     mut connection: PeerConnection,
-    peer_table: PeerTable,
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
@@ -1166,14 +1171,11 @@ async fn request_account_range_worker(
         id: _,
         accounts,
         proof,
-    })) = PeerHandler::make_request(
-        &peer_table,
-        peer_id,
-        &mut connection,
-        request,
-        PEER_REPLY_TIMEOUT,
-    )
-    .await
+        // The caller already holds a request reservation for this peer,
+        // so call outgoing_request directly to avoid a double increment.
+    })) = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await
     {
         if accounts.is_empty() {
             tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
@@ -1249,7 +1251,6 @@ async fn request_storage_ranges_worker(
     task: StorageTask,
     peer_id: H256,
     mut connection: PeerConnection,
-    peer_table: PeerTable,
     state_root: H256,
     chunk_account_hashes: Vec<H256>,
     chunk_storage_roots: Vec<H256>,
@@ -1280,14 +1281,11 @@ async fn request_storage_ranges_worker(
         id: _,
         slots,
         proof,
-    })) = PeerHandler::make_request(
-        &peer_table,
-        peer_id,
-        &mut connection,
-        request,
-        PEER_REPLY_TIMEOUT,
-    )
-    .await
+        // The caller already holds a request reservation for this peer,
+        // so call outgoing_request directly to avoid a double increment.
+    })) = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await
     else {
         tracing::debug!("Failed to get storage range");
         tx.send(empty_task_result).await.ok();

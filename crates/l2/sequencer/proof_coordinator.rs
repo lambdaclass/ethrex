@@ -151,7 +151,7 @@ impl ProofCoordinator {
         commit_hash: &str,
         prover_type: ProverType,
     ) -> Result<Option<(u64, ProverInputData)>, ProofCoordinatorError> {
-        let base_batch = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
+        let base_batch = 1 + self.rollup_store.get_latest_verified_batch_proof().await?.0;
 
         loop {
             // Lock briefly to find and claim a candidate

@@ -155,9 +155,14 @@ impl PeerHandler {
 
         let mut retries = 1;
 
+        // Ask up to MAX_PEERS_TO_ASK peers per retry (no point asking 40+
+        // peers sequentially with a 15s timeout each).
+        const MAX_PEERS_TO_ASK: usize = 5;
+        const MAX_RETRIES: i32 = 3;
+
         while sync_head_number == 0 {
-            if retries > 10 {
-                // sync_head might be invalid
+            if retries > MAX_RETRIES {
+                // sync_head is unknown to our peers
                 return Ok(None);
             }
             let peer_connection = self
@@ -165,7 +170,7 @@ impl PeerHandler {
                 .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?;
 
-            for (peer_id, mut connection) in peer_connection {
+            for (peer_id, mut connection) in peer_connection.into_iter().take(MAX_PEERS_TO_ASK) {
                 match ask_peer_head_number(
                     peer_id,
                     &mut connection,
@@ -245,6 +250,9 @@ impl PeerHandler {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
+                // Release the reservation we made before spawning the task.
+                self.peer_table.dec_requests(peer_id)?;
+
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
                     self.peer_table.record_failure(peer_id)?;
@@ -323,10 +331,23 @@ impl PeerHandler {
                 continue;
             };
             let tx = task_sender.clone();
+            // Reserve a request slot before spawning so get_best_peer sees
+            // this peer as busy immediately, preventing the loop from
+            // spawning dozens of tasks for the same peer in a single tick.
+            // Reserve a request slot before spawning so get_best_peer sees
+            // this peer as busy immediately, preventing the loop from
+            // spawning dozens of tasks for the same peer in a single tick.
+            // The reservation is released in the completion handler
+            // (dec_requests on try_recv). The worker calls
+            // outgoing_request directly (not make_request) since we
+            // already hold the reservation.
+            self.peer_table.inc_requests(peer_id)?;
             debug!("Downloader {peer_id} is now busy");
-            let peer_table = self.peer_table.clone();
 
-            // run download_chunk_from_peer in a different Tokio task
+            // Run download_chunk_from_peer in a different Tokio task.
+            // The worker must always send a result so dec_requests fires
+            // in the completion handler. The unwrap_or_default() ensures
+            // download errors don't panic.
             tokio::spawn(async move {
                 trace!(
                     "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
@@ -334,7 +355,6 @@ impl PeerHandler {
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
-                    &peer_table,
                     startblock,
                     chunk_limit,
                 )
@@ -440,13 +460,13 @@ impl PeerHandler {
         }
     }
 
-    /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer
-    ///
-    /// If it fails, returns an error message.
+    /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer.
+    /// The caller must already hold a request reservation for this peer
+    /// (via `inc_requests` before spawning), so we call `outgoing_request`
+    /// directly instead of `make_request` to avoid a double increment.
     async fn download_chunk_from_peer(
         peer_id: H256,
         connection: &mut PeerConnection,
-        peer_table: &PeerTable,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -462,9 +482,9 @@ impl PeerHandler {
         if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
-        })) =
-            PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
-                .await
+        })) = connection
+            .outgoing_request(request, PEER_REPLY_TIMEOUT)
+            .await
         {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                 Ok(block_headers)

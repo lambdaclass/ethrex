@@ -401,6 +401,9 @@ pub struct AlignedConfig {
 
     /// Fee estimation type ("instant" or "default")
     pub fee_estimate: String,
+
+    /// Timeout in seconds before resending a proof not yet verified on-chain
+    pub resubmission_timeout_secs: u64,
 }
 ```
 
@@ -411,6 +414,7 @@ pub struct AlignedConfig {
 | `--aligned` | Enable Aligned mode |
 | `--aligned-network` | Network for Aligned SDK (devnet/testnet/mainnet) |
 | `--aligned.beacon-url` | Beacon client URL supporting `/eth/v1/beacon/blobs` |
+| `--aligned.resubmission-timeout` | Timeout (seconds) before resending an unverified proof (e.g. `86400` for 24h) |
 
 ### Environment Variables
 
@@ -421,6 +425,7 @@ pub struct AlignedConfig {
 | `ETHREX_ALIGNED_MODE` | Enable Aligned mode |
 | `ETHREX_ALIGNED_BEACON_URL` | Beacon client URL |
 | `ETHREX_ALIGNED_NETWORK` | Aligned network |
+| `ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS` | Timeout (seconds) before resending an unverified proof |
 
 **Deployer Configuration:**
 
@@ -513,7 +518,7 @@ AlignedProofAggregatorService.verifyProofInclusion()
 ### Key Metrics
 
 - `batch_verification_gas`: Gas used per batch verification
-- `latest_sent_batch_proof`: Last batch proof submitted to Aligned
+- `latest_verified_batch_proof`: Last batch proof verified on-chain
 - `last_verified_batch`: Last batch verified on L1
 
 ### Log Messages
