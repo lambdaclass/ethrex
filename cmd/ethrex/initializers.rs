@@ -273,7 +273,7 @@ pub async fn init_rpc_api(
                         pending_head = Some(head);
                     }
                 } else if !syncer_clone.is_active()
-                    && blockchain_clone.secs_since_last_block() > 10
+                    && blockchain_clone.secs_since_last_block() > 4
                 {
                     // Fallback: trigger sync only if no block has been processed
                     // in >10 seconds (NewBlock via P2P stopped working or we fell behind).
@@ -281,7 +281,7 @@ pub async fn init_rpc_api(
                     let latest = store_clone.get_latest_block_number().await.unwrap_or(0);
                     if latest > 0 {
                         tracing::info!(
-                            "Polygon sync bridge: no blocks for >10s, triggering fallback sync"
+                            "Polygon sync bridge: no blocks for >4s, triggering fallback sync"
                         );
                         syncer_clone
                             .sync_to_head(ethrex_common::H256::from_low_u64_be(1));

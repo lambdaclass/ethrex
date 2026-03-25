@@ -750,7 +750,7 @@ where
         let chain_id = state.storage.get_chain_config().chain_id;
         if (chain_id == 137 || chain_id == 80002)
             && !remote_head.is_zero()
-            && state.blockchain.secs_since_last_block() > 10
+            && state.blockchain.secs_since_last_block() > 4
         {
             debug!(
                 peer=%state.node,
