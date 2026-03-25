@@ -260,9 +260,13 @@ impl Crypto for ZiskCrypto {
 
         match ret_code {
             0 | 1 => Ok(result),
-            _ => Err(CryptoError::Other(
-                "BLS12-381 G1 addition point not on curve".to_string(),
+            2 => Err(CryptoError::Other(
+                "bls12_381_g1_add inputs not in field".to_string(),
             )),
+            3 => Err(CryptoError::Other(
+                "bls12_381_g1_add point not on curve".to_string(),
+            )),
+            _ => Err(CryptoError::Other("bls12_381_g1_add failed".to_string())),
         }
     }
 
@@ -288,10 +292,13 @@ impl Crypto for ZiskCrypto {
         match ret_code {
             0 | 1 => Ok(result),
             2 => Err(CryptoError::Other(
-                "bls12_381_g1_msm points not in group".to_string(),
+                "bls12_381_g1_msm inputs not in field".to_string(),
             )),
             3 => Err(CryptoError::Other(
-                "bls12_381_g1_msm points not in subgroup".to_string(),
+                "bls12_381_g1_msm point not on curve".to_string(),
+            )),
+            4 => Err(CryptoError::Other(
+                "bls12_381_g1_msm point not in subgroup".to_string(),
             )),
             _ => Err(CryptoError::Other("bls12_381_g1_msm failed".to_string())),
         }
@@ -320,9 +327,13 @@ impl Crypto for ZiskCrypto {
             unsafe { bls12_381_g2_add_c(result.as_mut_ptr(), a_bytes.as_ptr(), b_bytes.as_ptr()) };
         match ret_code {
             0 | 1 => Ok(result),
-            _ => Err(CryptoError::Other(
-                "BLS12-381 G2 addition point not on curve".to_string(),
+            2 => Err(CryptoError::Other(
+                "bls12_381_g2_add inputs not in field".to_string(),
             )),
+            3 => Err(CryptoError::Other(
+                "bls12_381_g2_add point not on curve".to_string(),
+            )),
+            _ => Err(CryptoError::Other("bls12_381_g2_add failed".to_string())),
         }
     }
 
@@ -349,10 +360,13 @@ impl Crypto for ZiskCrypto {
         match ret_code {
             0 | 1 => Ok(result),
             2 => Err(CryptoError::Other(
-                "bls12_381_g2_msm points not in group".to_string(),
+                "bls12_381_g2_msm inputs not in field".to_string(),
             )),
             3 => Err(CryptoError::Other(
-                "bls12_381_g2_msm points not in subgroup".to_string(),
+                "bls12_381_g2_msm point not on curve".to_string(),
+            )),
+            4 => Err(CryptoError::Other(
+                "bls12_381_g2_msm point not in subgroup".to_string(),
             )),
             _ => Err(CryptoError::Other("bls12_381_g2_msm failed".to_string())),
         }
@@ -405,6 +419,9 @@ impl Crypto for ZiskCrypto {
         let ret_code = unsafe { bls12_381_fp_to_g1_c(result.as_mut_ptr(), fp.as_ptr()) };
         match ret_code {
             0 => Ok(result),
+            1 => Err(CryptoError::Other(
+                "bls12_381_fp_to_g1 input not in field".to_string(),
+            )),
             _ => Err(CryptoError::Other("bls12_381_fp_to_g1 failed".to_string())),
         }
     }
@@ -418,6 +435,9 @@ impl Crypto for ZiskCrypto {
         let ret_code = unsafe { bls12_381_fp2_to_g2_c(result.as_mut_ptr(), fp2_bytes.as_ptr()) };
         match ret_code {
             0 => Ok(result),
+            1 => Err(CryptoError::Other(
+                "bls12_381_fp2_to_g2 input not in field".to_string(),
+            )),
             _ => Err(CryptoError::Other("bls12_381_fp2_to_g2 failed".to_string())),
         }
     }
