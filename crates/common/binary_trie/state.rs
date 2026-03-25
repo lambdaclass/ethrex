@@ -267,6 +267,12 @@ impl BinaryTrieState {
         self.blocks_since_flush >= self.flush_threshold
     }
 
+    /// No-op when RocksDB is not enabled.
+    #[cfg(not(feature = "rocksdb"))]
+    pub fn should_flush(&mut self) -> bool {
+        false
+    }
+
     /// Returns `true` if a flush was performed, `false` otherwise.
     /// Call this after each block's `apply_account_update` calls.
     #[cfg(feature = "rocksdb")]

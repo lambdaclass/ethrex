@@ -5,13 +5,13 @@
 
 use std::str::FromStr;
 
+use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::snap::GetAccountRange;
 use ethrex_p2p::snap::{SnapError, process_account_range_request};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_trie::EMPTY_TRIE_HASH;
 
 use lazy_static::lazy_static;
 

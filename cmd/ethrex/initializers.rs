@@ -537,9 +537,7 @@ pub async fn init_l1(
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
     };
 
-    if opts.syncmode == SyncMode::Full {
-        store.generate_flatkeyvalue()?;
-    }
+    // store.generate_flatkeyvalue() removed (MPT-only, not supported on binary trie branch)
 
     // Binary trie does not support snap sync -- it must replay from genesis.
     if opts.syncmode == SyncMode::Snap {

@@ -2,6 +2,7 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
+use crate::mpt_hash::compute_hash_from_unsorted_iter;
 use crate::{
     Address, H256, U256,
     constants::{
@@ -19,7 +20,6 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use ethrex_trie::Trie;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -340,7 +340,7 @@ pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Cryp
         //                   RLP(tx)  else
         (idx.encode_to_vec(), tx.encode_canonical_to_vec())
     });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
@@ -348,7 +348,7 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
         .iter()
         .enumerate()
         .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
@@ -357,7 +357,7 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto)
         .iter()
         .enumerate()
         .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl RLPEncode for BlockBody {

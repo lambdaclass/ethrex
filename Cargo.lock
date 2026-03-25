@@ -3924,7 +3924,6 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
- "ethrex-trie",
  "ethrex-vm",
  "hex",
  "rustc-hash 2.1.1",
@@ -3944,7 +3943,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-trie",
  "hex",
  "hex-literal 0.4.1",
  "hex-simd",
@@ -4079,7 +4077,6 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-trie",
  "ethrex-vm",
  "futures",
  "hex",
@@ -4115,7 +4112,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-trie",
  "ethrex-vm",
  "hex",
  "k256",
@@ -4252,7 +4248,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-trie",
  "futures",
  "hex",
  "hex-literal 0.4.1",
@@ -4366,7 +4361,6 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-trie",
  "ethrex-vm",
  "hex",
  "hex-literal 0.4.1",
@@ -4434,7 +4428,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-trie",
  "fastbloom",
  "hex",
  "hex-literal 0.4.1",
@@ -4462,7 +4455,6 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-storage",
- "ethrex-trie",
  "futures",
  "libsql",
  "rkyv",
@@ -4494,7 +4486,6 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage",
  "ethrex-storage-rollup",
- "ethrex-trie",
  "ethrex-vm",
  "hasher",
  "hex",
@@ -4514,29 +4505,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-trie"
-version = "9.0.0"
-dependencies = [
- "anyhow",
- "bytes",
- "crossbeam 0.8.4",
- "digest 0.10.7",
- "ethereum-types 0.15.1",
- "ethrex-crypto",
- "ethrex-rlp",
- "hex",
- "lazy_static",
- "rayon",
- "rkyv",
- "rustc-hash 2.1.1",
- "serde",
- "serde_json",
- "smallvec",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "ethrex-vm"
 version = "9.0.0"
 dependencies = [
@@ -4549,7 +4517,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
- "ethrex-trie",
  "lazy_static",
  "rayon",
  "rkyv",

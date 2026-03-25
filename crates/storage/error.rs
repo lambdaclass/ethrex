@@ -1,5 +1,5 @@
+use ethrex_binary_trie::BinaryTrieError;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::TrieError;
 use thiserror::Error;
 
 // TODO improve errors
@@ -15,7 +15,7 @@ pub enum StoreError {
     #[error(transparent)]
     RLPDecode(#[from] RLPDecodeError),
     #[error(transparent)]
-    Trie(#[from] TrieError),
+    BinaryTrie(#[from] BinaryTrieError),
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
     #[error("Could not open DB for reading")]

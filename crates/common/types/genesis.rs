@@ -1,8 +1,8 @@
+use crate::mpt_hash::compute_hash_from_unsorted_iter;
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -764,7 +764,7 @@ impl Genesis {
                 AccountState::from(account).encode_to_vec(),
             )
         });
-        Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
+        compute_hash_from_unsorted_iter(iter, &NativeCrypto)
     }
 }
 #[cfg(test)]

@@ -935,12 +935,13 @@ impl L1Committer {
                 .filter(|tx| !tx.is_privileged())
                 .count();
 
-            new_state_root = checkpoint_store
-                .state_trie(potential_batch_block.hash())?
-                .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                    "Failed to get state root from storage".to_owned(),
-                ))?
-                .hash_no_commit(&ethrex_common::NativeCrypto);
+            new_state_root = H256::from(
+                checkpoint_store
+                    .get_binary_trie_root(potential_batch_block.hash())
+                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                        "Failed to get state root from storage".to_owned(),
+                    ))?,
+            );
 
             last_added_block_number += 1;
             acc_gas_used += current_block_gas_used;
@@ -1043,10 +1044,8 @@ impl L1Committer {
         let (one_time_checkpoint_path, _, one_time_checkpoint_blockchain) =
             self.generate_one_time_checkpoint(batch.number).await?;
 
-        let result = one_time_checkpoint_blockchain
-            .generate_witness_for_blocks_with_fee_configs_mpt(&blocks, Some(&fee_configs))
-            .await
-            .map_err(CommitterError::FailedToGenerateBatchWitness);
+        let result: Result<_, CommitterError> =
+            todo!("L2 batch witness generation not supported on binary trie branch");
 
         self.remove_one_time_checkpoint(&one_time_checkpoint_path)?;
 
@@ -1701,8 +1700,11 @@ pub async fn find_last_known_state_root(
 
     let mut current_last_header = last_header;
 
-    // Find the last block with a known state root
-    while !store.has_state_root(current_last_header.state_root)? {
+    // Find the last block with a known binary trie root
+    while store
+        .get_binary_trie_root(current_last_header.hash())
+        .is_none()
+    {
         if current_last_header.number == 0 {
             return Err(CommitterError::FailedToCreateCheckpoint(
                 "unknown state found in DB. Please run `ethrex removedb` and restart node"

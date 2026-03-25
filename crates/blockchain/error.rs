@@ -4,7 +4,6 @@ use ethrex_common::{
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
-use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
 
 // Re-export InvalidBlockError from ethrex-common for backwards compatibility
@@ -22,8 +21,6 @@ pub enum ChainError {
     ParentStateNotFound,
     #[error("DB error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Trie error: {0}")]
-    TrieError(#[from] TrieError),
     #[error("RLP decode error: {0}")]
     RLPDecodeError(#[from] RLPDecodeError),
     #[error("EVM error: {0}")]
@@ -60,7 +57,6 @@ impl ChainError {
             ChainError::ParentNotFound => "parent_not_found",
             ChainError::ParentStateNotFound => "parent_state_not_found",
             ChainError::StoreError(_) => "store_error",
-            ChainError::TrieError(_) => "trie_error",
             ChainError::RLPDecodeError(_) => "rlp_decode_error",
             ChainError::EvmError(_) => "evm_error",
             ChainError::InvalidTransaction(_) => "invalid_transaction",
