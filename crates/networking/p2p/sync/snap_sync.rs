@@ -1033,7 +1033,6 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
     let t_total = std::time::Instant::now();
 
@@ -1056,34 +1055,57 @@ async fn insert_accounts(
     info!("[PROFILE] account insertion: SST ingest ({num_files} files) took {:?}", t0.elapsed());
 
     let t2 = std::time::Instant::now();
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    // Collect code hashes during the trie-building pass to avoid a separate iteration.
-    // We buffer them because trie_from_sorted_accounts_wrap runs in a blocking context
-    // where we can't .await the async flush.
+    // Build state trie in parallel (16 sub-tries by first nibble).
+    // Single pass: iterate all accounts, decode once, collect code hashes and
+    // storage accounts while partitioning into 16 buckets by first nibble.
+    use ethrex_trie::trie_sorted::trie_from_sorted_parallel;
+
+    let mut buckets: Vec<Vec<(H256, Vec<u8>)>> = (0..16).map(|_| Vec::new()).collect();
     let mut collected_code_hashes: Vec<H256> = Vec::new();
-    let compute_state_root = trie_from_sorted_accounts_wrap(
-        trie.db(),
-        &mut iter
-            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
-                METRICS
-                    .account_tries_inserted
-                    .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
-                }
-                if account_state.code_hash != *EMPTY_KECCACK_HASH {
-                    collected_code_hashes.push(account_state.code_hash);
-                }
-            })
-            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
-    )
+    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    for item in iter {
+        let (k, v) = item.expect("We shouldn't have a rocksdb error here");
+        METRICS
+            .account_tries_inserted
+            .fetch_add(1, Ordering::Relaxed);
+        let account_state = AccountState::decode(&v).expect("We should have accounts here");
+        if account_state.storage_root != *EMPTY_TRIE_HASH {
+            storage_accounts.accounts_with_storage_root.insert(
+                H256::from_slice(&k),
+                (Some(account_state.storage_root), Vec::new()),
+            );
+        }
+        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+            collected_code_hashes.push(account_state.code_hash);
+        }
+        let nibble = (k[0] >> 4) as usize;
+        buckets[nibble].push((H256::from_slice(&k), v.to_vec()));
+    }
+    info!(
+        "[PROFILE] account insertion: partitioning took {:?} ({} code hashes, {} accounts)",
+        t2.elapsed(),
+        collected_code_hashes.len(),
+        buckets.iter().map(|b| b.len()).sum::<usize>(),
+    );
+
+    let t_build = std::time::Instant::now();
+    let bucket_slots: Vec<std::sync::Mutex<Option<Vec<(H256, Vec<u8>)>>>> = buckets
+        .into_iter()
+        .map(|b| std::sync::Mutex::new(Some(b)))
+        .collect();
+    let compute_state_root = trie_from_sorted_parallel(trie.db(), |nibble| {
+        let data = bucket_slots[nibble as usize]
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_default();
+        Box::new(data.into_iter())
+    })
     .map_err(SyncError::TrieGenerationError)?;
-    info!("[PROFILE] account insertion: trie building took {:?} (collected {} code hashes)", t2.elapsed(), collected_code_hashes.len());
+    info!(
+        "[PROFILE] account insertion: parallel trie building took {:?}",
+        t_build.elapsed(),
+    );
 
     // Flush collected code hashes (async)
     let t3 = std::time::Instant::now();

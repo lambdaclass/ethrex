@@ -1,11 +1,12 @@
 use crate::{
-    EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError,
+    EMPTY_TRIE_HASH, Nibbles, Node, NodeHash, NodeRef, TrieDB, TrieError,
     node::{BranchNode, ExtensionNode, LeafNode},
     threadpool::ThreadPool,
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
 use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use std::{sync::Arc, thread::scope};
 
 /// The elements of the stack represent the branch node that is the parent of the current
@@ -370,6 +371,110 @@ where
     Ok(hash)
 }
 
+/// Builds a sub-trie from sorted accounts and returns the child NodeRef for
+/// one specific nibble slot, instead of finalizing a root node.
+///
+/// Used by `trie_from_sorted_parallel` to build each of the 16 sub-tries.
+/// The sub-trie's nodes are written to the DB at their correct full paths.
+/// Returns `None` if the iterator is empty, or `Some(NodeRef)` for the
+/// sub-trie's top-level node reference (to be placed in the root BranchNode).
+pub fn trie_from_sorted_subtrie<'scope, T>(
+    db: &'scope dyn TrieDB,
+    data_iter: &mut T,
+    scope: Arc<ThreadPool<'scope>>,
+    buffer_sender: Sender<Vec<(Nibbles, Node)>>,
+    buffer_receiver: Receiver<Vec<(Nibbles, Node)>>,
+) -> Result<Option<NodeRef>, TrieGenerationError>
+where
+    T: Iterator<Item = (H256, Vec<u8>)> + Send,
+{
+    let Some(initial_value) = data_iter.next() else {
+        return Ok(None);
+    };
+    let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
+        .recv()
+        .expect("This channel shouldn't close");
+    let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64);
+    let mut nodehash_buffer = Vec::with_capacity(512);
+    let mut current_parent = StackElement::default();
+    let mut current_node: CenterSide = CenterSide::from_value(initial_value);
+    let mut next_value_opt: Option<(H256, Vec<u8>)> = data_iter.next();
+
+    while let Some(next_value) = next_value_opt {
+        if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
+            let buffer_sender = buffer_sender.clone();
+            scope.execute_priority(Box::new(move || {
+                let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+            }));
+            nodes_to_write = buffer_receiver
+                .recv()
+                .expect("This channel shouldn't close");
+        }
+
+        let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
+
+        while !is_child(&next_value_path, &current_parent) {
+            add_current_to_parent_and_write_queue(
+                &mut nodes_to_write,
+                &current_node,
+                &mut current_parent,
+                &mut nodehash_buffer,
+            )?;
+            let temp = CenterSide::from_stack_element(current_parent);
+            current_parent = trie_stack
+                .pop()
+                .ok_or_else(|| TrieGenerationError::TrieStackEmpty(current_node.path.clone()))?;
+            current_node = temp;
+        }
+
+        if current_node.path.count_prefix(&current_parent.path)
+            == current_node.path.count_prefix(&next_value_path)
+        {
+            add_current_to_parent_and_write_queue(
+                &mut nodes_to_write,
+                &current_node,
+                &mut current_parent,
+                &mut nodehash_buffer,
+            )?;
+        } else {
+            let mut element = create_parent(&current_node, &next_value_path);
+            add_current_to_parent_and_write_queue(
+                &mut nodes_to_write,
+                &current_node,
+                &mut element,
+                &mut nodehash_buffer,
+            )?;
+            trie_stack.push(current_parent);
+            current_parent = element;
+        }
+        current_node = CenterSide::from_value(next_value);
+        next_value_opt = data_iter.next();
+    }
+
+    // Unwind the stack
+    add_current_to_parent_and_write_queue(&mut nodes_to_write, &current_node, &mut current_parent, &mut nodehash_buffer)?;
+    while let Some(mut parent_node) = trie_stack.pop() {
+        add_current_to_parent_and_write_queue(
+            &mut nodes_to_write,
+            &CenterSide::from_stack_element(current_parent),
+            &mut parent_node,
+            &mut nodehash_buffer,
+        )?;
+        current_parent = parent_node;
+    }
+
+    // Don't finalize the root — just flush and return the single child's NodeRef.
+    // current_parent is at path [] with exactly one valid child (the sub-trie nibble).
+    let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+
+    let child_ref = current_parent
+        .element
+        .choices
+        .into_iter()
+        .find(|c| c.is_valid());
+    Ok(child_ref)
+}
+
 /// Wrapper function for `trie_from_sorted_accounts` that handles concurrency
 /// and memory limits
 pub fn trie_from_sorted_accounts_wrap<T>(
@@ -393,6 +498,126 @@ where
             buffer_receiver,
         )
     })
+}
+
+/// Builds a state trie in parallel by splitting the sorted key space into 16
+/// sub-tries (one per first nibble) and building them concurrently.
+///
+/// Each sub-trie is built using the same `trie_from_sorted_accounts` algorithm.
+/// The 16 sub-trie root hashes are then assembled into a root BranchNode.
+///
+/// `make_sub_iter` is called once per nibble (0..16) to produce a sorted iterator
+/// yielding only the accounts whose hash starts with that nibble.
+pub fn trie_from_sorted_parallel<F>(
+    db: &dyn TrieDB,
+    make_sub_iter: F,
+) -> Result<H256, TrieGenerationError>
+where
+    F: Fn(u8) -> Box<dyn Iterator<Item = (H256, Vec<u8>)> + Send> + Sync,
+{
+    let thread_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
+
+    // Run 16 sub-trie builds in parallel, sharing a ThreadPool for DB flushes.
+    let choices: [NodeRef; 16] = scope(|s| {
+        let pool = Arc::new(ThreadPool::new(thread_count, s));
+        let handles: Vec<_> = (0u8..16)
+            .map(|nibble| {
+                let pool = pool.clone();
+                let make_sub_iter = &make_sub_iter;
+                let (buf_tx, buf_rx) =
+                    bounded::<Vec<(Nibbles, Node)>>(buffers_per_subtrie);
+                for _ in 0..buffers_per_subtrie {
+                    let _ = buf_tx.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
+                }
+                s.spawn(move || {
+                    let mut iter = make_sub_iter(nibble);
+                    let child_ref = trie_from_sorted_subtrie(
+                        db, &mut iter, pool, buf_tx, buf_rx,
+                    )?;
+                    Ok(child_ref.map(|r| (nibble, r)))
+                })
+            })
+            .collect();
+
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        for handle in handles {
+            if let Some((nibble, node_ref)) = handle.join().unwrap()? {
+                choices[nibble as usize] = node_ref;
+            }
+        }
+        Ok::<[NodeRef; 16], TrieGenerationError>(choices)
+    })?;
+
+    let valid_count = choices.iter().filter(|c| c.is_valid()).count();
+    if valid_count == 0 {
+        return Ok(*EMPTY_TRIE_HASH);
+    }
+
+    let mut nodehash_buffer = Vec::with_capacity(512);
+
+    if valid_count == 1 {
+        let (index, _child) = choices
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.is_valid())
+            .unwrap();
+        let child_path = Nibbles::from_hex(vec![index as u8]);
+        let child_rlp = db
+            .get(child_path.clone())
+            .map_err(TrieGenerationError::FlushToDbError)?
+            .expect("Sub-trie wrote this node");
+        let mut child_node = Node::decode(&child_rlp)
+            .map_err(|e| TrieGenerationError::FlushToDbError(TrieError::RLPDecode(e)))?;
+
+        match &mut child_node {
+            Node::Branch(_) => {
+                let ext: Node = ExtensionNode {
+                    prefix: child_path,
+                    child: NodeHash::from_encoded(&child_rlp).into(),
+                }
+                .into();
+                let hash = ext.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).finalize(&NativeCrypto);
+                db.put_batch(vec![(Nibbles::default(), ext.encode_to_vec())])
+                    .map_err(TrieGenerationError::FlushToDbError)?;
+                Ok(hash)
+            }
+            Node::Extension(ext) => {
+                ext.prefix.prepend(index as u8);
+                let hash = ext.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).finalize(&NativeCrypto);
+                db.put_batch(vec![
+                    (child_path, vec![]),
+                    (Nibbles::default(), child_node.encode_to_vec()),
+                ])
+                .map_err(TrieGenerationError::FlushToDbError)?;
+                Ok(hash)
+            }
+            Node::Leaf(leaf) => {
+                leaf.partial.prepend(index as u8);
+                let hash = leaf.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).finalize(&NativeCrypto);
+                db.put_batch(vec![
+                    (child_path, vec![]),
+                    (Nibbles::default(), child_node.encode_to_vec()),
+                ])
+                .map_err(TrieGenerationError::FlushToDbError)?;
+                Ok(hash)
+            }
+        }
+    } else {
+        let root_node: Node = BranchNode {
+            choices,
+            value: vec![],
+        }
+        .into();
+        let hash = root_node
+            .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+            .finalize(&NativeCrypto);
+        db.put_batch(vec![(Nibbles::default(), root_node.encode_to_vec())])
+            .map_err(TrieGenerationError::FlushToDbError)?;
+        Ok(hash)
+    }
 }
 
 #[cfg(test)]
@@ -569,5 +794,74 @@ mod test {
     #[test]
     fn test_slots_1() {
         run_test_storage_slots(generate_input_slots_1());
+    }
+
+    /// Test that parallel trie building produces the same root hash as sequential
+    fn run_test_parallel(accounts: BTreeMap<H256, Vec<u8>>) {
+        // Sequential result (reference)
+        let sequential_data = Arc::new(Mutex::new(BTreeMap::new()));
+        let trie = Trie::new(Box::new(InMemoryTrieDB::new(sequential_data.clone())));
+        let sequential_hash = trie_from_sorted_accounts_wrap(
+            trie.db(),
+            &mut accounts
+                .clone()
+                .into_iter()
+                .map(|(hash, state)| (hash, state.encode_to_vec())),
+        )
+        .expect("Sequential shouldn't fail");
+
+        // Parallel result
+        let parallel_data = Arc::new(Mutex::new(BTreeMap::new()));
+        let trie = Trie::new(Box::new(InMemoryTrieDB::new(parallel_data.clone())));
+        let bucket_slots: Vec<Mutex<Option<Vec<(H256, Vec<u8>)>>>> = {
+            let mut buckets: Vec<Vec<(H256, Vec<u8>)>> = (0..16).map(|_| Vec::new()).collect();
+            for (hash, state) in accounts.iter() {
+                let nibble = (hash.0[0] >> 4) as usize;
+                buckets[nibble].push((*hash, state.encode_to_vec()));
+            }
+            buckets
+                .into_iter()
+                .map(|b| Mutex::new(Some(b)))
+                .collect()
+        };
+        let parallel_hash = trie_from_sorted_parallel(trie.db(), |nibble| {
+            let data = bucket_slots[nibble as usize]
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_default();
+            Box::new(data.into_iter())
+        })
+        .expect("Parallel shouldn't fail");
+
+        assert_eq!(
+            sequential_hash, parallel_hash,
+            "Parallel and sequential must produce the same root hash"
+        );
+    }
+
+    #[test]
+    fn test_parallel_1() {
+        run_test_parallel(generate_input_1());
+    }
+
+    #[test]
+    fn test_parallel_2() {
+        run_test_parallel(generate_input_2());
+    }
+
+    #[test]
+    fn test_parallel_3() {
+        run_test_parallel(generate_input_3());
+    }
+
+    #[test]
+    fn test_parallel_4() {
+        run_test_parallel(generate_input_4());
+    }
+
+    #[test]
+    fn test_parallel_5() {
+        run_test_parallel(generate_input_5());
     }
 }
