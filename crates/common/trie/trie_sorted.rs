@@ -102,25 +102,25 @@ fn add_current_to_parent_and_write_queue(
     nodes_to_write: &mut Vec<(Nibbles, Node)>,
     current_node: &CenterSide,
     parent_element: &mut StackElement,
+    nodehash_buffer: &mut Vec<u8>,
 ) -> Result<(), TrieGenerationError> {
-    let mut nodehash_buffer = Vec::with_capacity(512);
-    let mut path = current_node.path.clone();
-    path.skip_prefix(&parent_element.path);
-    let index = path
-        .next()
+    let prefix_len = current_node.path.count_prefix(&parent_element.path);
+    let path_ref: &[u8] = current_node.path.as_ref();
+    let index = *path_ref.get(prefix_len)
         .ok_or_else(|| TrieGenerationError::IndexNotFound(current_node.path.clone()))?;
+    let remaining = current_node.path.slice(prefix_len + 1, current_node.path.len());
     let top_path = parent_element.path.append_new(index);
     let (target_path, node): (Nibbles, Node) = match &current_node.element {
         CenterSideElement::Branch { node } => {
-            if path.is_empty() {
+            if remaining.is_empty() {
                 (top_path, node.clone().into())
             } else {
-                let hash = node.compute_hash_no_alloc(&mut nodehash_buffer);
+                let hash = node.compute_hash_no_alloc(nodehash_buffer);
                 nodes_to_write.push((current_node.path.clone(), node.clone().into()));
                 (
                     top_path,
                     ExtensionNode {
-                        prefix: path,
+                        prefix: remaining,
                         child: hash.into(),
                     }
                     .into(),
@@ -130,14 +130,14 @@ fn add_current_to_parent_and_write_queue(
         CenterSideElement::Leaf { value } => (
             top_path,
             LeafNode {
-                partial: path,
+                partial: remaining,
                 value: value.clone(),
             }
             .into(),
         ),
     };
     parent_element.element.choices[index as usize] =
-        node.compute_hash_no_alloc(&mut nodehash_buffer).into();
+        node.compute_hash_no_alloc(nodehash_buffer).into();
     nodes_to_write.push((target_path, node));
     Ok(())
 }
@@ -225,6 +225,7 @@ where
                 &mut nodes_to_write,
                 &current_node,
                 &mut current_parent,
+                &mut nodehash_buffer,
             )?;
             let temp = CenterSide::from_stack_element(current_parent);
             current_parent = trie_stack
@@ -246,6 +247,7 @@ where
                 &mut nodes_to_write,
                 &current_node,
                 &mut current_parent,
+                &mut nodehash_buffer,
             )?;
 
         // If the "distance" between the current and next value is larger than that to
@@ -262,6 +264,7 @@ where
                 &mut nodes_to_write,
                 &current_node,
                 &mut element,
+                &mut nodehash_buffer,
             )?;
             trie_stack.push(current_parent);
             current_parent = element;
@@ -272,12 +275,13 @@ where
 
     // We empty the stack, where each node is a child of the one in the stack, so we just keep
     // popping and adding to parent
-    add_current_to_parent_and_write_queue(&mut nodes_to_write, &current_node, &mut current_parent)?;
+    add_current_to_parent_and_write_queue(&mut nodes_to_write, &current_node, &mut current_parent, &mut nodehash_buffer)?;
     while let Some(mut parent_node) = trie_stack.pop() {
         add_current_to_parent_and_write_queue(
             &mut nodes_to_write,
             &CenterSide::from_stack_element(current_parent),
             &mut parent_node,
+            &mut nodehash_buffer,
         )?;
         current_parent = parent_node;
     }
