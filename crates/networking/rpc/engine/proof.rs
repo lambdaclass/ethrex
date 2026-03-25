@@ -18,7 +18,6 @@ use super::proof_types::{
 use ethrex_common::H256;
 use ethrex_common::types::eip8025_ssz;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-use ethrex_guest_program::input::ProgramInput;
 use serde_json::Value;
 use ssz_merkle::HashTreeRoot;
 use ssz_types::SszList;
@@ -146,9 +145,6 @@ impl RpcHandler for RequestProofsV1 {
             .await
             .map_err(|e| RpcErr::InvalidPayload(e.to_string()))?;
 
-        // Build ProgramInput with the block and witness.
-        let program_input = ProgramInput::new(vec![block], witness);
-
         // Persist root → block_number mapping in the DB.
         context
             .storage
@@ -165,7 +161,8 @@ impl RpcHandler for RequestProofsV1 {
                 request: Box::new(ProofRequest {
                     proof_gen_id,
                     new_payload_request_root,
-                    program_input,
+                    block,
+                    witness,
                     requested_proof_types: self.proof_attributes.proof_types.clone(),
                 }),
             })

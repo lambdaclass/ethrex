@@ -16,6 +16,8 @@
 
 use bytes::Bytes;
 use ethrex_common::H256;
+use ethrex_common::types::Block;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_prover::ProofData;
 use ethrex_prover::{ProofBytes, ProofFormat, ProverType};
@@ -59,7 +61,8 @@ pub enum L1CoordinatorError {
 pub struct ProofRequest {
     pub proof_gen_id: ProofGenId,
     pub new_payload_request_root: H256,
-    pub program_input: ProgramInput,
+    pub block: Block,
+    pub witness: ExecutionWitness,
     /// Proof types requested by the beacon via `engine_requestProofsV1`.
     pub requested_proof_types: Vec<u64>,
 }
@@ -222,11 +225,8 @@ impl L1ProofCoordinator {
         let response: ProofData<ProgramInput> = match input {
             Some((block_number, request)) => {
                 info!(block_number, %prover_type, "Sending witness to prover");
-                ProofData::input_response(
-                    block_number,
-                    request.program_input,
-                    ProofFormat::Compressed,
-                )
+                let program_input = ProgramInput::new(vec![request.block], request.witness);
+                ProofData::input_response(block_number, program_input, ProofFormat::Compressed)
             }
             None => {
                 debug!(%prover_type, "No pending work for this prover type");
