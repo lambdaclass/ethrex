@@ -5,7 +5,7 @@ use ethrex_p2p::discv4::messages::{
     ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
     PacketDecodeErr, PingMessage, PongMessage,
 };
-use ethrex_p2p::types::{Endpoint, Node, NodeRecord};
+use ethrex_p2p::types::{Endpoint, Node, NodeRecord, NodeRecordPairs};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use secp256k1::SecretKey;
 use std::fmt::Write;
@@ -237,11 +237,11 @@ fn test_encode_enr_response() {
         (String::from("tcp").into(), tcp_rlp.clone().into()),
         (String::from("udp").into(), udp_rlp.clone().into()),
     ];
-    let node_record = NodeRecord {
+    let node_record = NodeRecord::new(
         signature,
         seq,
-        pairs,
-    };
+        NodeRecordPairs::try_from_raw_pairs(pairs).unwrap(),
+    );
     let msg = Message::ENRResponse(ENRResponseMessage {
         request_hash,
         node_record,
@@ -358,11 +358,11 @@ fn test_decode_enr_response() {
         (String::from("tcp").into(), tcp_rlp.clone().into()),
         (String::from("udp").into(), udp_rlp.clone().into()),
     ];
-    let node_record = NodeRecord {
+    let node_record = NodeRecord::new(
         signature,
         seq,
-        pairs,
-    };
+        NodeRecordPairs::try_from_raw_pairs(pairs).unwrap(),
+    );
     let expected = Message::ENRResponse(ENRResponseMessage {
         request_hash,
         node_record,

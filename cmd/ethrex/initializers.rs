@@ -446,6 +446,8 @@ pub async fn init_l1(
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
+    raise_fd_limit()?;
+
     migrate_datadir_if_needed(&opts.datadir, &datadir, &network, opts.no_migrate);
 
     if !is_memory_datadir(&datadir) {
@@ -454,8 +456,6 @@ pub async fn init_l1(
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
-
-    raise_fd_limit()?;
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 

@@ -579,6 +579,10 @@ pub enum Subcommand {
         /// Port to listen for EIP-8025 proof callbacks (GeneratedProof POSTs)
         #[arg(long = "proof-callback-port", default_value = "9200")]
         proof_callback_port: u16,
+
+        /// Timeout in seconds for the proof callback listener (proof generation can take minutes)
+        #[arg(long = "proof-callback-timeout", default_value = "300")]
+        proof_callback_timeout: u64,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -689,6 +693,7 @@ impl Subcommand {
                 history_file,
                 execute,
                 proof_callback_port,
+                proof_callback_timeout,
             } => {
                 ethrex_repl::run(
                     endpoint,
@@ -697,6 +702,7 @@ impl Subcommand {
                     history_file,
                     execute,
                     proof_callback_port,
+                    proof_callback_timeout,
                 )
                 .await;
             }
@@ -842,7 +848,7 @@ pub async fn import_blocks(
                 continue;
             }
 
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             if index + MIN_FULL_BLOCKS < size {
@@ -960,7 +966,7 @@ pub async fn import_blocks_bench(
                 continue;
             }
 
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain

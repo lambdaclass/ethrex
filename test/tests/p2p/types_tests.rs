@@ -1,7 +1,9 @@
+use bytes::Bytes;
 use ethrex_common::H512;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_p2p::utils::public_key_from_signing_key;
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use std::{net::SocketAddr, str::FromStr};
@@ -83,10 +85,7 @@ async fn encode_node_record_to_enr_url() {
         addr.port(),
         public_key_from_signing_key(&signer),
     );
-    let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
-    // Drop fork ID since the test doesn't use it
-    record.pairs.retain(|(k, _)| k != "eth");
-    record.sign_record(&signer).unwrap();
+    let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
 
     let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
@@ -125,7 +124,7 @@ async fn encode_decode_node_record_with_forkid() {
     let enr_url = record.enr_url().unwrap();
     let base64_decoded = ethrex_common::base64::decode(&enr_url.as_bytes()[4..]);
     let parsed_record = NodeRecord::decode(&base64_decoded).unwrap();
-    let pairs = parsed_record.decode_pairs();
+    let pairs = parsed_record.pairs();
 
     assert_eq!(pairs.eth, Some(fork_id));
 }
@@ -148,4 +147,39 @@ fn verify_enr_signature_invalid() {
     // Tamper with the signature
     record.signature = ethrex_common::H512::zero();
     assert!(!record.verify_signature());
+}
+
+#[test]
+fn verify_enr_signature_fails_when_decode_drops_unknown_pairs() {
+    /*
+    Record has sequence number 1 and 7 key/value pairs.
+        "attnets"   0000000000000000
+        "eth2"      fdca39b000000121ffffffffffffffff
+        "id"        "v4"
+        "ip"        192.168.86.67
+        "secp256k1" 0311501bf6f21a04763aedb7b408c14b514de61c29eb9bd902a0884b2f9a2653d5
+        "tcp"       13000
+        "udp"       12000
+    */
+    let enr_string = "enr:-LK4QMer7ejH4SWXlSIdM6gOBUD6WH86M95-6ZQ04KOrsAWaDaswyYp9hFmzRpnGVypSlHL_QB2VzNT8ATRckIfnmosBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpD9yjmwAAABIf__________gmlkgnY0gmlwhMCoVkOJc2VjcDI1NmsxoQMRUBv28hoEdjrtt7QIwUtRTeYcKeub2QKgiEsvmiZT1YN0Y3CCMsiDdWRwgi7g";
+    let raw_record = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+    let decoded = NodeRecord::decode(&raw_record).unwrap();
+    let pairs = decoded.pairs();
+
+    assert!(!pairs.other.is_empty());
+    assert!(
+        pairs
+            .other
+            .iter()
+            .any(|(key, _)| key == &Bytes::from_static(b"attnets"))
+    );
+    assert!(
+        pairs
+            .other
+            .iter()
+            .any(|(key, _)| key == &Bytes::from_static(b"eth2"))
+    );
+    assert_eq!(decoded.pairs().tcp_port, Some(13000));
+    assert_eq!(decoded.encode_to_vec(), raw_record);
+    assert!(decoded.verify_signature());
 }

@@ -28,7 +28,11 @@ pub fn spawn_listener(port: u16, timeout_secs: u64, variables: VariableStore) {
     });
 }
 
-async fn run_listener(port: u16, timeout: Duration, variables: VariableStore) -> Result<(), String> {
+async fn run_listener(
+    port: u16,
+    timeout: Duration,
+    variables: VariableStore,
+) -> Result<(), String> {
     let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
 
     let socket = TcpSocket::new_v4().map_err(|e| format!("Failed to create socket: {e}"))?;

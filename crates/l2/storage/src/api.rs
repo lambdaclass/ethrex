@@ -137,9 +137,21 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
-    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
+    /// Returns `(batch_number, verified_at_secs)` for the latest batch verified on-chain.
+    async fn get_latest_verified_batch_proof(&self) -> Result<(u64, u64), RollupStoreError>;
 
-    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError>;
+    /// Records that `batch_number` was verified on-chain at `verified_at` (unix secs).
+    async fn set_latest_verified_batch_proof(
+        &self,
+        batch_number: u64,
+        verified_at: u64,
+    ) -> Result<(), RollupStoreError>;
+
+    /// Returns the batch number for the latest proof sent to the Aligned gateway.
+    async fn get_latest_sent_to_aligned(&self) -> Result<u64, RollupStoreError>;
+
+    /// Records that `batch_number` was sent to the Aligned gateway.
+    async fn set_latest_sent_to_aligned(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
     async fn get_account_updates_by_block_number(
         &self,

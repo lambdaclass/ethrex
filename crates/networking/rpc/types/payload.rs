@@ -127,7 +127,10 @@ impl ExecutionPayload {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(&body.transactions),
+            transactions_root: compute_transactions_root(
+                &body.transactions,
+                &ethrex_crypto::NativeCrypto,
+            ),
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),
@@ -142,7 +145,7 @@ impl ExecutionPayload {
             withdrawals_root: body
                 .withdrawals
                 .as_ref()
-                .map(|w| compute_withdrawals_root(w)),
+                .map(|w| compute_withdrawals_root(w, &ethrex_crypto::NativeCrypto)),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,

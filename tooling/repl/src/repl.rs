@@ -287,7 +287,9 @@ impl Repl {
                                 timeout,
                                 self.variables.clone(),
                             );
-                            format!("{formatted}\nListening for proof callback on port {port} (timeout: {timeout}s)...")
+                            format!(
+                                "{formatted}\nListening for proof callback on port {port} (timeout: {timeout}s)..."
+                            )
                         } else {
                             formatted
                         }

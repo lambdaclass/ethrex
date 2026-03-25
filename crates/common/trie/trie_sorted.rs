@@ -5,6 +5,7 @@ use crate::{
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
 use ethereum_types::H256;
+use ethrex_crypto::NativeCrypto;
 use std::{sync::Arc, thread::scope};
 
 /// The elements of the stack represent the branch node that is the parent of the current
@@ -115,7 +116,7 @@ fn add_current_to_parent_and_write_queue(
             if path.is_empty() {
                 (top_path, node.clone().into())
             } else {
-                let hash = node.compute_hash_no_alloc(&mut nodehash_buffer);
+                let hash = node.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto);
                 nodes_to_write.push((current_node.path.clone(), node.clone().into()));
                 (
                     top_path,
@@ -136,8 +137,9 @@ fn add_current_to_parent_and_write_queue(
             .into(),
         ),
     };
-    parent_element.element.choices[index as usize] =
-        node.compute_hash_no_alloc(&mut nodehash_buffer).into();
+    parent_element.element.choices[index as usize] = node
+        .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+        .into();
     nodes_to_write.push((target_path, node));
     Ok(())
 }
@@ -300,8 +302,8 @@ where
                     .last()
                     .expect("we just inserted")
                     .1
-                    .compute_hash_no_alloc(&mut nodehash_buffer)
-                    .finalize()
+                    .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+                    .finalize(&NativeCrypto)
             }
             Node::Extension(extension_node) => {
                 extension_node.prefix.prepend(index as u8);
@@ -309,8 +311,8 @@ where
                 // and we're just removing that one element
                 target_path.next();
                 extension_node
-                    .compute_hash_no_alloc(&mut nodehash_buffer)
-                    .finalize()
+                    .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+                    .finalize(&NativeCrypto)
             }
             Node::Leaf(leaf_node) => {
                 leaf_node.partial.prepend(index as u8);
@@ -318,8 +320,8 @@ where
                 // and we're just removing that one element
                 target_path.next();
                 leaf_node
-                    .compute_hash_no_alloc(&mut nodehash_buffer)
-                    .finalize()
+                    .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+                    .finalize(&NativeCrypto)
             }
         }
     } else {
@@ -329,8 +331,8 @@ where
             .last()
             .expect("we just inserted")
             .1
-            .compute_hash_no_alloc(&mut nodehash_buffer)
-            .finalize()
+            .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+            .finalize(&NativeCrypto)
     };
 
     let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
@@ -471,7 +473,7 @@ mod test {
                 .unwrap();
         }
 
-        assert_eq!(tested_trie_hash, trie.hash().unwrap());
+        assert_eq!(tested_trie_hash, trie.hash(&NativeCrypto).unwrap());
 
         let computed_data = computed_data.lock().unwrap();
         let expected_data = expected_data.lock().unwrap();
@@ -503,7 +505,7 @@ mod test {
                 .unwrap();
         }
 
-        let trie_hash = trie.hash_no_commit();
+        let trie_hash = trie.hash_no_commit(&NativeCrypto);
 
         assert!(tested_trie_hash == trie_hash)
     }

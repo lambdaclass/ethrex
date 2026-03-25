@@ -204,3 +204,17 @@ pub fn get_git_commit_hash() -> String {
 pub fn batch_checkpoint_name(batch_number: u64) -> String {
     format!("checkpoint_batch_{batch_number}")
 }
+
+/// Removes the checkpoint directory for the previous batch (`checkpoint_batch_{batch_number - 1}`).
+/// No-op when `batch_number` is 0.
+pub fn remove_batch_checkpoint(checkpoints_dir: &std::path::Path, batch_number: u64) {
+    let Some(prev) = batch_number.checked_sub(1) else {
+        return;
+    };
+    let cp = checkpoints_dir.join(batch_checkpoint_name(prev));
+    if cp.exists() {
+        let _ = std::fs::remove_dir_all(&cp).inspect_err(|e| {
+            tracing::error!("Failed to remove checkpoint {cp:?}: {e}");
+        });
+    }
+}

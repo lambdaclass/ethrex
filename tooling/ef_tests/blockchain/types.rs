@@ -589,11 +589,11 @@ impl From<Account> for ethrexAccount {
     fn from(val: Account) -> Self {
         ethrexAccount {
             info: AccountInfo {
-                code_hash: code_hash(&val.code),
+                code_hash: code_hash(&val.code, &ethrex_crypto::NativeCrypto),
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: Code::from_bytecode(val.code),
+            code: Code::from_bytecode(val.code, &ethrex_crypto::NativeCrypto),
             storage: val
                 .storage
                 .into_iter()
