@@ -1258,75 +1258,104 @@ async fn handle_incoming_message(
                             );
                         }
                     } else {
-                        // Parent exists — execute inline via pipeline
+                        // Parent exists — offload pipeline to background task
+                        // so we don't block the peer connection for ~2s.
+                        let blockchain = state.blockchain.clone();
+                        let storage = state.storage.clone();
+                        let block = new_block.block;
                         let announced_td = new_block.total_difficulty;
-                        match state.blockchain.add_block_pipeline(new_block.block, None) {
-                            Ok(()) => {
-                                let latest = state.storage.get_latest_block_number().await?;
-                                let local_td_lower_bound = ethrex_common::U256::from(latest);
-                                if announced_td > local_td_lower_bound || block_number > latest {
-                                    state
-                                        .storage
-                                        .forkchoice_update(
-                                            vec![],
-                                            block_number,
-                                            block_hash,
-                                            None,
-                                            None,
-                                        )
-                                        .await?;
-                                    debug!(block_number, %announced_td, "Updated canonical head (Polygon)");
+                        tokio::spawn(async move {
+                            // Run the blocking pipeline on the tokio blocking pool
+                            let bc = blockchain.clone();
+                            let blk_number = block.header.number;
+                            let blk_hash = block.hash();
+                            let result = tokio::task::spawn_blocking(move || {
+                                bc.add_block_pipeline(block, None)
+                            })
+                            .await;
+                            let result = match result {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    warn!(block_number = blk_number, error = %e, "Polygon block task panicked");
+                                    return;
                                 }
-
-                                // Chain-follow: process buffered blocks whose parent we just stored
-                                let mut next_parent = block_hash;
-                                while let Some(pending) =
-                                    state.blockchain.take_polygon_pending_block(next_parent)
-                                {
-                                    let pending_hash = pending.hash();
-                                    let pending_number = pending.header.number;
-                                    match state.blockchain.add_block_pipeline(pending, None) {
-                                        Ok(()) => {
-                                            let latest =
-                                                state.storage.get_latest_block_number().await?;
-                                            if pending_number > latest {
-                                                state
-                                                    .storage
-                                                    .forkchoice_update(
-                                                        vec![],
-                                                        pending_number,
-                                                        pending_hash,
-                                                        None,
-                                                        None,
-                                                    )
-                                                    .await?;
-                                            }
-                                            debug!(
-                                                block_number = pending_number,
-                                                "Processed buffered Polygon block"
-                                            );
-                                            next_parent = pending_hash;
+                            };
+                            match result {
+                                Ok(()) => {
+                                    let latest =
+                                        storage.get_latest_block_number().await.unwrap_or(0);
+                                    let local_td_lower_bound = ethrex_common::U256::from(latest);
+                                    if announced_td > local_td_lower_bound || blk_number > latest {
+                                        if let Err(e) = storage
+                                            .forkchoice_update(
+                                                vec![],
+                                                blk_number,
+                                                blk_hash,
+                                                None,
+                                                None,
+                                            )
+                                            .await
+                                        {
+                                            warn!(block_number = blk_number, error = %e, "forkchoice_update failed");
+                                        } else {
+                                            debug!(block_number = blk_number, %announced_td, "Updated canonical head (Polygon)");
                                         }
-                                        Err(e) => {
-                                            warn!(
-                                                block_number = pending_number,
-                                                error = %e,
-                                                "Failed to process buffered Polygon block"
-                                            );
+                                    }
+
+                                    // Chain-follow: process buffered blocks whose parent we just stored
+                                    let mut next_parent = blk_hash;
+                                    loop {
+                                        let Some(pending) =
+                                            blockchain.take_polygon_pending_block(next_parent)
+                                        else {
                                             break;
+                                        };
+                                        let pending_hash = pending.hash();
+                                        let pending_number = pending.header.number;
+                                        let bc_inner = blockchain.clone();
+                                        let inner_result = tokio::task::spawn_blocking(move || {
+                                            bc_inner.add_block_pipeline(pending, None)
+                                        })
+                                        .await;
+                                        match inner_result {
+                                            Ok(Ok(())) => {
+                                                let latest = storage
+                                                    .get_latest_block_number()
+                                                    .await
+                                                    .unwrap_or(0);
+                                                if pending_number > latest {
+                                                    let _ = storage
+                                                        .forkchoice_update(
+                                                            vec![],
+                                                            pending_number,
+                                                            pending_hash,
+                                                            None,
+                                                            None,
+                                                        )
+                                                        .await;
+                                                }
+                                                debug!(
+                                                    block_number = pending_number,
+                                                    "Processed buffered Polygon block"
+                                                );
+                                                next_parent = pending_hash;
+                                            }
+                                            Ok(Err(e)) => {
+                                                warn!(block_number = pending_number, error = %e, "Failed to process buffered Polygon block");
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                warn!(block_number = pending_number, error = %e, "Buffered block task panicked");
+                                                break;
+                                            }
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    warn!(block_number = blk_number, error = %e, "Failed to process Polygon block");
+                                }
                             }
-                            Err(e) => {
-                                warn!(
-                                    peer=%state.node,
-                                    block_number,
-                                    error=%e,
-                                    "Failed to process Polygon block"
-                                );
-                            }
-                        }
+                        });
                     }
                 }
             }
