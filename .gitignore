@@ -135,3 +135,4 @@ core.*
 *.log
 
 __pycache__/
+eip-7864-phase8-plan.md

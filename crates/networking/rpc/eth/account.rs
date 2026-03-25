@@ -56,14 +56,14 @@ impl RpcHandler for GetBalanceRequest {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            ));
         };
-
-        let account = context
+        let balance = context
             .storage
             .get_account_info(block_number, self.address)
-            .await?;
-        let balance = account.map(|acc| acc.balance).unwrap_or_default();
+            .await?
+            .map(|info| info.balance)
+            .unwrap_or_default();
 
         serde_json::to_value(format!("{balance:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -92,9 +92,8 @@ impl RpcHandler for GetCodeRequest {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            ));
         };
-
         let code = context
             .storage
             .get_code_by_account_address(block_number, self.address)
@@ -131,9 +130,8 @@ impl RpcHandler for GetStorageAtRequest {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+            ));
         };
-
         let storage_value = context
             .storage
             .get_storage_at(block_number, self.address, self.storage_slot)?
@@ -178,7 +176,6 @@ impl RpcHandler for GetTransactionCountRequest {
                     return serde_json::to_value("0x0")
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 };
-
                 context
                     .storage
                     .get_nonce_by_account_address(block_number, self.address)
@@ -218,33 +215,47 @@ impl RpcHandler for GetProofRequest {
         let Some(block_number) = self.block.resolve_block_number(storage).await? else {
             return Ok(Value::Null);
         };
-        let Some(header) = storage.get_block_header(block_number)? else {
+        let Some(block_hash) = storage.get_canonical_block_hash(block_number).await? else {
             return Ok(Value::Null);
         };
-        // Create account proof
-        let Some(account_proof) = storage
-            .get_account_proof(header.state_root, self.address, &self.storage_keys)
-            .await?
-        else {
-            return Err(RpcErr::Internal("Could not get account proof".to_owned()));
-        };
-        let storage_proof = account_proof
-            .storage_proof
-            .into_iter()
-            .map(|sp| StorageProof {
-                key: sp.key.into_uint(),
-                value: sp.value,
-                proof: sp.proof,
+
+        // Read account state from Store (FKV-backed, always available regardless of diff window).
+        let account_info = storage
+            .get_account_info_by_hash(block_hash, self.address)
+            .map_err(|e| RpcErr::Internal(format!("storage error: {e}")))?;
+
+        // Storage slot values from Store (FKV-backed).
+        let storage_proof: Vec<StorageProof> = self
+            .storage_keys
+            .iter()
+            .map(|key| {
+                let value = storage
+                    .get_storage_at_by_block_hash(block_hash, self.address, *key)
+                    .unwrap_or(None)
+                    .unwrap_or_default();
+                StorageProof {
+                    key: key.into_uint(),
+                    // Binary trie proofs have a different format than MPT proofs.
+                    // Proof generation is not yet wired into this RPC handler.
+                    proof: vec![],
+                    value,
+                }
             })
             .collect();
-        let account = account_proof.account;
+
+        let (balance, code_hash, nonce) = account_info
+            .map(|info| (info.balance, info.code_hash, info.nonce))
+            .unwrap_or_default();
+
         let account_proof = AccountProof {
-            account_proof: account_proof.proof,
+            // Binary trie proofs use sibling hashes, not MPT-encoded nodes.
+            // Proof data is not yet wired into this RPC handler.
+            account_proof: vec![],
             address: self.address,
-            balance: account.balance,
-            code_hash: account.code_hash,
-            nonce: account.nonce,
-            storage_hash: account.storage_root,
+            balance,
+            code_hash,
+            nonce,
+            storage_hash: H256::zero(),
             storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))

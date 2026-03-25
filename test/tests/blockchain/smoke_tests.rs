@@ -17,15 +17,16 @@ use ethrex_storage::{EngineType, Store};
 #[tokio::test]
 async fn test_small_to_long_reorg() {
     // Store and genesis
-    let store = test_store().await;
+    let genesis = test_genesis().await;
+    let store = test_store(&genesis).await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
     let genesis_hash = genesis_header.hash();
 
     // Create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::default_with_genesis(store.clone(), &genesis);
 
     // Add first block. We'll make it canonical.
-    let block_1a = new_block(&store, &genesis_header).await;
+    let block_1a = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1a = block_1a.hash();
     blockchain.add_block(block_1a.clone()).unwrap();
     store
@@ -38,7 +39,7 @@ async fn test_small_to_long_reorg() {
     assert!(is_canonical(&store, 1, hash_1a).await.unwrap());
 
     // Add second block at height 1. Will not be canonical.
-    let block_1b = new_block(&store, &genesis_header).await;
+    let block_1b = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1b = block_1b.hash();
     blockchain
         .add_block(block_1b.clone())
@@ -49,7 +50,7 @@ async fn test_small_to_long_reorg() {
     assert!(!is_canonical(&store, 1, hash_1b).await.unwrap());
 
     // Add a third block at height 2, child to the non canonical block.
-    let block_2 = new_block(&store, &block_1b.header).await;
+    let block_2 = new_block(&store, &block_1b.header, &blockchain).await;
     let hash_2 = block_2.hash();
     blockchain
         .add_block(block_2.clone())
@@ -78,14 +79,15 @@ async fn test_small_to_long_reorg() {
 
 #[tokio::test]
 async fn test_sync_not_supported_yet() {
-    let store = test_store().await;
+    let genesis = test_genesis().await;
+    let store = test_store(&genesis).await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
     // Create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::default_with_genesis(store.clone(), &genesis);
 
     // Build a single valid block.
-    let block_1 = new_block(&store, &genesis_header).await;
+    let block_1 = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1 = block_1.hash();
     blockchain.add_block(block_1.clone()).unwrap();
     apply_fork_choice(&store, hash_1, H256::zero(), H256::zero())
@@ -93,7 +95,7 @@ async fn test_sync_not_supported_yet() {
         .unwrap();
 
     // Build a child, then change its parent, making it effectively a pending block.
-    let mut block_2 = new_block(&store, &block_1.header).await;
+    let mut block_2 = new_block(&store, &block_1.header, &blockchain).await;
     block_2.header.parent_hash = H256::random();
     let hash_2 = block_2.hash();
     let result = blockchain.add_block(block_2.clone());
@@ -112,15 +114,16 @@ async fn test_sync_not_supported_yet() {
 #[tokio::test]
 async fn test_reorg_from_long_to_short_chain() {
     // Store and genesis
-    let store = test_store().await;
+    let genesis = test_genesis().await;
+    let store = test_store(&genesis).await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
     let genesis_hash = genesis_header.hash();
 
     // Create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::default_with_genesis(store.clone(), &genesis);
 
     // Add first block. Not canonical.
-    let block_1a = new_block(&store, &genesis_header).await;
+    let block_1a = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1a = block_1a.hash();
     blockchain.add_block(block_1a.clone()).unwrap();
     let retrieved_1a = store.get_block_header_by_hash(hash_1a).unwrap().unwrap();
@@ -128,7 +131,7 @@ async fn test_reorg_from_long_to_short_chain() {
     assert!(!is_canonical(&store, 1, hash_1a).await.unwrap());
 
     // Add second block at height 1. Canonical.
-    let block_1b = new_block(&store, &genesis_header).await;
+    let block_1b = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1b = block_1b.hash();
     blockchain
         .add_block(block_1b.clone())
@@ -144,7 +147,7 @@ async fn test_reorg_from_long_to_short_chain() {
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_1b);
 
     // Add a third block at height 2, child to the canonical one.
-    let block_2 = new_block(&store, &block_1b.header).await;
+    let block_2 = new_block(&store, &block_1b.header, &blockchain).await;
     let hash_2 = block_2.hash();
     blockchain
         .add_block(block_2.clone())
@@ -182,22 +185,23 @@ async fn test_reorg_from_long_to_short_chain() {
 #[tokio::test]
 async fn new_head_with_canonical_ancestor_should_skip() {
     // Store and genesis
-    let store = test_store().await;
+    let genesis = test_genesis().await;
+    let store = test_store(&genesis).await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
     let genesis_hash = genesis_header.hash();
 
     // Create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::default_with_genesis(store.clone(), &genesis);
 
     // Add block at height 1.
-    let block_1 = new_block(&store, &genesis_header).await;
+    let block_1 = new_block(&store, &genesis_header, &blockchain).await;
     let hash_1 = block_1.hash();
     blockchain
         .add_block(block_1.clone())
         .expect("Could not add block 1b.");
 
     // Add child at height 2.
-    let block_2 = new_block(&store, &block_1.header).await;
+    let block_2 = new_block(&store, &block_1.header, &blockchain).await;
     let hash_2 = block_2.hash();
     blockchain
         .add_block(block_2.clone())
@@ -233,21 +237,22 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
     // Then add one in a different branch. Check that the last one is still the same.
 
     // Store and genesis
-    let store = test_store().await;
+    let genesis = test_genesis().await;
+    let store = test_store(&genesis).await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
     let genesis_hash = genesis_header.hash();
 
     // Create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::default_with_genesis(store.clone(), &genesis);
 
     // Add block at height 1.
-    let block_1 = new_block(&store, &genesis_header).await;
+    let block_1 = new_block(&store, &genesis_header, &blockchain).await;
     blockchain
         .add_block(block_1.clone())
         .expect("Could not add block 1b.");
 
     // Add child at height 2.
-    let block_2 = new_block(&store, &block_1.header).await;
+    let block_2 = new_block(&store, &block_1.header, &blockchain).await;
     let hash_2 = block_2.hash();
     blockchain
         .add_block(block_2.clone())
@@ -266,7 +271,7 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_2);
 
     // Add a new, non canonical block, starting from genesis.
-    let block_1b = new_block(&store, &genesis_header).await;
+    let block_1b = new_block(&store, &genesis_header, &blockchain).await;
     let hash_b = block_1b.hash();
     blockchain
         .add_block(block_1b.clone())
@@ -284,7 +289,7 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
 }
 
-async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
+async fn new_block(store: &Store, parent: &BlockHeader, blockchain: &Blockchain) -> Block {
     let args = BuildPayloadArgs {
         parent: parent.hash(),
         timestamp: parent.timestamp + 12,
@@ -298,9 +303,6 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
     };
 
-    // Create blockchain
-    let blockchain = Blockchain::default_with_store(store.clone());
-
     let block = create_payload(&args, store, Bytes::new()).unwrap();
     let result = blockchain.build_payload(block).unwrap();
     result.payload
@@ -310,19 +312,19 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-async fn test_store() -> Store {
-    // Get genesis
+async fn test_genesis() -> ethrex_common::types::Genesis {
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
     let reader = BufReader::new(file);
-    let genesis = serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+    serde_json::from_reader(reader).expect("Failed to deserialize genesis file")
+}
 
-    // Build store with genesis
+async fn test_store(genesis: &ethrex_common::types::Genesis) -> Store {
     let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
 
     store
-        .add_initial_state(genesis)
+        .add_initial_state(genesis.clone())
         .await
         .expect("Failed to add genesis state");
 

@@ -3331,11 +3331,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-binary-trie"
+version = "9.0.0"
+dependencies = [
+ "blake3",
+ "bytes",
+ "ethrex-common 9.0.0",
+ "rustc-hash 2.1.1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ethrex-blockchain"
 version = "9.0.0"
 dependencies = [
  "bytes",
  "crossbeam 0.8.4",
+ "ethrex-binary-trie",
  "ethrex-common 9.0.0",
  "ethrex-crypto",
  "ethrex-metrics",

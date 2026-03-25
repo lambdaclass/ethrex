@@ -6,7 +6,7 @@ members = [
   "crates/blockchain/dev",
   "crates/common",
   "crates/common/rlp",
-  "crates/common/trie",
+  "crates/common/binary_trie",
   "crates/common/crypto",
   "crates/l2/",
   "crates/l2/common",
@@ -63,6 +63,7 @@ ethrex-rpc = { path = "./crates/networking/rpc" }
 ethrex-storage = { path = "./crates/storage" }
 ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
+ethrex-binary-trie = { path = "./crates/common/binary_trie" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-crypto = { path = "./crates/common/crypto", default-features = false }
@@ -99,6 +100,7 @@ tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
 reqwest = { version = "0.12.7", features = ["socks", "json"] }
+lru = "0.12.5"
 rustc-hash = "2.1.1"
 snap = "1.1.1"
 secp256k1 = { version = "0.30.0", default-features = false, features = [

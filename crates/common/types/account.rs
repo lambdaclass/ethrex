@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
+use crate::mpt_hash::compute_hash_from_unsorted_iter;
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
-use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -346,7 +346,7 @@ pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto)
             v.encode_to_vec(),
         ))
     });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl From<&GenesisAccount> for AccountState {

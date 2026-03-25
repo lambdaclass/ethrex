@@ -42,7 +42,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     let tx = get_tx_from_test_case(test_case).await?;
     let tracer = LevmCallTracer::disabled();
 
-    let (mut db, initial_block_hash, store, _genesis) =
+    let (mut db, initial_block_hash, mut store, _genesis) =
         load_initial_state(test, &test_case.fork).await;
     let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
         .map_err(RunnerError::VMError)?;
@@ -147,6 +147,9 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
+    store.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
+        ethrex_binary_trie::state::BinaryTrieState::new(),
+    )));
     let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
 
     let result = blockchain.add_block_pipeline(block, None);

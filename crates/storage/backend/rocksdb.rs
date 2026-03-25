@@ -1,7 +1,7 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
+    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, BINARY_TRIE_NODES, BLOCK_NUMBERS, BODIES,
     CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
-    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+    TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
@@ -118,12 +118,12 @@ impl RocksDBBackend {
                     block_opts.set_bloom_filter(10.0, false);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
+                BINARY_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
-                    cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
+                    cf_opts.set_memtable_prefix_bloom_ratio(0.2);
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
@@ -200,6 +200,13 @@ impl RocksDBBackend {
             }
         }
         Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Return a cloned handle to the underlying database.
+    ///
+    /// Used to share the DB with `BinaryTrieState` so both use a single RocksDB instance.
+    pub fn db_handle(&self) -> Arc<DBWithThreadMode<MultiThreaded>> {
+        self.db.clone()
     }
 }
 

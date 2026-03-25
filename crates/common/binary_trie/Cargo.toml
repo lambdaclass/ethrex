@@ -1,0 +1,31 @@
+[package]
+name = "ethrex-binary-trie"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3 = "1"
+bytes.workspace = true
+ethrex-common.workspace = true
+fastbloom = "0.14"
+hex.workspace = true
+lru.workspace = true
+rustc-hash.workspace = true
+thiserror.workspace = true
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
+[dev-dependencies]
+ethrex-crypto.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+
+[lib]
+path = "./lib.rs"
+
+[lints]
+workspace = true

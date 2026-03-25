@@ -43,8 +43,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{Store, error::StoreError};
-use ethrex_trie::TrieError;
+use ethrex_storage::Store;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
@@ -439,26 +438,6 @@ impl GenServer for PeerConnectionServer {
                         // with our concurrency model
                         debug!(peer=%established_state.node, "Broken pipe with peer, disconnected");
                         return CastResponse::Stop;
-                    }
-                    PeerConnectionError::StoreError(StoreError::Trie(
-                        TrieError::InconsistentTree(_),
-                    )) => {
-                        if established_state.blockchain.is_synced() {
-                            // If we're responding with inconsistent trie while synced, our trie may be broken
-                            // If this error is non sporadic we should investigate
-                            error!(
-                                peer=%established_state.node,
-                                error=%e,
-                                "Error handling cast message",
-                            );
-                        } else {
-                            // If we're not synced, we expect to have inconsistent trie errors
-                            trace!(
-                                peer=%established_state.node,
-                                error=%e,
-                                "Error handling cast message",
-                            );
-                        }
                     }
                     _ => {
                         // We should check why we're failling to handle the cast message

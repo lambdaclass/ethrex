@@ -55,15 +55,14 @@ pub const CHAIN_DATA: &str = "chain_data";
 /// - [`Vec<u8>`] = `block_hash.encode_to_vec()`
 pub const SNAP_STATE: &str = "snap_state";
 
-/// Account State trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
-pub const ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
+/// Binary trie nodes + metadata column family: [`u8; 8`] => [`Vec<u8>`]
+/// - `id.to_le_bytes()` => serialized node bytes
+/// - Meta keys use `0xFF` prefix: `[0xFF, b'R']` (root), `[0xFF, b'N']` (next_id), etc.
+pub const BINARY_TRIE_NODES: &str = "binary_trie_nodes";
 
-/// Storage trie nodes column family: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
-pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
+/// Binary trie storage key tracking column family: [`[u8; 20]`] => [`Vec<u8>`]
+/// - raw `address` (20 bytes) => packed list of H256 storage keys
+pub const BINARY_TRIE_STORAGE_KEYS: &str = "binary_trie_storage_keys";
 
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
@@ -115,11 +114,11 @@ pub const TABLES: [&str; 19] = [
     RECEIPTS,
     SNAP_STATE,
     INVALID_CHAINS,
-    ACCOUNT_TRIE_NODES,
-    STORAGE_TRIE_NODES,
     FULLSYNC_HEADERS,
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    BINARY_TRIE_NODES,
+    BINARY_TRIE_STORAGE_KEYS,
 ];

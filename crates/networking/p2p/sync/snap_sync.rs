@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
 
+#[cfg(feature = "rocksdb")]
+use crate::snap::mpt_stubs::Trie;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{AccountState, BlockHeader, Code};
 use ethrex_common::{
@@ -19,8 +21,6 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
-#[cfg(feature = "rocksdb")]
-use ethrex_trie::Trie;
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
@@ -484,7 +484,7 @@ pub async fn snap_sync(
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
-    store.generate_flatkeyvalue()?;
+    // store.generate_flatkeyvalue() removed (MPT-only, not supported on binary trie branch)
 
     debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
     debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
@@ -693,111 +693,21 @@ pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
     timestamp + (SNAP_LIMIT as u64 * 12)
 }
 
-pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_state_root");
-    let validated = tokio::task::spawn_blocking(move || {
-        store
-            .open_locked_state_trie(state_root)
-            .expect("couldn't open trie")
-            .validate_parallel()
-    })
-    .await
-    .expect("We should be able to create threads");
-
-    if validated.is_ok() {
-        info!("Succesfully validated tree, {state_root} found");
-    } else {
-        error!("We have failed the validation of the state tree");
-        std::process::exit(1);
-    }
-    validated.is_ok()
+pub async fn validate_state_root(_store: Store, _state_root: H256) -> bool {
+    // MPT state trie validation not supported on binary trie branch
+    info!("validate_state_root: skipped (binary trie branch)");
+    true
 }
 
-pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_storage_root");
-    let is_valid = tokio::task::spawn_blocking(move || {
-        use rayon::prelude::*;
-        let mut iter = store
-            .iter_accounts(state_root)
-            .expect("couldn't iterate accounts")
-            .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH);
-
-        const CHUNK_SIZE: usize = 4096;
-        let mut result: Result<(), ethrex_trie::TrieError> = Ok(());
-
-        loop {
-            let chunk: Vec<_> = iter.by_ref().take(CHUNK_SIZE).collect();
-            if chunk.is_empty() {
-                break;
-            }
-
-            result = chunk
-                .par_iter()
-                .try_for_each(|(hashed_address, account_state)| {
-                    store
-                        .open_locked_storage_trie(
-                            *hashed_address,
-                            state_root,
-                            account_state.storage_root,
-                        )
-                        .expect("couldn't open storage trie")
-                        .validate()
-                });
-
-            if result.is_err() {
-                break;
-            }
-        }
-
-        result
-    })
-    .await
-    .expect("We should be able to create threads");
-    info!("Finished validate_storage_root");
-    if is_valid.is_err() {
-        std::process::exit(1);
-    }
-    is_valid.is_ok()
+pub async fn validate_storage_root(_store: Store, _state_root: H256) -> bool {
+    // MPT storage trie validation not supported on binary trie branch
+    info!("validate_storage_root: skipped (binary trie branch)");
+    true
 }
 
-pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
-    info!("Starting validate_bytecodes");
-
-    // Collect unique code hashes — many contracts share bytecode (proxies, ERC20 clones)
-    let mut unique_hashes = HashSet::new();
-    for (_, account_state) in store
-        .iter_accounts(state_root)
-        .expect("we couldn't iterate over accounts")
-    {
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            unique_hashes.insert(account_state.code_hash);
-        }
-    }
-
-    info!(
-        "Collected {} unique code hashes for validation",
-        unique_hashes.len()
-    );
-
-    // Validate in parallel using existence-only check
-    use rayon::prelude::*;
-    let missing: Vec<_> = unique_hashes
-        .par_iter()
-        .filter(|code_hash| match store.code_exists(**code_hash) {
-            Ok(exists) => !exists,
-            Err(e) => {
-                error!("DB error checking code hash {:x}: {e}", code_hash);
-                true
-            }
-        })
-        .collect();
-
-    if !missing.is_empty() {
-        for hash in &missing {
-            error!("Missing code hash {:x}", hash);
-        }
-        std::process::exit(1);
-    }
+pub fn validate_bytecodes(_store: Store, _state_root: H256) -> bool {
+    // MPT-based bytecode validation not supported on binary trie branch
+    info!("validate_bytecodes: skipped (binary trie branch)");
     true
 }
 
@@ -806,168 +716,42 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // ============================================================================
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+type StorageRoots = (H256, Vec<u8>);
 
 #[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
-    store: Store,
-    account_hash: H256,
-    key_value_pairs: &[(H256, U256)],
+    _store: Store,
+    _account_hash: H256,
+    _key_value_pairs: &[(H256, U256)],
 ) -> Result<StorageRoots, SyncError> {
-    use ethrex_trie::{Nibbles, Node};
-
-    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?
-            .compute_hash(&ethrex_crypto::NativeCrypto)
-            .finalize(&ethrex_crypto::NativeCrypto),
-        None => *EMPTY_TRIE_HASH,
-    };
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
-
-    for (hashed_key, value) in key_value_pairs {
-        if let Err(err) = storage_trie.insert(hashed_key.0.to_vec(), value.encode_to_vec()) {
-            warn!(
-                "Failed to insert hashed key {hashed_key:?} in account hash: {account_hash:?}, err={err:?}"
-            );
-        };
-        METRICS.storage_leaves_inserted.inc();
-    }
-
-    let (_, changes) = storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
-
-    Ok((account_hash, changes))
+    Err(SyncError::FileSystem(
+        "snap sync not supported on binary trie branch".to_string(),
+    ))
 }
 
 #[cfg(not(feature = "rocksdb"))]
 async fn insert_accounts(
-    store: Store,
-    storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &Path,
+    _store: Store,
+    _storage_accounts: &mut AccountStorageRoots,
+    _account_state_snapshots_dir: &Path,
     _: &Path,
-    code_hash_collector: &mut CodeHashCollector,
+    _code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    let mut computed_state_root = *EMPTY_TRIE_HASH;
-    for entry in std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-    {
-        let entry = entry
-            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
-        info!("Reading account file from entry {entry:?}");
-        let snapshot_path = entry.path();
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-        let account_states_snapshot: Vec<(H256, AccountState)> =
-            RLPDecode::decode(&snapshot_contents)
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-        storage_accounts.accounts_with_storage_root.extend(
-            account_states_snapshot.iter().filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH)
-                    .then_some((*hash, (Some(state.storage_root), Vec::new())))
-            }),
-        );
-
-        // Collect valid code hashes from current account snapshot
-        let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
-            .iter()
-            .filter_map(|(_, state)| {
-                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
-            })
-            .collect();
-
-        code_hash_collector.extend(code_hashes_from_snapshot);
-        code_hash_collector.flush_if_needed().await?;
-
-        info!("Inserting accounts into the state trie");
-
-        let store_clone = store.clone();
-        let current_state_root: Result<H256, SyncError> =
-            tokio::task::spawn_blocking(move || -> Result<H256, SyncError> {
-                let mut trie = store_clone.open_direct_state_trie(computed_state_root)?;
-
-                for (account_hash, account) in account_states_snapshot {
-                    trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
-                }
-                info!("Comitting to disk");
-                let current_state_root = trie.hash(&ethrex_crypto::NativeCrypto)?;
-                Ok(current_state_root)
-            })
-            .await?;
-
-        computed_state_root = current_state_root?;
-    }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    info!("computed_state_root {computed_state_root}");
-    Ok((computed_state_root, BTreeSet::new()))
+    Err(SyncError::FileSystem(
+        "snap sync not supported on binary trie branch".to_string(),
+    ))
 }
 
 #[cfg(not(feature = "rocksdb"))]
 async fn insert_storages(
-    store: Store,
+    _store: Store,
     _: BTreeSet<H256>,
-    account_storages_snapshots_dir: &Path,
+    _account_storages_snapshots_dir: &Path,
     _: &Path,
 ) -> Result<(), SyncError> {
-    use rayon::iter::{IntoParallelIterator, ParallelIterator};
-
-    for entry in std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-    {
-        use crate::utils::AccountsWithStorage;
-
-        let entry = entry.map_err(|err| {
-            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
-        })?;
-        info!("Reading account storage file from entry {entry:?}");
-
-        let snapshot_path = entry.path();
-
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
-
-        #[expect(clippy::type_complexity)]
-        let account_storages_snapshot: Vec<AccountsWithStorage> =
-            RLPDecode::decode(&snapshot_contents)
-                .map(|all_accounts: Vec<(Vec<H256>, Vec<(H256, U256)>)>| {
-                    all_accounts
-                        .into_iter()
-                        .map(|(accounts, storages)| AccountsWithStorage { accounts, storages })
-                        .collect()
-                })
-                .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
-
-        let store_clone = store.clone();
-        info!("Starting compute of account_storages_snapshot");
-        let storage_trie_node_changes = tokio::task::spawn_blocking(move || {
-            let store: Store = store_clone;
-
-            account_storages_snapshot
-                .into_par_iter()
-                .flat_map(|account_storages| {
-                    let storages: Arc<[_]> = account_storages.storages.into();
-                    account_storages
-                        .accounts
-                        .into_par_iter()
-                        // FIXME: we probably want to make storages an Arc
-                        .map(move |account| (account, storages.clone()))
-                })
-                .map(|(account, storages)| compute_storage_roots(store.clone(), account, &storages))
-                .collect::<Result<Vec<_>, SyncError>>()
-        })
-        .await??;
-        info!("Writing to db");
-
-        store
-            .write_storage_trie_nodes_batch(storage_trie_node_changes)
-            .await?;
-    }
-
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-
-    Ok(())
+    Err(SyncError::FileSystem(
+        "snap sync not supported on binary trie branch".to_string(),
+    ))
 }
 
 // ============================================================================
@@ -976,208 +760,25 @@ async fn insert_storages(
 
 #[cfg(feature = "rocksdb")]
 async fn insert_accounts(
-    store: Store,
-    storage_accounts: &mut AccountStorageRoots,
-    account_state_snapshots_dir: &Path,
-    datadir: &Path,
-    code_hash_collector: &mut CodeHashCollector,
+    _store: Store,
+    _storage_accounts: &mut AccountStorageRoots,
+    _account_state_snapshots_dir: &Path,
+    _datadir: &Path,
+    _code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
-
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-        }
-    }
-
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let compute_state_root = trie_from_sorted_accounts_wrap(
-        trie.db(),
-        &mut iter
-            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
-                METRICS
-                    .account_tries_inserted
-                    .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
-                }
-            })
-            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
-    )
-    .map_err(SyncError::TrieGenerationError)?;
-
-    drop(db); // close db before removing directory
-
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-
-    let accounts_with_storage =
-        BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
-    Ok((compute_state_root, accounts_with_storage))
+    Err(SyncError::FileSystem(
+        "snap sync not supported on binary trie branch".to_string(),
+    ))
 }
 
 #[cfg(feature = "rocksdb")]
 async fn insert_storages(
-    store: Store,
-    accounts_with_storage: BTreeSet<H256>,
-    account_storages_snapshots_dir: &Path,
-    datadir: &Path,
+    _store: Store,
+    _accounts_with_storage: BTreeSet<H256>,
+    _account_storages_snapshots_dir: &Path,
+    _datadir: &Path,
 ) -> Result<(), SyncError> {
-    use crate::utils::get_rocksdb_temp_storage_dir;
-    use crossbeam::channel::{bounded, unbounded};
-    use ethrex_trie::{
-        Nibbles, Node, ThreadPool,
-        trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
-    };
-    use std::thread::scope;
-
-    struct RocksDBIterator<'a> {
-        iter: rocksdb::DBRawIterator<'a>,
-        limit: H256,
-    }
-
-    impl<'a> Iterator for RocksDBIterator<'a> {
-        type Item = (H256, Vec<u8>);
-
-        fn next(&mut self) -> Option<Self::Item> {
-            if !self.iter.valid() {
-                return None;
-            }
-            let return_value = {
-                let key = self.iter.key();
-                let value = self.iter.value();
-                match (key, value) {
-                    (Some(key), Some(value)) => {
-                        let hash = H256::from_slice(&key[0..32]);
-                        let key = H256::from_slice(&key[32..]);
-                        let value = value.to_vec();
-                        if hash != self.limit {
-                            None
-                        } else {
-                            Some((key, value))
-                        }
-                    }
-                    _ => None,
-                }
-            };
-            self.iter.next();
-            return_value
-        }
-    }
-
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let snapshot = db.snapshot();
-
-    let account_with_storage_and_tries = accounts_with_storage
-        .into_iter()
-        .map(|account_hash| {
-            (
-                account_hash,
-                store
-                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                    .expect("Should be able to open trie"),
-            )
-        })
-        .collect::<Vec<(H256, Trie)>>();
-
-    let (sender, receiver) = unbounded::<()>();
-    let mut counter = 0;
-    let thread_count = std::thread::available_parallelism()
-        .map(|num| num.into())
-        .unwrap_or(8);
-
-    let (buffer_sender, buffer_receiver) = bounded::<Vec<(Nibbles, Node)>>(BUFFER_COUNT as usize);
-    for _ in 0..BUFFER_COUNT {
-        let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
-    }
-
-    scope(|scope| {
-        let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
-        for (account_hash, trie) in account_with_storage_and_tries.iter() {
-            let sender = sender.clone();
-            let buffer_sender = buffer_sender.clone();
-            let buffer_receiver = buffer_receiver.clone();
-            if counter >= thread_count - 1 {
-                let _ = receiver.recv();
-                counter -= 1;
-            }
-            counter += 1;
-            let pool_clone = pool.clone();
-            let mut iter = snapshot.raw_iterator();
-            let task = Box::new(move || {
-                let mut buffer: [u8; 64] = [0_u8; 64];
-                buffer[..32].copy_from_slice(&account_hash.0);
-                iter.seek(buffer);
-                let iter = RocksDBIterator {
-                    iter,
-                    limit: *account_hash,
-                };
-
-                let _ = trie_from_sorted_accounts(
-                    trie.db(),
-                    &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
-                    pool_clone,
-                    buffer_sender,
-                    buffer_receiver,
-                )
-                .inspect_err(|err: &ethrex_trie::trie_sorted::TrieGenerationError| {
-                    error!(
-                        "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
-                    );
-                })
-                .map_err(SyncError::TrieGenerationError);
-                let _ = sender.send(());
-            });
-            pool.execute(task);
-        }
-    });
-
-    // close db before removing directory
-    drop(snapshot);
-    drop(db);
-
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
-
-    Ok(())
+    Err(SyncError::FileSystem(
+        "snap sync not supported on binary trie branch".to_string(),
+    ))
 }

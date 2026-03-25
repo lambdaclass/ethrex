@@ -67,16 +67,13 @@
 pub mod api;
 pub mod backend;
 pub mod error;
-mod layering;
 pub mod rlp;
 pub mod store;
-pub mod trie;
 pub mod utils;
 
-pub use layering::apply_prefix;
 pub use store::{
-    AccountUpdatesList, EngineType, Store, UpdateBatch, has_valid_db, hash_address, hash_key,
-    read_chain_id_from_db,
+    AccountUpdatesList, EngineType, MptUpdatesList, Store, UpdateBatch, has_valid_db, hash_address,
+    hash_key, read_chain_id_from_db,
 };
 
 /// Store Schema Version, must be updated on any breaking change.

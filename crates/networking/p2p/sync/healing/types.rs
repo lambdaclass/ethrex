@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_trie::{Nibbles, Node};
+use crate::snap::mpt_stubs::{Nibbles, Node};
 
 /// Entry in the healing queue tracking nodes waiting for children
 #[derive(Debug, Clone)]

@@ -25,7 +25,8 @@ use tracing::{Level, error, info, warn};
 
 use crate::{
     initializers::{
-        get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
+        get_network, init_binary_trie_state, init_blockchain, init_store, init_tracing, load_store,
+        regenerate_head_state,
     },
     utils::{
         self, default_datadir, get_client_version, get_client_version_string,
@@ -722,7 +723,10 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
+    let mut store = init_store(datadir, genesis.clone()).await?;
+    let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
+        .map_err(|e| ChainError::Custom(e.to_string()))?;
+    store.set_binary_trie_state(binary_trie_state);
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
 
@@ -793,7 +797,12 @@ pub async fn import_blocks(
                     blockchain
                         .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
                         .await
-                        .map_err(|(err, _)| err)?;
+                        .map_err(|(err, failure)| {
+                            if let Some(f) = failure {
+                                warn!("Batch failed at block hash {:#x}", f.failed_block_hash);
+                            }
+                            err
+                        })?;
                 }
             } else {
                 // We need to have the state of the latest 128 blocks
@@ -840,7 +849,10 @@ pub async fn import_blocks_bench(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
+    let mut store = init_store(datadir, genesis.clone()).await?;
+    let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
+        .map_err(|e| ChainError::Custom(e.to_string()))?;
+    store.set_binary_trie_state(binary_trie_state);
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");

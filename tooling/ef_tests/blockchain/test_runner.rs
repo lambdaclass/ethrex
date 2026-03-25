@@ -77,12 +77,15 @@ pub async fn run_ef_test(
         return Err("Decoded genesis header does not match expected header".to_string());
     }
 
-    let store = build_store_for_test(test).await;
+    let mut store = build_store_for_test(test).await;
 
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
+    store.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
+        ethrex_binary_trie::state::BinaryTrieState::new(),
+    )));
     let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
 
     // Early return if the exception is in the rlp decoding of the block
@@ -171,7 +174,10 @@ async fn run(
 /// post-state of pass 2 must match the expected post-state.
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
-    let store1 = build_store_for_test(test).await;
+    let mut store1 = build_store_for_test(test).await;
+    store1.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
+        ethrex_binary_trie::state::BinaryTrieState::new(),
+    )));
     let blockchain1 = Blockchain::new(store1.clone(), BlockchainOptions::default());
 
     let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
@@ -203,7 +209,10 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     }
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
-    let store2 = build_store_for_test(test).await;
+    let mut store2 = build_store_for_test(test).await;
+    store2.set_binary_trie_state(std::sync::Arc::new(std::sync::RwLock::new(
+        ethrex_binary_trie::state::BinaryTrieState::new(),
+    )));
     let blockchain2 = Blockchain::new(store2.clone(), BlockchainOptions::default());
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {

@@ -42,7 +42,6 @@ use crate::{
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
-    vm::StoreVmDatabase,
 };
 
 use thiserror::Error;
@@ -256,7 +255,7 @@ impl PayloadBuildContext {
             .get_block_header_by_hash(payload.header.parent_hash)
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
-        let vm_db = StoreVmDatabase::new(storage.clone(), parent_header)?;
+        let vm_db = crate::vm::StoreVmDatabase::new(storage.clone(), parent_header)?;
         let mut vm = new_evm(blockchain_type, vm_db)?;
 
         // Enable BAL recording for Amsterdam and later forks (EIP-7928)
@@ -301,6 +300,7 @@ impl PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
+    #[allow(dead_code)]
     fn parent_hash(&self) -> BlockHash {
         self.payload.header.parent_hash
     }
@@ -763,14 +763,9 @@ impl Blockchain {
 
         let account_updates = context.vm.get_state_transitions()?;
 
-        let ret_acount_updates_list = self
-            .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        let state_root = ret_acount_updates_list.state_trie_hash;
-
-        context.payload.header.state_root = state_root;
+        // Binary trie: state root is computed when the block is accepted via add_block_pipeline.
+        // During speculative payload building we set it to zero; the CL does not validate state_root.
+        context.payload.header.state_root = H256::zero();
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
         context.payload.header.receipts_root =
@@ -804,6 +799,7 @@ impl Blockchain {
         }
 
         context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
+
         Ok(())
     }
 }

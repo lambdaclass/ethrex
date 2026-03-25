@@ -7,7 +7,7 @@ use ethrex_common::{H256, tracing::CallTrace, types::Block};
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError};
 
-use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
+use crate::{Blockchain, error::ChainError};
 
 impl Blockchain {
     /// Outputs the call trace for the given transaction
@@ -106,11 +106,7 @@ impl Blockchain {
             .storage
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ChainError::ParentNotFound)?;
-        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
-            parent_header,
-            block_hash_cache,
-        )?;
+        let vm_db = self.vm_db_with_hash_cache(block_hash_cache, parent_header.hash())?;
         let mut vm = self.new_evm(vm_db)?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
@@ -139,7 +135,12 @@ async fn get_missing_state_parents(
         let Some(parent_block) = store.get_block_by_hash(parent_hash).await? else {
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
-        if store.has_state_root(parent_block.header.state_root)? {
+        // Check if this block's header exists in store (it's been synced).
+        let has_state = store
+            .get_block_header_by_hash(parent_hash)
+            .map(|h| h.is_some())
+            .unwrap_or(false);
+        if has_state {
             break;
         }
         parent_hash = parent_block.header.parent_hash;

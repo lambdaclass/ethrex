@@ -235,7 +235,10 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                         .map(|sk| recover_address_for_sk(&sk))
                         .collect();
 
-                    let (store_with_genesis, genesis) = setup_genesis(&addresses).await;
+                    let (mut store_with_genesis, genesis) = setup_genesis(&addresses).await;
+                    store_with_genesis.set_binary_trie_state(std::sync::Arc::new(
+                        std::sync::RwLock::new(ethrex_binary_trie::state::BinaryTrieState::new()),
+                    ));
                     let block_chain = Blockchain::new(
                         store_with_genesis.clone(),
                         BlockchainOptions {
