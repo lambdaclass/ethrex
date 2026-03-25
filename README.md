@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/ethrex_banner.png" alt="ethrex banner" width="300">
+  <img src="assets/ethrex_banner.png" alt="ethrex banner" width="400">
 </p>
 
 # ethrex
