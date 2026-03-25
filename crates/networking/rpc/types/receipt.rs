@@ -65,7 +65,7 @@ impl From<Receipt> for RpcReceiptInfo {
             tx_type: receipt.tx_type,
             status: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
-            logs_bloom: bloom_from_logs(&receipt.logs),
+            logs_bloom: bloom_from_logs(&receipt.logs, &ethrex_crypto::NativeCrypto),
         }
     }
 }

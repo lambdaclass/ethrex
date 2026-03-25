@@ -784,7 +784,7 @@ pub async fn import_blocks(
                 continue;
             }
 
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             if index + MIN_FULL_BLOCKS < size {
@@ -902,7 +902,7 @@ pub async fn import_blocks_bench(
                 continue;
             }
 
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain

@@ -89,11 +89,22 @@ impl OpcodeHandler for OpCallHandler {
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
-        // EIP-8037 (Amsterdam+): charge state gas for call to empty account with value transfer.
-        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
-        let gas_left = if fork >= Fork::Amsterdam && address_is_empty && !value.is_zero() {
-            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
-            vm.current_call_frame.gas_remaining as u64
+        // EIP-8037 (Amsterdam+): account for state gas spill in child gas computation,
+        // but charge state gas AFTER regular gas per EIPs#11421.
+        // Regular gas OOG must not consume state gas that would inflate the parent's
+        // reservoir on frame failure.
+        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
+        let gas_left = if needs_state_gas {
+            let from_reservoir = vm.state_gas_reservoir.min(STATE_GAS_NEW_ACCOUNT);
+            // Safe: from_reservoir = min(reservoir, STATE_GAS_NEW_ACCOUNT) <= STATE_GAS_NEW_ACCOUNT
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "from_reservoir <= STATE_GAS_NEW_ACCOUNT"
+            )]
+            let spill = STATE_GAS_NEW_ACCOUNT - from_reservoir;
+            gas_left
+                .checked_sub(spill)
+                .ok_or(ExceptionalHalt::OutOfGas)?
         } else {
             gas_left
         };
@@ -108,11 +119,18 @@ impl OpcodeHandler for OpCallHandler {
             gas_left,
             fork,
         )?;
+
+        // Charge regular gas first (before state gas, per EIPs#11421).
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
                 .checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+
+        // Then charge state gas for new account creation.
+        if needs_state_gas {
+            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
+        }
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.

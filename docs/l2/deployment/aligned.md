@@ -123,6 +123,7 @@ ethrex l2 \
   --committer.l1-private-key <COMMITTER_PRIVATE_KEY>  \
   --proof-coordinator.l1-private-key <PROOF_COORDINATOR_PRIVATE_KEY>  \
   --aligned.beacon-url <ALIGNED_BEACON_URL> \
+  --aligned.resubmission-timeout 86400 \
   --datadir ethrex_l2 \
   --no-monitor
 ```
@@ -134,6 +135,7 @@ Aligned params explanation:
 - `--aligned`: Enables aligned mode, enforcing all required parameters.
 - `--aligned.beacon-url`: URL of the beacon client used by the Aligned SDK to verify proof aggregations, it has to support `/eth/v1/beacon/blobs`
 - `--aligned-network`: Parameter used by the Aligned SDK. Available networks: `devnet`, `hoodi`, `mainnet`.
+- `--aligned.resubmission-timeout`: Timeout in seconds before resending a proof not yet verified on-chain. Required when `--aligned` is enabled. Aligned typically aggregates once per day, so set this accordingly (e.g. `86400` for 24h).
 - `--aligned.from-block`: (Optional) Starting L1 block number for proof aggregation search. Helps avoid scanning old blocks from before proofs were being sent. If not set, the search starts from the beginning.
 
 If you can't find a beacon client URL which supports that endpoint, you can run your own with lighthouse and ethrex:

@@ -65,7 +65,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         Address::from_low_u64_be(CONTRACT_ADDRESS),
         Account::new(
             U256::MAX,
-            Code::from_bytecode(bytecode.clone()),
+            Code::from_bytecode(bytecode.clone(), &ethrex_crypto::NativeCrypto),
             0,
             FxHashMap::default(),
         ),
@@ -74,7 +74,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         Address::from_low_u64_be(SENDER_ADDRESS),
         Account::new(
             U256::MAX,
-            Code::from_bytecode(Bytes::new()),
+            Code::from_bytecode(Bytes::new(), &ethrex_crypto::NativeCrypto),
             0,
             FxHashMap::default(),
         ),
