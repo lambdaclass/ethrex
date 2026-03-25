@@ -23,8 +23,6 @@ use ethrex_guest_program::input::ProgramInput;
 use ethrex_prover::Sp1Backend;
 use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
-#[cfg(feature = "stateless")]
-use ethrex_rpc::debug::execution_witness::execution_witness_from_rpc_chain_config;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
 use regex::Regex;
@@ -557,9 +555,9 @@ async fn run_stateless_from_fixture(
                 format!("Failed to parse executionWitness for block {block_number}: {e}")
             })?;
 
-        let execution_witness =
-            execution_witness_from_rpc_chain_config(rpc_witness, *chain_config, block_number)
-                .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+        let execution_witness = rpc_witness
+            .into_execution_witness(*chain_config, block_number)
+            .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
 
         let program_input = ProgramInput::new(vec![block], execution_witness);
 

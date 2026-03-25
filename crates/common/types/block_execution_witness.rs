@@ -8,12 +8,13 @@ use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCACK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
+    utils::keccak,
 };
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -133,6 +134,143 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
                 .map(Bytes::from)
                 .collect(),
         })
+    }
+}
+
+impl RpcExecutionWitness {
+    /// Convert an RPC execution witness into the internal [`ExecutionWitness`]
+    /// format by rebuilding trie structures from the flat node list.
+    pub fn into_execution_witness(
+        self,
+        chain_config: ChainConfig,
+        first_block_number: u64,
+    ) -> Result<ExecutionWitness, GuestProgramStateError> {
+        let mut initial_state_root = None;
+
+        for h in &self.headers {
+            let header = BlockHeader::decode(h)?;
+            if header.number == first_block_number - 1 {
+                initial_state_root = Some(header.state_root);
+                break;
+            }
+        }
+
+        let initial_state_root = initial_state_root.ok_or_else(|| {
+            GuestProgramStateError::Custom(format!(
+                "header for block {} not found",
+                first_block_number - 1
+            ))
+        })?;
+
+        let nodes: BTreeMap<H256, Node> = self
+            .state
+            .into_iter()
+            .filter_map(|b| {
+                if b == Bytes::from_static(&[0x80]) {
+                    // other implementations of debug_executionWitness allow for a `Null` node,
+                    // which would fail to decode in ours
+                    return None;
+                }
+                let hash = keccak(&b);
+                Some(Node::decode(&b).map(|node| (hash, node)))
+            })
+            .collect::<Result<_, RLPDecodeError>>()?;
+
+        // get state trie root and embed the rest of the trie into it
+        let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+            Trie::get_embedded_root(&nodes, initial_state_root)?
+        {
+            Some((*state_trie_root).clone())
+        } else {
+            None
+        };
+
+        // Walk the state trie to discover accounts and their storage roots,
+        // instead of relying on the keys field which is being removed from the RPC spec.
+        let mut storage_trie_roots = BTreeMap::new();
+        if let Some(state_trie_root) = &state_trie_root {
+            let mut accounts = Vec::new();
+            collect_accounts_from_trie(
+                state_trie_root,
+                Nibbles::from_raw(&[], false),
+                &mut accounts,
+                &nodes,
+            );
+
+            for (hashed_address, storage_root_hash) in accounts {
+                if storage_root_hash == *EMPTY_TRIE_HASH {
+                    continue;
+                }
+                if !nodes.contains_key(&storage_root_hash) {
+                    continue;
+                }
+                let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+                let NodeRef::Node(node, _) = node else {
+                    return Err(GuestProgramStateError::Custom(
+                        "execution witness does not contain non-empty storage trie".to_string(),
+                    ));
+                };
+                storage_trie_roots.insert(hashed_address, (*node).clone());
+            }
+        }
+
+        Ok(ExecutionWitness {
+            codes: self.codes.into_iter().map(|b| b.to_vec()).collect(),
+            chain_config,
+            first_block_number,
+            block_headers_bytes: self.headers.into_iter().map(|b| b.to_vec()).collect(),
+            state_trie_root,
+            storage_trie_roots,
+        })
+    }
+}
+
+/// Recursively walks an embedded state trie node and collects
+/// `(hashed_address, storage_root)` pairs from leaf nodes.
+fn collect_accounts_from_trie(
+    node: &Node,
+    path: Nibbles,
+    accounts: &mut Vec<(H256, H256)>,
+    nodes: &BTreeMap<H256, Node>,
+) {
+    match node {
+        Node::Branch(branch) => {
+            for (i, child) in branch.choices.iter().enumerate() {
+                let child_node: Option<&Node> = match child {
+                    NodeRef::Node(n, _) => Some(n),
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize()),
+                    _ => None,
+                };
+                if let Some(child_node) = child_node {
+                    collect_accounts_from_trie(
+                        child_node,
+                        path.append_new(i as u8),
+                        accounts,
+                        nodes,
+                    );
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let child_node: Option<&Node> = match &ext.child {
+                NodeRef::Node(n, _) => Some(n),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize()),
+                _ => None,
+            };
+            if let Some(child_node) = child_node {
+                collect_accounts_from_trie(child_node, path.concat(&ext.prefix), accounts, nodes);
+            }
+        }
+        Node::Leaf(leaf) => {
+            let full_path = path.concat(&leaf.partial);
+            let path_bytes = full_path.to_bytes();
+            if path_bytes.len() == 32 {
+                let hashed_address = H256::from_slice(&path_bytes);
+                if let Ok(account_state) = AccountState::decode(&leaf.value) {
+                    accounts.push((hashed_address, account_state.storage_root));
+                }
+            }
+        }
     }
 }
 
