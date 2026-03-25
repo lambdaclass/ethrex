@@ -683,7 +683,6 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     Ok(fee_token_ratio)
 }
 
-
 /// Helper function to encode the calldata for the fee token contract calls.
 /// <function>(address,uint256)
 fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> Bytes {
