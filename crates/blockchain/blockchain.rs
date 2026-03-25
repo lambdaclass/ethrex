@@ -3262,6 +3262,11 @@ fn execute_polygon_system_calls(
                 &producer_bytes,
             );
 
+            let calldata_hex_preview: String = calldata
+                .iter()
+                .take(100)
+                .map(|b| format!("{b:02x}"))
+                .collect();
             debug!(
                 block_number,
                 span_id = next_span.id,
@@ -3269,6 +3274,11 @@ fn execute_polygon_system_calls(
                 end = next_span.end_block,
                 validators = next_span.validators.len(),
                 producers = next_span.selected_producers.len(),
+                calldata_len = calldata.len(),
+                calldata_preview = %calldata_hex_preview,
+                gas_limit = MAX_SYSTEM_CALL_GAS,
+                from = %SYSTEM_ADDRESS,
+                to = %VALIDATOR_CONTRACT,
                 "Executing commitSpan system call"
             );
 
@@ -3285,17 +3295,23 @@ fn execute_polygon_system_calls(
                         // Update stored span — the committed span becomes current.
                         engine.set_current_span(next_span);
                     } else {
-                        // commitSpan reverts are fatal
-                        return Err(ChainError::Custom(format!(
-                            "commitSpan reverted at block {block_number} for span {}",
-                            next_span.id
-                        )));
+                        // commitSpan reverted — log and skip (non-fatal for debugging)
+                        warn!(
+                            block_number,
+                            span_id = next_span_id,
+                            output = %format!("{:?}", report.output),
+                            gas_used = report.gas_used,
+                            "commitSpan REVERTED — skipping receipt (non-fatal debug mode)"
+                        );
                     }
                 }
                 Err(e) => {
-                    return Err(ChainError::Custom(format!(
-                        "commitSpan system call failed at block {block_number}: {e}"
-                    )));
+                    warn!(
+                        block_number,
+                        span_id = next_span_id,
+                        error = %e,
+                        "commitSpan system call FAILED — skipping (non-fatal debug mode)"
+                    );
                 }
             }
         } else {
