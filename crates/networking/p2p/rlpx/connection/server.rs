@@ -1248,15 +1248,28 @@ async fn handle_incoming_message(
                             }
                         }
                         Err(ChainError::ParentNotFound) => {
-                            // Block is stored as pending by execute_block.
-                            // Signal the sync bridge to trigger a full sync
-                            // that fills the gap from our head to this block.
-                            warn!(
-                                peer=%state.node,
-                                block_number,
-                                "Polygon block parent not found, triggering gap-fill sync"
-                            );
-                            state.blockchain.set_polygon_sync_head(block_hash);
+                            // Block is stored as pending by add_block_pipeline.
+                            // Only trigger the sync bridge for real gaps (>16 blocks).
+                            // Small gaps (1-2 blocks behind) resolve naturally via
+                            // forward sync without needing a bridge cycle.
+                            let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                            if block_number > latest + 16 {
+                                warn!(
+                                    peer=%state.node,
+                                    block_number,
+                                    latest,
+                                    gap = block_number.saturating_sub(latest),
+                                    "Polygon block parent not found, triggering gap-fill sync"
+                                );
+                                state.blockchain.set_polygon_sync_head(block_hash);
+                            } else {
+                                debug!(
+                                    peer=%state.node,
+                                    block_number,
+                                    latest,
+                                    "Polygon block parent not found (small gap, skipping bridge)"
+                                );
+                            }
                         }
                         Err(e) => {
                             warn!(
