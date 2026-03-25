@@ -1055,22 +1055,12 @@ async fn insert_accounts(
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     info!("[PROFILE] account insertion: SST ingest ({num_files} files) took {:?}", t0.elapsed());
 
-    let t1 = std::time::Instant::now();
-    let mut code_hash_count: u64 = 0;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-            code_hash_count += 1;
-        }
-    }
-    info!("[PROFILE] account insertion: code hash pass ({code_hash_count} hashes) took {:?}", t1.elapsed());
-
     let t2 = std::time::Instant::now();
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    // Collect code hashes during the trie-building pass to avoid a separate iteration.
+    // We buffer them because trie_from_sorted_accounts_wrap runs in a blocking context
+    // where we can't .await the async flush.
+    let mut collected_code_hashes: Vec<H256> = Vec::new();
     let compute_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
         &mut iter
@@ -1086,11 +1076,22 @@ async fn insert_accounts(
                         (Some(account_state.storage_root), Vec::new()),
                     );
                 }
+                if account_state.code_hash != *EMPTY_KECCACK_HASH {
+                    collected_code_hashes.push(account_state.code_hash);
+                }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
-    info!("[PROFILE] account insertion: trie building took {:?}", t2.elapsed());
+    info!("[PROFILE] account insertion: trie building took {:?} (collected {} code hashes)", t2.elapsed(), collected_code_hashes.len());
+
+    // Flush collected code hashes (async)
+    let t3 = std::time::Instant::now();
+    for hash in &collected_code_hashes {
+        code_hash_collector.add(*hash);
+        code_hash_collector.flush_if_needed().await?;
+    }
+    info!("[PROFILE] account insertion: code hash flush ({} hashes) took {:?}", collected_code_hashes.len(), t3.elapsed());
 
     drop(db); // close db before removing directory
 
