@@ -1124,24 +1124,12 @@ async fn insert_storages(
             batch.len()
         );
     }
-    info!("SST ingestion complete. Starting trie construction for {} accounts...", accounts_with_storage.len());
+    let total_accounts = accounts_with_storage.len();
+    info!("SST ingestion complete. Starting trie construction for {total_accounts} accounts...");
     let snapshot = db.snapshot();
-
-    let account_with_storage_and_tries = accounts_with_storage
-        .into_iter()
-        .map(|account_hash| {
-            (
-                account_hash,
-                store
-                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                    .expect("Should be able to open trie"),
-            )
-        })
-        .collect::<Vec<(H256, Trie)>>();
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
-    let total_accounts = account_with_storage_and_tries.len();
     let mut accounts_processed = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
@@ -1152,33 +1140,52 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
-    scope(|scope| {
-        let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
-        for (account_hash, trie) in account_with_storage_and_tries.iter() {
-            let sender = sender.clone();
-            let buffer_sender = buffer_sender.clone();
-            let buffer_receiver = buffer_receiver.clone();
-            if counter >= thread_count - 1 {
-                let _ = receiver.recv();
-                counter -= 1;
-                accounts_processed += 1;
-                if accounts_processed % 10000 == 0 {
-                    info!("Storage trie insertion: {accounts_processed}/{total_accounts} accounts");
-                }
-            }
-            counter += 1;
-            let pool_clone = pool.clone();
-            let mut iter = snapshot.raw_iterator();
-            let task = Box::new(move || {
-                let mut buffer: [u8; 64] = [0_u8; 64];
-                buffer[..32].copy_from_slice(&account_hash.0);
-                iter.seek(buffer);
-                let iter = RocksDBIterator {
-                    iter,
-                    limit: *account_hash,
-                };
+    // Process accounts in batches to avoid allocating all 65M tries at once (OOM on mainnet).
+    let batch_size = 100_000;
+    let account_vec: Vec<H256> = accounts_with_storage.into_iter().collect();
+    for batch in account_vec.chunks(batch_size) {
+        let batch_tries: Vec<(H256, Trie)> = batch
+            .iter()
+            .map(|account_hash| {
+                (
+                    *account_hash,
+                    store
+                        .open_direct_storage_trie(*account_hash, *EMPTY_TRIE_HASH)
+                        .expect("Should be able to open trie"),
+                )
+            })
+            .collect();
 
-                let _ = trie_from_sorted_accounts(
+        scope(|scope| {
+            let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
+            for (account_hash, trie) in batch_tries.iter() {
+                let sender = sender.clone();
+                let buffer_sender = buffer_sender.clone();
+                let buffer_receiver = buffer_receiver.clone();
+                if counter >= thread_count - 1 {
+                    let _ = receiver.recv();
+                    counter -= 1;
+                    accounts_processed += 1;
+                    if accounts_processed % 10000 == 0 {
+                        info!(
+                            "Storage trie insertion: {accounts_processed}/{total_accounts} accounts"
+                        );
+                    }
+                }
+                counter += 1;
+                let pool_clone = pool.clone();
+                let mut iter = snapshot.raw_iterator();
+                let account_hash = *account_hash;
+                let task = Box::new(move || {
+                    let mut buffer: [u8; 64] = [0_u8; 64];
+                    buffer[..32].copy_from_slice(&account_hash.0);
+                    iter.seek(buffer);
+                    let iter = RocksDBIterator {
+                        iter,
+                        limit: account_hash,
+                    };
+
+                    let _ = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
                     pool_clone,
@@ -1191,11 +1198,13 @@ async fn insert_storages(
                     );
                 })
                 .map_err(SyncError::TrieGenerationError);
-                let _ = sender.send(());
-            });
-            pool.execute(task);
-        }
-    });
+                    let _ = sender.send(());
+                });
+                pool.execute(task);
+            }
+        });
+        // batch_tries dropped here, freeing memory before next batch
+    }
 
     // close db before removing directory
     drop(snapshot);
