@@ -390,6 +390,7 @@ impl Blockchain {
                 .last()
                 .map(|r| r.cumulative_gas_used)
                 .unwrap_or(0);
+            let rt_handle = tokio::runtime::Handle::current();
             if let Some(receipt) = execute_polygon_system_calls(
                 block,
                 &parent_header,
@@ -397,6 +398,7 @@ impl Blockchain {
                 &mut vm,
                 cumulative_gas,
                 self.bor_engine.as_deref(),
+                &rt_handle,
             )? {
                 execution_result.receipts.push(receipt);
             }
@@ -601,6 +603,9 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        // Capture tokio runtime handle before entering thread::scope —
+        // scoped OS threads don't inherit the tokio context.
+        let rt_handle = tokio::runtime::Handle::current();
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
@@ -665,6 +670,7 @@ impl Blockchain {
                                 vm,
                                 cumulative_gas,
                                 self.bor_engine.as_deref(),
+                                &rt_handle,
                             )? {
                                 execution_result.receipts.push(receipt);
                             }
@@ -1497,6 +1503,7 @@ impl Blockchain {
 
         // For Polygon: execute Bor system calls and create state sync receipt.
         if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let rt_handle = tokio::runtime::Handle::current();
             let cumulative_gas = execution_result
                 .receipts
                 .last()
@@ -1509,6 +1516,7 @@ impl Blockchain {
                 vm,
                 cumulative_gas,
                 self.bor_engine.as_deref(),
+                &rt_handle,
             )? {
                 execution_result.receipts.push(receipt);
             }
@@ -3175,6 +3183,7 @@ fn execute_polygon_system_calls(
     vm: &mut Evm,
     cumulative_gas_used: u64,
     bor_engine: Option<&BorEngine>,
+    rt_handle: &tokio::runtime::Handle,
 ) -> Result<Option<Receipt>, ChainError> {
     use ethrex_common::types::{Log, TxType};
     use ethrex_polygon::consensus::engine::encode_validator_bytes;
@@ -3235,14 +3244,13 @@ fn execute_polygon_system_calls(
             let next_span_id = current_span_id + 1;
 
             // Fetch the next span from Heimdall (async → sync bridge)
-            let next_span = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(engine.heimdall.fetch_span(next_span_id))
-            })
-            .map_err(|e| {
-                ChainError::Custom(format!(
-                    "Failed to fetch span {next_span_id} from Heimdall: {e}"
-                ))
-            })?;
+            let next_span = rt_handle
+                .block_on(engine.heimdall.fetch_span(next_span_id))
+                .map_err(|e| {
+                    ChainError::Custom(format!(
+                        "Failed to fetch span {next_span_id} from Heimdall: {e}"
+                    ))
+                })?;
 
             let validator_bytes = encode_validator_bytes(&next_span.validators);
             let producer_bytes = encode_validator_bytes(&next_span.selected_producers);
