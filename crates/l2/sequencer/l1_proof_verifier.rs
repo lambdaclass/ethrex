@@ -125,8 +125,23 @@ impl L1ProofVerifier {
     }
 
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
-        let first_batch_to_verify =
-            1 + get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+        let last_verified =
+            get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+
+        // Sync DB cursor if on-chain verification advanced past it (e.g. node
+        // crashed after the verify tx landed but before writing the cursor).
+        let (db_batch, _) = self.rollup_store.get_latest_verified_batch_proof().await?;
+        if db_batch < last_verified {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ProofVerifierError::InternalError(e.to_string()))?
+                .as_secs();
+            self.rollup_store
+                .set_latest_verified_batch_proof(last_verified, now)
+                .await?;
+        }
+
+        let first_batch_to_verify = last_verified + 1;
 
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
