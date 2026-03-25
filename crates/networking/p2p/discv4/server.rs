@@ -35,8 +35,10 @@ use tokio::net::UdpSocket;
 use tracing::{debug, error, info, trace};
 
 const EXPIRATION_SECONDS: u64 = 20;
-/// Interval between revalidation checks.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
+/// Interval between revalidation checks (how often we run the revalidation loop).
+/// Must be short so that new contacts from handle_neighbors (which no longer
+/// sends immediate pings) get validated quickly and become usable for lookups.
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// The initial interval between peer lookups, until the number of peers reaches
