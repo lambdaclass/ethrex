@@ -1253,7 +1253,7 @@ async fn handle_incoming_message(
                             // Small gaps (1-2 blocks behind) resolve naturally via
                             // forward sync without needing a bridge cycle.
                             let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
-                            if block_number > latest + 16 {
+                            if block_number > latest + 64 {
                                 warn!(
                                     peer=%state.node,
                                     block_number,
