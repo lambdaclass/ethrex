@@ -16,6 +16,7 @@ use std::{
 };
 
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
@@ -430,7 +431,7 @@ pub fn node_pending_children(
 
                 pending_children_count += 1;
                 paths.extend(vec![RequestMetadata {
-                    hash: child.compute_hash().finalize(),
+                    hash: child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                     path: child_path,
                     parent_path: path.clone(),
                 }]);
@@ -452,7 +453,10 @@ pub fn node_pending_children(
             pending_children_count += 1;
 
             paths.extend(vec![RequestMetadata {
-                hash: node.child.compute_hash().finalize(),
+                hash: node
+                    .child
+                    .compute_hash(&NativeCrypto)
+                    .finalize(&NativeCrypto),
                 path: child_path,
                 parent_path: path.clone(),
             }]);
