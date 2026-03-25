@@ -343,6 +343,7 @@ cast call &lt;PAYMENT_SERVICE_ADDRESS&gt; "getQuota(address)(uint256)" &lt;PROOF
   --committer.l1-private-key &lt;COMMITTER_PRIVATE_KEY&gt;  \
   --proof-coordinator.l1-private-key &lt;PROOF_COORDINATOR_PRIVATE_KEY&gt;  \
   --aligned.beacon-url &lt;ALIGNED_BEACON_URL&gt; \
+  --aligned.resubmission-timeout 86400 \
   --datadir ethrex_l2 \
   --no-monitor
 </code></pre>
@@ -352,6 +353,7 @@ cast call &lt;PAYMENT_SERVICE_ADDRESS&gt; "getQuota(address)(uint256)" &lt;PROOF
 <li><code>--aligned</code>: Enables aligned mode, enforcing all required parameters.</li>
 <li><code>--aligned.beacon-url</code>: URL of the beacon client used by the Aligned SDK to verify proof aggregations, it has to support <code>/eth/v1/beacon/blobs</code></li>
 <li><code>--aligned-network</code>: Parameter used by the Aligned SDK. Available networks: <code>devnet</code>, <code>hoodi</code>, <code>mainnet</code>.</li>
+<li><code>--aligned.resubmission-timeout</code>: Timeout in seconds before resending a proof not yet verified on-chain. Required when <code>--aligned</code> is enabled. Aligned typically aggregates once per day, so set this accordingly (e.g. <code>86400</code> for 24h).</li>
 <li><code>--aligned.from-block</code>: (Optional) Starting L1 block number for proof aggregation search. Helps avoid scanning old blocks from before proofs were being sent. If not set, the search starts from the beginning.</li>
 </ul>
 <p>If you can't find a beacon client URL which supports that endpoint, you can run your own with lighthouse and ethrex:</p>

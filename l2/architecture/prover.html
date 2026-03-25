@@ -261,7 +261,7 @@
 <p><strong>Prover type check</strong>: is the prover's type (SP1, RISC0, Exec, TDX) in the set of proof types required by this deployment? If not, the coordinator responds with <code>ProverTypeNotNeeded</code>. This is a permanent rejection — the prover binary is incompatible with this coordinator's configuration.</p>
 </li>
 <li>
-<p><strong>Resolve next batch</strong>: the coordinator computes the next batch to prove as <code>1 + latest_sent_batch_proof</code> (the batch immediately after the last one whose proof was submitted to L1).</p>
+<p><strong>Resolve next batch</strong>: the coordinator computes the next batch to prove as <code>1 + latest_verified_batch_proof</code> (the batch immediately after the last one verified on-chain).</p>
 </li>
 <li>
 <p><strong>Proof already exists</strong>: does a proof from this prover type already exist for the batch? If so, the coordinator responds with an empty <code>BatchResponse</code> — there's nothing for this prover to do right now.</p>

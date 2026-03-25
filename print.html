@@ -5266,6 +5266,7 @@ cast call &lt;PAYMENT_SERVICE_ADDRESS&gt; "getQuota(address)(uint256)" &lt;PROOF
   --committer.l1-private-key &lt;COMMITTER_PRIVATE_KEY&gt;  \
   --proof-coordinator.l1-private-key &lt;PROOF_COORDINATOR_PRIVATE_KEY&gt;  \
   --aligned.beacon-url &lt;ALIGNED_BEACON_URL&gt; \
+  --aligned.resubmission-timeout 86400 \
   --datadir ethrex_l2 \
   --no-monitor
 </code></pre>
@@ -5275,6 +5276,7 @@ cast call &lt;PAYMENT_SERVICE_ADDRESS&gt; "getQuota(address)(uint256)" &lt;PROOF
 <li><code>--aligned</code>: Enables aligned mode, enforcing all required parameters.</li>
 <li><code>--aligned.beacon-url</code>: URL of the beacon client used by the Aligned SDK to verify proof aggregations, it has to support <code>/eth/v1/beacon/blobs</code></li>
 <li><code>--aligned-network</code>: Parameter used by the Aligned SDK. Available networks: <code>devnet</code>, <code>hoodi</code>, <code>mainnet</code>.</li>
+<li><code>--aligned.resubmission-timeout</code>: Timeout in seconds before resending a proof not yet verified on-chain. Required when <code>--aligned</code> is enabled. Aligned typically aggregates once per day, so set this accordingly (e.g. <code>86400</code> for 24h).</li>
 <li><code>--aligned.from-block</code>: (Optional) Starting L1 block number for proof aggregation search. Helps avoid scanning old blocks from before proofs were being sent. If not set, the search starts from the beginning.</li>
 </ul>
 <p>If you can't find a beacon client URL which supports that endpoint, you can run your own with lighthouse and ethrex:</p>
@@ -5623,11 +5625,16 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <li>Chain verification is blocked at the lost proof's batch number</li>
 <li>Proofs for subsequent batches continue to generate and queue</li>
 </ul>
-<h3 id="recovery-steps-1"><a class="header" href="#recovery-steps-1">Recovery Steps</a></h3>
+<h3 id="automatic-recovery"><a class="header" href="#automatic-recovery">Automatic Recovery</a></h3>
+<p>The <code>--aligned.resubmission-timeout</code> flag (required in aligned mode) configures a time-based resubmission mechanism. If a proof has been sent to Aligned but on-chain verification has not advanced within the specified timeout (e.g. <code>86400</code> seconds = 24h), the L1ProofSender automatically resets its cursor and resends the proof. Look for the following log message:</p>
+<pre><code>ERROR Aligned verification timed out, attempting resubmission
+</code></pre>
+<p>If automatic resubmission resolves the issue, no manual intervention is needed. The steps below are for cases where manual investigation or intervention is required.</p>
+<h3 id="manual-recovery-steps"><a class="header" href="#manual-recovery-steps">Manual Recovery Steps</a></h3>
 <h4 id="step-1-confirm-the-proof-is-lost"><a class="header" href="#step-1-confirm-the-proof-is-lost">Step 1: Confirm the Proof is Lost</a></h4>
-<p><strong>Check what batch the system thinks it sent:</strong></p>
-<pre><code class="language-sql">-- Check the latest sent batch pointer (SQL storage)
-SELECT batch FROM latest_sent WHERE _id = 0;
+<p><strong>Check what batch the system thinks it sent to Aligned:</strong></p>
+<pre><code class="language-sql">-- Check the latest batch sent to Aligned gateway (SQL storage)
+SELECT batch FROM latest_sent_to_aligned WHERE _id = 0;
 </code></pre>
 <p><strong>Check if the proof exists locally:</strong></p>
 <pre><code class="language-sql">-- Check if proof exists in the rollup store (SQL storage)
@@ -5667,15 +5674,15 @@ for receipt in receipts {
     println!("Nonce: {}, Status: {}", receipt.nonce, receipt.status);
 }
 <span class="boring">}</span></code></pre></pre>
-<p>If the proof exists locally, <code>latest_sent</code> shows the batch was sent, but neither the gateway has a receipt nor Aligned has aggregated it after an extended period, the proof was likely lost.</p>
-<h4 id="step-2-reset-the-latest-sent-batch-pointer"><a class="header" href="#step-2-reset-the-latest-sent-batch-pointer">Step 2: Reset the Latest Sent Batch Pointer</a></h4>
-<p>The proof still exists in the database - the system just thinks it was already sent. Reset the <code>latest_sent</code> value to make the L1ProofSender resend it:</p>
+<p>If the proof exists locally, <code>latest_sent_to_aligned</code> shows the batch was sent, but neither the gateway has a receipt nor Aligned has aggregated it after an extended period, the proof was likely lost.</p>
+<h4 id="step-2-reset-the-aligned-cursor"><a class="header" href="#step-2-reset-the-aligned-cursor">Step 2: Reset the Aligned Cursor</a></h4>
+<p>The proof still exists in the database - the system just thinks it was already sent. Reset the <code>latest_sent_to_aligned</code> value to make the L1ProofSender resend it:</p>
 <pre><code class="language-sql">-- Reset to the batch before the lost one (SQL storage)
--- This will cause L1ProofSender to resend batch N on the next iteration
-UPDATE latest_sent SET batch = &lt;BATCH_NUMBER - 1&gt; WHERE _id = 0;
+-- L1ProofSender will resend batch N on the next iteration
+UPDATE latest_sent_to_aligned SET batch = &lt;BATCH_NUMBER - 1&gt; WHERE _id = 0;
 </code></pre>
 <p>For example, if batch 5 was lost:</p>
-<pre><code class="language-sql">UPDATE latest_sent SET batch = 4 WHERE _id = 0;
+<pre><code class="language-sql">UPDATE latest_sent_to_aligned SET batch = 4 WHERE _id = 0;
 </code></pre>
 <blockquote>
 <p><strong>Note</strong>: It's safe to resend a proof even if Aligned didn't actually lose it. Aligned treats each submission with a different nonce as a separate entry, so the SDK will return <code>Ok</code> and queue the proof again. If the original proof was already aggregated, the L1ProofVerifier will find it when checking the commitment (which is deterministic based on vk + public inputs). The only downside is paying an extra aggregation fee for the duplicate submission.</p>
@@ -5707,7 +5714,7 @@ UPDATE latest_sent SET batch = &lt;BATCH_NUMBER - 1&gt; WHERE _id = 0;
 <li>Users cannot withdraw funds (withdrawals require batch verification)</li>
 <li>L2 can continue producing blocks but they won't be finalized</li>
 </ul>
-<h3 id="recovery-steps-2"><a class="header" href="#recovery-steps-2">Recovery Steps</a></h3>
+<h3 id="recovery-steps-1"><a class="header" href="#recovery-steps-1">Recovery Steps</a></h3>
 <p>This requires <strong>switching from Aligned mode to Standard mode</strong>.</p>
 <h4 id="step-1-stop-the-l2-node"><a class="header" href="#step-1-stop-the-l2-node">Step 1: Stop the L2 Node</a></h4>
 <ul>
@@ -5758,7 +5765,7 @@ ethrex l2 \
 <li>New proofs cannot be submitted to Aligned</li>
 <li>Verification stalls for new batches</li>
 </ul>
-<h3 id="recovery-steps-3"><a class="header" href="#recovery-steps-3">Recovery Steps</a></h3>
+<h3 id="recovery-steps-2"><a class="header" href="#recovery-steps-2">Recovery Steps</a></h3>
 <h4 id="step-1-deposit-more-funds"><a class="header" href="#step-1-deposit-more-funds">Step 1: Deposit More Funds</a></h4>
 <p>Using the Aligned CLI from the <code>aligned_layer</code> repository:</p>
 <pre><code class="language-bash">cd aligned_layer/aggregation_mode/cli
@@ -5787,7 +5794,7 @@ cargo run --release -- deposit \
 <li>Invalid proof is automatically deleted from local storage</li>
 <li>Proof regeneration is triggered automatically</li>
 </ul>
-<h3 id="recovery-steps-4"><a class="header" href="#recovery-steps-4">Recovery Steps</a></h3>
+<h3 id="recovery-steps-3"><a class="header" href="#recovery-steps-3">Recovery Steps</a></h3>
 <p><strong>Automatic recovery</strong> - the system handles this:</p>
 <ol>
 <li>L1ProofSender detects <code>InvalidProof</code> error</li>
@@ -5837,7 +5844,7 @@ cargo run --release -- deposit \
 <h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
 <div class="table-wrapper"><table><thead><tr><th>Scenario</th><th>Automatic Recovery</th><th>Manual Intervention</th></tr></thead><tbody>
 <tr><td>Aligned temporary outage</td><td>Yes</td><td>None needed</td></tr>
-<tr><td>Proof lost before verification</td><td>No</td><td>Reset <code>latest_sent</code> pointer to trigger resend</td></tr>
+<tr><td>Proof lost before verification</td><td>Yes (via <code>--aligned.resubmission-timeout</code>)</td><td>Reset <code>latest_sent_to_aligned</code> pointer if automatic resubmission fails</td></tr>
 <tr><td>Aligned permanent shutdown</td><td>No</td><td>Switch to Standard mode</td></tr>
 <tr><td>Insufficient quota balance</td><td>No</td><td>Deposit funds</td></tr>
 <tr><td>Proof marked invalid</td><td>Yes</td><td>None needed</td></tr>
@@ -8055,7 +8062,7 @@ In this section we talk a bit about them, first going through the more specific 
 <p><strong>Prover type check</strong>: is the prover's type (SP1, RISC0, Exec, TDX) in the set of proof types required by this deployment? If not, the coordinator responds with <code>ProverTypeNotNeeded</code>. This is a permanent rejection — the prover binary is incompatible with this coordinator's configuration.</p>
 </li>
 <li>
-<p><strong>Resolve next batch</strong>: the coordinator computes the next batch to prove as <code>1 + latest_sent_batch_proof</code> (the batch immediately after the last one whose proof was submitted to L1).</p>
+<p><strong>Resolve next batch</strong>: the coordinator computes the next batch to prove as <code>1 + latest_verified_batch_proof</code> (the batch immediately after the last one verified on-chain).</p>
 </li>
 <li>
 <p><strong>Proof already exists</strong>: does a proof from this prover type already exist for the batch? If so, the coordinator responds with an empty <code>BatchResponse</code> — there's nothing for this prover to do right now.</p>
@@ -13171,6 +13178,9 @@ Variable-size fields:
 
     /// Fee estimation type ("instant" or "default")
     pub fee_estimate: String,
+
+    /// Timeout in seconds before resending a proof not yet verified on-chain
+    pub resubmission_timeout_secs: u64,
 }
 <span class="boring">}</span></code></pre></pre>
 <h3 id="cli-flags"><a class="header" href="#cli-flags">CLI Flags</a></h3>
@@ -13178,6 +13188,7 @@ Variable-size fields:
 <tr><td><code>--aligned</code></td><td>Enable Aligned mode</td></tr>
 <tr><td><code>--aligned-network</code></td><td>Network for Aligned SDK (devnet/testnet/mainnet)</td></tr>
 <tr><td><code>--aligned.beacon-url</code></td><td>Beacon client URL supporting <code>/eth/v1/beacon/blobs</code></td></tr>
+<tr><td><code>--aligned.resubmission-timeout</code></td><td>Timeout (seconds) before resending an unverified proof (e.g. <code>86400</code> for 24h)</td></tr>
 </tbody></table>
 </div>
 <h3 id="environment-variables"><a class="header" href="#environment-variables">Environment Variables</a></h3>
@@ -13186,6 +13197,7 @@ Variable-size fields:
 <tr><td><code>ETHREX_ALIGNED_MODE</code></td><td>Enable Aligned mode</td></tr>
 <tr><td><code>ETHREX_ALIGNED_BEACON_URL</code></td><td>Beacon client URL</td></tr>
 <tr><td><code>ETHREX_ALIGNED_NETWORK</code></td><td>Aligned network</td></tr>
+<tr><td><code>ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS</code></td><td>Timeout (seconds) before resending an unverified proof</td></tr>
 </tbody></table>
 </div>
 <p><strong>Deployer Configuration:</strong></p>
@@ -13265,7 +13277,7 @@ AlignedProofAggregatorService.verifyProofInclusion()
 <h3 id="key-metrics"><a class="header" href="#key-metrics">Key Metrics</a></h3>
 <ul>
 <li><code>batch_verification_gas</code>: Gas used per batch verification</li>
-<li><code>latest_sent_batch_proof</code>: Last batch proof submitted to Aligned</li>
+<li><code>latest_verified_batch_proof</code>: Last batch proof verified on-chain</li>
 <li><code>last_verified_batch</code>: Last batch verified on L1</li>
 </ul>
 <h3 id="log-messages"><a class="header" href="#log-messages">Log Messages</a></h3>
@@ -18067,6 +18079,11 @@ Aligned options:
           Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
 
           [env: ETHREX_ALIGNED_FROM_BLOCK=]
+
+      --aligned.resubmission-timeout &lt;SECONDS&gt;
+          Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).
+
+          [env: ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS=]
 
       --aligned.fee-estimate &lt;FEE_ESTIMATE&gt;
           Fee estimate for Aligned sdk
