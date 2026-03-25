@@ -97,11 +97,15 @@ pub async fn run_ef_test(
     run(test_key, test, &blockchain, &store).await?;
 
     // For Amsterdam tests, exercise the parallel BAL execution path as a correctness check.
+    // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
+    // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
+    // same final state is reached.
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
 
     // Run stateless if backend was specified for this.
+    // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
         // If the fixture provides an executionWitness (zkevm format), use it directly
         // instead of regenerating the witness from blockchain execution.
