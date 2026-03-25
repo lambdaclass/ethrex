@@ -278,7 +278,40 @@ async fn handle_forkchoice(
     )
     .await
     {
-        Ok(head) => {
+        Ok((head, reorg_data)) => {
+            // If a reorg occurred, re-execute blocks on the new fork to rebuild state.
+            if let Some(reorg) = reorg_data {
+                info!(
+                    "Re-executing {} blocks after reorg",
+                    reorg.blocks_to_reexecute.len(),
+                );
+                for (number, hash) in &reorg.blocks_to_reexecute {
+                    let block = context
+                        .storage
+                        .get_block_by_hash(*hash)
+                        .await
+                        .map_err(|e| {
+                            RpcErr::Internal(format!(
+                                "Failed to fetch block {number} for reorg re-execution: {e}"
+                            ))
+                        })?
+                        .ok_or_else(|| {
+                            RpcErr::Internal(format!(
+                                "Block {number} ({hash:#x}) not found for reorg re-execution"
+                            ))
+                        })?;
+                    context
+                        .blockchain
+                        .add_block_pipeline(block, None)
+                        .map_err(|e| {
+                            RpcErr::Internal(format!(
+                                "Failed to re-execute block {number} during reorg: {e}"
+                            ))
+                        })?;
+                }
+                info!("Reorg re-execution complete");
+            }
+
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
@@ -320,9 +353,9 @@ async fn handle_forkchoice(
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
-                // TODO(#5564): handle arbitrary reorgs
-                InvalidForkChoice::StateNotReachable => {
-                    // Ignore the FCU
+                InvalidForkChoice::ReorgTooDeep(_) => {
+                    // Reorg exceeds layer cache depth, fall back to sync.
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {

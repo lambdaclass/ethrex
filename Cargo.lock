@@ -3901,6 +3901,7 @@ dependencies = [
  "bytes",
  "ethrex-common",
  "ethrex-crypto",
+ "fastbloom",
  "hex",
  "lru 0.12.5",
  "rocksdb",

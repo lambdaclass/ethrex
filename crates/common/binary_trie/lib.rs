@@ -1,6 +1,7 @@
 pub mod error;
 pub mod hash;
 pub mod key_mapping;
+pub mod layer_cache;
 pub mod merkle;
 pub mod node;
 pub mod node_store;

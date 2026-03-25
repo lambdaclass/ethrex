@@ -4,12 +4,24 @@ use ethrex_common::{
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     error::{self, InvalidForkChoice},
     is_canonical,
 };
+
+/// Maximum reorg depth supported by the layer cache.
+const LAYER_CACHE_MAX_DEPTH: u64 = 128;
+
+/// Information about a reorg that occurred during fork choice.
+/// The caller must re-execute blocks from the fork point to the new head
+/// to rebuild state.
+#[derive(Debug)]
+pub struct ReorgData {
+    /// Blocks on the new fork that need re-execution, ordered oldest to newest.
+    pub blocks_to_reexecute: Vec<(BlockNumber, BlockHash)>,
+}
 
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
@@ -25,7 +37,7 @@ pub async fn apply_fork_choice(
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
-) -> Result<BlockHeader, InvalidForkChoice> {
+) -> Result<(BlockHeader, Option<ReorgData>), InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
@@ -104,6 +116,49 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
+    // Detect reorg: if new canonical blocks exist and the fork point is
+    // behind the current latest, the canonical chain is being switched.
+    let reorg_data = if !new_canonical_blocks.is_empty() && link_block_number < latest {
+        let reorg_depth = latest - link_block_number;
+        if reorg_depth > LAYER_CACHE_MAX_DEPTH {
+            return Err(InvalidForkChoice::ReorgTooDeep(LAYER_CACHE_MAX_DEPTH));
+        }
+        info!("Reorg detected: depth={reorg_depth}, reloading binary trie from checkpoint");
+
+        // Reload binary trie from disk checkpoint. This clears layers and root map.
+        let checkpoint = store
+            .reload_binary_trie()
+            .map_err(InvalidForkChoice::StoreError)?;
+        info!("Binary trie reloaded from checkpoint at block {checkpoint}");
+
+        // Collect blocks that need re-execution, oldest to newest.
+        // If the trie checkpoint is behind the fork point, we must first
+        // replay canonical blocks from checkpoint+1..=fork_point, then
+        // the new fork's blocks.
+        let mut blocks_to_reexecute: Vec<(BlockNumber, BlockHash)> = Vec::new();
+
+        // Canonical blocks between checkpoint and fork point.
+        for n in (checkpoint + 1)..=link_block_number {
+            if let Ok(Some(hash)) = store.get_canonical_block_hash(n).await {
+                blocks_to_reexecute.push((n, hash));
+            }
+        }
+
+        // New fork blocks (new_canonical_blocks is newest-to-oldest, reverse it).
+        let mut fork_blocks: Vec<(BlockNumber, BlockHash)> =
+            new_canonical_blocks.iter().copied().collect();
+        fork_blocks.reverse();
+        blocks_to_reexecute.extend(fork_blocks);
+        // Add the head block itself.
+        blocks_to_reexecute.push((head.number, head_hash));
+
+        Some(ReorgData {
+            blocks_to_reexecute,
+        })
+    } else {
+        None
+    };
+
     // Finished all validations.
 
     store
@@ -122,7 +177,7 @@ pub async fn apply_fork_choice(
         METRICS_BLOCKS.set_head_height(head.number);
     );
 
-    Ok(head)
+    Ok((head, reorg_data))
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.

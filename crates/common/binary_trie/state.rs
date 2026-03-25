@@ -42,6 +42,14 @@ pub struct BinaryTrieState {
     /// The underlying binary trie holding all state leaves.
     trie: BinaryTrie,
 
+    /// Leaf diffs accumulated during the current block's `apply_account_update` calls.
+    /// Drained via `take_block_diffs()` after each block's merkleization.
+    current_block_diffs: Vec<([u8; 32], Option<[u8; 32]>)>,
+
+    /// Binary trie state root from the previous block (before the current block's updates).
+    /// Used as the `parent` when inserting a layer into the layer cache.
+    prev_state_root: [u8; 32],
+
     /// Tracks which storage keys each account has written.
     /// Needed for `removed_storage` (SELFDESTRUCT) since the binary trie
     /// has no prefix-enumeration — we can't discover all storage keys
@@ -80,6 +88,8 @@ impl BinaryTrieState {
     pub fn new() -> Self {
         Self {
             trie: BinaryTrie::new(),
+            current_block_diffs: Vec::new(),
+            prev_state_root: [0u8; 32],
             storage_keys: Mutex::new(FxHashMap::default()),
             #[cfg(feature = "rocksdb")]
             db: None,
@@ -127,6 +137,8 @@ impl BinaryTrieState {
 
         Ok(Self {
             trie,
+            current_block_diffs: Vec::new(),
+            prev_state_root: [0u8; 32],
             storage_keys: Mutex::new(storage_keys),
             db: Some(db),
             storage_keys_cf,
@@ -262,17 +274,86 @@ impl BinaryTrieState {
         self.last_flushed_block = block_number;
     }
 
+    /// Returns the last flushed block number.
+    pub fn last_flushed_block(&self) -> u64 {
+        self.last_flushed_block
+    }
+
+    /// Reload the trie and storage keys from the last disk checkpoint,
+    /// discarding all in-memory mutations since the last flush.
+    ///
+    /// Returns the checkpoint block number, or 0 if no checkpoint exists.
+    /// Used during reorg recovery to restore the trie to a known-good state
+    /// before re-executing blocks on the new fork.
+    #[cfg(feature = "rocksdb")]
+    pub fn reload_from_checkpoint(&mut self) -> Result<u64, BinaryTrieError> {
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| BinaryTrieError::StoreError("no DB configured".into()))?
+            .clone();
+
+        let store = NodeStore::open(Arc::clone(&db), self.trie.store.nodes_cf)?;
+        let root = store.load_root();
+        self.trie = BinaryTrie { store, root };
+
+        let storage_keys = if root.is_some() {
+            load_storage_keys(&db, self.storage_keys_cf)?
+        } else {
+            FxHashMap::default()
+        };
+        *self.storage_keys.lock().unwrap() = storage_keys;
+        self.dirty_storage_keys.clear();
+        self.blocks_since_flush = 0;
+        self.current_block_diffs.clear();
+        self.prev_state_root = [0u8; 32];
+
+        let checkpoint = self.checkpoint_block().unwrap_or(0);
+        self.last_flushed_block = checkpoint;
+
+        Ok(checkpoint)
+    }
+
     /// Compute the binary trie state root via merkelization.
     ///
     /// Takes `&mut self` because computed hashes are cached back into the trie
     /// nodes for incremental reuse on subsequent calls.
     ///
     /// After computing the root, strips subtree caches from dirty nodes to
-    /// reduce memory between blocks (~16KB saved per dirty StemNode).
+    /// reduce memory (~16KB per StemNode). The cached_hash is preserved so
+    /// merkleization doesn't re-hash the entire trie on subsequent blocks.
+    /// Subtree caches will be rebuilt on the next merkleization call, but
+    /// the incremental update path runs in O(8) when cached_hash exists.
     pub fn state_root(&mut self) -> [u8; 32] {
         let root = merkelize(&mut self.trie);
         self.trie.store.strip_dirty_subtrees();
         root
+    }
+
+    /// Drain and return the leaf diffs accumulated during the current block,
+    /// along with the parent root (the state root before this block's updates).
+    ///
+    /// Also advances `prev_state_root` to `new_root` so the next block's
+    /// diffs will have the correct parent.
+    ///
+    /// Call this after `state_root()` returns `new_root`.
+    pub fn take_block_diffs(
+        &mut self,
+        new_root: [u8; 32],
+    ) -> ([u8; 32], Vec<([u8; 32], Option<[u8; 32]>)>) {
+        let parent = self.prev_state_root;
+        self.prev_state_root = new_root;
+        (parent, std::mem::take(&mut self.current_block_diffs))
+    }
+
+    /// Record a trie insert into the current block's diffs.
+    fn record_insert(&mut self, key: [u8; 32], value: [u8; 32]) {
+        self.current_block_diffs.push((key, Some(value)));
+    }
+
+    /// Record a trie remove into the current block's diffs.
+    fn record_remove(&mut self, key: [u8; 32]) {
+        self.current_block_diffs.push((key, None));
     }
 
     /// Read account state from the binary trie.
@@ -365,8 +446,9 @@ impl BinaryTrieState {
             // sends both together), update the code_hash leaf directly so the trie
             // stays consistent.
             if update.info.is_none() {
-                self.trie
-                    .insert(get_tree_key_for_code_hash(address), code.hash.0)?;
+                let code_hash_key = get_tree_key_for_code_hash(address);
+                self.trie.insert(code_hash_key, code.hash.0)?;
+                self.record_insert(code_hash_key, code.hash.0);
             }
         }
 
@@ -375,30 +457,44 @@ impl BinaryTrieState {
             self.write_account_info(address, info, update.code.as_ref())?;
         }
 
-        // Apply storage changes.
-        for (key, value) in &update.added_storage {
-            let storage_key = U256::from_big_endian(key.as_bytes());
-            let tree_key = get_tree_key_for_storage_slot(address, storage_key);
+        // Apply storage changes: trie mutations first, then update storage_keys.
+        if !update.added_storage.is_empty() {
+            let mut keys_to_add = Vec::new();
+            let mut keys_to_remove = Vec::new();
 
-            if value.is_zero() {
-                // Zero means delete.
-                self.trie.remove(tree_key)?;
-                let mut storage_keys = self.storage_keys.lock().unwrap();
+            for (key, value) in &update.added_storage {
+                let storage_key = U256::from_big_endian(key.as_bytes());
+                let tree_key = get_tree_key_for_storage_slot(address, storage_key);
+
+                if value.is_zero() {
+                    self.trie.remove(tree_key)?;
+                    self.record_remove(tree_key);
+                    keys_to_remove.push(*key);
+                } else {
+                    let value_bytes = value.to_big_endian();
+                    self.trie.insert(tree_key, value_bytes)?;
+                    self.record_insert(tree_key, value_bytes);
+                    keys_to_add.push(*key);
+                }
+            }
+
+            // Batch-update storage_keys with a single lock acquisition.
+            let mut storage_keys = self.storage_keys.lock().unwrap();
+            for key in keys_to_remove {
                 if let Some(keys) = storage_keys.get_mut(address) {
-                    keys.remove(key);
+                    keys.remove(&key);
                     if keys.is_empty() {
                         storage_keys.remove(address);
                     }
                 }
-            } else {
-                self.trie.insert(tree_key, value.to_big_endian())?;
-                self.storage_keys
-                    .lock()
-                    .unwrap()
-                    .entry(*address)
-                    .or_default()
-                    .insert(*key);
             }
+            if !keys_to_add.is_empty() {
+                let entry = storage_keys.entry(*address).or_default();
+                for key in keys_to_add {
+                    entry.insert(key);
+                }
+            }
+            drop(storage_keys);
             #[cfg(feature = "rocksdb")]
             self.dirty_storage_keys.insert(*address);
         }
@@ -661,12 +757,14 @@ impl BinaryTrieState {
             .map(|c| c.bytecode.len() as u32)
             .unwrap_or_else(|| self.get_code_size(address));
 
+        let basic_data_key = get_tree_key_for_basic_data(address);
         let basic_data = pack_basic_data(0, code_size, info.nonce, info.balance);
-        self.trie
-            .insert(get_tree_key_for_basic_data(address), basic_data)?;
+        self.trie.insert(basic_data_key, basic_data)?;
+        self.record_insert(basic_data_key, basic_data);
 
-        self.trie
-            .insert(get_tree_key_for_code_hash(address), info.code_hash.0)?;
+        let code_hash_key = get_tree_key_for_code_hash(address);
+        self.trie.insert(code_hash_key, info.code_hash.0)?;
+        self.record_insert(code_hash_key, info.code_hash.0);
 
         Ok(())
     }
@@ -682,18 +780,19 @@ impl BinaryTrieState {
             } else {
                 (code.bytecode.len() as u64).div_ceil(31)
             };
-            // Remove chunks that won't be overwritten by the new code.
             for chunk_id in new_num_chunks..old_num_chunks {
-                self.trie
-                    .remove(get_tree_key_for_code_chunk(address, chunk_id))?;
+                let key = get_tree_key_for_code_chunk(address, chunk_id);
+                self.trie.remove(key)?;
+                self.record_remove(key);
             }
         }
 
         // Write new code chunks.
         let chunks = chunkify_code(&code.bytecode);
         for (i, chunk) in chunks.iter().enumerate() {
-            self.trie
-                .insert(get_tree_key_for_code_chunk(address, i as u64), *chunk)?;
+            let key = get_tree_key_for_code_chunk(address, i as u64);
+            self.trie.insert(key, *chunk)?;
+            self.record_insert(key, *chunk);
         }
 
         Ok(())
@@ -705,15 +804,20 @@ impl BinaryTrieState {
         let code_size = self.get_code_size(address);
 
         // Remove basic_data and code_hash leaves.
-        self.trie.remove(get_tree_key_for_basic_data(address))?;
-        self.trie.remove(get_tree_key_for_code_hash(address))?;
+        let basic_key = get_tree_key_for_basic_data(address);
+        let code_hash_key = get_tree_key_for_code_hash(address);
+        self.trie.remove(basic_key)?;
+        self.record_remove(basic_key);
+        self.trie.remove(code_hash_key)?;
+        self.record_remove(code_hash_key);
 
         // Remove code chunks.
         if code_size > 0 {
             let num_chunks = (code_size as u64).div_ceil(31);
             for chunk_id in 0..num_chunks {
-                self.trie
-                    .remove(get_tree_key_for_code_chunk(address, chunk_id))?;
+                let key = get_tree_key_for_code_chunk(address, chunk_id);
+                self.trie.remove(key)?;
+                self.record_remove(key);
             }
         }
 
@@ -735,8 +839,8 @@ impl BinaryTrieState {
                 let storage_key = U256::from_big_endian(key.as_bytes());
                 let tree_key = get_tree_key_for_storage_slot(address, storage_key);
                 self.trie.remove(tree_key)?;
+                self.record_remove(tree_key);
             }
-            // Mark the address as dirty (entry removed from storage_keys).
             #[cfg(feature = "rocksdb")]
             self.dirty_storage_keys.insert(*address);
         }

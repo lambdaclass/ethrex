@@ -66,8 +66,8 @@ use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
-    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-    Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
+    AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Receipt,
+    Transaction, WrappedEIP4844Transaction, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -118,6 +118,7 @@ type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList, // updates (trie applied in-thread when precompute_witnesses=false)
     bool,               // trie_done_in_pipeline: true if merkleizer applied trie updates
+    Option<[u8; 32]>,   // binary trie root (Some if merkleization ran in-pipeline)
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
     usize,              // max queue length
     [Instant; 6],       // timing instants
@@ -504,19 +505,27 @@ impl Blockchain {
 
                         // Apply trie updates in-thread (pipelined with execution) unless
                         // witness pre-computation is enabled, which needs the pre-state trie.
-                        let (account_updates_list, trie_done) = if !precompute_witnesses {
+                        let (account_updates_list, trie_done, trie_root) = if !precompute_witnesses
+                        {
                             match storage_ref.handle_merkleization(&flat_updates) {
-                                Ok(list) => (list, true),
-                                Err(_) => (AccountUpdatesList::from_updates(&flat_updates), false),
+                                Ok((list, root)) => (list, true, Some(root)),
+                                Err(_) => {
+                                    (AccountUpdatesList::from_updates(&flat_updates), false, None)
+                                }
                             }
                         } else {
                             // precompute_witnesses=true: skip in-thread trie apply so the
                             // caller can generate pre-state proofs first.
-                            (AccountUpdatesList::from_updates(&flat_updates), false)
+                            (AccountUpdatesList::from_updates(&flat_updates), false, None)
                         };
 
                         let merkleizer_end_instant = Instant::now();
-                        Ok((account_updates_list, trie_done, merkleizer_end_instant))
+                        Ok((
+                            account_updates_list,
+                            trie_done,
+                            trie_root,
+                            merkleizer_end_instant,
+                        ))
                     })
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn merkleizer thread: {e}"))
@@ -534,8 +543,12 @@ impl Blockchain {
                     .unwrap_or(Duration::ZERO);
                 Ok((execution_result, merkleizer_result, warmer_duration))
             })?;
-        let (account_updates_list, trie_done_in_pipeline, merkleizer_end_instant) =
-            merkleizer_result?;
+        let (
+            account_updates_list,
+            trie_done_in_pipeline,
+            pipeline_trie_root,
+            merkleizer_end_instant,
+        ) = merkleizer_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
         let exec_merkleize_end_instant = Instant::now();
@@ -544,6 +557,7 @@ impl Blockchain {
             execution_result,
             account_updates_list,
             trie_done_in_pipeline,
+            pipeline_trie_root,
             produced_bal,
             max_queue_length,
             [
@@ -1502,6 +1516,7 @@ impl Blockchain {
             res,
             account_updates_list,
             trie_done_in_pipeline,
+            pipeline_trie_root,
             produced_bal,
             merkle_queue_length,
             instants,
@@ -1554,6 +1569,9 @@ impl Blockchain {
                 .map_err(ChainError::StoreError)?
         } else {
             // Trie already advanced in the merkleizer thread; only flush if needed.
+            if let Some(root) = pipeline_trie_root {
+                self.storage.set_binary_trie_root(block.hash(), root);
+            }
             self.storage
                 .flush_binary_trie_if_needed(block_number, block.hash())
                 .map_err(ChainError::StoreError)?;

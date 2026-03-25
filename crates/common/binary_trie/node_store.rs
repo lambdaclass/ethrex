@@ -12,9 +12,13 @@ use crate::node::{Node, NodeId};
 /// Default maximum number of clean nodes kept in the LRU cache.
 ///
 /// With sparse StemNode values, node sizes are: InternalNode ≈ 65 bytes,
-/// StemNode ≈ 450 bytes (BTreeMap overhead + 1-5 values). A cap of 2M
-/// gives roughly 2M * ~250 bytes avg ≈ ~500 MB.
-const DEFAULT_CLEAN_CACHE_CAP: usize = 2_000_000;
+/// Clean LRU cache capacity. Nodes vary widely in size (InternalNode ~100 bytes,
+/// StemNode with subtree cache up to ~10KB). Combined with dirty_nodes and
+/// warm_nodes (unbounded HashMaps), total memory is hard to predict.
+/// 100K entries keeps memory bounded (~500MB-1GB) while still caching
+/// the hot working set. Nodes evicted from the LRU are loaded from RocksDB
+/// on demand (only during merkleization, not EVM execution).
+const DEFAULT_CLEAN_CACHE_CAP: usize = 100_000;
 
 // Meta keys for RocksDB storage (stored alongside nodes in BINARY_TRIE_NODES CF).
 // The 0xFF prefix ensures they don't collide with u64 node IDs (8 bytes, no prefix).

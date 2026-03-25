@@ -45,7 +45,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
@@ -188,6 +188,19 @@ pub struct Store {
     /// When set, account and storage reads delegate to the binary trie instead
     /// of the MPT. Set via `set_binary_trie_state` after the store is created.
     binary_trie_state: Option<Arc<RwLock<ethrex_binary_trie::state::BinaryTrieState>>>,
+
+    /// Per-block leaf diff cache for the binary trie. Enables reorg support
+    /// by keeping uncommitted state in memory as layers.
+    binary_trie_layer_cache: Arc<RwLock<ethrex_binary_trie::layer_cache::BinaryTrieLayerCache>>,
+
+    /// Maps `block_hash -> binary_trie_root` for blocks in the layer cache.
+    /// Binary trie roots are NOT stored in block headers (which have MPT roots).
+    binary_trie_root_map: Arc<RwLock<FxHashMap<BlockHash, [u8; 32]>>>,
+
+    /// Pending FKV updates per binary trie state root, written to disk at
+    /// layer commit time. Each entry holds the flat_updates and code_updates
+    /// for one block (or batch).
+    pending_fkv_updates: Arc<RwLock<FxHashMap<[u8; 32], (Vec<AccountUpdate>, Vec<(H256, Code)>)>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -1415,7 +1428,7 @@ impl Store {
             receipts,
             code_updates,
             batch_mode,
-            flat_updates,
+            flat_updates: _,
         } = update_batch;
 
         // Skip trie worker when there are no MPT account/storage updates.
@@ -1456,27 +1469,6 @@ impl Store {
             None
         };
 
-        // Pre-collect storage keys to delete for accounts with storage cleared.
-        // Done before the write tx because the read view and write batch are separate.
-        let storage_keys_to_delete: rustc_hash::FxHashMap<H256, Vec<Vec<u8>>> = {
-            let read_view = db.begin_read()?;
-            flat_updates
-                .iter()
-                .filter(|u| u.removed_storage || u.removed)
-                .map(|u| {
-                    let hashed_address = hash_address_fixed(&u.address);
-                    let prefix = hashed_address.as_bytes().to_vec();
-                    let keys: Vec<Vec<u8>> = read_view
-                        .prefix_iterator(STORAGE_FLATKEYVALUE, &prefix)?
-                        .filter_map(|item| item.ok().map(|(k, _)| k.to_vec()))
-                        .collect();
-                    Ok((hashed_address, keys))
-                })
-                .collect::<Result<_, StoreError>>()?
-        };
-
-        // Read view for looking up existing FKV entries (e.g. prior storage_root).
-        let fkv_read = db.begin_read()?;
         let mut tx = db.begin_write()?;
 
         for block in blocks {
@@ -1518,101 +1510,9 @@ impl Store {
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
 
-        // Write flat key-value state for O(1) account and storage reads.
-        for update in &flat_updates {
-            let hashed_address = hash_address_fixed(&update.address);
-
-            if update.removed {
-                // Delete account entry and all its storage from FKV.
-                tx.delete(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?;
-                // Storage keys were collected before the write tx (O(1) lookup).
-                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
-                    for key in keys {
-                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
-                    }
-                }
-                continue;
-            }
-
-            if update.removed_storage {
-                // Delete all existing storage for this account (SELFDESTRUCT, O(1) lookup).
-                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
-                    for key in keys {
-                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
-                    }
-                }
-            }
-
-            // Write account state if info was updated.
-            if let Some(ref info) = update.info {
-                // Synthesize storage_root for EVM compatibility.
-                // The VM uses `storage_root != EMPTY_TRIE_HASH` to decide if
-                // an account has storage (affects CREATE gas costs, etc.).
-                // We determine the correct value from the update delta + the
-                // existing FKV entry (which tracks prior storage state).
-                let storage_root = if update.removed_storage && update.added_storage.is_empty() {
-                    // Storage was explicitly cleared and nothing re-added.
-                    *EMPTY_TRIE_HASH
-                } else if !update.added_storage.is_empty() {
-                    // This update adds storage keys.
-                    H256::from_low_u64_be(1)
-                } else {
-                    // No storage change in this update. Preserve the existing
-                    // FKV value: if the account previously had storage, keep
-                    // the sentinel; otherwise use EMPTY_TRIE_HASH.
-                    fkv_read
-                        .get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())
-                        .ok()
-                        .flatten()
-                        .and_then(|bytes| AccountState::decode(&bytes).ok())
-                        .map(|prev| prev.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH)
-                };
-                let account_state = AccountState {
-                    nonce: info.nonce,
-                    balance: info.balance,
-                    code_hash: info.code_hash,
-                    storage_root,
-                };
-                tx.put(
-                    ACCOUNT_FLATKEYVALUE,
-                    hashed_address.as_bytes(),
-                    &account_state.encode_to_vec(),
-                )?;
-            }
-
-            // Write or delete individual storage slots.
-            for (slot_key, value) in &update.added_storage {
-                let hashed_key = hash_key_fixed(slot_key);
-                let mut fkv_key = Vec::with_capacity(64);
-                fkv_key.extend_from_slice(hashed_address.as_bytes());
-                fkv_key.extend_from_slice(&hashed_key);
-                if value.is_zero() {
-                    tx.delete(STORAGE_FLATKEYVALUE, &fkv_key)?;
-                } else {
-                    tx.put(STORAGE_FLATKEYVALUE, &fkv_key, &value.encode_to_vec())?;
-                }
-            }
-
-            // If storage was added but info wasn't updated, ensure the FKV entry's
-            // storage_root sentinel is set so LEVM knows the account has storage.
-            // We must read via a separate read view since the write batch has no get().
-            if update.info.is_none() && !update.added_storage.is_empty() && !update.removed {
-                if let Some(bytes) =
-                    fkv_read.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?
-                {
-                    let mut account_state = AccountState::decode(&bytes)?;
-                    if account_state.storage_root == *EMPTY_TRIE_HASH {
-                        account_state.storage_root = H256::from_low_u64_be(1);
-                        tx.put(
-                            ACCOUNT_FLATKEYVALUE,
-                            hashed_address.as_bytes(),
-                            &account_state.encode_to_vec(),
-                        )?;
-                    }
-                }
-            }
-        }
+        // FKV writes are deferred to layer commit time. Per-block writes go
+        // only to the binary trie layer cache (recorded in handle_merkleization).
+        // FKV on disk is updated when the layer cache commits (~128 blocks).
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
         // Specifically, the next block produced MUST see this upper layer.
@@ -1690,6 +1590,11 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             binary_trie_state: None,
+            binary_trie_layer_cache: Arc::new(RwLock::new(
+                ethrex_binary_trie::layer_cache::BinaryTrieLayerCache::new(commit_threshold),
+            )),
+            binary_trie_root_map: Arc::new(RwLock::new(FxHashMap::default())),
+            pending_fkv_updates: Arc::new(RwLock::new(FxHashMap::default())),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
@@ -1808,6 +1713,54 @@ impl Store {
         self.binary_trie_state.clone()
     }
 
+    /// Record a block's binary trie state root for layer cache lookups.
+    pub fn set_binary_trie_root(&self, block_hash: BlockHash, root: [u8; 32]) {
+        if let Ok(mut map) = self.binary_trie_root_map.write() {
+            map.insert(block_hash, root);
+        }
+    }
+
+    /// Look up the binary trie state root for a given block hash.
+    pub fn get_binary_trie_root(&self, block_hash: BlockHash) -> Option<[u8; 32]> {
+        self.binary_trie_root_map
+            .read()
+            .ok()?
+            .get(&block_hash)
+            .copied()
+    }
+
+    /// Reload the binary trie from its last disk checkpoint, discarding
+    /// all in-memory mutations. Also clears the layer cache and root map.
+    /// Returns the checkpoint block number.
+    ///
+    /// On non-RocksDB backends, clears layers/root map and returns 0
+    /// (the trie has no persistent checkpoint).
+    pub fn reload_binary_trie(&self) -> Result<u64, StoreError> {
+        let bts = self
+            .binary_trie_state
+            .as_ref()
+            .ok_or_else(|| StoreError::Custom("binary trie state not initialized".to_string()))?;
+        let mut state = bts
+            .write()
+            .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
+        #[cfg(feature = "rocksdb")]
+        let checkpoint = state
+            .reload_from_checkpoint()
+            .map_err(|e| StoreError::Custom(format!("binary trie reload failed: {e}")))?;
+        #[cfg(not(feature = "rocksdb"))]
+        let checkpoint = 0u64;
+
+        // Clear layer cache and root map — all layers are from the old fork.
+        if let Ok(mut cache) = self.binary_trie_layer_cache.write() {
+            cache.clear();
+        }
+        if let Ok(mut map) = self.binary_trie_root_map.write() {
+            map.clear();
+        }
+
+        Ok(checkpoint)
+    }
+
     pub async fn get_account_info(
         &self,
         block_number: BlockNumber,
@@ -1821,30 +1774,71 @@ impl Store {
 
     pub fn get_account_info_by_hash(
         &self,
-        _block_hash: BlockHash,
+        block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let hashed_address = hash_address_fixed(&address);
-        let read_tx = self.backend.begin_read()?;
-        match read_tx.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())? {
-            Some(bytes) => {
-                let account_state = AccountState::decode(&bytes)?;
-                Ok(Some(AccountInfo {
-                    code_hash: account_state.code_hash,
-                    balance: account_state.balance,
-                    nonce: account_state.nonce,
-                }))
-            }
-            None => Ok(None),
-        }
+        Ok(self
+            .get_account_state_by_block_hash(block_hash, address)?
+            .map(|s| AccountInfo {
+                code_hash: s.code_hash,
+                balance: s.balance,
+                nonce: s.nonce,
+            }))
     }
 
-    /// Read account state at a specific block hash, delegating to FKV.
+    /// Read account state, checking the binary trie layer cache first,
+    /// then falling through to FKV on disk for committed state.
     pub fn get_account_state_by_block_hash(
         &self,
-        _block_hash: BlockHash,
+        block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        use ethrex_binary_trie::key_mapping::{
+            get_tree_key_for_basic_data, get_tree_key_for_code_hash, unpack_basic_data,
+        };
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        // Check layer cache if the block has a binary trie root.
+        if let Some(trie_root) = self.get_binary_trie_root(block_hash) {
+            let cache = self
+                .binary_trie_layer_cache
+                .read()
+                .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?;
+
+            let basic_data_key = get_tree_key_for_basic_data(&address);
+            match cache.get(trie_root, &basic_data_key) {
+                Some(None) => return Ok(None), // Account deleted in a layer.
+                Some(Some(basic_data)) => {
+                    let (_version, _code_size, nonce, balance) = unpack_basic_data(&basic_data);
+
+                    let code_hash_key = get_tree_key_for_code_hash(&address);
+                    let code_hash = match cache.get(trie_root, &code_hash_key) {
+                        Some(Some(hash)) => H256(hash),
+                        Some(None) | None => *EMPTY_KECCACK_HASH,
+                    };
+
+                    // For storage_root, fall through to FKV which has the
+                    // correct sentinel (FKV is still written per-block).
+                    let hashed_address = hash_address_fixed(&address);
+                    let read_tx = self.backend.begin_read()?;
+                    let storage_root = read_tx
+                        .get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?
+                        .and_then(|bytes| AccountState::decode(&bytes).ok())
+                        .map(|s| s.storage_root)
+                        .unwrap_or(*EMPTY_TRIE_HASH);
+
+                    return Ok(Some(AccountState {
+                        nonce,
+                        balance,
+                        storage_root,
+                        code_hash,
+                    }));
+                }
+                None => {} // Not in layers, fall through to FKV.
+            }
+        }
+
+        // Fall through to FKV for committed state.
         let hashed_address = hash_address_fixed(&address);
         let read_tx = self.backend.begin_read()?;
         match read_tx.get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())? {
@@ -1853,13 +1847,36 @@ impl Store {
         }
     }
 
-    /// Read a storage slot at a specific block hash, delegating to FKV.
+    /// Read a storage slot, checking the binary trie layer cache first,
+    /// then falling through to FKV on disk for committed state.
     pub fn get_storage_at_by_block_hash(
         &self,
-        _block_hash: BlockHash,
+        block_hash: BlockHash,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        use ethrex_binary_trie::key_mapping::get_tree_key_for_storage_slot;
+
+        // Check layer cache.
+        if let Some(trie_root) = self.get_binary_trie_root(block_hash) {
+            let storage_key_u256 = U256::from_big_endian(storage_key.as_bytes());
+            let tree_key = get_tree_key_for_storage_slot(&address, storage_key_u256);
+
+            let cache = self
+                .binary_trie_layer_cache
+                .read()
+                .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?;
+
+            match cache.get(trie_root, &tree_key) {
+                Some(None) => return Ok(None), // Slot deleted in a layer.
+                Some(Some(value)) => {
+                    return Ok(Some(U256::from_big_endian(&value)));
+                }
+                None => {} // Not in layers, fall through to FKV.
+            }
+        }
+
+        // Fall through to FKV for committed state.
         let hashed_address = hash_address_fixed(&address);
         let hashed_key = hash_key_fixed(&storage_key);
         let mut fkv_key = Vec::with_capacity(64);
@@ -1944,7 +1961,8 @@ impl Store {
         block_number: u64,
         account_updates: &[AccountUpdate],
     ) -> Result<AccountUpdatesList, StoreError> {
-        let result = self.handle_merkleization(account_updates)?;
+        let (result, trie_root) = self.handle_merkleization(account_updates)?;
+        self.set_binary_trie_root(block_hash, trie_root);
         self.flush_binary_trie_if_needed(block_number, block_hash)?;
         Ok(result)
     }
@@ -1953,10 +1971,15 @@ impl Store {
     ///
     /// Called from the merkleizer pipeline thread during pipelined block execution.
     /// Does NOT flush -- call `flush_binary_trie_if_needed` separately after storing.
+    /// Apply account updates to the binary trie, compute state root, and record
+    /// the block's leaf diffs into the layer cache.
+    ///
+    /// Returns `(AccountUpdatesList, binary_trie_root)`. The caller should pass
+    /// `binary_trie_root` to [`set_binary_trie_root`] with the block hash.
     pub fn handle_merkleization(
         &self,
         account_updates: &[AccountUpdate],
-    ) -> Result<AccountUpdatesList, StoreError> {
+    ) -> Result<(AccountUpdatesList, [u8; 32]), StoreError> {
         let bts = self
             .binary_trie_state
             .as_ref()
@@ -1977,10 +2000,29 @@ impl Store {
         }
         let root = state.state_root();
         tracing::debug!("Binary trie root: {}", ethrex_common::H256::from(root));
-        Ok(AccountUpdatesList {
-            code_updates,
-            flat_updates: account_updates.to_vec(),
-        })
+
+        // Record the block's leaf diffs into the layer cache.
+        let (parent_root, diffs) = state.take_block_diffs(root);
+        if !diffs.is_empty() {
+            self.binary_trie_layer_cache
+                .write()
+                .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?
+                .put_batch(parent_root, root, diffs);
+        }
+
+        // Clone account updates once, share between pending FKV and return value.
+        let flat_updates = account_updates.to_vec();
+        if let Ok(mut pending) = self.pending_fkv_updates.write() {
+            pending.insert(root, (flat_updates.clone(), code_updates.clone()));
+        }
+
+        Ok((
+            AccountUpdatesList {
+                code_updates,
+                flat_updates,
+            },
+            root,
+        ))
     }
 
     /// Flushes the binary trie to disk if the flush interval has been reached.
@@ -1999,9 +2041,162 @@ impl Store {
         let mut state = bts
             .write()
             .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
-        state
+        let flushed = state
             .flush_if_needed(block_number, block_hash)
             .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
+
+        // When the binary trie flushes, write all pending FKV updates to disk.
+        if flushed {
+            self.flush_all_pending_fkv()?;
+        }
+
+        Ok(())
+    }
+
+    /// Write FKV updates for the given binary trie roots (from committed layers).
+    /// Processes roots oldest-first so newer updates override older ones.
+    /// Drain all pending FKV updates and write them to disk.
+    /// Called when the binary trie flushes (~every 128 blocks).
+    fn flush_all_pending_fkv(&self) -> Result<(), StoreError> {
+        let all_pending: Vec<(Vec<AccountUpdate>, Vec<(H256, Code)>)> = {
+            let mut pending = self
+                .pending_fkv_updates
+                .write()
+                .map_err(|_| StoreError::Custom("pending FKV lock poisoned".to_string()))?;
+            pending.drain().map(|(_, v)| v).collect()
+        };
+
+        if all_pending.is_empty() {
+            return Ok(());
+        }
+
+        let mut all_flat: Vec<AccountUpdate> = Vec::new();
+        let mut all_code: Vec<(H256, Code)> = Vec::new();
+        for (flat, code) in all_pending {
+            all_flat.extend(flat);
+            all_code.extend(code);
+        }
+
+        self.write_fkv_updates(&all_flat, &all_code)
+    }
+
+    /// Write a batch of FKV updates (account state + storage slots + code) to disk.
+    fn write_fkv_updates(
+        &self,
+        flat_updates: &[AccountUpdate],
+        code_updates: &[(H256, Code)],
+    ) -> Result<(), StoreError> {
+        if flat_updates.is_empty() && code_updates.is_empty() {
+            return Ok(());
+        }
+
+        let db = self.backend.clone();
+
+        // Pre-collect storage keys to delete.
+        let storage_keys_to_delete: FxHashMap<H256, Vec<Vec<u8>>> = {
+            let read_view = db.begin_read()?;
+            flat_updates
+                .iter()
+                .filter(|u| u.removed_storage || u.removed)
+                .map(|u| {
+                    let hashed_address = hash_address_fixed(&u.address);
+                    let prefix = hashed_address.as_bytes().to_vec();
+                    let keys: Vec<Vec<u8>> = read_view
+                        .prefix_iterator(STORAGE_FLATKEYVALUE, &prefix)?
+                        .filter_map(|item| item.ok().map(|(k, _)| k.to_vec()))
+                        .collect();
+                    Ok((hashed_address, keys))
+                })
+                .collect::<Result<_, StoreError>>()?
+        };
+
+        let fkv_read = db.begin_read()?;
+        let mut tx = db.begin_write()?;
+
+        for (code_hash, code) in code_updates {
+            let buf = encode_code(code);
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+        }
+
+        for update in flat_updates {
+            let hashed_address = hash_address_fixed(&update.address);
+            let acct_fkv_key = hashed_address.as_bytes();
+
+            if update.removed {
+                tx.delete(ACCOUNT_FLATKEYVALUE, acct_fkv_key)?;
+                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
+                    for key in keys {
+                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
+                    }
+                }
+                continue;
+            }
+
+            if update.removed_storage {
+                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
+                    for key in keys {
+                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
+                    }
+                }
+            }
+
+            if let Some(ref info) = update.info {
+                let storage_root = if update.removed_storage && update.added_storage.is_empty() {
+                    *EMPTY_TRIE_HASH
+                } else if !update.added_storage.is_empty() {
+                    H256::from_low_u64_be(1)
+                } else {
+                    fkv_read
+                        .get(ACCOUNT_FLATKEYVALUE, acct_fkv_key)
+                        .ok()
+                        .flatten()
+                        .and_then(|bytes| AccountState::decode(&bytes).ok())
+                        .map(|prev| prev.storage_root)
+                        .unwrap_or(*EMPTY_TRIE_HASH)
+                };
+                let account_state = AccountState {
+                    nonce: info.nonce,
+                    balance: info.balance,
+                    code_hash: info.code_hash,
+                    storage_root,
+                };
+                tx.put(
+                    ACCOUNT_FLATKEYVALUE,
+                    acct_fkv_key,
+                    &account_state.encode_to_vec(),
+                )?;
+            }
+
+            for (slot_key, value) in &update.added_storage {
+                let hashed_key = hash_key_fixed(slot_key);
+                let mut fkv_key = Vec::with_capacity(64);
+                fkv_key.extend_from_slice(acct_fkv_key);
+                fkv_key.extend_from_slice(&hashed_key);
+                if value.is_zero() {
+                    tx.delete(STORAGE_FLATKEYVALUE, &fkv_key)?;
+                } else {
+                    tx.put(STORAGE_FLATKEYVALUE, &fkv_key, &value.encode_to_vec())?;
+                }
+            }
+
+            if update.info.is_none() && !update.added_storage.is_empty() && !update.removed {
+                if let Some(bytes) = fkv_read.get(ACCOUNT_FLATKEYVALUE, acct_fkv_key)? {
+                    let mut account_state = AccountState::decode(&bytes)?;
+                    if account_state.storage_root == *EMPTY_TRIE_HASH {
+                        account_state.storage_root = H256::from_low_u64_be(1);
+                        tx.put(
+                            ACCOUNT_FLATKEYVALUE,
+                            acct_fkv_key,
+                            &account_state.encode_to_vec(),
+                        )?;
+                    }
+                }
+            }
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
