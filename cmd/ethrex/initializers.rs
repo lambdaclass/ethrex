@@ -272,9 +272,18 @@ pub async fn init_rpc_api(
                     } else {
                         pending_head = Some(head);
                     }
+                } else if !syncer_clone.is_active() {
+                    // Fallback: periodically trigger sync to pick up new blocks
+                    // even when no P2P event set a pending_head (e.g., small gaps
+                    // that don't trigger the bridge). Fast no-op when caught up.
+                    let latest = store_clone.get_latest_block_number().await.unwrap_or(0);
+                    if latest > 0 {
+                        syncer_clone
+                            .sync_to_head(ethrex_common::H256::from_low_u64_be(1));
+                    }
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }
         });
     }
