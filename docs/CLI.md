@@ -627,6 +627,11 @@ Aligned options:
 
           [env: ETHREX_ALIGNED_FROM_BLOCK=]
 
+      --aligned.resubmission-timeout <SECONDS>
+          Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).
+
+          [env: ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS=]
+
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk
 
