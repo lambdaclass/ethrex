@@ -97,7 +97,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
 use std::time::{Duration, Instant};
@@ -193,6 +193,9 @@ pub struct Blockchain {
     /// In-memory buffer for Polygon NewBlock blocks whose parent hasn't arrived yet.
     /// Keyed by parent_hash so we can chain-follow after processing a block.
     polygon_pending_blocks: std::sync::Mutex<HashMap<H256, Block>>,
+    /// Epoch-seconds timestamp of the last successfully processed block.
+    /// Used by the bridge fallback to avoid re-triggering when P2P NewBlock is flowing.
+    last_block_processed_at: AtomicU64,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -313,6 +316,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             polygon_sync_head: std::sync::Mutex::new(None),
             polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
+            last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             bor_engine,
@@ -326,6 +330,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             polygon_sync_head: std::sync::Mutex::new(None),
             polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
+            last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             bor_engine: None,
@@ -2214,6 +2219,9 @@ impl Blockchain {
                 stored,
             );
         }
+        if result.is_ok() {
+            self.touch_last_block_time();
+        }
         result
     }
 
@@ -2373,6 +2381,10 @@ impl Blockchain {
                 warmer_duration,
                 instants,
             );
+        }
+
+        if result.is_ok() {
+            self.touch_last_block_time();
         }
 
         Ok((produced_bal, result))
@@ -3031,6 +3043,28 @@ impl Blockchain {
             .lock()
             .ok()?
             .remove(&parent_hash)
+    }
+
+    /// Record that a block was just successfully processed.
+    fn touch_last_block_time(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_block_processed_at.store(now, Ordering::Relaxed);
+    }
+
+    /// Seconds since the last block was successfully processed, or `u64::MAX` if never.
+    pub fn secs_since_last_block(&self) -> u64 {
+        let last = self.last_block_processed_at.load(Ordering::Relaxed);
+        if last == 0 {
+            return u64::MAX;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(last)
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
