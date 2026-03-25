@@ -636,9 +636,46 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        // Clone sender for polygon system calls after pipeline
+                        let polygon_tx = if matches!(self.options.r#type, BlockchainType::Polygon) {
+                            Some(tx.clone())
+                        } else {
+                            None
+                        };
                         let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
                         cancelled_ref.store(true, Ordering::Relaxed);
-                        let (execution_result, produced_bal) = result?;
+                        let (mut execution_result, produced_bal) = result?;
+
+                        // Polygon: execute Bor system calls and block alloc after pipeline
+                        if let Some(polygon_tx) = polygon_tx {
+                            let cumulative_gas = execution_result
+                                .receipts
+                                .last()
+                                .map(|r| r.cumulative_gas_used)
+                                .unwrap_or(0);
+                            if let Some(receipt) = execute_polygon_system_calls(
+                                block,
+                                parent_header,
+                                &chain_config,
+                                vm,
+                                cumulative_gas,
+                                self.bor_engine.as_deref(),
+                            )? {
+                                execution_result.receipts.push(receipt);
+                            }
+
+                            apply_polygon_block_alloc(block.header.number, &chain_config, vm)?;
+
+                            // Flush system call state transitions to merkleizer
+                            let transitions =
+                                vm.db.get_state_transitions_tx().map_err(EvmError::from)?;
+                            if !transitions.is_empty() {
+                                polygon_tx.send(transitions).map_err(|e| {
+                                    ChainError::Custom(format!("send polygon transitions: {e}"))
+                                })?;
+                                queue_length_ref.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -2172,12 +2209,6 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
-        // Polygon blocks use the non-pipeline path because Bor system calls
-        // (commitState/commitSpan) need to execute after regular transactions
-        // and before state transitions, which the pipeline doesn't support yet.
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            return self.add_block(block);
-        }
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result
     }
