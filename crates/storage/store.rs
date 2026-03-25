@@ -202,6 +202,9 @@ pub struct Store {
     /// for one block (or batch).
     pending_fkv_updates: Arc<RwLock<FxHashMap<[u8; 32], (Vec<AccountUpdate>, Vec<(H256, Code)>)>>>,
 
+    /// Channel for sending flush work (trie nodes + FKV) to the background thread.
+    flush_work_tx: SyncSender<FlushWork>,
+
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
@@ -1579,6 +1582,7 @@ impl Store {
                 last_written
             }
         };
+        let (flush_work_tx, flush_work_rx) = sync_channel::<FlushWork>(1);
         let mut background_threads = Vec::new();
         let mut store = Self {
             db_path,
@@ -1595,6 +1599,7 @@ impl Store {
             )),
             binary_trie_root_map: Arc::new(RwLock::new(FxHashMap::default())),
             pending_fkv_updates: Arc::new(RwLock::new(FxHashMap::default())),
+            flush_work_tx,
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
@@ -1662,6 +1667,36 @@ impl Store {
                 }
             }
         }));
+        // Background flush thread: writes trie nodes + FKV updates to disk.
+        let flush_backend = store.backend.clone();
+        background_threads.push(std::thread::spawn(move || {
+            loop {
+                match flush_work_rx.recv() {
+                    Ok(work) => {
+                        // Phase 1: write trie nodes batch (if present).
+                        #[cfg(feature = "rocksdb")]
+                        if let Some((db, batch)) = work.trie_batch {
+                            if let Err(e) = db.write(batch) {
+                                error!("Background trie flush failed: {e}");
+                            }
+                        }
+                        // Phase 2: write FKV updates.
+                        if let Err(e) = write_fkv_updates_static(
+                            flush_backend.as_ref(),
+                            &work.flat_updates,
+                            &work.code_updates,
+                        ) {
+                            error!("Background FKV flush failed: {e}");
+                        }
+                    }
+                    Err(err) => {
+                        debug!("Flush worker sender disconnected: {err}");
+                        return;
+                    }
+                }
+            }
+        }));
+
         store.background_threads = Arc::new(ThreadList {
             list: background_threads,
         });
@@ -2041,23 +2076,41 @@ impl Store {
         let mut state = bts
             .write()
             .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
-        let flushed = state
-            .flush_if_needed(block_number, block_hash)
-            .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
 
-        // When the binary trie flushes, write all pending FKV updates to disk.
-        if flushed {
-            self.flush_all_pending_fkv()?;
+        // Check if flush threshold reached.
+        if !state.should_flush() {
+            return Ok(());
         }
+
+        // Build the WriteBatch (fast: collects dirty nodes, rotates generations).
+        #[cfg(feature = "rocksdb")]
+        let trie_batch = {
+            let (db, batch) = state
+                .prepare_flush(block_number, block_hash)
+                .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
+            Some((db, batch))
+        };
+
+        drop(state); // Release the trie lock before background send.
+
+        // Collect pending FKV updates.
+        let (all_flat, all_code) = self.drain_pending_fkv()?;
+
+        // Send both trie batch + FKV to background thread.
+        self.flush_work_tx
+            .send(FlushWork {
+                #[cfg(feature = "rocksdb")]
+                trie_batch,
+                flat_updates: all_flat,
+                code_updates: all_code,
+            })
+            .map_err(|_| StoreError::Custom("flush worker disconnected".to_string()))?;
 
         Ok(())
     }
 
-    /// Write FKV updates for the given binary trie roots (from committed layers).
-    /// Processes roots oldest-first so newer updates override older ones.
-    /// Drain all pending FKV updates and write them to disk.
-    /// Called when the binary trie flushes (~every 128 blocks).
-    fn flush_all_pending_fkv(&self) -> Result<(), StoreError> {
+    /// Drain all pending FKV updates and return them.
+    fn drain_pending_fkv(&self) -> Result<(Vec<AccountUpdate>, Vec<(H256, Code)>), StoreError> {
         let all_pending: Vec<(Vec<AccountUpdate>, Vec<(H256, Code)>)> = {
             let mut pending = self
                 .pending_fkv_updates
@@ -2066,10 +2119,6 @@ impl Store {
             pending.drain().map(|(_, v)| v).collect()
         };
 
-        if all_pending.is_empty() {
-            return Ok(());
-        }
-
         let mut all_flat: Vec<AccountUpdate> = Vec::new();
         let mut all_code: Vec<(H256, Code)> = Vec::new();
         for (flat, code) in all_pending {
@@ -2077,7 +2126,7 @@ impl Store {
             all_code.extend(code);
         }
 
-        self.write_fkv_updates(&all_flat, &all_code)
+        Ok((all_flat, all_code))
     }
 
     /// Write a batch of FKV updates (account state + storage slots + code) to disk.
@@ -2086,120 +2135,131 @@ impl Store {
         flat_updates: &[AccountUpdate],
         code_updates: &[(H256, Code)],
     ) -> Result<(), StoreError> {
-        if flat_updates.is_empty() && code_updates.is_empty() {
-            return Ok(());
-        }
-
-        let db = self.backend.clone();
-
-        // Pre-collect storage keys to delete.
-        let storage_keys_to_delete: FxHashMap<H256, Vec<Vec<u8>>> = {
-            let read_view = db.begin_read()?;
-            flat_updates
-                .iter()
-                .filter(|u| u.removed_storage || u.removed)
-                .map(|u| {
-                    let hashed_address = hash_address_fixed(&u.address);
-                    let prefix = hashed_address.as_bytes().to_vec();
-                    let keys: Vec<Vec<u8>> = read_view
-                        .prefix_iterator(STORAGE_FLATKEYVALUE, &prefix)?
-                        .filter_map(|item| item.ok().map(|(k, _)| k.to_vec()))
-                        .collect();
-                    Ok((hashed_address, keys))
-                })
-                .collect::<Result<_, StoreError>>()?
-        };
-
-        let fkv_read = db.begin_read()?;
-        let mut tx = db.begin_write()?;
-
-        for (code_hash, code) in code_updates {
-            let buf = encode_code(code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
-            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
-            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
-        }
-
-        for update in flat_updates {
-            let hashed_address = hash_address_fixed(&update.address);
-            let acct_fkv_key = hashed_address.as_bytes();
-
-            if update.removed {
-                tx.delete(ACCOUNT_FLATKEYVALUE, acct_fkv_key)?;
-                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
-                    for key in keys {
-                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
-                    }
-                }
-                continue;
-            }
-
-            if update.removed_storage {
-                if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
-                    for key in keys {
-                        tx.delete(STORAGE_FLATKEYVALUE, key)?;
-                    }
-                }
-            }
-
-            if let Some(ref info) = update.info {
-                let storage_root = if update.removed_storage && update.added_storage.is_empty() {
-                    *EMPTY_TRIE_HASH
-                } else if !update.added_storage.is_empty() {
-                    H256::from_low_u64_be(1)
-                } else {
-                    fkv_read
-                        .get(ACCOUNT_FLATKEYVALUE, acct_fkv_key)
-                        .ok()
-                        .flatten()
-                        .and_then(|bytes| AccountState::decode(&bytes).ok())
-                        .map(|prev| prev.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH)
-                };
-                let account_state = AccountState {
-                    nonce: info.nonce,
-                    balance: info.balance,
-                    code_hash: info.code_hash,
-                    storage_root,
-                };
-                tx.put(
-                    ACCOUNT_FLATKEYVALUE,
-                    acct_fkv_key,
-                    &account_state.encode_to_vec(),
-                )?;
-            }
-
-            for (slot_key, value) in &update.added_storage {
-                let hashed_key = hash_key_fixed(slot_key);
-                let mut fkv_key = Vec::with_capacity(64);
-                fkv_key.extend_from_slice(acct_fkv_key);
-                fkv_key.extend_from_slice(&hashed_key);
-                if value.is_zero() {
-                    tx.delete(STORAGE_FLATKEYVALUE, &fkv_key)?;
-                } else {
-                    tx.put(STORAGE_FLATKEYVALUE, &fkv_key, &value.encode_to_vec())?;
-                }
-            }
-
-            if update.info.is_none() && !update.added_storage.is_empty() && !update.removed {
-                if let Some(bytes) = fkv_read.get(ACCOUNT_FLATKEYVALUE, acct_fkv_key)? {
-                    let mut account_state = AccountState::decode(&bytes)?;
-                    if account_state.storage_root == *EMPTY_TRIE_HASH {
-                        account_state.storage_root = H256::from_low_u64_be(1);
-                        tx.put(
-                            ACCOUNT_FLATKEYVALUE,
-                            acct_fkv_key,
-                            &account_state.encode_to_vec(),
-                        )?;
-                    }
-                }
-            }
-        }
-
-        tx.commit()?;
-        Ok(())
+        write_fkv_updates_static(self.backend.as_ref(), flat_updates, code_updates)
     }
 
+    // NOTE: remaining impl Store methods continue below, after write_fkv_updates_static.
+}
+
+/// Write FKV updates to disk. Standalone function usable from background threads.
+fn write_fkv_updates_static(
+    db: &dyn StorageBackend,
+    flat_updates: &[AccountUpdate],
+    code_updates: &[(H256, Code)],
+) -> Result<(), StoreError> {
+    if flat_updates.is_empty() && code_updates.is_empty() {
+        return Ok(());
+    }
+
+    // Pre-collect storage keys to delete.
+    let storage_keys_to_delete: FxHashMap<H256, Vec<Vec<u8>>> = {
+        let read_view = db.begin_read()?;
+        flat_updates
+            .iter()
+            .filter(|u| u.removed_storage || u.removed)
+            .map(|u| {
+                let hashed_address = hash_address_fixed(&u.address);
+                let prefix = hashed_address.as_bytes().to_vec();
+                let keys: Vec<Vec<u8>> = read_view
+                    .prefix_iterator(STORAGE_FLATKEYVALUE, &prefix)?
+                    .filter_map(|item| item.ok().map(|(k, _)| k.to_vec()))
+                    .collect();
+                Ok((hashed_address, keys))
+            })
+            .collect::<Result<_, StoreError>>()?
+    };
+
+    let fkv_read = db.begin_read()?;
+    let mut tx = db.begin_write()?;
+
+    for (code_hash, code) in code_updates {
+        let buf = encode_code(code);
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+        tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+        tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
+    }
+
+    for update in flat_updates {
+        let hashed_address = hash_address_fixed(&update.address);
+        let acct_fkv_key = hashed_address.as_bytes();
+
+        if update.removed {
+            tx.delete(ACCOUNT_FLATKEYVALUE, acct_fkv_key)?;
+            if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
+                for key in keys {
+                    tx.delete(STORAGE_FLATKEYVALUE, key)?;
+                }
+            }
+            continue;
+        }
+
+        if update.removed_storage {
+            if let Some(keys) = storage_keys_to_delete.get(&hashed_address) {
+                for key in keys {
+                    tx.delete(STORAGE_FLATKEYVALUE, key)?;
+                }
+            }
+        }
+
+        if let Some(ref info) = update.info {
+            let storage_root = if update.removed_storage && update.added_storage.is_empty() {
+                *EMPTY_TRIE_HASH
+            } else if !update.added_storage.is_empty() {
+                H256::from_low_u64_be(1)
+            } else {
+                fkv_read
+                    .get(ACCOUNT_FLATKEYVALUE, acct_fkv_key)
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| AccountState::decode(&bytes).ok())
+                    .map(|prev| prev.storage_root)
+                    .unwrap_or(*EMPTY_TRIE_HASH)
+            };
+            let account_state = AccountState {
+                nonce: info.nonce,
+                balance: info.balance,
+                code_hash: info.code_hash,
+                storage_root,
+            };
+            tx.put(
+                ACCOUNT_FLATKEYVALUE,
+                acct_fkv_key,
+                &account_state.encode_to_vec(),
+            )?;
+        }
+
+        for (slot_key, value) in &update.added_storage {
+            let hashed_key = hash_key_fixed(slot_key);
+            let mut fkv_key = Vec::with_capacity(64);
+            fkv_key.extend_from_slice(acct_fkv_key);
+            fkv_key.extend_from_slice(&hashed_key);
+            if value.is_zero() {
+                tx.delete(STORAGE_FLATKEYVALUE, &fkv_key)?;
+            } else {
+                tx.put(STORAGE_FLATKEYVALUE, &fkv_key, &value.encode_to_vec())?;
+            }
+        }
+
+        if update.info.is_none() && !update.added_storage.is_empty() && !update.removed {
+            if let Some(bytes) = fkv_read.get(ACCOUNT_FLATKEYVALUE, acct_fkv_key)? {
+                let mut account_state = AccountState::decode(&bytes)?;
+                if account_state.storage_root == *EMPTY_TRIE_HASH {
+                    account_state.storage_root = H256::from_low_u64_be(1);
+                    tx.put(
+                        ACCOUNT_FLATKEYVALUE,
+                        acct_fkv_key,
+                        &account_state.encode_to_vec(),
+                    )?;
+                }
+            }
+        }
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+impl Store {
     /// Performs the same actions as apply_account_updates_from_trie
     ///  but also returns the used storage tries with witness recorded
     pub fn apply_account_updates_from_trie_with_witness(
@@ -3304,6 +3364,20 @@ impl Store {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
     }
+}
+
+/// Work item for the background flush thread.
+/// Carries both the trie node WriteBatch and FKV updates.
+struct FlushWork {
+    /// Pre-built WriteBatch for binary trie nodes + storage_keys + metadata.
+    /// None when only FKV updates need flushing (no trie flush this cycle).
+    #[cfg(feature = "rocksdb")]
+    trie_batch: Option<(
+        std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
+        rocksdb::WriteBatch,
+    )>,
+    flat_updates: Vec<AccountUpdate>,
+    code_updates: Vec<(H256, Code)>,
 }
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;

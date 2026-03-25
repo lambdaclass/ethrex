@@ -175,6 +175,31 @@ impl BinaryTrieState {
     /// atomically in a single `WriteBatch`. On success the dirty sets are cleared.
     #[cfg(feature = "rocksdb")]
     pub fn flush(&mut self, block_number: u64, block_hash: H256) -> Result<(), BinaryTrieError> {
+        let (db, batch) = self.prepare_flush(block_number, block_hash)?;
+        db.write(batch)
+            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Build a `WriteBatch` with all dirty trie nodes and storage_keys,
+    /// then rotate generations and clear dirty state. The returned batch
+    /// can be written to RocksDB asynchronously.
+    ///
+    /// After this call, the in-memory trie state is ready for the next block
+    /// (dirty nodes moved to warm, caches stripped). The caller MUST write
+    /// the batch to disk eventually for crash consistency.
+    #[cfg(feature = "rocksdb")]
+    pub fn prepare_flush(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+    ) -> Result<
+        (
+            Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
+            rocksdb::WriteBatch,
+        ),
+        BinaryTrieError,
+    > {
         let db = self
             .db
             .as_ref()
@@ -193,7 +218,7 @@ impl BinaryTrieState {
         // 1. Flush trie nodes (dirty + freed nodes, root, next_id) into nodes_cf.
         self.trie.flush_to_batch(&mut batch, &nodes_cf);
 
-        // 2. Write dirty storage_keys entries: raw address (20 bytes) as key.
+        // 2. Write dirty storage_keys entries.
         {
             let storage_keys = self.storage_keys.lock().unwrap();
             for addr in &self.dirty_storage_keys {
@@ -204,38 +229,44 @@ impl BinaryTrieState {
                     }
                     batch.put_cf(&storage_keys_cf, addr.as_bytes(), &value);
                 } else {
-                    // Account's storage was fully cleared — delete the entry.
                     batch.delete_cf(&storage_keys_cf, addr.as_bytes());
                 }
             }
         }
 
-        // 3. Write checkpoint block number into nodes_cf (meta).
+        // 3. Write checkpoint metadata.
         batch.put_cf(&nodes_cf, META_BLOCK_KEY, block_number.to_le_bytes());
         batch.put_cf(&nodes_cf, META_BASE_HASH_KEY, block_hash.as_bytes());
 
-        db.write(batch)
-            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
+        // Clone db Arc before dropping the CF borrows.
+        let db_for_return = Arc::clone(&db);
+        drop(nodes_cf);
+        drop(storage_keys_cf);
 
-        // Evict dirty entries from in-memory cache (they're now persisted
-        // to disk and can be reloaded on demand). Non-dirty entries stay
-        // cached to avoid unnecessary RocksDB re-reads.
+        // 4. In-memory rotation: dirty → warm, caches stripped, dirty cleared.
         {
             let mut storage_keys = self.storage_keys.lock().unwrap();
             for addr in &self.dirty_storage_keys {
                 storage_keys.remove(addr);
             }
         }
-
         self.dirty_storage_keys.clear();
         self.blocks_since_flush = 0;
         self.last_flushed_block = block_number;
 
-        Ok(())
+        Ok((db_for_return, batch))
     }
 
     /// Flush to disk if the block threshold has been reached.
     ///
+    /// Check if the flush threshold has been reached.
+    /// Increments the block counter each call.
+    #[cfg(feature = "rocksdb")]
+    pub fn should_flush(&mut self) -> bool {
+        self.blocks_since_flush += 1;
+        self.blocks_since_flush >= self.flush_threshold
+    }
+
     /// Returns `true` if a flush was performed, `false` otherwise.
     /// Call this after each block's `apply_account_update` calls.
     #[cfg(feature = "rocksdb")]
