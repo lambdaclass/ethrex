@@ -1225,10 +1225,10 @@ async fn handle_incoming_message(
                         "Received new Polygon block via P2P"
                     );
 
-                    // Execute and store the block. blockchain.add_block() runs
-                    // Bor header validation, LEVM execution, and state root check.
+                    // Execute and store the block via the pipeline path, which
+                    // runs Bor system calls and merkleizes in parallel.
                     let announced_td = new_block.total_difficulty;
-                    match state.blockchain.add_block(new_block.block) {
+                    match state.blockchain.add_block_pipeline(new_block.block, None) {
                         Ok(()) => {
                             // Update the canonical head if the new block's total
                             // difficulty exceeds our current head. The peer announces
