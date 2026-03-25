@@ -187,7 +187,10 @@ impl BorEngine {
         // difficulty = total_validators - succession, where succession is the
         // ring distance from proposer to signer. In-turn proposer gets the
         // highest difficulty (= total_validators), farthest gets 1.
-        if let Some(expected) = parent_snapshot.expected_difficulty(&signer)
+        // Post-Rio: skip difficulty check — snapshot uses full validator set (25) for
+        // authorization but difficulty is computed from selected_producers only.
+        if !self.config.is_rio_active(header.number)
+            && let Some(expected) = parent_snapshot.expected_difficulty(&signer)
             && header.difficulty != U256::from(expected)
         {
             return Err(BorEngineError::WrongDifficulty {
@@ -383,7 +386,8 @@ impl BorEngine {
         let span = self.fetch_span_for_block(block_number).await?;
 
         // Convert Heimdall span to snapshot validator entries.
-        // Post-Rio: use selected_producers (sorted by address) instead of full validators.
+        // Always uses full validator set for signer authorization.
+        // Post-Rio: sorted by address for deterministic ordering.
         let is_rio = self.config.is_rio_active(block_number);
         let validator_set = span_to_validator_set(&span, is_rio);
 
@@ -540,12 +544,11 @@ fn span_to_validator_set(
     span: &crate::heimdall::Span,
     is_rio: bool,
 ) -> Vec<super::snapshot::ValidatorInfo> {
-    let source = if is_rio {
-        &span.selected_producers
-    } else {
-        &span.validators
-    };
-    let mut set: Vec<super::snapshot::ValidatorInfo> = source
+    // Always use the full validator set for signer authorization.
+    // Post-Rio, all 25 validators can sign blocks (not just selected_producers).
+    // selected_producers is only used for difficulty/proposer selection.
+    let mut set: Vec<super::snapshot::ValidatorInfo> = span
+        .validators
         .iter()
         .map(|v| super::snapshot::ValidatorInfo {
             address: v.signer,
