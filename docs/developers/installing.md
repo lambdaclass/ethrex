@@ -23,7 +23,7 @@ To build the client run
 cargo build --release --bin ethrex
 ```
 
-the following feature can be enable with `--features <features>`
+the following features can be enabled with `--features <features>`
 
 |Feature|Description|
 |-------|-----------|

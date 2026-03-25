@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }
@@ -20,6 +21,7 @@ tracing.workspace = true
 serde.workspace = true
 rkyv.workspace = true
 rayon.workspace = true
+rustc-hash.workspace = true
 
 bincode = "1"
 dyn-clone = "1.0"

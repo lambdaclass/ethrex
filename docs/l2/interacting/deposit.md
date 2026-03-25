@@ -21,7 +21,7 @@ rex l2 deposit 50000000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd2
 
 ## Verifying the updated L2 balance
 
-Once the deposit is made you can verify the balance has increase with:
+Once the deposit is made you can verify the balance has increased with:
 
 ```sh
 # Format: rex l2 balance <ADDRESS> [RPC_URL]

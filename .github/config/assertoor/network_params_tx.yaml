@@ -30,7 +30,8 @@ network_params:
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
 
 assertoor_params:
+  image: ethpandaops/assertoor:v0.0.17
   run_stability_check: false
   run_block_proposal_check: false
   tests:
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/c35b5c3a5fd543bcc843ee0e0af1e6255ca48dbd/playbooks/stable/eoa-transactions-test.yaml

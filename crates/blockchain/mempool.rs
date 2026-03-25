@@ -1,7 +1,9 @@
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque, hash_map::Entry},
     sync::RwLock,
 };
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
@@ -12,18 +14,23 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256, U256,
-    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
+    Address, H160, H256,
+    types::{
+        BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
+        kzg_commitment_to_versioned_hash,
+    },
 };
 use ethrex_storage::error::StoreError;
-use std::collections::HashSet;
 use tracing::warn;
 
 #[derive(Debug, Default)]
 struct MempoolInner {
-    broadcast_pool: HashSet<H256>,
-    transaction_pool: HashMap<H256, MempoolTransaction>,
-    blobs_bundle_pool: HashMap<H256, BlobsBundle>,
+    broadcast_pool: FxHashSet<H256>,
+    transaction_pool: FxHashMap<H256, MempoolTransaction>,
+    blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
+    /// Maps blob versioned hashes to transaction hashes that include them and a position inside
+    /// blob bundle where blob and its adjacent data is available.
+    blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
     max_mempool_size: usize,
@@ -35,7 +42,10 @@ impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
             txs_order: VecDeque::with_capacity(max_mempool_size * 2),
-            transaction_pool: HashMap::with_capacity(max_mempool_size),
+            transaction_pool: FxHashMap::with_capacity_and_hasher(
+                max_mempool_size,
+                Default::default(),
+            ),
             max_mempool_size,
             mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
             ..Default::default()
@@ -44,17 +54,37 @@ impl MempoolInner {
 
     /// Remove a transaction from the pool with the transaction pool lock already taken
     fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
-        if let Some(tx) = self.transaction_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool.remove(hash);
-            }
-
-            self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
-            self.transaction_pool.remove(hash);
-            self.broadcast_pool.remove(hash);
+        let Some(tx) = self.transaction_pool.remove(hash) else {
+            return Ok(());
         };
+        if matches!(tx.tx_type(), TxType::EIP4844) {
+            self.remove_blob_bundle(hash);
+        }
+
+        self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+        self.broadcast_pool.remove(hash);
 
         Ok(())
+    }
+
+    /// Remove a blobs bundle from the pool
+    pub fn remove_blob_bundle(&mut self, hash: &H256) {
+        let Some(h) = self.blobs_bundle_pool.remove(hash) else {
+            return;
+        };
+
+        for commitment in &h.commitments {
+            let versioned_hash = kzg_commitment_to_versioned_hash(commitment);
+            if let Entry::Occupied(mut entry) =
+                self.blobs_bundle_by_versioned_hash.entry(versioned_hash)
+            {
+                let txn_to_bundle = entry.get_mut();
+                txn_to_bundle.remove(hash);
+                if txn_to_bundle.is_empty() {
+                    entry.remove();
+                }
+            }
+        }
     }
 
     /// Remove the oldest transaction in the pool
@@ -78,13 +108,21 @@ impl MempoolInner {
 #[derive(Debug, Default)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
+    /// Signaled on transaction and blobs bundle insertions so payload
+    /// builders can await new work instead of busy-looping.
+    tx_added: tokio::sync::Notify,
 }
 
 impl Mempool {
     pub fn new(max_mempool_size: usize) -> Self {
         Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
+            tx_added: tokio::sync::Notify::new(),
         }
+    }
+
+    pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
+        &self.tx_added
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
@@ -123,6 +161,9 @@ impl Mempool {
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
+        // Drop the write lock before notifying to avoid holding it while waking waiters
+        drop(inner);
+        self.tx_added.notify_waiters();
 
         Ok(())
     }
@@ -143,8 +184,11 @@ impl Mempool {
         Ok(txs)
     }
 
-    pub fn clear_broadcasted_txs(&self) -> Result<(), StoreError> {
-        self.write()?.broadcast_pool.clear();
+    pub fn remove_broadcasted_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in hashes {
+            inner.broadcast_pool.remove(hash);
+        }
         Ok(())
     }
 
@@ -154,9 +198,16 @@ impl Mempool {
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
-        self.write()?
-            .blobs_bundle_pool
-            .insert(tx_hash, blobs_bundle);
+        let mut mempool = self.write()?;
+        for (i, c) in blobs_bundle.commitments.iter().enumerate() {
+            let versioned_hash = kzg_commitment_to_versioned_hash(c);
+            mempool
+                .blobs_bundle_by_versioned_hash
+                .entry(versioned_hash)
+                .or_default()
+                .insert(tx_hash, i);
+        }
+        mempool.blobs_bundle_pool.insert(tx_hash, blobs_bundle);
         Ok(())
     }
 
@@ -177,7 +228,7 @@ impl Mempool {
     pub fn filter_transactions(
         &self,
         filter: &PendingTxFilter,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+    ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let filter_tx = |tx: &Transaction| -> bool {
             // Filter by tx type
             let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
@@ -203,7 +254,9 @@ impl Mempool {
             // Filter by blob gas fee
             if is_blob_tx
                 && let Some(blob_fee) = filter.blob_fee
-                && tx.max_fee_per_blob_gas().is_none_or(|fee| fee < blob_fee)
+                && tx
+                    .max_fee_per_blob_gas()
+                    .is_none_or(|fee| fee < blob_fee.into())
             {
                 return false;
             }
@@ -215,9 +268,9 @@ impl Mempool {
     /// Gets all the transactions in the mempool
     pub fn get_all_txs_by_sender(
         &self,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
-            HashMap::with_capacity(128);
+    ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>> =
+            FxHashMap::with_capacity_and_hasher(128, Default::default());
         let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
@@ -236,9 +289,9 @@ impl Mempool {
     pub fn filter_transactions_with_filter_fn(
         &self,
         filter: &dyn Fn(&Transaction) -> bool,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> =
-            HashMap::with_capacity(128);
+    ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+        let mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>> =
+            FxHashMap::with_capacity_and_hasher(128, Default::default());
         let tx_pool = &self.read()?.transaction_pool;
 
         for (_, tx) in tx_pool.iter() {
@@ -317,6 +370,28 @@ impl Mempool {
     pub fn get_blobs_bundle_pool(&self) -> Result<Vec<BlobsBundle>, MempoolError> {
         let blobs_bundle_pool = &self.read()?.blobs_bundle_pool;
         Ok(blobs_bundle_pool.values().cloned().collect())
+    }
+
+    /// Returns blobs data (blob, commitment, proof) associated with the versioned hashes
+    pub fn get_blobs_data_by_versioned_hashes(
+        &self,
+        versioned_hashes: &[H256],
+    ) -> Result<Vec<Option<BlobTuple>>, MempoolError> {
+        let mempool = self.read()?;
+        let blobs_bundle_pool = &mempool.blobs_bundle_pool;
+        let blobs_bundle_by_versioned_hash = &mempool.blobs_bundle_by_versioned_hash;
+        let mut res = vec![None; versioned_hashes.len()];
+        for (idx, vh) in versioned_hashes.iter().enumerate() {
+            if let Some((found_hash, inner_pos)) = blobs_bundle_by_versioned_hash
+                .get(vh)
+                .and_then(|h| h.iter().next())
+            {
+                res[idx] = blobs_bundle_pool
+                    .get(found_hash)
+                    .and_then(|b| b.get_blob_tuple_by_index(*inner_pos))
+            }
+        }
+        Ok(res)
     }
 
     /// Returns the status of the mempool, which is the number of transactions currently in
@@ -406,7 +481,7 @@ impl Mempool {
 pub struct PendingTxFilter {
     pub min_tip: Option<u64>,
     pub base_fee: Option<u64>,
-    pub blob_fee: Option<U256>,
+    pub blob_fee: Option<u64>,
     pub only_plain_txs: bool,
     pub only_blob_txs: bool,
 }

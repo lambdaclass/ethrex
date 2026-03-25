@@ -1,5 +1,6 @@
 use std::mem;
 
+use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::{
@@ -138,15 +139,15 @@ impl LeafNode {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
-        self.compute_hash_no_alloc(&mut vec![])
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+        self.compute_hash_no_alloc(&mut vec![], crypto)
     }
 
     /// Computes the node's hash, using the provided buffer
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
         self.encode(buf);
-        let hash = NodeHash::from_encoded(buf);
+        let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash
     }
@@ -173,6 +174,7 @@ impl LeafNode {
 
 #[cfg(test)]
 mod test {
+    use ethrex_crypto::NativeCrypto;
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     use super::*;
@@ -329,7 +331,7 @@ mod test {
     #[test]
     fn compute_hash_x() {
         let node = LeafNode::new(Nibbles::from_bytes(b"key".as_ref()), b"value".to_vec());
-        let node_hash_ref = node.compute_hash();
+        let node_hash_ref = node.compute_hash(&NativeCrypto);
         assert_eq!(
             node_hash_ref.as_ref(),
             &[
@@ -345,7 +347,7 @@ mod test {
             b"a comparatively long value".to_vec(),
         );
 
-        let node_hash_ref = node.compute_hash();
+        let node_hash_ref = node.compute_hash(&NativeCrypto);
         assert_eq!(
             node_hash_ref.as_ref(),
             &[

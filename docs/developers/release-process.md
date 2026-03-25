@@ -153,7 +153,7 @@ If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`
 
 ### Failure on "latest release" workflow
 
-If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push that changes, follow these steps:
+If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.

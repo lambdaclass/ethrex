@@ -121,6 +121,9 @@ pub fn verify_blob_kzg_proof(
         not(feature = "kzg-rs")
     ))]
     {
+        let _blob = blob;
+        let _commitment = commitment;
+        let _proof = proof;
         return Err(KzgError::Unimplemented(
             "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
         ));
@@ -197,6 +200,10 @@ pub fn verify_kzg_proof(
         not(feature = "kzg-rs")
     ))]
     {
+        let _commitment_bytes = commitment_bytes;
+        let _z = z;
+        let _y = y;
+        let _proof_bytes = proof_bytes;
         return Err(KzgError::Unimplemented(
             "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
         ));

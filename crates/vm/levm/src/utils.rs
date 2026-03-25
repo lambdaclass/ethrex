@@ -7,13 +7,16 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
+        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST,
+        STATE_GAS_AUTH_TOTAL, STATE_GAS_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN,
+        WARM_ADDRESS_ACCESS_COST,
     },
     vm::{Substate, VM},
 };
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
+use ethrex_common::constants::SYSTEM_ADDRESS;
+use ethrex_common::types::Log;
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -22,8 +25,8 @@ use ethrex_common::{
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
-use std::collections::HashMap;
-pub type Storage = HashMap<U256, H256>;
+use rustc_hash::FxHashMap;
+pub type Storage = FxHashMap<U256, H256>;
 
 // ================== Address related functions ======================
 /// Converts address (H160) to word (U256)
@@ -69,6 +72,7 @@ pub fn calculate_create2_address(
 // ================== Backup related functions =======================
 
 /// Restore the state of the cache to the state it in the callframe backup.
+/// Also restores BAL recorder state changes (but not touched_addresses) per EIP-7928.
 pub fn restore_cache_state(
     db: &mut GeneralizedDatabase,
     callframe_backup: CallFrameBackup,
@@ -76,6 +80,8 @@ pub fn restore_cache_state(
     for (address, account) in callframe_backup.original_accounts_info {
         if let Some(current_account) = db.current_accounts_state.get_mut(&address) {
             current_account.info = account.info;
+            current_account.status = account.status;
+            current_account.has_storage = account.has_storage;
         }
     }
 
@@ -93,18 +99,25 @@ pub fn restore_cache_state(
         }
     }
 
+    // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)
+    if let Some(checkpoint) = callframe_backup.bal_checkpoint
+        && let Some(recorder) = db.bal_recorder.as_mut()
+    {
+        recorder.restore(checkpoint);
+    }
+
     Ok(())
 }
 
 // ================= Blob hash related functions =====================
 pub fn get_base_fee_per_blob_gas(
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS,
-        block_excess_blob_gas.unwrap_or_default(),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        block_excess_blob_gas.unwrap_or_default().into(),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -135,7 +148,7 @@ pub fn get_max_blob_gas_price(
 /// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<U256>,
+    block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
@@ -189,81 +202,10 @@ pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError
     }
 }
 
-#[cfg(any(
-    feature = "zisk",
-    feature = "risc0",
-    feature = "sp1",
-    not(feature = "secp256k1")
-))]
 pub fn eip7702_recover_address(
     auth_tuple: &AuthorizationTuple,
+    crypto: &dyn ethrex_crypto::Crypto,
 ) -> Result<Option<Address>, VMError> {
-    use ethrex_rlp::encode::RLPEncode;
-    use sha2::Digest;
-    use sha3::Keccak256;
-
-    if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
-        return Ok(None);
-    }
-    if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
-        return Ok(None);
-    }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
-        return Ok(None);
-    }
-
-    let rlp_buf = (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode_to_vec();
-
-    let mut digest = Keccak256::new();
-    digest.update([MAGIC]);
-    digest.update(rlp_buf);
-
-    let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
-    ]
-    .concat();
-
-    let Ok(recovery_id) = k256::ecdsa::RecoveryId::try_from(
-        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
-    ) else {
-        return Ok(None);
-    };
-
-    let Ok(signature) = k256::ecdsa::Signature::from_slice(&bytes) else {
-        return Ok(None);
-    };
-
-    let Ok(authority) =
-        k256::ecdsa::VerifyingKey::recover_from_digest(digest, &signature, recovery_id)
-    else {
-        return Ok(None);
-    };
-
-    let public_key = authority.to_encoded_point(false).to_bytes();
-    let mut hasher = Keccak256::new();
-    hasher.update(public_key.get(1..).ok_or(InternalError::Slicing)?);
-    let address_hash = hasher.finalize();
-
-    // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash
-        .get(12..32)
-        .ok_or(InternalError::Slicing)?
-        .try_into()
-        .map_err(|_| InternalError::TypeConversion)?;
-    Ok(Some(Address::from_slice(&authority_address_bytes)))
-}
-
-#[cfg(all(
-    not(feature = "zisk"),
-    not(feature = "risc0"),
-    not(feature = "sp1"),
-    feature = "secp256k1"
-))]
-pub fn eip7702_recover_address(
-    auth_tuple: &AuthorizationTuple,
-) -> Result<Option<Address>, VMError> {
-    use ethrex_crypto::keccak::keccak_hash;
     use ethrex_rlp::encode::RLPEncode;
 
     if auth_tuple.s_signature > *SECP256K1_ORDER_OVER2 || U256::zero() >= auth_tuple.s_signature {
@@ -279,40 +221,20 @@ pub fn eip7702_recover_address(
     let mut rlp_buf = Vec::with_capacity(128);
     rlp_buf.push(MAGIC);
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
-    let bytes = keccak_hash(&rlp_buf);
+    let msg = crypto.keccak256(&rlp_buf);
 
-    let message = secp256k1::Message::from_digest(bytes);
+    let y_parity: u8 =
+        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?;
 
-    let bytes = [
-        auth_tuple.r_signature.to_big_endian(),
-        auth_tuple.s_signature.to_big_endian(),
-    ]
-    .concat();
+    let mut sig = [0u8; 65];
+    sig[..32].copy_from_slice(&auth_tuple.r_signature.to_big_endian());
+    sig[32..64].copy_from_slice(&auth_tuple.s_signature.to_big_endian());
+    sig[64] = y_parity;
 
-    let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(
-        TryInto::<i32>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?,
-    ) else {
-        return Ok(None);
-    };
-
-    let Ok(signature) = secp256k1::ecdsa::RecoverableSignature::from_compact(&bytes, recovery_id)
-    else {
-        return Ok(None);
-    };
-
-    //recover
-    let Ok(authority) = signature.recover(&message) else {
-        return Ok(None);
-    };
-
-    let public_key = authority.serialize_uncompressed();
-    let address_hash = keccak_hash(&public_key[1..]);
-
-    // Get the last 20 bytes of the hash -> Address
-    let authority_address_bytes: [u8; 20] = address_hash[12..]
-        .try_into()
-        .map_err(|_| InternalError::TypeConversion)?;
-    Ok(Some(Address::from_slice(&authority_address_bytes)))
+    match crypto.recover_signer(&sig, &msg) {
+        Ok(address) => Ok(Some(address)),
+        Err(_) => Ok(None),
+    }
 }
 
 /// Gets code of an account, returning early if it's not a delegated account, otherwise
@@ -345,9 +267,9 @@ pub fn eip7702_get_code(
     let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        WARM_ADDRESS_ACCESS_COST
-    } else {
         COLD_ADDRESS_ACCESS_COST
+    } else {
+        WARM_ADDRESS_ACCESS_COST
     };
 
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
@@ -379,18 +301,30 @@ impl<'a> VM<'a> {
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
-            let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
+            let Some(authority_address) = eip7702_recover_address(&auth_tuple, self.crypto)? else {
                 continue;
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            let authority_info = self.db.get_account(authority_address)?.info.clone();
+            let authority_account = self.db.get_account(authority_address)?;
+            let authority_exists = authority_account.exists;
+            let authority_info = authority_account.info.clone();
             let authority_code = self.db.get_code(authority_info.code_hash)?;
             self.substate.add_accessed_address(authority_address);
 
             // 5. Verify the code of authority is either empty or already delegated.
+            // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
             let empty_or_delegated = authority_code.bytecode.is_empty()
                 || code_has_delegation(&authority_code.bytecode)?;
+
+            // Record authority as touched for BAL per EIP-7928, even if validation fails later.
+            // This ensures authority appears in BAL with empty change set when:
+            // - Authority was loaded (above)
+            // - But validation fails (checks below)
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(authority_address);
+            }
+
             if !empty_or_delegated {
                 continue;
             }
@@ -402,12 +336,30 @@ impl<'a> VM<'a> {
                 continue;
             }
 
-            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if !authority_info.is_empty() {
-                let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
-                refunded_gas = refunded_gas
-                    .checked_add(refunded_gas_if_exists)
-                    .ok_or(InternalError::Overflow)?;
+            // 7. Refund if authority exists in the trie.
+            // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+            // to the state gas reservoir (the new-account portion of the auth state charge).
+            // Pre-Amsterdam: add REFUND_AUTH_PER_EXISTING_ACCOUNT (12500) to global refund counter.
+            // NOTE: Uses `exists` (account_exists in EELS / Exist in geth), NOT `!is_empty()`.
+            // An account can exist in the trie but be empty (e.g., has non-empty storage root).
+            if authority_exists {
+                if self.env.config.fork >= Fork::Amsterdam {
+                    let state_refund = STATE_GAS_NEW_ACCOUNT;
+                    self.state_gas_reservoir = self
+                        .state_gas_reservoir
+                        .checked_add(state_refund)
+                        .ok_or(InternalError::Overflow)?;
+                    // Track as intrinsic state gas adjustment (matches EELS intrinsic_state_gas -= refund).
+                    // Do NOT reduce state_gas_used here — that would inflate regular_gas in block accounting.
+                    self.intrinsic_state_gas_refund = self
+                        .intrinsic_state_gas_refund
+                        .checked_add(state_refund)
+                        .ok_or(InternalError::Overflow)?;
+                } else {
+                    refunded_gas = refunded_gas
+                        .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
+                        .ok_or(InternalError::Overflow)?;
+                }
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -424,14 +376,21 @@ impl<'a> VM<'a> {
             } else {
                 Bytes::new()
             };
-            self.update_account_bytecode(authority_address, Code::from_bytecode(code))?;
+            self.update_account_bytecode(
+                authority_address,
+                Code::from_bytecode(code, self.crypto),
+            )?;
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = refunded_gas;
+        self.substate.refunded_gas = self
+            .substate
+            .refunded_gas
+            .checked_add(refunded_gas)
+            .ok_or(InternalError::Overflow)?;
 
         Ok(())
     }
@@ -439,38 +398,81 @@ impl<'a> VM<'a> {
     pub fn add_intrinsic_gas(&mut self) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let intrinsic_gas = self.get_intrinsic_gas()?;
+        let (regular_gas, state_gas) = self.get_intrinsic_gas()?;
+
+        let total_gas = regular_gas.checked_add(state_gas).ok_or(OutOfGas)?;
 
         self.current_call_frame
-            .increase_consumed_gas(intrinsic_gas)
+            .increase_consumed_gas(total_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
+
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(state_gas)
+            .ok_or(InternalError::Overflow)?;
+
+        // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.
+        // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much
+        // regular execution gas is allowed (capped at TX_MAX_GAS_LIMIT_AMSTERDAM); the difference becomes
+        // the reservoir for drawing state gas without consuming regular gas_remaining.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let gas_limit = self.tx.gas_limit();
+            let execution_gas = gas_limit.saturating_sub(total_gas);
+            let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
+            let gas_left = regular_gas_budget.min(execution_gas);
+            let reservoir = execution_gas.saturating_sub(gas_left);
+            if reservoir > 0 {
+                // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
+                let reservoir_i64 =
+                    i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
+                self.current_call_frame.gas_remaining = self
+                    .current_call_frame
+                    .gas_remaining
+                    .checked_sub(reservoir_i64)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_gas_reservoir = reservoir;
+            }
+        }
 
         Ok(())
     }
 
     // ==================== Gas related functions =======================
-    pub fn get_intrinsic_gas(&self) -> Result<u64, VMError> {
+    /// Returns `(regular_gas, state_gas)` intrinsic gas for the transaction.
+    /// For Amsterdam+, state_gas is the EIP-8037 state portion.
+    /// For pre-Amsterdam, state_gas is always 0.
+    pub fn get_intrinsic_gas(&self) -> Result<(u64, u64), VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-        let mut intrinsic_gas: u64 = 0;
+        let mut regular_gas: u64 = 0;
+        let mut state_gas: u64 = 0;
+        let fork = self.env.config.fork;
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
         let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
 
-        intrinsic_gas = intrinsic_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
+        regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
         // Base Cost
-        intrinsic_gas = intrinsic_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+        regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
 
         // Create Cost
         if self.is_create()? {
-            // https://eips.ethereum.org/EIPS/eip-2#specification
-            intrinsic_gas = intrinsic_gas
-                .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGas)?;
+            if fork >= Fork::Amsterdam {
+                // EIP-8037: reduced regular cost + state gas for new account
+                regular_gas = regular_gas
+                    .checked_add(REGULAR_GAS_CREATE)
+                    .ok_or(OutOfGas)?;
+                state_gas = state_gas
+                    .checked_add(STATE_GAS_NEW_ACCOUNT)
+                    .ok_or(OutOfGas)?;
+            } else {
+                // https://eips.ethereum.org/EIPS/eip-2#specification
+                regular_gas = regular_gas.checked_add(CREATE_BASE_COST).ok_or(OutOfGas)?;
+            }
 
             // https://eips.ethereum.org/EIPS/eip-3860
-            if self.env.config.fork >= Fork::Shanghai {
+            if fork >= Fork::Shanghai {
                 let number_of_words = &self.current_call_frame.calldata.len().div_ceil(WORD_SIZE);
                 let double_number_of_words: u64 = number_of_words
                     .checked_mul(2)
@@ -478,7 +480,7 @@ impl<'a> VM<'a> {
                     .try_into()
                     .map_err(|_| InternalError::TypeConversion)?;
 
-                intrinsic_gas = intrinsic_gas
+                regular_gas = regular_gas
                     .checked_add(double_number_of_words)
                     .ok_or(OutOfGas)?;
             }
@@ -497,29 +499,39 @@ impl<'a> VM<'a> {
             }
         }
 
-        intrinsic_gas = intrinsic_gas
-            .checked_add(access_lists_cost)
-            .ok_or(OutOfGas)?;
+        regular_gas = regular_gas.checked_add(access_lists_cost).ok_or(OutOfGas)?;
 
         // Authorization List Cost
         // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
         // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-        let amount_of_auth_tuples = match self.tx.authorization_list() {
+        let amount_of_auth_tuples: u64 = match self.tx.authorization_list() {
             None => 0,
             Some(list) => list
                 .len()
                 .try_into()
                 .map_err(|_| InternalError::TypeConversion)?,
         };
-        let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
-            .checked_mul(amount_of_auth_tuples)
-            .ok_or(InternalError::Overflow)?;
 
-        intrinsic_gas = intrinsic_gas
-            .checked_add(authorization_list_cost)
-            .ok_or(OutOfGas)?;
+        if fork >= Fork::Amsterdam {
+            // EIP-8037: per-auth regular cost is PER_AUTH_BASE_COST, state is 135 * COST_PER_STATE_BYTE
+            let regular_auth_cost = PER_AUTH_BASE_COST
+                .checked_mul(amount_of_auth_tuples)
+                .ok_or(InternalError::Overflow)?;
+            regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
+            let state_auth_cost = STATE_GAS_AUTH_TOTAL
+                .checked_mul(amount_of_auth_tuples)
+                .ok_or(InternalError::Overflow)?;
+            state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
+        } else {
+            let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
+                .checked_mul(amount_of_auth_tuples)
+                .ok_or(InternalError::Overflow)?;
+            regular_gas = regular_gas
+                .checked_add(authorization_list_cost)
+                .ok_or(OutOfGas)?;
+        }
 
-        Ok(intrinsic_gas)
+        Ok((regular_gas, state_gas))
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.
@@ -587,6 +599,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
             storage: account.storage,
             status: AccountStatus::Unmodified,
+            exists: true,
         },
         account.code,
     )
@@ -610,5 +623,46 @@ pub fn size_offset_to_usize(size: U256, offset: U256) -> Result<(usize, usize), 
         Ok((0, 0))
     } else {
         Ok((u256_to_usize(size)?, u256_to_usize(offset)?))
+    }
+}
+
+// ==================== EIP-7708 Helper Functions ====================
+
+/// Creates EIP-7708 Transfer log (LOG3) for ETH transfers.
+/// Emitted from SYSTEM_ADDRESS when ETH is transferred.
+#[inline]
+pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
+    let mut from_topic = [0u8; 32];
+    from_topic[12..].copy_from_slice(from.as_bytes());
+
+    let mut to_topic = [0u8; 32];
+    to_topic[12..].copy_from_slice(to.as_bytes());
+
+    let data = value.to_big_endian();
+
+    Log {
+        address: SYSTEM_ADDRESS,
+        topics: vec![
+            TRANSFER_EVENT_TOPIC,
+            H256::from(from_topic),
+            H256::from(to_topic),
+        ],
+        data: Bytes::from(data.to_vec()),
+    }
+}
+
+/// Creates EIP-7708 Burn log (LOG2) for ETH burns.
+/// Emitted from SYSTEM_ADDRESS when ETH is burned (e.g. via SELFDESTRUCT).
+#[inline]
+pub fn create_burn_log(address: Address, amount: U256) -> Log {
+    let mut address_topic = [0u8; 32];
+    address_topic[12..].copy_from_slice(address.as_bytes());
+
+    let data = amount.to_big_endian();
+
+    Log {
+        address: SYSTEM_ADDRESS,
+        topics: vec![BURN_EVENT_TOPIC, H256::from(address_topic)],
+        data: Bytes::from(data.to_vec()),
     }
 }

@@ -6,7 +6,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     U256,
-    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction},
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
 };
 use ethrex_l2_common::{
     messages::get_block_l2_out_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
@@ -209,9 +209,23 @@ pub async fn fill_transactions(
             continue;
         }
 
+        // Set BAL index for this transaction (1-indexed per EIP-7928)
+        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+        let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+        context.vm.set_bal_index(tx_index);
+
+        // Record tx sender and recipient for BAL
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head_tx.tx.sender());
+            if let TxKind::Call(to) = head_tx.to() {
+                recorder.record_touched_address(to);
+            }
+        }
+
         // Execute tx
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
+        let previous_cumulative_gas_spent = context.cumulative_gas_spent;
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
@@ -231,6 +245,7 @@ pub async fn fill_transactions(
                 context.vm.undo_last_tx()?;
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
+                context.cumulative_gas_spent = previous_cumulative_gas_spent;
                 found_invalid_message = true;
                 break;
             }

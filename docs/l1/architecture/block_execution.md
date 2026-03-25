@@ -189,7 +189,7 @@ After all transactions execute:
 Store::apply_account_updates_batch(parent_hash, updates) -> StateTrieHash
 ```
 
-This is one of the two merkelization backends (the other is used by `add_block_pipeline`):
+This is one of the two merkleization backends (the other is used by `add_block_pipeline`):
 
 1. Load parent state trie
 2. Apply each account update to the trie

@@ -2,68 +2,20 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, serde_utils,
+    H256,
     types::{
         AccountState, BlockHeader, ChainConfig,
-        block_execution_witness::{ExecutionWitness, GuestProgramStateError},
+        block_execution_witness::{ExecutionWitness, GuestProgramStateError, RpcExecutionWitness},
     },
     utils::keccak,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
-use ethrex_storage::hash_address;
-use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
-use serde::{Deserialize, Serialize};
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie};
 use serde_json::Value;
 use tracing::debug;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RpcExecutionWitness {
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub state: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub keys: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub codes: Vec<Bytes>,
-    #[serde(
-        serialize_with = "serde_utils::bytes::vec::serialize",
-        deserialize_with = "serde_utils::bytes::vec::deserialize"
-    )]
-    pub headers: Vec<Bytes>,
-}
-
-impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
-    type Error = TrieError;
-    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
-        let mut nodes = Vec::new();
-        if let Some(state_trie_root) = value.state_trie_root {
-            state_trie_root.encode_subtrie(&mut nodes)?;
-        }
-        for node in value.storage_trie_roots.values() {
-            node.encode_subtrie(&mut nodes)?;
-        }
-        Ok(Self {
-            state: nodes.into_iter().map(Bytes::from).collect(),
-            keys: value.keys.into_iter().map(Bytes::from).collect(),
-            codes: value.codes.into_iter().map(Bytes::from).collect(),
-            headers: value
-                .block_headers_bytes
-                .into_iter()
-                .map(Bytes::from)
-                .collect(),
-        })
-    }
-}
 
 // TODO: Ideally this would be a try_from but crate dependencies complicate this matter
 // This function is used by ethrex-replay
@@ -112,36 +64,33 @@ pub fn execution_witness_from_rpc_chain_config(
         None
     };
 
-    // get all storage trie roots and embed the rest of the trie into it
-    let state_trie = if let Some(state_trie_root) = &state_trie_root {
-        Trie::new_temp_with_root(state_trie_root.clone().into())
-    } else {
-        Trie::new_temp()
-    };
+    // Walk the state trie to discover accounts and their storage roots,
+    // instead of relying on the keys field which is being removed from the RPC spec.
     let mut storage_trie_roots = BTreeMap::new();
-    for key in &rpc_witness.keys {
-        if key.len() != 20 {
-            continue; // not an address
+    if let Some(state_trie_root) = &state_trie_root {
+        let mut accounts = Vec::new();
+        collect_accounts_from_node(
+            state_trie_root,
+            Nibbles::from_raw(&[], false),
+            &mut accounts,
+            &nodes,
+        );
+
+        for (hashed_address, storage_root_hash) in accounts {
+            if storage_root_hash == *EMPTY_TRIE_HASH {
+                continue; // empty storage trie
+            }
+            if !nodes.contains_key(&storage_root_hash) {
+                continue; // storage trie isn't relevant to this execution
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(GuestProgramStateError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(hashed_address, (*node).clone());
         }
-        let address = Address::from_slice(key);
-        let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
-            continue; // empty account, doesn't have a storage trie
-        };
-        let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-        if storage_root_hash == *EMPTY_TRIE_HASH {
-            continue; // empty storage trie
-        }
-        if !nodes.contains_key(&storage_root_hash) {
-            continue; // storage trie isn't relevant to this execution
-        }
-        let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
-        let NodeRef::Node(node, _) = node else {
-            return Err(GuestProgramStateError::Custom(
-                "execution witness does not contain non-empty storage trie".to_string(),
-            ));
-        };
-        storage_trie_roots.insert(address, (*node).clone());
     }
 
     let witness = ExecutionWitness {
@@ -155,10 +104,74 @@ pub fn execution_witness_from_rpc_chain_config(
             .collect(),
         state_trie_root,
         storage_trie_roots,
-        keys: rpc_witness.keys.into_iter().map(|b| b.to_vec()).collect(),
     };
 
     Ok(witness)
+}
+
+/// Recursively walks an embedded state trie node and collects
+/// `(hashed_address, storage_root)` pairs from leaf nodes.
+/// Also resolves `NodeRef::Hash` references using the flat `nodes` map,
+/// in case some children weren't fully embedded by `get_embedded_root`.
+fn collect_accounts_from_node(
+    node: &Node,
+    path: Nibbles,
+    accounts: &mut Vec<(H256, H256)>,
+    nodes: &BTreeMap<H256, Node>,
+) {
+    match node {
+        Node::Branch(branch) => {
+            for (i, child) in branch.choices.iter().enumerate() {
+                let child_node: Option<&Node> = match child {
+                    NodeRef::Node(n, _) => Some(n),
+                    NodeRef::Hash(hash) if hash.is_valid() => {
+                        nodes.get(&hash.finalize(&NativeCrypto))
+                    }
+                    _ => None,
+                };
+                if let Some(child_node) = child_node {
+                    collect_accounts_from_node(
+                        child_node,
+                        path.append_new(i as u8),
+                        accounts,
+                        nodes,
+                    );
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let child_node: Option<&Node> = match &ext.child {
+                NodeRef::Node(n, _) => Some(n),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
+                _ => None,
+            };
+            if let Some(child_node) = child_node {
+                collect_accounts_from_node(child_node, path.concat(&ext.prefix), accounts, nodes);
+            }
+        }
+        Node::Leaf(leaf) => {
+            let full_path = path.concat(&leaf.partial);
+            let path_bytes = full_path.to_bytes();
+            if path_bytes.len() == 32 {
+                let hashed_address = H256::from_slice(&path_bytes);
+                match AccountState::decode(&leaf.value) {
+                    Ok(account_state) => {
+                        accounts.push((hashed_address, account_state.storage_root));
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Failed to decode AccountState from state trie leaf at {hashed_address:?}: {e}"
+                        );
+                    }
+                }
+            } else {
+                debug!(
+                    "Unexpected state trie leaf path length: {} (expected 32)",
+                    path_bytes.len()
+                );
+            }
+        }
+    }
 }
 
 pub struct ExecutionWitnessRequest {
@@ -236,17 +249,15 @@ impl RpcHandler for ExecutionWitnessRequest {
 
         if blocks.len() == 1 {
             // Check if we have a cached witness for this block
+            // Use raw JSON bytes path to avoid deserialization + re-serialization
             let block = &blocks[0];
-            if let Some(witness) = context
+            if let Some(json_bytes) = context
                 .storage
-                .get_witness_by_number_and_hash(block.header.number, block.hash())?
+                .get_witness_json_bytes(block.header.number, block.hash())?
             {
-                let rpc_execution_witness =
-                    RpcExecutionWitness::try_from(witness).map_err(|e| {
-                        RpcErr::Internal(format!("Failed to create rpc execution witness {e}"))
-                    })?;
-                return serde_json::to_value(rpc_execution_witness)
-                    .map_err(|error| RpcErr::Internal(error.to_string()));
+                // Parse directly to Value - witness is already in RPC format
+                return serde_json::from_slice(&json_bytes)
+                    .map_err(|e| RpcErr::Internal(format!("Failed to parse cached witness: {e}")));
             }
         }
 

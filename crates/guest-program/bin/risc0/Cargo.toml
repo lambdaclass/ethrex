@@ -2,6 +2,7 @@
 name = "ethrex-guest-risc0"
 version = "9.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [workspace]
 
@@ -15,7 +16,7 @@ risc0-zkvm-platform = { version = "=2.2.1", default-features = false, features =
     "sys-getenv",
 ] }
 ethrex-guest-program = { path = "../../", default-features = false, features = [
-    "c-kzg",
+    "c-kzg", "risc0",
 ] }
 rkyv = { version = "0.8.10", features = ["unaligned"] }
 
