@@ -265,10 +265,12 @@ pub async fn init_rpc_api(
                 }
 
                 // If we have a target and the syncer is idle, trigger sync
-                if let Some(head) = pending_head {
+                if let Some(head) = pending_head.take() {
                     if !syncer_clone.is_active() {
                         tracing::info!(?head, "Polygon sync bridge: triggering sync");
                         syncer_clone.sync_to_head(head);
+                    } else {
+                        pending_head = Some(head);
                     }
                 }
 
