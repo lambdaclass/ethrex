@@ -36,6 +36,7 @@ pub fn execution_program(
             // L1 VM factory - simple creation without fee configs
             Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
         },
+        crypto.clone(),
     )?;
 
     Ok(ProgramOutput {

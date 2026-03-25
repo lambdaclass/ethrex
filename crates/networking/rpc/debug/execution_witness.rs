@@ -9,6 +9,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie};
 use serde_json::Value;
@@ -123,7 +124,9 @@ fn collect_accounts_from_node(
             for (i, child) in branch.choices.iter().enumerate() {
                 let child_node: Option<&Node> = match child {
                     NodeRef::Node(n, _) => Some(n),
-                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize()),
+                    NodeRef::Hash(hash) if hash.is_valid() => {
+                        nodes.get(&hash.finalize(&NativeCrypto))
+                    }
                     _ => None,
                 };
                 if let Some(child_node) = child_node {
@@ -139,7 +142,7 @@ fn collect_accounts_from_node(
         Node::Extension(ext) => {
             let child_node: Option<&Node> = match &ext.child {
                 NodeRef::Node(n, _) => Some(n),
-                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize()),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
                 _ => None,
             };
             if let Some(child_node) = child_node {

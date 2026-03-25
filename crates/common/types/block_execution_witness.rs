@@ -10,7 +10,7 @@ use crate::{
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Node, Trie, TrieError};
@@ -160,10 +160,11 @@ pub enum GuestProgramStateError {
     Custom(String),
 }
 
-impl TryFrom<ExecutionWitness> for GuestProgramState {
-    type Error = GuestProgramStateError;
-
-    fn try_from(value: ExecutionWitness) -> Result<Self, Self::Error> {
+impl GuestProgramState {
+    pub fn from_witness(
+        value: ExecutionWitness,
+        crypto: &dyn Crypto,
+    ) -> Result<Self, GuestProgramStateError> {
         let block_headers: BTreeMap<u64, BlockHeader> = value
             .block_headers_bytes
             .into_iter()
@@ -194,13 +195,13 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
         } else {
             Trie::new_temp()
         };
-        state_trie.hash_no_commit();
+        state_trie.hash_no_commit(crypto);
 
         let mut storage_tries = BTreeMap::new();
         for (hashed_address, storage_trie_root) in value.storage_trie_roots {
             // hash storage trie nodes
             let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
-            storage_trie.hash_no_commit();
+            storage_trie.hash_no_commit(crypto);
             storage_tries.insert(hashed_address, storage_trie);
         }
 
@@ -210,12 +211,12 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             .codes
             .into_iter()
             .map(|code| {
-                let code = Code::from_bytecode(code.into());
+                let code = Code::from_bytecode(code.into(), crypto);
                 (code.hash, code)
             })
             .collect();
 
-        let ethrex_guest_program_state = GuestProgramState {
+        Ok(GuestProgramState {
             codes_hashed,
             state_trie,
             storage_tries,
@@ -225,9 +226,7 @@ impl TryFrom<ExecutionWitness> for GuestProgramState {
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
             verified_storage_roots: BTreeMap::new(),
-        };
-
-        Ok(ethrex_guest_program_state)
+        })
     }
 }
 
@@ -238,12 +237,13 @@ impl GuestProgramState {
     pub fn apply_account_updates(
         &mut self,
         account_updates: &[AccountUpdate],
+        crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
         for update in account_updates.iter() {
             let hashed_address = *self
                 .account_hashes_by_address
                 .entry(update.address)
-                .or_insert_with(|| hash_address(&update.address));
+                .or_insert_with(|| hash_address(&update.address, crypto));
 
             if update.removed {
                 // Remove account from trie
@@ -278,7 +278,7 @@ impl GuestProgramState {
                     let (deletes, inserts): (Vec<_>, Vec<_>) = update
                         .added_storage
                         .iter()
-                        .map(|(k, v)| (hash_key(k), v))
+                        .map(|(k, v)| (hash_key(k, crypto), v))
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
@@ -289,7 +289,7 @@ impl GuestProgramState {
                         storage_trie.remove(&hashed_key)?;
                     }
 
-                    let storage_root = storage_trie.hash_no_commit();
+                    let storage_root = storage_trie.hash_no_commit(crypto);
                     account_state.storage_root = storage_root;
                 }
 
@@ -304,8 +304,8 @@ impl GuestProgramState {
 
     /// Returns the root hash of the state trie
     /// Returns an error if the state trie is not built yet
-    pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
-        Ok(self.state_trie.hash_no_commit())
+    pub fn state_trie_root(&self, crypto: &dyn Crypto) -> Result<H256, GuestProgramStateError> {
+        Ok(self.state_trie.hash_no_commit(crypto))
     }
 
     /// Returns Some(block_number) if the hash for block_number is not the parent
@@ -313,7 +313,10 @@ impl GuestProgramState {
     ///
     /// Keep in mind that the last block hash (which is a batch's parent hash)
     /// can't be validated against the next header, because it has no successor.
-    pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
+    pub fn get_first_invalid_block_hash(
+        &self,
+        crypto: &dyn Crypto,
+    ) -> Result<Option<u64>, GuestProgramStateError> {
         // Enforces there's at least one block header, so windows() call doesn't panic.
         if self.block_headers.is_empty() {
             return Err(GuestProgramStateError::NoBlockHeaders);
@@ -337,7 +340,7 @@ impl GuestProgramState {
                 return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
 
-            if next_header.parent_hash != header.hash() {
+            if next_header.parent_hash != header.compute_block_hash(crypto) {
                 return Ok(Some(*number));
             }
         }
@@ -361,11 +364,12 @@ impl GuestProgramState {
     pub fn get_account_state(
         &mut self,
         address: Address,
+        crypto: &dyn Crypto,
     ) -> Result<Option<AccountState>, GuestProgramStateError> {
         let hashed_address = *self
             .account_hashes_by_address
             .entry(address)
-            .or_insert_with(|| hash_address(&address));
+            .or_insert_with(|| hash_address(&address, crypto));
 
         let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address.as_bytes()) else {
             return Ok(None);
@@ -379,10 +383,14 @@ impl GuestProgramState {
 
     /// Fetches the block hash for a specific block number.
     /// Looks up `self.block_headers` and computes the hash if it is not already computed.
-    pub fn get_block_hash(&self, block_number: u64) -> Result<H256, GuestProgramStateError> {
+    pub fn get_block_hash(
+        &self,
+        block_number: u64,
+        crypto: &dyn Crypto,
+    ) -> Result<H256, GuestProgramStateError> {
         self.block_headers
             .get(&block_number)
-            .map(|header| header.hash())
+            .map(|header| header.compute_block_hash(crypto))
             .ok_or_else(|| {
                 GuestProgramStateError::Database(format!(
                     "Block hash not found for block number {block_number}"
@@ -395,9 +403,10 @@ impl GuestProgramState {
         &mut self,
         address: Address,
         key: H256,
+        crypto: &dyn Crypto,
     ) -> Result<Option<U256>, GuestProgramStateError> {
-        let hashed_key = hash_key(&key);
-        let Some(storage_trie) = self.get_valid_storage_trie(address)? else {
+        let hashed_key = hash_key(&key, crypto);
+        let Some(storage_trie) = self.get_valid_storage_trie(address, crypto)? else {
             return Ok(None);
         };
         if let Some(encoded_key) = storage_trie
@@ -471,10 +480,11 @@ impl GuestProgramState {
     pub fn initialize_block_header_hashes(
         &self,
         blocks: &[Block],
+        crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
         let mut block_numbers_in_common = BTreeSet::new();
         for block in blocks {
-            let hash = block.header.compute_block_hash();
+            let hash = block.header.compute_block_hash(crypto);
             set_hash_or_validate(&block.header, hash)?;
 
             let number = block.header.number;
@@ -489,7 +499,7 @@ impl GuestProgramState {
                 // We have already set this hash in the previous step
                 continue;
             }
-            let hash = header.compute_block_hash();
+            let hash = header.compute_block_hash(crypto);
             set_hash_or_validate(header, hash)?;
         }
 
@@ -499,11 +509,12 @@ impl GuestProgramState {
     pub fn get_valid_storage_trie(
         &mut self,
         address: Address,
+        crypto: &dyn Crypto,
     ) -> Result<Option<&Trie>, GuestProgramStateError> {
         let hashed_address = *self
             .account_hashes_by_address
             .entry(address)
-            .or_insert_with(|| hash_address(&address));
+            .or_insert_with(|| hash_address(&address, crypto));
 
         let is_storage_verified = *self
             .verified_storage_roots
@@ -512,14 +523,16 @@ impl GuestProgramState {
         if is_storage_verified {
             Ok(self.storage_tries.get(&hashed_address))
         } else {
-            let Some(storage_root) = self.get_account_state(address)?.map(|a| a.storage_root)
+            let Some(storage_root) = self
+                .get_account_state(address, crypto)?
+                .map(|a| a.storage_root)
             else {
                 // empty account
                 return Ok(None);
             };
             let storage_trie = match self.storage_tries.get(&hashed_address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
-                Some(trie) if trie.hash_no_commit() == storage_root => trie,
+                Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(
                         "invalid storage trie for account {address}"
@@ -532,12 +545,12 @@ impl GuestProgramState {
     }
 }
 
-fn hash_address(address: &Address) -> H256 {
-    H256(keccak_hash(address.to_fixed_bytes()))
+fn hash_address(address: &Address, crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(&address.to_fixed_bytes()))
 }
 
-pub fn hash_key(key: &H256) -> Vec<u8> {
-    keccak_hash(key.to_fixed_bytes()).to_vec()
+pub fn hash_key(key: &H256, crypto: &dyn Crypto) -> Vec<u8> {
+    crypto.keccak256(&key.to_fixed_bytes()).to_vec()
 }
 
 /// Initializes hash of header or validates the hash is correct in case it's already set

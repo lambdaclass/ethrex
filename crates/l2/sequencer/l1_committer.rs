@@ -1063,7 +1063,7 @@ impl L1Committer {
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
                     "Failed to get state root from storage".to_owned(),
                 ))?
-                .hash_no_commit();
+                .hash_no_commit(&ethrex_common::NativeCrypto);
 
             last_added_block_number += 1;
             acc_gas_used += current_block_gas_used;

@@ -2,7 +2,6 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
-use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
     constants::{
@@ -13,7 +12,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
-use ethrex_crypto::{Crypto, CryptoError};
+use ethrex_crypto::{Crypto, CryptoError, NativeCrypto};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -334,31 +333,31 @@ impl BlockBody {
     }
 }
 
-pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
+pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
     let iter = transactions.iter().enumerate().map(|(idx, tx)| {
         // Key: RLP(tx_index)
         // Value: tx_type || RLP(tx)  if tx_type != 0
         //                   RLP(tx)  else
         (idx.encode_to_vec(), tx.encode_canonical_to_vec())
     });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
-pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
+pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
-pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
+pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
         .iter()
         .enumerate()
         .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl RLPEncode for BlockBody {
@@ -389,14 +388,16 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    pub fn compute_block_hash(&self) -> H256 {
+    pub fn compute_block_hash(&self, crypto: &dyn Crypto) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
-        keccak(buf)
+        H256(crypto.keccak256(&buf))
     }
 
     pub fn hash(&self) -> H256 {
-        *self.hash.get_or_init(|| self.compute_block_hash())
+        *self
+            .hash
+            .get_or_init(|| self.compute_block_hash(&NativeCrypto))
     }
 }
 
@@ -698,11 +699,12 @@ pub fn validate_block_header(
 pub fn validate_block_body(
     block_header: &BlockHeader,
     block_body: &BlockBody,
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockBodyError> {
     // Validates that:
     //  - Transactions root and withdrawals root matches with the header
     //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
-    let computed_tx_root = compute_transactions_root(&block_body.transactions);
+    let computed_tx_root = compute_transactions_root(&block_body.transactions, crypto);
 
     if block_header.transactions_root != computed_tx_root {
         return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
@@ -714,7 +716,7 @@ pub fn validate_block_body(
 
     match (block_header.withdrawals_root, &block_body.withdrawals) {
         (Some(withdrawals_root), Some(withdrawals)) => {
-            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals, crypto);
             if withdrawals_root != computed_withdrawals_root {
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
@@ -875,7 +877,7 @@ mod test {
         let expected_root = H256::from_slice(&hex!(
             "48a703da164234812273ea083e4ec3d09d028300cd325b46a6a75402e5a7ab95"
         ));
-        let root = compute_withdrawals_root(&withdrawals);
+        let root = compute_withdrawals_root(&withdrawals, &ethrex_crypto::NativeCrypto);
         assert_eq!(root, expected_root);
     }
 
@@ -989,7 +991,8 @@ mod test {
                     .unwrap()
             })
             .collect();
-        let transactions_root = compute_transactions_root(&transactions);
+        let transactions_root =
+            compute_transactions_root(&transactions, &ethrex_crypto::NativeCrypto);
         let expected_root = H256::from_slice(
             &hex::decode("adf0387d2303fe80aeca23bf6828c979b44d8a8fe4a1ba1d3511bc1567ca80de")
                 .unwrap(),

@@ -17,6 +17,7 @@ use ethrex_common::{
     H256,
     types::{BlockBody, BlockHeader, validate_block_body},
 };
+use ethrex_crypto::NativeCrypto;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
@@ -540,7 +541,7 @@ impl PeerHandler {
             let mut res = Vec::new();
             let mut validation_success = true;
             for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
-                if let Err(e) = validate_block_body(header, &body) {
+                if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
                     warn!(
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
