@@ -1110,13 +1110,13 @@ async fn insert_storages(
         .collect();
     let total_files = file_paths.len();
     info!("Ingesting {total_files} SST files into temp RocksDB in batches...");
-    // Ingest in batches and delete files after each batch to limit disk usage.
+    // Ingest in batches with move_files=true so RocksDB moves (not copies) the SST
+    // files into its own directory, freeing disk as we go.
+    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
+    ingest_opts.set_move_files(true);
     for (batch_idx, batch) in file_paths.chunks(500).enumerate() {
-        db.ingest_external_file(batch.to_vec())
+        db.ingest_external_file_opts(&ingest_opts, batch.to_vec())
             .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        for path in batch {
-            let _ = std::fs::remove_file(path);
-        }
         info!(
             "Ingested batch {}/{} ({} files)",
             batch_idx + 1,
