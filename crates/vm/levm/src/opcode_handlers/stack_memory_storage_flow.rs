@@ -284,17 +284,14 @@ impl OpcodeHandler for OpSStoreHandler {
 
         let fork = vm.env.config.fork;
 
-        // EIP-8037 (Amsterdam+): charge state gas BEFORE regular gas per EELS ordering.
-        // State gas for new storage slot creation (0 -> nonzero) spills into gas_remaining
-        // when the reservoir is empty, which must happen before the regular gas charge.
-        if fork >= Fork::Amsterdam
+        // EIP-8037 (Amsterdam+): check if state gas is needed for new storage slot (0 -> nonzero),
+        // but charge it AFTER regular gas per EELS ordering (ethereum/EIPs#11421).
+        // Regular gas OOG must not consume state gas that would inflate the parent's reservoir.
+        let needs_state_gas = fork >= Fork::Amsterdam
             && value != current_value
             && current_value == original_value
             && original_value.is_zero()
-            && !value.is_zero()
-        {
-            vm.increase_state_gas(STATE_GAS_STORAGE_SET)?;
-        }
+            && !value.is_zero();
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
@@ -304,6 +301,10 @@ impl OpcodeHandler for OpSStoreHandler {
                 storage_slot_was_cold,
                 fork,
             )?)?;
+
+        if needs_state_gas {
+            vm.increase_state_gas(STATE_GAS_STORAGE_SET)?;
+        }
         if value != current_value {
             // EIP-2929
             const REMOVE_SLOT_COST: i64 = 4800;
