@@ -120,7 +120,19 @@ impl ProverBackend for ZiskBackend {
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let input_bytes =
             rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
-        std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
+
+        // ZisK v0.16.1 expects input in ZiskStdin format:
+        // [8-byte LE length][data][zero-padding to 8-byte alignment]
+        let data_len = input_bytes.len();
+        let total_len = 8 + data_len;
+        let padding = (8 - (total_len % 8)) % 8;
+
+        let mut buf = Vec::with_capacity(total_len + padding);
+        buf.extend_from_slice(&data_len.to_le_bytes());
+        buf.extend_from_slice(&input_bytes);
+        buf.extend(std::iter::repeat(0u8).take(padding));
+
+        std::fs::write(INPUT_PATH, &buf).map_err(BackendError::serialization)?;
         Ok(())
     }
 
