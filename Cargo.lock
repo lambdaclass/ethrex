@@ -3904,11 +3904,9 @@ dependencies = [
  "fastbloom",
  "hex",
  "lru 0.12.5",
- "rocksdb",
  "rustc-hash 2.1.1",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.18",
 ]
 

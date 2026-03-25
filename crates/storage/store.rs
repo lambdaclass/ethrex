@@ -53,6 +53,72 @@ use tracing::{debug, error, info};
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
 
+// ---------------------------------------------------------------------------
+// TrieBackend adapter for the storage backend
+// ---------------------------------------------------------------------------
+
+/// Wraps the storage backend to implement `TrieBackend` for the binary trie.
+struct StorageTrieBackend {
+    backend: Arc<dyn StorageBackend>,
+}
+
+impl ethrex_binary_trie::db::TrieBackend for StorageTrieBackend {
+    fn get(
+        &self,
+        table: &'static str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, ethrex_binary_trie::BinaryTrieError> {
+        self.backend
+            .begin_read()
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))?
+            .get(table, key)
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))
+    }
+
+    fn write_batch(
+        &self,
+        ops: Vec<ethrex_binary_trie::db::WriteOp>,
+    ) -> Result<(), ethrex_binary_trie::BinaryTrieError> {
+        let mut tx = self
+            .backend
+            .begin_write()
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))?;
+        for op in ops {
+            match op {
+                ethrex_binary_trie::db::WriteOp::Put { table, key, value } => {
+                    tx.put(table, &key, &value).map_err(|e| {
+                        ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string())
+                    })?;
+                }
+                ethrex_binary_trie::db::WriteOp::Delete { table, key } => {
+                    tx.delete(table, &key).map_err(|e| {
+                        ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string())
+                    })?;
+                }
+            }
+        }
+        tx.commit()
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))
+    }
+
+    fn full_iterator(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, ethrex_binary_trie::BinaryTrieError>
+    {
+        let read_view = self
+            .backend
+            .begin_read()
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))?;
+        let entries: Vec<(Vec<u8>, Vec<u8>)> = read_view
+            .prefix_iterator(table, &[])
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))?
+            .filter_map(|r| r.ok().map(|(k, v)| (k.to_vec(), v.to_vec())))
+            .collect();
+        Ok(Box::new(entries.into_iter()))
+    }
+}
+
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
@@ -1452,12 +1518,23 @@ impl Store {
             }
         };
         let (flush_work_tx, flush_work_rx) = sync_channel::<FlushWork>(1);
-        // Background flush thread: writes FKV updates to disk.
+        // Background flush thread: writes trie ops + FKV updates to disk.
         let flush_backend = backend.clone();
+        let flush_trie_backend = Arc::new(StorageTrieBackend {
+            backend: backend.clone(),
+        });
         let flush_thread = std::thread::spawn(move || {
             loop {
                 match flush_work_rx.recv() {
                     Ok(work) => {
+                        if !work.trie_ops.is_empty() {
+                            if let Err(e) = ethrex_binary_trie::db::TrieBackend::write_batch(
+                                flush_trie_backend.as_ref(),
+                                work.trie_ops,
+                            ) {
+                                error!("Background trie flush failed: {e}");
+                            }
+                        }
                         if let Err(e) = write_fkv_updates_static(
                             flush_backend.as_ref(),
                             &work.flat_updates,
@@ -1495,6 +1572,15 @@ impl Store {
         Ok(store)
     }
 
+    /// Create a `TrieBackend` backed by this store's storage backend.
+    ///
+    /// Used to open a `BinaryTrieState` that shares the same underlying storage.
+    pub fn create_trie_backend(&self) -> Arc<dyn ethrex_binary_trie::db::TrieBackend> {
+        Arc::new(StorageTrieBackend {
+            backend: self.backend.clone(),
+        })
+    }
+
     pub async fn new_from_genesis(
         store_path: &Path,
         engine_type: EngineType,
@@ -1508,20 +1594,6 @@ impl Store {
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
-    }
-
-    /// Return a cloned handle to the underlying RocksDB instance.
-    ///
-    /// Returns `None` if the store is backed by the in-memory engine.
-    /// Used to share the DB handle with `BinaryTrieState`.
-    #[cfg(feature = "rocksdb")]
-    pub fn db_handle(
-        &self,
-    ) -> Option<std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>> {
-        self.backend
-            .as_any()
-            .downcast_ref::<RocksDBBackend>()
-            .map(|b| b.db_handle())
     }
 
     /// Attach a binary trie state so that account/storage reads delegate to it
@@ -1570,12 +1642,9 @@ impl Store {
         let mut state = bts
             .write()
             .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
-        #[cfg(feature = "rocksdb")]
         let checkpoint = state
             .reload_from_checkpoint()
             .map_err(|e| StoreError::Custom(format!("binary trie reload failed: {e}")))?;
-        #[cfg(not(feature = "rocksdb"))]
-        let checkpoint = 0u64;
 
         // Clear layer cache and root map — all layers are from the old fork.
         if let Ok(mut cache) = self.binary_trie_layer_cache.write() {
@@ -1859,25 +1928,20 @@ impl Store {
             return Ok(());
         }
 
-        // Build the WriteBatch (fast: collects dirty nodes, rotates generations).
-        #[cfg(feature = "rocksdb")]
-        let trie_batch = {
-            let (db, batch) = state
-                .prepare_flush(block_number, block_hash)
-                .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
-            Some((db, batch))
-        };
+        // Collect write ops (fast: collects dirty nodes, rotates generations).
+        let trie_ops = state
+            .prepare_flush(block_number, block_hash)
+            .map_err(|e| StoreError::Custom(format!("binary trie flush error: {e}")))?;
 
         drop(state); // Release the trie lock before background send.
 
         // Collect pending FKV updates.
         let (all_flat, all_code) = self.drain_pending_fkv()?;
 
-        // Send both trie batch + FKV to background thread.
+        // Send both trie ops + FKV to background thread.
         self.flush_work_tx
             .send(FlushWork {
-                #[cfg(feature = "rocksdb")]
-                trie_batch,
+                trie_ops,
                 flat_updates: all_flat,
                 code_updates: all_code,
             })
@@ -2047,34 +2111,27 @@ impl Store {
         genesis_accounts: &BTreeMap<Address, GenesisAccount>,
         genesis_hash: H256,
     ) -> Result<(), StoreError> {
-        #[cfg(feature = "rocksdb")]
-        {
-            use crate::api::tables::{BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
-            use ethrex_binary_trie::state::BinaryTrieState;
+        use crate::api::tables::{BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS};
+        use ethrex_binary_trie::state::BinaryTrieState;
 
-            let Some(db) = self.db_handle() else {
-                // In-memory mode: binary trie genesis is handled in init_binary_trie_state.
-                return Ok(());
-            };
+        let backend = Arc::new(StorageTrieBackend {
+            backend: self.backend.clone(),
+        });
 
-            let mut state =
-                BinaryTrieState::open_with_db(db, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
-                    .map_err(|e| StoreError::Custom(format!("Failed to open binary trie: {e}")))?;
+        let mut state = BinaryTrieState::open(backend, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
+            .map_err(|e| StoreError::Custom(format!("Failed to open binary trie: {e}")))?;
 
-            state.apply_genesis(genesis_accounts).map_err(|e| {
-                StoreError::Custom(format!("Failed to apply genesis to binary trie: {e}"))
-            })?;
+        // In-memory backend: the binary trie tables won't persist across restarts,
+        // so genesis is applied here (same as before).
+        state.apply_genesis(genesis_accounts).map_err(|e| {
+            StoreError::Custom(format!("Failed to apply genesis to binary trie: {e}"))
+        })?;
 
-            state
-                .flush(0, genesis_hash)
-                .map_err(|e| StoreError::Custom(format!("Failed to flush binary trie: {e}")))?;
+        state
+            .flush(0, genesis_hash)
+            .map_err(|e| StoreError::Custom(format!("Failed to flush binary trie: {e}")))?;
 
-            self.set_binary_trie_state(Arc::new(RwLock::new(state)));
-        }
-        #[cfg(not(feature = "rocksdb"))]
-        {
-            let _ = (genesis_accounts, genesis_hash);
-        }
+        self.set_binary_trie_state(Arc::new(RwLock::new(state)));
 
         Ok(())
     }
@@ -2492,15 +2549,10 @@ impl Store {
 }
 
 /// Work item for the background flush thread.
-/// Carries both the trie node WriteBatch and FKV updates.
+/// Carries both the trie node write ops and FKV updates.
 struct FlushWork {
-    /// Pre-built WriteBatch for binary trie nodes + storage_keys + metadata.
-    /// None when only FKV updates need flushing (no trie flush this cycle).
-    #[cfg(feature = "rocksdb")]
-    trie_batch: Option<(
-        std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
-        rocksdb::WriteBatch,
-    )>,
+    /// Pre-collected write ops for binary trie nodes + storage_keys + metadata.
+    trie_ops: Vec<ethrex_binary_trie::db::WriteOp>,
     flat_updates: Vec<AccountUpdate>,
     code_updates: Vec<(H256, Code)>,
 }

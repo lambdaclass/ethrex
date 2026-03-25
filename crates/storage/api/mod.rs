@@ -19,7 +19,7 @@
 //!   only used during snap-sync.
 
 use crate::error::StoreError;
-use std::{any::Any, fmt::Debug, path::Path, sync::Arc};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 pub mod tables;
 
@@ -51,9 +51,6 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
-
-    /// Returns `self` as `&dyn Any` for downcasting to a concrete backend type.
-    fn as_any(&self) -> &dyn Any;
 }
 
 /// Read-only transaction interface.

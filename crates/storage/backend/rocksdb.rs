@@ -267,10 +267,6 @@ impl StorageBackend for RocksDBBackend {
         Ok(Box::new(RocksDBLocked { db, lock, cf }))
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
         let checkpoint = Checkpoint::new(&self.db)
             .map_err(|e| StoreError::Custom(format!("Failed to create checkpoint: {e}")))?;

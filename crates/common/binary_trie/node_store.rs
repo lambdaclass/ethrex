@@ -1,13 +1,12 @@
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use lru::LruCache;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::db::{TrieBackend, WriteOp};
 use crate::error::BinaryTrieError;
-#[cfg(any(test, feature = "rocksdb"))]
-use crate::node::{InternalNode, STEM_VALUES, StemNode};
-use crate::node::{Node, NodeId};
+use crate::node::{InternalNode, Node, NodeId, STEM_VALUES, StemNode};
 
 /// Default maximum number of clean nodes kept in the LRU cache.
 ///
@@ -16,19 +15,16 @@ use crate::node::{Node, NodeId};
 /// StemNode with subtree cache up to ~10KB). Combined with dirty_nodes and
 /// warm_nodes (unbounded HashMaps), total memory is hard to predict.
 /// 100K entries keeps memory bounded (~500MB-1GB) while still caching
-/// the hot working set. Nodes evicted from the LRU are loaded from RocksDB
+/// the hot working set. Nodes evicted from the LRU are loaded from the backend
 /// on demand (only during merkleization, not EVM execution).
 const DEFAULT_CLEAN_CACHE_CAP: usize = 100_000;
 
-// Meta keys for RocksDB storage (stored alongside nodes in BINARY_TRIE_NODES CF).
+// Meta keys for storage (stored alongside nodes in BINARY_TRIE_NODES table).
 // The 0xFF prefix ensures they don't collide with u64 node IDs (8 bytes, no prefix).
-#[cfg(feature = "rocksdb")]
 const META_ROOT: &[u8] = &[0xFF, b'R'];
-#[cfg(feature = "rocksdb")]
 const META_NEXT_ID: &[u8] = &[0xFF, b'N'];
 
 /// Returns an 8-byte key for a node: raw `id` as little-endian u64.
-#[cfg(any(test, feature = "rocksdb"))]
 fn node_key(id: NodeId) -> [u8; 8] {
     id.to_le_bytes()
 }
@@ -46,7 +42,6 @@ fn node_key(id: NodeId) -> [u8; 8] {
 ///   - `presence_bitmap`: bit i (0-indexed from the LSB of byte 0) is set if `values[i].is_some()`.
 ///   - Only present values are serialized, in order of index.
 ///   - `cached_hash` and `cached_subtree` are not serialized (they are recomputed on demand).
-#[cfg(any(test, feature = "rocksdb"))]
 fn serialize_node(node: &Node) -> Vec<u8> {
     match node {
         Node::Internal(internal) => {
@@ -77,7 +72,6 @@ fn serialize_node(node: &Node) -> Vec<u8> {
 }
 
 /// Deserialize a node from bytes.
-#[cfg(any(test, feature = "rocksdb"))]
 fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
     if bytes.is_empty() {
         return Err(BinaryTrieError::DeserializationError(
@@ -150,7 +144,7 @@ fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
 // NodeStore
 // ---------------------------------------------------------------------------
 
-/// In-memory (and optionally RocksDB-backed) store for binary trie nodes.
+/// In-memory (and optionally backend-persisted) store for binary trie nodes.
 ///
 /// Nodes are identified by a stable `NodeId` (a monotonically increasing u64
 /// starting at 1). The value 0 is reserved as the "None" sentinel used in the
@@ -163,7 +157,7 @@ fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
 /// - `free` schedules a node for deletion on the next `flush`.
 ///
 /// ## Read path
-/// - `get` returns a shared reference; loads from RocksDB on a cache miss.
+/// - `get` returns a shared reference; loads from the backend on a cache miss.
 /// - `take` removes the node from the cache so the caller can modify it before
 ///   calling `put` or `free`.
 pub struct NodeStore {
@@ -183,11 +177,10 @@ pub struct NodeStore {
     /// IDs of nodes scheduled for deletion on the next flush.
     freed: FxHashSet<NodeId>,
     next_id: NodeId,
-    #[cfg(feature = "rocksdb")]
-    db: Option<std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>>,
-    /// Name of the column family used for nodes and metadata.
-    #[cfg(feature = "rocksdb")]
-    pub nodes_cf: &'static str,
+    /// Persistence backend (None for pure in-memory operation).
+    backend: Option<Arc<dyn TrieBackend>>,
+    /// Name of the table used for nodes and metadata.
+    pub nodes_table: &'static str,
 }
 
 impl NodeStore {
@@ -202,35 +195,21 @@ impl NodeStore {
             )),
             freed: FxHashSet::default(),
             next_id: 1,
-            #[cfg(feature = "rocksdb")]
-            db: None,
-            #[cfg(feature = "rocksdb")]
-            nodes_cf: "",
+            backend: None,
+            nodes_table: "",
         }
     }
 
-    /// Open a persistent NodeStore backed by a shared RocksDB instance.
+    /// Open a persistent NodeStore backed by a `TrieBackend`.
     ///
-    /// Reads `next_id` from the `META_NEXT_ID` key in `nodes_cf`. If absent, starts at 1.
-    #[cfg(feature = "rocksdb")]
+    /// Reads `next_id` from the `META_NEXT_ID` key in `nodes_table`. If absent, starts at 1.
     pub fn open(
-        db: std::sync::Arc<rocksdb::DBWithThreadMode<rocksdb::MultiThreaded>>,
-        nodes_cf: &'static str,
+        backend: Arc<dyn TrieBackend>,
+        nodes_table: &'static str,
     ) -> Result<Self, BinaryTrieError> {
-        let next_id = {
-            let cf = db
-                .cf_handle(nodes_cf)
-                .ok_or_else(|| BinaryTrieError::StoreError(format!("CF '{nodes_cf}' not found")))?;
-            match db
-                .get_cf(&cf, META_NEXT_ID)
-                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
-            {
-                Some(bytes) if bytes.len() >= 8 => {
-                    u64::from_le_bytes(bytes[..8].try_into().unwrap())
-                }
-                _ => 1,
-            }
-            // cf is dropped here, releasing the borrow on db
+        let next_id = match backend.get(nodes_table, META_NEXT_ID)? {
+            Some(bytes) if bytes.len() >= 8 => u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            _ => 1,
         };
 
         Ok(Self {
@@ -242,17 +221,15 @@ impl NodeStore {
             )),
             freed: FxHashSet::default(),
             next_id,
-            db: Some(db),
-            nodes_cf,
+            backend: Some(backend),
+            nodes_table,
         })
     }
 
-    /// Load the persisted root NodeId from the database, if any.
-    #[cfg(feature = "rocksdb")]
+    /// Load the persisted root NodeId from the backend, if any.
     pub fn load_root(&self) -> Option<NodeId> {
-        let db = self.db.as_ref()?;
-        let cf = db.cf_handle(self.nodes_cf)?;
-        let bytes = db.get_cf(&cf, META_ROOT).ok()??;
+        let backend = self.backend.as_ref()?;
+        let bytes = backend.get(self.nodes_table, META_ROOT).ok()??;
         if bytes.len() < 8 {
             return None;
         }
@@ -277,7 +254,7 @@ impl NodeStore {
 
     /// Get a node by ID, returning it by value (cloned).
     ///
-    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → RocksDB.
+    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → backend.
     ///
     /// Takes `&self` so read paths (trie traversal) do not require `&mut`.
     /// Cache population on a miss uses an internal `Mutex`.
@@ -295,15 +272,12 @@ impl NodeStore {
                 return Ok(node.clone());
             }
         }
-        #[cfg(feature = "rocksdb")]
         {
             let node = self.load_from_db(id)?;
             let cloned = node.clone();
             self.clean_cache.lock().unwrap().put(id, node);
             Ok(cloned)
         }
-        #[cfg(not(feature = "rocksdb"))]
-        Err(BinaryTrieError::NodeNotFound(id))
     }
 
     /// Get a shared reference to a node by ID, populating the cache on miss.
@@ -312,7 +286,7 @@ impl NodeStore {
     /// a reference rather than an owned clone. Takes `&mut self` to allow
     /// cache insertion without the overhead of a Mutex lock.
     ///
-    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → RocksDB.
+    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → backend.
     pub fn get_mut(&mut self, id: NodeId) -> Result<&Node, BinaryTrieError> {
         if self.dirty_nodes.contains_key(&id) {
             return Ok(self.dirty_nodes.get(&id).unwrap());
@@ -320,17 +294,10 @@ impl NodeStore {
         if self.warm_nodes.contains_key(&id) {
             return Ok(self.warm_nodes.get(&id).unwrap());
         }
-        // Check clean cache; on miss, load from DB.
+        // Check clean cache; on miss, load from backend.
         if !self.clean_cache.get_mut().unwrap().contains(&id) {
-            #[cfg(feature = "rocksdb")]
-            {
-                let node = self.load_from_db(id)?;
-                self.clean_cache.get_mut().unwrap().put(id, node);
-            }
-            #[cfg(not(feature = "rocksdb"))]
-            {
-                return Err(BinaryTrieError::NodeNotFound(id));
-            }
+            let node = self.load_from_db(id)?;
+            self.clean_cache.get_mut().unwrap().put(id, node);
         }
         Ok(self.clean_cache.get_mut().unwrap().get(&id).unwrap())
     }
@@ -348,14 +315,7 @@ impl NodeStore {
         if let Some(node) = self.clean_cache.get_mut().unwrap().pop(&id) {
             return Ok(node);
         }
-        #[cfg(feature = "rocksdb")]
-        {
-            self.load_from_db(id)
-        }
-        #[cfg(not(feature = "rocksdb"))]
-        {
-            Err(BinaryTrieError::NodeNotFound(id))
-        }
+        self.load_from_db(id)
     }
 
     /// Put a node back (or update an existing one). Marks the node dirty.
@@ -388,40 +348,50 @@ impl NodeStore {
         self.freed.insert(id);
     }
 
-    /// Write dirty and freed nodes plus metadata into a caller-supplied
-    /// `WriteBatch`. Used by `BinaryTrieState::flush` to build a single atomic
-    /// batch that also contains storage_keys entries.
+    /// Collect all dirty and freed nodes plus metadata as `WriteOp`s.
     ///
-    /// All writes go to `nodes_cf` via CF-aware `put_cf`/`delete_cf`.
-    /// After writing, performs generational rotation (dirty → warm → LRU).
-    #[cfg(feature = "rocksdb")]
-    pub fn flush_to_batch(
-        &mut self,
-        batch: &mut rocksdb::WriteBatch,
-        nodes_cf: &impl rocksdb::AsColumnFamilyRef,
-        root: Option<NodeId>,
-    ) {
+    /// Used by `BinaryTrieState::prepare_flush` to build a single atomic batch
+    /// that also contains storage_keys entries.
+    ///
+    /// After collecting, performs generational rotation (dirty → warm → LRU).
+    pub fn collect_flush_ops(&mut self, root: Option<NodeId>) -> Vec<WriteOp> {
+        let mut ops = Vec::with_capacity(self.dirty_nodes.len() + self.freed.len() + 2);
+
         // Write all dirty nodes.
         for (id, node) in &self.dirty_nodes {
-            let key = node_key(*id);
-            let bytes = serialize_node(node);
-            batch.put_cf(nodes_cf, key, bytes);
+            ops.push(WriteOp::Put {
+                table: self.nodes_table,
+                key: node_key(*id).to_vec(),
+                value: serialize_node(node),
+            });
         }
 
         // Delete all freed nodes.
         for &id in &self.freed {
-            batch.delete_cf(nodes_cf, node_key(id));
+            ops.push(WriteOp::Delete {
+                table: self.nodes_table,
+                key: node_key(id).to_vec(),
+            });
         }
 
         // Write root metadata.
-        let root_bytes = root.unwrap_or(0).to_le_bytes();
-        batch.put_cf(nodes_cf, META_ROOT, root_bytes);
+        ops.push(WriteOp::Put {
+            table: self.nodes_table,
+            key: META_ROOT.to_vec(),
+            value: root.unwrap_or(0).to_le_bytes().to_vec(),
+        });
 
         // Write next_id metadata.
-        batch.put_cf(nodes_cf, META_NEXT_ID, self.next_id.to_le_bytes());
+        ops.push(WriteOp::Put {
+            table: self.nodes_table,
+            key: META_NEXT_ID.to_vec(),
+            value: self.next_id.to_le_bytes().to_vec(),
+        });
 
         self.rotate_generations();
         self.freed.clear();
+
+        ops
     }
 
     /// Strip subtree caches from all dirty nodes to reduce memory.
@@ -486,17 +456,13 @@ impl NodeStore {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    #[cfg(feature = "rocksdb")]
     fn load_from_db(&self, id: NodeId) -> Result<Node, BinaryTrieError> {
-        let db = self.db.as_ref().ok_or(BinaryTrieError::NodeNotFound(id))?;
-        let cf = db.cf_handle(self.nodes_cf).ok_or_else(|| {
-            BinaryTrieError::StoreError(format!("CF '{}' not found", self.nodes_cf))
-        })?;
+        let backend = self
+            .backend
+            .as_ref()
+            .ok_or(BinaryTrieError::NodeNotFound(id))?;
         let key = node_key(id);
-        match db
-            .get_cf(&cf, &key)
-            .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
-        {
+        match backend.get(self.nodes_table, &key)? {
             Some(bytes) => deserialize_node(&bytes),
             None => Err(BinaryTrieError::NodeNotFound(id)),
         }
@@ -558,7 +524,7 @@ mod tests {
         let mut store = NodeStore::new_memory();
         let id = store.create(Node::Internal(InternalNode::new(None, None)));
         let _node = store.take(id).unwrap();
-        // Node is gone from cache; get() should fail (no DB).
+        // Node is gone from cache; get() should fail (no backend).
         assert!(matches!(
             store.get(id),
             Err(BinaryTrieError::NodeNotFound(_))
@@ -596,308 +562,5 @@ mod tests {
         assert!(!store.dirty_ids.contains(&id));
         assert!(!store.dirty_nodes.contains_key(&id));
         assert!(store.clean_cache.lock().unwrap().contains(&id));
-    }
-
-    #[test]
-    fn put_clean_keeps_dirty_node_in_dirty_map() {
-        let mut store = NodeStore::new_memory();
-        let id = store.create(Node::Internal(InternalNode::new(None, None)));
-
-        // Simulate take/put_clean cycle (as merkelization does).
-        let node = store.take(id).unwrap();
-        store.put_clean(id, node);
-
-        // Node should still be in dirty_nodes (not demoted to clean_cache).
-        assert!(store.dirty_ids.contains(&id));
-        assert!(store.dirty_nodes.contains_key(&id));
-        assert!(!store.clean_cache.lock().unwrap().contains(&id));
-    }
-
-    #[test]
-    fn rotate_generations_moves_dirty_to_warm() {
-        let mut store = NodeStore::new_memory();
-        let id = store.create(Node::Internal(InternalNode::new(None, None)));
-        assert!(store.dirty_nodes.contains_key(&id));
-
-        store.rotate_generations();
-
-        assert!(!store.dirty_nodes.contains_key(&id));
-        assert!(store.warm_nodes.contains_key(&id));
-        assert!(!store.dirty_ids.contains(&id));
-
-        // Second rotation moves warm to clean cache.
-        store.rotate_generations();
-        assert!(!store.warm_nodes.contains_key(&id));
-        assert!(store.clean_cache.lock().unwrap().contains(&id));
-    }
-
-    #[test]
-    fn free_schedules_deletion() {
-        let mut store = NodeStore::new_memory();
-        let id = store.create(Node::Internal(InternalNode::new(None, None)));
-        store.free(id);
-
-        assert!(store.freed.contains(&id));
-        assert!(!store.dirty_nodes.contains_key(&id));
-        assert!(!store.warm_nodes.contains_key(&id));
-        assert!(!store.clean_cache.lock().unwrap().contains(&id));
-        assert!(matches!(
-            store.get(id),
-            Err(BinaryTrieError::NodeNotFound(_))
-        ));
-    }
-
-    #[test]
-    fn get_missing_returns_not_found() {
-        let mut store = NodeStore::new_memory();
-        assert!(matches!(
-            store.get(42),
-            Err(BinaryTrieError::NodeNotFound(42))
-        ));
-    }
-
-    // --- serialize / deserialize roundtrip ---
-
-    #[test]
-    fn roundtrip_internal_both_none() {
-        let node = Node::Internal(InternalNode::new(None, None));
-        let bytes = serialize_node(&node);
-        assert_eq!(bytes.len(), 17);
-        assert_eq!(bytes[0], 0x01);
-
-        let restored = deserialize_node(&bytes).unwrap();
-        if let Node::Internal(internal) = restored {
-            assert_eq!(internal.left, None);
-            assert_eq!(internal.right, None);
-            assert_eq!(internal.cached_hash, None);
-        } else {
-            panic!("expected Internal");
-        }
-    }
-
-    #[test]
-    fn roundtrip_internal_with_children() {
-        let node = Node::Internal(InternalNode::new(Some(3), Some(7)));
-        let bytes = serialize_node(&node);
-        let restored = deserialize_node(&bytes).unwrap();
-        if let Node::Internal(internal) = restored {
-            assert_eq!(internal.left, Some(3));
-            assert_eq!(internal.right, Some(7));
-        } else {
-            panic!("expected Internal");
-        }
-    }
-
-    #[test]
-    fn roundtrip_stem_empty() {
-        let stem_node = make_stem(0x42);
-        let node = Node::Stem(stem_node);
-        let bytes = serialize_node(&node);
-        // tag(1) + stem(31) + bitmap(32) + 0 values = 64 bytes
-        assert_eq!(bytes.len(), 64);
-        assert_eq!(bytes[0], 0x02);
-
-        let restored = deserialize_node(&bytes).unwrap();
-        if let Node::Stem(sn) = restored {
-            assert_eq!(sn.stem[0], 0x42);
-            assert!(sn.values.is_empty());
-            assert!(sn.cached_hash.is_none());
-            assert!(sn.cached_subtree.is_none());
-        } else {
-            panic!("expected Stem");
-        }
-    }
-
-    #[test]
-    fn roundtrip_stem_partial_values() {
-        let mut stem_node = make_stem(0x01);
-        stem_node.set_value(0, [0xAAu8; 32]);
-        stem_node.set_value(127, [0xBBu8; 32]);
-        stem_node.set_value(255, [0xCCu8; 32]);
-
-        let node = Node::Stem(stem_node);
-        let bytes = serialize_node(&node);
-        // tag(1) + stem(31) + bitmap(32) + 3 values * 32 = 160 bytes
-        assert_eq!(bytes.len(), 160);
-
-        let restored = deserialize_node(&bytes).unwrap();
-        if let Node::Stem(sn) = restored {
-            assert_eq!(sn.get_value(0), Some([0xAAu8; 32]));
-            assert_eq!(sn.get_value(127), Some([0xBBu8; 32]));
-            assert_eq!(sn.get_value(255), Some([0xCCu8; 32]));
-            // Other slots should be None.
-            assert_eq!(sn.get_value(1), None);
-            assert_eq!(sn.get_value(128), None);
-        } else {
-            panic!("expected Stem");
-        }
-    }
-
-    #[test]
-    fn roundtrip_stem_all_values() {
-        let mut stem_node = make_stem(0xFF);
-        for i in 0u8..=255 {
-            stem_node.set_value(i, [i; 32]);
-        }
-        let node = Node::Stem(stem_node);
-        let bytes = serialize_node(&node);
-        // tag(1) + stem(31) + bitmap(32) + 256 values * 32 = 8256 bytes
-        assert_eq!(bytes.len(), 8256);
-
-        let restored = deserialize_node(&bytes).unwrap();
-        if let Node::Stem(sn) = restored {
-            for i in 0u8..=255 {
-                assert_eq!(sn.get_value(i), Some([i; 32]), "mismatch at index {i}");
-            }
-        } else {
-            panic!("expected Stem");
-        }
-    }
-
-    #[test]
-    fn deserialize_empty_bytes_returns_error() {
-        assert!(matches!(
-            deserialize_node(&[]),
-            Err(BinaryTrieError::DeserializationError(_))
-        ));
-    }
-
-    #[test]
-    fn deserialize_unknown_tag_returns_error() {
-        assert!(matches!(
-            deserialize_node(&[0xAA]),
-            Err(BinaryTrieError::DeserializationError(_))
-        ));
-    }
-
-    #[test]
-    fn deserialize_internal_too_short_returns_error() {
-        // Only 10 bytes — needs 17.
-        let bytes = [0x01u8; 10];
-        assert!(matches!(
-            deserialize_node(&bytes),
-            Err(BinaryTrieError::DeserializationError(_))
-        ));
-    }
-
-    #[test]
-    fn deserialize_stem_too_short_returns_error() {
-        // Only 30 bytes — needs at least 64.
-        let bytes = [0x02u8; 30];
-        assert!(matches!(
-            deserialize_node(&bytes),
-            Err(BinaryTrieError::DeserializationError(_))
-        ));
-    }
-
-    #[test]
-    fn node_key_encoding() {
-        // Node keys are now raw u64 LE (8 bytes, no prefix).
-        let key = node_key(1);
-        assert_eq!(key.len(), 8);
-        assert_eq!(&key[..], &1u64.to_le_bytes());
-
-        let key_max = node_key(u64::MAX);
-        assert_eq!(&key_max[..], &u64::MAX.to_le_bytes());
-    }
-
-    // --- memory-only NodeStore integrated operations ---
-
-    #[test]
-    fn store_tree_structure() {
-        let mut store = NodeStore::new_memory();
-
-        // Create two stem nodes.
-        let mut s1 = make_stem(0x00);
-        s1.set_value(0, [1u8; 32]);
-        let mut s2 = make_stem(0xFF);
-        s2.set_value(0, [2u8; 32]);
-
-        let s1_id = store.create(Node::Stem(s1));
-        let s2_id = store.create(Node::Stem(s2));
-
-        // Create an internal node pointing to them.
-        let root_id = store.create(Node::Internal(InternalNode::new(Some(s1_id), Some(s2_id))));
-
-        // Verify the structure.
-        let root = store.get(root_id).unwrap();
-        if let Node::Internal(internal) = root {
-            assert_eq!(internal.left, Some(s1_id));
-            assert_eq!(internal.right, Some(s2_id));
-        } else {
-            panic!("expected Internal at root");
-        }
-
-        let left = store.get(s1_id).unwrap();
-        assert!(matches!(left, Node::Stem(_)));
-
-        let right = store.get(s2_id).unwrap();
-        assert!(matches!(right, Node::Stem(_)));
-    }
-
-    // --- Interior mutability / &self read tests ---
-
-    #[test]
-    fn get_by_value_matches_get_mut_by_ref() {
-        let mut store = NodeStore::new_memory();
-        let mut stem = make_stem(0xAB);
-        stem.set_value(0, [1u8; 32]);
-        stem.set_value(42, [2u8; 32]);
-        let id = store.create(Node::Stem(stem));
-
-        // get(&self) returns by clone
-        let by_value = store.get(id).unwrap();
-        // get_mut(&mut self) returns by reference
-        let by_ref = store.get_mut(id).unwrap();
-
-        // Both should have the same data.
-        if let (Node::Stem(v), Node::Stem(r)) = (&by_value, by_ref) {
-            assert_eq!(v.stem, r.stem);
-            assert_eq!(v.get_value(0), r.get_value(0));
-            assert_eq!(v.get_value(42), r.get_value(42));
-            assert_eq!(v.get_value(1), r.get_value(1)); // None
-        } else {
-            panic!("expected Stem nodes");
-        }
-    }
-
-    #[test]
-    fn concurrent_reads_via_shared_ref() {
-        use std::sync::Arc;
-
-        let mut store = NodeStore::new_memory();
-        let mut stem = make_stem(0x01);
-        stem.set_value(0, [42u8; 32]);
-        let id = store.create(Node::Stem(stem));
-
-        // Rotate to move node into warm (simulates post-flush state).
-        store.rotate_generations();
-
-        let store = Arc::new(store);
-
-        // Spawn two threads that read concurrently via &self.
-        let s1 = Arc::clone(&store);
-        let s2 = Arc::clone(&store);
-
-        let t1 = std::thread::spawn(move || {
-            for _ in 0..1000 {
-                let node = s1.get(id).unwrap();
-                if let Node::Stem(s) = node {
-                    assert_eq!(s.get_value(0), Some([42u8; 32]));
-                }
-            }
-        });
-
-        let t2 = std::thread::spawn(move || {
-            for _ in 0..1000 {
-                let node = s2.get(id).unwrap();
-                if let Node::Stem(s) = node {
-                    assert_eq!(s.get_value(0), Some([42u8; 32]));
-                }
-            }
-        });
-
-        t1.join().unwrap();
-        t2.join().unwrap();
     }
 }

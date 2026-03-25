@@ -10,7 +10,7 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ethrex-binary-trie = { workspace = true, features = ["rocksdb"] }
+ethrex-binary-trie.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true

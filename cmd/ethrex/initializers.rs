@@ -172,8 +172,8 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
 
 /// Opens or creates the binary trie state, applying genesis if empty.
 ///
-/// For the persistent path, `store` must be a RocksDB-backed Store. The binary
-/// trie uses the same RocksDB instance via a shared `Arc<DB>` handle.
+/// Uses the store's backend via the `TrieBackend` trait, so it works
+/// with any storage engine (RocksDB or in-memory).
 pub fn init_binary_trie_state(
     store: &Store,
     datadir: &Path,
@@ -201,37 +201,23 @@ pub fn init_binary_trie_state(
         );
     }
 
-    #[cfg(feature = "rocksdb")]
-    {
-        // If Store already initialized the binary trie during add_initial_state
-        // (genesis case), reuse it.
-        if let Some(existing) = store.binary_trie_state() {
-            info!("Binary trie already initialized (from genesis)");
-            return Ok(existing);
-        }
-
-        let db = store
-            .db_handle()
-            .ok_or_else(|| eyre::eyre!("Failed to get RocksDB handle from Store"))?;
-
-        let mut state =
-            BinaryTrieState::open_with_db(db, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
-                .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
-
-        if let Some(checkpoint) = state.checkpoint_block() {
-            state.set_last_flushed_block(checkpoint);
-            info!("Binary trie resuming from checkpoint block {checkpoint}");
-        }
-
-        Ok(Arc::new(std::sync::RwLock::new(state)))
+    // If Store already initialized the binary trie during add_initial_state
+    // (genesis case), reuse it.
+    if let Some(existing) = store.binary_trie_state() {
+        info!("Binary trie already initialized (from genesis)");
+        return Ok(existing);
     }
-    #[cfg(not(feature = "rocksdb"))]
-    {
-        let _ = store;
-        Err(eyre::eyre!(
-            "rocksdb feature required for persistent binary trie"
-        ))
+
+    let backend = store.create_trie_backend();
+    let mut state = BinaryTrieState::open(backend, BINARY_TRIE_NODES, BINARY_TRIE_STORAGE_KEYS)
+        .map_err(|e| eyre::eyre!("Failed to open binary trie: {e}"))?;
+
+    if let Some(checkpoint) = state.checkpoint_block() {
+        state.set_last_flushed_block(checkpoint);
+        info!("Binary trie resuming from checkpoint block {checkpoint}");
     }
+
+    Ok(Arc::new(std::sync::RwLock::new(state)))
 }
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {

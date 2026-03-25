@@ -74,10 +74,6 @@ impl StorageBackend for InMemoryBackend {
         // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 pub struct InMemoryLocked {

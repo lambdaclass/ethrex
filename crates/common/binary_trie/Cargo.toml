@@ -15,8 +15,6 @@ hex.workspace = true
 lru.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
-rocksdb = { workspace = true, optional = true }
-
 [dependencies.serde]
 workspace = true
 features = ["derive"]
@@ -25,10 +23,6 @@ features = ["derive"]
 ethrex-crypto.workspace = true
 hex.workspace = true
 serde_json.workspace = true
-tempfile.workspace = true
-
-[features]
-rocksdb = ["dep:rocksdb"]
 
 [lib]
 path = "./lib.rs"

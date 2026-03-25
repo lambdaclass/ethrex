@@ -61,18 +61,12 @@ impl BinaryTrie {
         get_proof_impl(self, key)
     }
 
-    /// Write all dirty/freed trie nodes and metadata into a caller-supplied
-    /// Write dirty and freed nodes to the given CF in a caller-supplied `WriteBatch`.
+    /// Collect all dirty/freed trie nodes and metadata as `WriteOp`s.
     ///
-    /// Used by `BinaryTrieState::flush` to combine trie and storage_keys
-    /// into a single atomic RocksDB write.
-    #[cfg(feature = "rocksdb")]
-    pub fn flush_to_batch(
-        &mut self,
-        batch: &mut rocksdb::WriteBatch,
-        nodes_cf: &impl rocksdb::AsColumnFamilyRef,
-    ) {
-        self.store.flush_to_batch(batch, nodes_cf, self.root);
+    /// Used by `BinaryTrieState::prepare_flush` to combine trie and storage_keys
+    /// into a single atomic write batch.
+    pub fn collect_flush_ops(&mut self) -> Vec<crate::db::WriteOp> {
+        self.store.collect_flush_ops(self.root)
     }
 }
 
