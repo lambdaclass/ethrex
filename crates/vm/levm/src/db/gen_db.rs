@@ -19,7 +19,7 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
@@ -42,6 +42,9 @@ pub struct GeneralizedDatabase {
     /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
     /// (state transitions come from BAL instead).
     skip_initial_tracking: bool,
+    /// Optional tracker for BAL validation: records addresses accessed via load_account.
+    /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
+    pub accessed_accounts: Option<FxHashSet<Address>>,
 }
 
 impl GeneralizedDatabase {
@@ -56,6 +59,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            accessed_accounts: None,
         }
     }
 
@@ -87,6 +91,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
+            accessed_accounts: None,
         }
     }
 
@@ -144,6 +149,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            accessed_accounts: None,
         }
     }
 
@@ -151,6 +157,9 @@ impl GeneralizedDatabase {
     /// Loads account
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
+        if let Some(tracker) = &mut self.accessed_accounts {
+            tracker.insert(address);
+        }
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
