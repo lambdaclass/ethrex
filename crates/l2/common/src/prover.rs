@@ -7,7 +7,9 @@ use serde_with::serde_as;
 
 // Re-export prover types from ethrex-common so existing `ethrex_l2_common::prover::X` paths
 // continue to work for all downstream crates.
-pub use ethrex_common::types::prover::{ProofBytes, ProofData, ProofFormat, ProverType};
+pub use ethrex_common::types::prover::{
+    ProofBytes, ProofData, ProofFormat, ProverOutput, ProverType,
+};
 
 /// Returns the on-chain getter name for checking whether this proof type
 /// is required by the OnChainProposer contract, or `None` for types that

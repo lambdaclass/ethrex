@@ -20,7 +20,7 @@ use ethrex_common::types::Block;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_prover::ProofData;
-use ethrex_prover::{ProofBytes, ProofFormat, ProverType};
+use ethrex_prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_storage::Store;
 use spawned_concurrency::messages::Unused;
 use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
@@ -243,15 +243,15 @@ impl L1ProofCoordinator {
         &mut self,
         stream: &mut TcpStream,
         block_number: u64,
-        proof: &ProofBytes,
+        proof: &ProverOutput,
     ) -> Result<(), L1CoordinatorError> {
-        let prover_reported_type = proof.prover_type as u64;
+        let prover_reported_type = proof.prover_type() as u64;
         info!(
             block_number,
             prover_reported_type, "Proof received from prover"
         );
 
-        let proof_data = proof.proof.clone();
+        let proof_data = proof.proof_bytes().proof.clone();
 
         // Validate size.
         if proof_data.len() > MAX_PROOF_SIZE {

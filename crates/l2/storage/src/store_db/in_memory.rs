@@ -12,7 +12,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{ProofBytes, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProverInputData, ProverOutput, ProverType};
 
 use crate::api::StoreEngineRollup;
 
@@ -50,7 +50,7 @@ struct StoreInner {
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
-    batch_proofs: HashMap<(ProverType, u64), ProofBytes>,
+    batch_proofs: HashMap<(ProverType, u64), ProverOutput>,
     /// Map of batch number to commit transaction hash
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
@@ -283,7 +283,7 @@ impl StoreEngineRollup for Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-        proof: ProofBytes,
+        proof: ProverOutput,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
             .batch_proofs
@@ -295,7 +295,7 @@ impl StoreEngineRollup for Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-    ) -> Result<Option<ProofBytes>, RollupStoreError> {
+    ) -> Result<Option<ProverOutput>, RollupStoreError> {
         Ok(self
             .inner()?
             .batch_proofs

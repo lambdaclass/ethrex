@@ -2,7 +2,7 @@ use crate::{
     backend::{BackendType, ExecBackend, ProverBackend},
     protocol::ProofData,
 };
-use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::input::ProgramInput;
 use serde::{Serialize, de::DeserializeOwned};
 use spawned_concurrency::messages::Unused;
@@ -182,7 +182,7 @@ where
         &self,
         endpoint: &Url,
         batch_number: u64,
-        proof_bytes: ProofBytes,
+        proof_bytes: ProverOutput,
     ) -> Result<(), String> {
         let submit: ProofData<I> = ProofData::proof_submit(batch_number, proof_bytes);
 

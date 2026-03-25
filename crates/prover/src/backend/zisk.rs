@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
 
 use crate::backend::{BackendError, ProverBackend};
@@ -188,7 +188,7 @@ impl ProverBackend for ZiskBackend {
         &self,
         _proof: Self::ProofOutput,
         _format: ProofFormat,
-    ) -> Result<ProofBytes, BackendError> {
+    ) -> Result<ProverOutput, BackendError> {
         Err(BackendError::not_implemented(
             "to_proof_bytes is not implemented for ZisK backend",
         ))

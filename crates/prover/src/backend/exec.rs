@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
-use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::crypto::NativeCrypto;
 use ethrex_guest_program::{input::ProgramInput, output::ProgramOutput};
 
@@ -52,12 +52,11 @@ impl ExecBackend {
         }
     }
 
-    fn empty_proof_bytes() -> ProofBytes {
-        ProofBytes {
+    fn empty_proof_bytes() -> ProverOutput {
+        ProverOutput::Proof(ProofBytes {
             prover_type: ProverType::Exec,
             proof: vec![],
-            public_values: vec![],
-        }
+        })
     }
 }
 
@@ -100,7 +99,7 @@ impl ProverBackend for ExecBackend {
         &self,
         _proof: Self::ProofOutput,
         _format: ProofFormat,
-    ) -> Result<ProofBytes, BackendError> {
+    ) -> Result<ProverOutput, BackendError> {
         Ok(Self::empty_proof_bytes())
     }
 

@@ -4,7 +4,7 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_git_commit_hash;
 use bytes::Bytes;
 use ethrex_common::Address;
-use ethrex_l2_common::prover::{ProofBytes, ProofData, ProofFormat, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProofData, ProofFormat, ProverInputData, ProverOutput, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
@@ -257,12 +257,12 @@ impl ProofCoordinator {
         &self,
         stream: &mut TcpStream,
         batch_number: u64,
-        proof_bytes: ProofBytes,
+        proof_bytes: ProverOutput,
     ) -> Result<(), ProofCoordinatorError> {
         info!("ProofSubmit received for batch number: {batch_number}");
 
         // Check if we have a proof for this batch and prover type
-        let prover_type = proof_bytes.prover_type;
+        let prover_type = proof_bytes.prover_type();
         if self
             .rollup_store
             .get_proof_by_batch_and_type(batch_number, prover_type)

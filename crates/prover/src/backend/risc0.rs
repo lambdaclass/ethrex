@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverType};
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{
     input::ProgramInput,
     methods::{ETHREX_GUEST_RISC0_ELF, ETHREX_GUEST_RISC0_ID},
@@ -28,14 +28,13 @@ impl Risc0Backend {
         }
     }
 
-    fn to_groth16_proof_bytes(receipt: &Receipt) -> Result<ProofBytes, BackendError> {
+    fn to_groth16_proof_bytes(receipt: &Receipt) -> Result<ProverOutput, BackendError> {
         let seal = Self::encode_seal(receipt)?;
 
-        Ok(ProofBytes {
+        Ok(ProverOutput::Proof(ProofBytes {
             prover_type: ProverType::RISC0,
             proof: seal,
-            public_values: receipt.journal.bytes.clone(),
-        })
+        }))
     }
 
     // ref: https://github.com/risc0/risc0-ethereum/blob/046bb34ea4605f9d8420c7db89baf8e1064fa6f5/contracts/src/lib.rs#L88
@@ -125,17 +124,20 @@ impl ProverBackend for Risc0Backend {
         &self,
         proof: Self::ProofOutput,
         format: ProofFormat,
-    ) -> Result<ProofBytes, BackendError> {
-        let proof_bytes = match format {
-            ProofFormat::Compressed => ProofBytes {
-                prover_type: ProverType::RISC0,
-                proof: bincode::serialize(&proof.inner).map_err(BackendError::proof_conversion)?,
+    ) -> Result<ProverOutput, BackendError> {
+        let prover_output = match format {
+            ProofFormat::Compressed => ProverOutput::ProofWithPublicValues {
+                proof_bytes: ProofBytes {
+                    prover_type: ProverType::RISC0,
+                    proof: bincode::serialize(&proof.inner)
+                        .map_err(BackendError::proof_conversion)?,
+                },
                 public_values: proof.journal.bytes,
             },
             ProofFormat::Groth16 => Self::to_groth16_proof_bytes(&proof)?,
         };
 
-        Ok(proof_bytes)
+        Ok(prover_output)
     }
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
