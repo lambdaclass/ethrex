@@ -35,7 +35,7 @@ use crate::{
     tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
     types::Node,
 };
-use ethrex_blockchain::{Blockchain, error::ChainError};
+use ethrex_blockchain::Blockchain;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction};
@@ -1225,59 +1225,104 @@ async fn handle_incoming_message(
                         "Received new Polygon block via P2P"
                     );
 
-                    // Execute and store the block via the pipeline path, which
-                    // runs Bor system calls and merkleizes in parallel.
-                    let announced_td = new_block.total_difficulty;
-                    match state.blockchain.add_block_pipeline(new_block.block, None) {
-                        Ok(()) => {
-                            // Update the canonical head if the new block's total
-                            // difficulty exceeds our current head. The peer announces
-                            // its cumulative TD in the NewBlock message. We compare
-                            // against our head's block number as a conservative lower
-                            // bound (each Bor block has difficulty >= 1, so local
-                            // TD >= head_number). A proper TD store will replace this
-                            // in Wave 4.
-                            let latest = state.storage.get_latest_block_number().await?;
-                            let local_td_lower_bound = ethrex_common::U256::from(latest);
-                            if announced_td > local_td_lower_bound || block_number > latest {
-                                state
-                                    .storage
-                                    .forkchoice_update(vec![], block_number, block_hash, None, None)
-                                    .await?;
-                                debug!(block_number, %announced_td, "Updated canonical head (Polygon)");
-                            }
-                        }
-                        Err(ChainError::ParentNotFound) => {
-                            // Block is stored as pending by add_block_pipeline.
-                            // Only trigger the sync bridge for real gaps (>16 blocks).
-                            // Small gaps (1-2 blocks behind) resolve naturally via
-                            // forward sync without needing a bridge cycle.
-                            let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
-                            if block_number > latest + 64 {
-                                warn!(
-                                    peer=%state.node,
-                                    block_number,
-                                    latest,
-                                    gap = block_number.saturating_sub(latest),
-                                    "Polygon block parent not found, triggering gap-fill sync"
-                                );
-                                state.blockchain.set_polygon_sync_head(block_hash);
-                            } else {
-                                debug!(
-                                    peer=%state.node,
-                                    block_number,
-                                    latest,
-                                    "Polygon block parent not found (small gap, skipping bridge)"
-                                );
-                            }
-                        }
-                        Err(e) => {
+                    // Check if parent exists before executing
+                    let parent_hash = new_block.block.header.parent_hash;
+                    if state
+                        .storage
+                        .get_block_header_by_hash(parent_hash)?
+                        .is_none()
+                    {
+                        // Parent not in DB — buffer for chain-following when parent arrives
+                        state
+                            .blockchain
+                            .buffer_polygon_pending_block(new_block.block);
+                        let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                        if block_number > latest + 64 {
                             warn!(
                                 peer=%state.node,
                                 block_number,
-                                error=%e,
-                                "Failed to process Polygon block"
+                                latest,
+                                gap = block_number.saturating_sub(latest),
+                                "Polygon block parent not found, triggering gap-fill sync"
                             );
+                            state.blockchain.set_polygon_sync_head(block_hash);
+                        } else {
+                            debug!(
+                                peer=%state.node,
+                                block_number,
+                                latest,
+                                "Polygon block parent not found, buffered for chain-follow"
+                            );
+                        }
+                    } else {
+                        // Parent exists — execute inline via pipeline
+                        let announced_td = new_block.total_difficulty;
+                        match state.blockchain.add_block_pipeline(new_block.block, None) {
+                            Ok(()) => {
+                                let latest = state.storage.get_latest_block_number().await?;
+                                let local_td_lower_bound = ethrex_common::U256::from(latest);
+                                if announced_td > local_td_lower_bound || block_number > latest {
+                                    state
+                                        .storage
+                                        .forkchoice_update(
+                                            vec![],
+                                            block_number,
+                                            block_hash,
+                                            None,
+                                            None,
+                                        )
+                                        .await?;
+                                    debug!(block_number, %announced_td, "Updated canonical head (Polygon)");
+                                }
+
+                                // Chain-follow: process buffered blocks whose parent we just stored
+                                let mut next_parent = block_hash;
+                                while let Some(pending) =
+                                    state.blockchain.take_polygon_pending_block(next_parent)
+                                {
+                                    let pending_hash = pending.hash();
+                                    let pending_number = pending.header.number;
+                                    match state.blockchain.add_block_pipeline(pending, None) {
+                                        Ok(()) => {
+                                            let latest =
+                                                state.storage.get_latest_block_number().await?;
+                                            if pending_number > latest {
+                                                state
+                                                    .storage
+                                                    .forkchoice_update(
+                                                        vec![],
+                                                        pending_number,
+                                                        pending_hash,
+                                                        None,
+                                                        None,
+                                                    )
+                                                    .await?;
+                                            }
+                                            debug!(
+                                                block_number = pending_number,
+                                                "Processed buffered Polygon block"
+                                            );
+                                            next_parent = pending_hash;
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                block_number = pending_number,
+                                                error = %e,
+                                                "Failed to process buffered Polygon block"
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    peer=%state.node,
+                                    block_number,
+                                    error=%e,
+                                    "Failed to process Polygon block"
+                                );
+                            }
                         }
                     }
                 }

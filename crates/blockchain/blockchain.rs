@@ -190,6 +190,9 @@ pub struct Blockchain {
     /// Polygon sync target: set by P2P after status exchange with a Polygon peer.
     /// The sync bridge task reads this to trigger the sync manager.
     polygon_sync_head: std::sync::Mutex<Option<H256>>,
+    /// In-memory buffer for Polygon NewBlock blocks whose parent hasn't arrived yet.
+    /// Keyed by parent_hash so we can chain-follow after processing a block.
+    polygon_pending_blocks: std::sync::Mutex<HashMap<H256, Block>>,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -309,6 +312,7 @@ impl Blockchain {
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
             polygon_sync_head: std::sync::Mutex::new(None),
+            polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             bor_engine,
@@ -321,6 +325,7 @@ impl Blockchain {
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             polygon_sync_head: std::sync::Mutex::new(None),
+            polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             bor_engine: None,
@@ -3003,6 +3008,21 @@ impl Blockchain {
     /// Takes the Polygon sync target (returns and clears it).
     pub fn take_polygon_sync_head(&self) -> Option<H256> {
         self.polygon_sync_head.lock().ok()?.take()
+    }
+
+    /// Buffers a Polygon NewBlock whose parent hasn't been processed yet.
+    pub fn buffer_polygon_pending_block(&self, block: Block) {
+        if let Ok(mut pending) = self.polygon_pending_blocks.lock() {
+            pending.insert(block.header.parent_hash, block);
+        }
+    }
+
+    /// Takes a buffered pending block whose parent matches the given hash.
+    pub fn take_polygon_pending_block(&self, parent_hash: H256) -> Option<Block> {
+        self.polygon_pending_blocks
+            .lock()
+            .ok()?
+            .remove(&parent_hash)
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
