@@ -559,18 +559,35 @@ fn span_to_validator_set(
     set
 }
 
-/// Encode a list of Heimdall validators as Bor-format bytes.
+/// Encode a list of Heimdall validators as RLP bytes for commitSpan.
 ///
-/// Each validator is 40 bytes: [20-byte address][20-byte big-endian padded voting power].
+/// Matches Bor's `rlp.EncodeToBytes([]MinimalVal{{ID, VotingPower, Signer}})`:
+/// an RLP list of `[id: u64, voting_power: u64, signer: Address]` lists.
 pub fn encode_validator_bytes(validators: &[crate::heimdall::Validator]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(validators.len() * 40);
-    for v in validators {
-        bytes.extend_from_slice(v.signer.as_bytes());
-        let mut power = [0u8; 20];
-        power[12..].copy_from_slice(&v.voting_power.to_be_bytes());
-        bytes.extend_from_slice(&power);
+    use ethrex_rlp::encode::encode_length;
+
+    // Each validator is RLP-encoded as a list [id, power, signer]
+    let encoded_vals: Vec<Vec<u8>> = validators
+        .iter()
+        .map(|v| {
+            let mut buf = Vec::new();
+            ethrex_rlp::structs::Encoder::new(&mut buf)
+                .encode_field(&v.id)
+                .encode_field(&v.voting_power)
+                .encode_field(&v.signer)
+                .finish();
+            buf
+        })
+        .collect();
+
+    // Wrap as outer RLP list
+    let payload_len: usize = encoded_vals.iter().map(|v| v.len()).sum();
+    let mut out = Vec::with_capacity(payload_len + 5);
+    encode_length(payload_len, &mut out);
+    for val in &encoded_vals {
+        out.extend_from_slice(val);
     }
-    bytes
+    out
 }
 
 /// Decode a hex string (with or without 0x prefix) into bytes.
