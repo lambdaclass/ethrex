@@ -3237,25 +3237,59 @@ fn execute_polygon_system_calls(
     // 1. commitSpan at span boundaries (BEFORE commitState, matching Bor's Finalize order)
     if need_span_commit {
         if let Some(engine) = bor_engine {
-            // Use stored span ID if available, fall back to formula.
-            let current_span_id = engine
+            // Read currentSpanNumber() from the ValidatorSet contract (0x1000).
+            // The contract maintains its own span counter which may differ from
+            // Heimdall's span IDs (e.g. after the Rio fork reset the counter).
+            // Selector: 0x4dbc959f = keccak256("currentSpanNumber()")
+            let current_span_selector = bytes::Bytes::from_static(&[0x4d, 0xbc, 0x95, 0x9f]);
+            let contract_span_number = match vm.execute_polygon_system_call(
+                &block.header,
+                VALIDATOR_CONTRACT,
+                SYSTEM_ADDRESS,
+                current_span_selector,
+                MAX_SYSTEM_CALL_GAS,
+            ) {
+                Ok(report) if report.is_success() && report.output.len() >= 32 => {
+                    // ABI-encoded uint256 — take last 8 bytes as u64
+                    let bytes: [u8; 8] =
+                        report.output[24..32].try_into().expect("slice is 8 bytes");
+                    u64::from_be_bytes(bytes)
+                }
+                Ok(report) => {
+                    return Err(ChainError::Custom(format!(
+                        "currentSpanNumber() call failed at block {block_number}: success={}, output_len={}",
+                        report.is_success(),
+                        report.output.len()
+                    )));
+                }
+                Err(e) => {
+                    return Err(ChainError::Custom(format!(
+                        "currentSpanNumber() call failed at block {block_number}: {e}"
+                    )));
+                }
+            };
+            let commit_span_id = contract_span_number + 1;
+
+            // Use Heimdall span ID for fetching span data (validators, producers, boundaries)
+            let heimdall_span_id = engine
                 .current_span_id()
-                .unwrap_or_else(|| bor_config.span_id_at(block_number));
-            let next_span_id = current_span_id + 1;
+                .unwrap_or_else(|| bor_config.span_id_at(block_number))
+                + 1;
 
             // Fetch the next span from Heimdall (async → sync bridge)
             let next_span = rt_handle
-                .block_on(engine.heimdall.fetch_span(next_span_id))
+                .block_on(engine.heimdall.fetch_span(heimdall_span_id))
                 .map_err(|e| {
                     ChainError::Custom(format!(
-                        "Failed to fetch span {next_span_id} from Heimdall: {e}"
+                        "Failed to fetch span {heimdall_span_id} from Heimdall: {e}"
                     ))
                 })?;
 
             let validator_bytes = encode_validator_bytes(&next_span.validators);
             let producer_bytes = encode_validator_bytes(&next_span.selected_producers);
+            // Use the contract's span counter for the commitSpan call, NOT Heimdall's span ID
             let calldata = encode_commit_span(
-                next_span.id,
+                commit_span_id,
                 next_span.start_block,
                 next_span.end_block,
                 &validator_bytes,
@@ -3269,7 +3303,9 @@ fn execute_polygon_system_calls(
                 .collect();
             debug!(
                 block_number,
-                span_id = next_span.id,
+                contract_span = contract_span_number,
+                commit_span_id,
+                heimdall_span_id,
                 start = next_span.start_block,
                 end = next_span.end_block,
                 validators = next_span.validators.len(),
@@ -3298,7 +3334,7 @@ fn execute_polygon_system_calls(
                         // commitSpan reverted — log and skip (non-fatal for debugging)
                         warn!(
                             block_number,
-                            span_id = next_span_id,
+                            commit_span_id,
                             output = %format!("{:?}", report.output),
                             gas_used = report.gas_used,
                             "commitSpan REVERTED — skipping receipt (non-fatal debug mode)"
@@ -3308,7 +3344,7 @@ fn execute_polygon_system_calls(
                 Err(e) => {
                     warn!(
                         block_number,
-                        span_id = next_span_id,
+                        commit_span_id,
                         error = %e,
                         "commitSpan system call FAILED — skipping (non-fatal debug mode)"
                     );
