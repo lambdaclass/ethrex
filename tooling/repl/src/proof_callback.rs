@@ -9,15 +9,13 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpSocket;
 
-/// How long to wait for the proof callback before giving up.
-const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Spawn a background task that listens for exactly one HTTP POST containing
 /// a `GeneratedProof` JSON body, stores it in the variable store, responds
 /// with HTTP 200, and exits.
-pub fn spawn_listener(port: u16, variables: VariableStore) {
+pub fn spawn_listener(port: u16, timeout_secs: u64, variables: VariableStore) {
+    let timeout = Duration::from_secs(timeout_secs);
     tokio::spawn(async move {
-        if let Err(e) = run_listener(port, variables).await {
+        if let Err(e) = run_listener(port, timeout, variables).await {
             // Print to stdout so it's visible even with rustyline in raw mode.
             use std::io::Write;
             let stdout = std::io::stdout();
@@ -30,7 +28,7 @@ pub fn spawn_listener(port: u16, variables: VariableStore) {
     });
 }
 
-async fn run_listener(port: u16, variables: VariableStore) -> Result<(), String> {
+async fn run_listener(port: u16, timeout: Duration, variables: VariableStore) -> Result<(), String> {
     let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
 
     let socket = TcpSocket::new_v4().map_err(|e| format!("Failed to create socket: {e}"))?;
@@ -45,13 +43,13 @@ async fn run_listener(port: u16, variables: VariableStore) -> Result<(), String>
         .map_err(|e| format!("Failed to listen on port {port}: {e}"))?;
 
     // Wait for the callback connection with a timeout.
-    let (mut stream, _peer) = tokio::time::timeout(CALLBACK_TIMEOUT, listener.accept())
+    let (mut stream, _peer) = tokio::time::timeout(timeout, listener.accept())
         .await
         .map_err(|_| {
             format!(
                 "Timed out after {}s waiting for proof callback on port {port}.\n\
                  Check that the node was started with: --proof.callback-url http://127.0.0.1:{port}",
-                CALLBACK_TIMEOUT.as_secs()
+                timeout.as_secs()
             )
         })?
         .map_err(|e| format!("Accept failed: {e}"))?;

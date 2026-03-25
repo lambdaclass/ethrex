@@ -22,6 +22,7 @@ pub async fn run(
     history_file: String,
     execute: Option<String>,
     proof_callback_port: u16,
+    proof_callback_timeout: u64,
 ) {
     let history_path = expand_tilde(&history_file);
     let client = RpcClient::new(endpoint);
@@ -32,7 +33,13 @@ pub async fn run(
     });
 
     if let Some(command) = execute {
-        let repl = Repl::new(client, authrpc_client, history_path, proof_callback_port);
+        let repl = Repl::new(
+            client,
+            authrpc_client,
+            history_path,
+            proof_callback_port,
+            proof_callback_timeout,
+        );
         let result = repl.execute_command(&command).await;
         if !result.is_empty() {
             println!("{result}");
@@ -40,7 +47,13 @@ pub async fn run(
         return;
     }
 
-    let mut repl = Repl::new(client, authrpc_client, history_path, proof_callback_port);
+    let mut repl = Repl::new(
+        client,
+        authrpc_client,
+        history_path,
+        proof_callback_port,
+        proof_callback_timeout,
+    );
     repl.run().await;
 }
 

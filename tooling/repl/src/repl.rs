@@ -20,6 +20,7 @@ pub struct Repl {
     history_path: String,
     variables: VariableStore,
     proof_callback_port: u16,
+    proof_callback_timeout: u64,
 }
 
 impl Repl {
@@ -28,6 +29,7 @@ impl Repl {
         authrpc_client: Option<RpcClient>,
         history_path: String,
         proof_callback_port: u16,
+        proof_callback_timeout: u64,
     ) -> Self {
         Self {
             client,
@@ -36,6 +38,7 @@ impl Repl {
             history_path,
             variables: VariableStore::new(),
             proof_callback_port,
+            proof_callback_timeout,
         }
     }
 
@@ -278,8 +281,13 @@ impl Repl {
                         // HTTP listener to receive the GeneratedProof callback.
                         if is_request_proofs {
                             let port = self.proof_callback_port;
-                            crate::proof_callback::spawn_listener(port, self.variables.clone());
-                            format!("{formatted}\nListening for proof callback on port {port}...")
+                            let timeout = self.proof_callback_timeout;
+                            crate::proof_callback::spawn_listener(
+                                port,
+                                timeout,
+                                self.variables.clone(),
+                            );
+                            format!("{formatted}\nListening for proof callback on port {port} (timeout: {timeout}s)...")
                         } else {
                             formatted
                         }
