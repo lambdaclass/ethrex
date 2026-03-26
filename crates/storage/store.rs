@@ -59,7 +59,9 @@ use tracing::{debug, error, info};
 pub const MAX_WITNESSES: u64 = 128;
 
 /// Maximum number of blocks to retain execution proofs for (EIP-8025).
-/// Same retention window as witnesses.
+/// Matches the witness retention window (`MAX_WITNESSES`). 128 blocks is
+/// well beyond the Ethereum finality depth (~2 epochs ≈ 64 slots), giving
+/// validators enough time to verify proofs before they are pruned.
 pub const MAX_PROOF_BLOCKS: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
@@ -2172,7 +2174,9 @@ impl Store {
 
         if let Some(oldest_block_number) = self.get_oldest_proof_number()? {
             let prefix = oldest_block_number.to_be_bytes();
-            let mut to_delete = Vec::new();
+            let mut proof_keys_to_delete = Vec::new();
+            // Collect roots from deleted proofs so we can clean up their rtb: mappings.
+            let mut roots_to_delete = Vec::new();
 
             {
                 let read_txn = self.backend.begin_read()?;
@@ -2189,12 +2193,27 @@ impl Store {
                     if block_number > threshold {
                         break;
                     }
-                    to_delete.push(key.to_vec());
+                    // Extract root (bytes 8..40) from the composite key to clean up rtb: mapping.
+                    if key.len() >= 40 {
+                        let mut root_bytes = [0u8; 32];
+                        root_bytes.copy_from_slice(&key[8..40]);
+                        roots_to_delete.push(root_bytes);
+                    }
+                    proof_keys_to_delete.push(key.to_vec());
                 }
             }
 
-            for key in to_delete {
+            for key in proof_keys_to_delete {
                 self.delete(EXECUTION_PROOFS, key)?;
+            }
+
+            // Clean up the corresponding rtb: (root→block) mappings.
+            for root_bytes in roots_to_delete {
+                let mut rtb_key = Vec::with_capacity(36);
+                rtb_key.extend_from_slice(b"rtb:");
+                rtb_key.extend_from_slice(&root_bytes);
+                // Ignore errors — the mapping may already be gone.
+                let _ = self.delete(EXECUTION_PROOFS, rtb_key);
             }
         };
 

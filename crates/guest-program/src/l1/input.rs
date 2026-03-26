@@ -32,22 +32,25 @@ impl ProgramInput {
 /// EIP-8025 length-prefixed wire format:
 ///
 ///   `[ssz_len: u32 LE] [ssz_bytes] [rkyv_bytes]`
+///
+/// Returns an error if rkyv serialization of the execution witness fails.
 #[cfg(feature = "eip-8025")]
 pub fn encode_eip8025(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, ProgramInputEncodeError> {
     use ssz::SszEncode;
 
     let ssz_bytes = new_payload_request.to_ssz();
     let ssz_len = ssz_bytes.len() as u32;
-    let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness).expect("rkyv encode");
+    let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness)
+        .map_err(|e| ProgramInputEncodeError::Rkyv(e.to_string()))?;
 
     let mut out = Vec::with_capacity(4 + ssz_bytes.len() + rkyv_bytes.len());
     out.extend_from_slice(&ssz_len.to_le_bytes());
     out.extend_from_slice(&ssz_bytes);
     out.extend_from_slice(&rkyv_bytes);
-    out
+    Ok(out)
 }
 
 /// Decode the EIP-8025 length-prefixed wire format into a `NewPayloadRequest`
@@ -70,7 +73,8 @@ pub fn decode_eip8025(
     if bytes.len() < 4 {
         return Err(ProgramInputDecodeError::TooShort);
     }
-    let ssz_len = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes")) as usize;
+    // Safety: we already checked bytes.len() >= 4 above, so this slice is exactly 4 bytes.
+    let ssz_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
     if bytes.len() < 4 + ssz_len {
         return Err(ProgramInputDecodeError::TooShort);
     }
@@ -84,6 +88,21 @@ pub fn decode_eip8025(
         .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;
 
     Ok((new_payload_request, execution_witness))
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug)]
+pub enum ProgramInputEncodeError {
+    Rkyv(String),
+}
+
+#[cfg(feature = "eip-8025")]
+impl core::fmt::Display for ProgramInputEncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Rkyv(e) => write!(f, "rkyv encode error: {e}"),
+        }
+    }
 }
 
 #[cfg(feature = "eip-8025")]

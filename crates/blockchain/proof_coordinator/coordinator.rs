@@ -40,6 +40,13 @@ use super::types::{ExecutionProofV1, GeneratedProof, MAX_PROOF_SIZE, ProofGenId,
 /// How long to wait for a prover connection before re-checking the message queue.
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Maximum time to read a complete message from a connected prover.
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum message size from a prover (10 MiB). This bounds memory usage
+/// per connection and prevents a malicious peer from causing OOM.
+const MAX_PROVER_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
 /// Error type for L1 proof coordinator operations.
 #[derive(Debug, thiserror::Error)]
 pub enum L1CoordinatorError {
@@ -153,12 +160,41 @@ impl L1ProofCoordinator {
         send_after(Duration::ZERO, handle.clone(), CoordCastMsg::AcceptNext);
     }
 
-    /// Handle a single prover connection synchronously.
+    /// Handle a single prover connection with timeout and size limit.
     async fn handle_connection(&mut self, mut stream: TcpStream) {
-        let mut buffer = Vec::new();
-        if let Err(e) = stream.read_to_end(&mut buffer).await {
-            error!("Failed to read from prover: {e}");
-            return;
+        let mut buffer = Vec::with_capacity(4096);
+        let read_result = tokio::time::timeout(CONNECTION_READ_TIMEOUT, async {
+            loop {
+                let mut chunk = [0u8; 8192];
+                match stream.read(&mut chunk).await {
+                    Ok(0) => break Ok(()),
+                    Ok(n) => {
+                        if buffer.len() + n > MAX_PROVER_MESSAGE_SIZE {
+                            break Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "Message exceeds maximum size of {MAX_PROVER_MESSAGE_SIZE} bytes"
+                                ),
+                            ));
+                        }
+                        buffer.extend_from_slice(&chunk[..n]);
+                    }
+                    Err(e) => break Err(e),
+                }
+            }
+        })
+        .await;
+
+        match read_result {
+            Err(_) => {
+                warn!("Timed out reading from prover connection");
+                return;
+            }
+            Ok(Err(e)) => {
+                error!("Failed to read from prover: {e}");
+                return;
+            }
+            Ok(Ok(())) => {}
         }
 
         let msg: Result<ProofData<ProgramInput>, _> = serde_json::from_slice(&buffer);
@@ -287,9 +323,11 @@ impl L1ProofCoordinator {
             None => {
                 warn!(
                     block_number,
-                    "No pending request found for proof; using defaults"
+                    "No pending request found for proof; rejecting submission"
                 );
-                (H256::default(), [0u8; 8])
+                let ack: ProofData<ProgramInput> = ProofData::proof_submit_ack(block_number);
+                send_response(stream, &ack).await?;
+                return Ok(());
             }
         };
 
