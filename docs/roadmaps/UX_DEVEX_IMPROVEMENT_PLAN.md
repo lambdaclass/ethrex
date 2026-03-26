@@ -21,8 +21,8 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 | Category | Issues Found | Severity | Impact |
 |----------|-------------|----------|--------|
 | Error Handling | 150+ problems | Mixed (5 Critical, 2 High, rest Medium) | Node crashes, hours lost debugging |
-| Node Operator UX | 15 gaps | High | Can't monitor/diagnose issues |
-| Configuration | 21 missing env vars | Medium | Container deployment friction |
+| Node Operator UX | 14 gaps | High | Can't monitor/diagnose issues |
+| Configuration | 3 missing env vars + setup gaps | Medium | Container deployment friction |
 | Documentation | 4 major gaps | Medium | Onboarding delays |
 
 ---
@@ -576,23 +576,7 @@ WantedBy=multi-user.target
 
 ---
 
-### 2.14 Interactive REPL for Node State Inspection
-
-**Problem:** Operators have no interactive way to inspect node state. Diagnosing issues requires crafting RPC calls manually or writing scripts. Other clients (e.g., geth's JavaScript console) provide a REPL that lets operators query accounts, storage, blocks, and chain state interactively.
-
-**Solution:** Provide a REPL (read-eval-print loop) that works both locally (connecting to a running node via IPC or RPC) and remotely (connecting over HTTP/WS). The REPL should support:
-- Querying account balances, nonces, and code
-- Inspecting block headers, transactions, and receipts
-- Browsing storage slots
-- Checking sync status and peer info
-- Scriptable via command history and piping
-
-**Effort:** 1-2 weeks
-**Breaking:** No
-
----
-
-### 2.15 State and Block Composition Analysis
+### 2.14 State and Block Composition Analysis
 
 **Problem:** Operators and researchers have no built-in way to analyze the composition of on-chain state or blocks. Understanding what percentage of state consists of ERC20 tokens, bridge contracts, DeFi protocols, etc. — or what types of transactions fill blocks — requires external tooling.
 
@@ -608,51 +592,7 @@ WantedBy=multi-user.target
 
 ## Category 3: Configuration and Setup (Priority: MEDIUM)
 
-### 3.1 Expand Environment Variable Coverage
-
-**Problem:** 21 CLI options have no environment variable support, making containerized deployment harder.
-
-**Missing Environment Variables:**
-
-| CLI Option | Location | Impact | Priority |
-|-----------|----------|--------|----------|
-| `--bootnodes` | cli.rs:64 | Can't override in containers | High |
-| `--syncmode` | cli.rs:85 | Can't select sync mode | High |
-| `--dev` | cli.rs:109-115 | Can't enable dev mode | High |
-| `--authrpc.addr` | cli.rs:195-201 | Auth RPC binding | High |
-| `--authrpc.port` | cli.rs:203-209 | Auth RPC port | High |
-| `--authrpc.jwtsecret` | cli.rs:211-217 | JWT file path | High |
-| `--p2p.addr` | cli.rs:221-226 | P2P address | Medium |
-| `--p2p.port` | cli.rs:228-234 | P2P port | Medium |
-| `--p2p.disabled` | cli.rs:219 | Disable P2P | Medium |
-| `--p2p.target-peers` | cli.rs:252-258 | Peer target | Medium |
-| `--p2p.lookup-interval` | cli.rs:260-266 | Discovery timing | Low |
-| `--p2p.tx-broadcasting-interval` | cli.rs:244-250 | Broadcast timing | Low |
-| `--discovery.port` | cli.rs:236-242 | Discovery port | Medium |
-| `--builder.extra-data` | cli.rs:268-274 | Block extra data | Low |
-| `--builder.gas-limit` | cli.rs:276-282 | Gas limit | Medium |
-| `--builder.max-blobs` | cli.rs:284-290 | Blob limit | Low |
-| `--mempool.maxsize` | cli.rs:141-147 | Mempool size | Medium |
-| `--log.dir` | cli.rs:134-139 | Log directory | Medium |
-| `--log.color` | cli.rs:126-132 | Log coloring | Low |
-| `--metrics.addr` | cli.rs:87-92 | Metrics binding | Medium |
-| `--precompute-witnesses` | cli.rs:292-298 | Witness generation | Low |
-
-**Already Supported** (for reference):
-- `ETHREX_NETWORK`, `ETHREX_DATADIR`, `ETHREX_HTTP_ADDR`, `ETHREX_HTTP_PORT`
-- `ETHREX_ENABLE_WS`, `ETHREX_WS_ADDR`, `ETHREX_WS_PORT`
-- `ETHREX_METRICS_PORT`, `ETHREX_LOG_LEVEL`
-
-**Solution:** Add env vars for High/Medium priority CLI options using the existing `ETHREX_<OPTION>` pattern. Low-priority options (e.g., `--builder.extra-data`, `--p2p.lookup-interval`) can be deferred.
-
-**Files:** `cmd/ethrex/cli.rs`
-
-**Effort:** 1-2 days
-**Breaking:** No
-
----
-
-### 3.2 Improve Network Detection Errors
+### 3.1 Improve Network Detection Errors
 
 **Problem:** Unknown network names silently become file paths. Typo "hoddi" instead of "hoodi" fails with confusing file-not-found error.
 
@@ -805,29 +745,27 @@ ETHREX_LOG_LEVEL=info
 
 ---
 
-### 3.6 Add HTTP Health Endpoint and Docker Health Checks
+### 3.6 Enhance Health Endpoint and Add Docker Health Checks
 
-**Problem:** `docker-compose.yml` has no health checks, and the RPC server has no `/health` endpoint to check against.
+**Current State:** A `/health` endpoint already exists on the metrics API server (`crates/blockchain/metrics/api.rs`) returning "Service Up". However, it does not include sync status and is on the metrics port, not the RPC port. Docker compose files have no healthcheck configuration.
 
-**Solution (Part 1 — Health Endpoint):** Add a `/health` endpoint to the RPC server that returns HTTP 200 when the node is running (and optionally indicates sync status in the response body). This is a prerequisite for Docker health checks and load balancer integration.
-
-**Files:** `crates/networking/rpc/` (new handler)
-
-**Solution (Part 2 — Docker Health Checks):** Add healthcheck configuration:
+**Remaining Work:**
+1. Add sync status to the `/health` response body (syncing/synced, current block, target block)
+2. Add healthcheck configuration to Docker compose files:
 ```yaml
 services:
   ethrex:
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8545/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 ```
 
-**Files:** `tooling/sync/docker-compose.yml`, `docker-compose.yaml`
+**Files:** `crates/blockchain/metrics/api.rs`, `tooling/sync/docker-compose.yml`, `docker-compose.yaml`
 
-**Effort:** 1 day (endpoint + compose config)
+**Effort:** 4-6 hours
 **Breaking:** No
 
 ---
@@ -1009,11 +947,11 @@ services.ethrex = {
 |------|---------------------|------------------------|
 | 1 | 1.1 Remove Panics | 2.3 Sync Progress Metrics |
 | 2 | 1.1 continued + 1.4 Error Types + 1.5 RPC bug | 2.3 continued + 3.5 .env.example |
-| 3 | 1.3 Context-Discarding Errors | 3.1 Env Var Coverage |
-| 4 | 1.2 Replace unreachable!() | 2.6 Health Status Metrics + 2.4 Mempool |
+| 3 | 1.3 Context-Discarding Errors | 2.6 Health Status Metrics |
+| 4 | 1.2 Replace unreachable!() | 2.4 Mempool |
 | 5 | 1.6 Address Error TODOs | 2.1 Startup Banner + 2.7 Shutdown + 4.4 Troubleshooting |
 | 6 | 1.7 Improve Logging | 2.2 CLI Status Command |
-| 7 | 3.3 Replace Init Panics | 3.6 Health Endpoint + Docker + 3.2 Network Detection |
+| 7 | 3.3 Replace Init Panics | 3.6 Health Endpoint + Docker + 3.1 Network Detection |
 | 8 | (buffer / stretch goals) | 4.2 Deployment Guide |
 | 9-10 | Dashboards, docs & polish | Dashboards, docs & polish |
 
@@ -1053,12 +991,10 @@ services.ethrex = {
 **Track B - Container Deployment:**
 | Item | Effort | Why Now |
 |------|--------|---------|
-| **3.1 Env Var Coverage (High/Medium)** | 1-2 days | Container deployment blocker |
 | **2.6 Health Status Metrics** | 4-6 hours | Operators need synced/not-synced indicator |
 | **2.4 Wire L1 Mempool Metrics** | 4-6 hours | Quick win, metrics already exist |
 
 **Week 3-4 Deliverables:**
-- High/Medium priority CLI options have env var equivalents (~15-20 options)
 - Health metrics: `ethrex_node_synced`, `ethrex_sync_mode`
 - `unreachable!()` arms audited; those reachable via malformed input replaced with error handling
 - Errors include root cause information
@@ -1102,7 +1038,7 @@ services.ethrex = {
 | Item | Effort | Why Now |
 |------|--------|---------|
 | **3.6 Health Endpoint + Docker Health Checks** | 1 day | Container orchestration (endpoint first, then compose) |
-| **3.2 Improve Network Detection** | 4 hours | Better error on typos |
+| **3.1 Improve Network Detection** | 4 hours | Better error on typos |
 | **4.2 Production Deployment Guide** | 3 days | Critical - needed for adoption |
 
 **Week 7-8 Deliverables:**
@@ -1142,8 +1078,7 @@ These items are valuable but lower priority given current goals:
 |------|--------|-----------------|
 | 2.10 Network Diagnostics Command | 2-3 days | Nice-to-have, not blocking |
 | 2.11 Database Management Commands | 1 week | Large effort, can wait |
-| 2.14 Interactive REPL for Node State Inspection | 1-2 weeks | Large effort, nice-to-have |
-| 2.15 State and Block Composition Analysis | 1-2 weeks | Large effort, research-oriented |
+| 2.14 State and Block Composition Analysis | 1-2 weeks | Large effort, research-oriented |
 | 4.1 Storage API Reference | 2 days | Developer docs, not operator |
 
 ---
@@ -1156,7 +1091,7 @@ Each category of change requires corresponding verification:
 - **unreachable!() replacements (1.2):** Before replacing, verify whether each arm is genuinely dead code (dispatched by message type) or reachable via malformed input. Only add error handling where the arm can actually be hit.
 - **Metrics (2.3–2.9):** Integration tests that verify metrics are registered and updated during sync/block import. Can use the existing test harness.
 - **CLI commands (2.2):** End-to-end test that starts a node, runs `ethrex status`, and verifies output format.
-- **Configuration (3.1–3.3):** Unit tests for env var parsing and validation error messages.
+- **Configuration (3.1, 3.3):** Unit tests for validation error messages.
 
 ---
 
@@ -1165,7 +1100,7 @@ Each category of change requires corresponding verification:
 | Phase | Weeks | Track A | Track B |
 |-------|-------|---------|---------|
 | Foundation | 1-2 | Panics, error types, RPC bug (all breaking changes) | Sync metrics, .env |
-| Error + Config | 3-4 | Context errors, unreachable | Env vars, health metrics |
+| Error + Config | 3-4 | Context errors, unreachable | Health metrics |
 | TODOs + UX + Troubleshooting | 5-6 | Error TODOs, logging | Banner, status cmd, troubleshooting guide |
 | Init + Monitoring + Deployment | 7-8 | Init panics | Health endpoint, Docker, deployment guide |
 | Dashboards + Polish | 9-10 | Shared | Dashboards, systemd, crate READMEs |
@@ -1186,14 +1121,13 @@ Each category of change requires corresponding verification:
 4. `ethrex status` command shows sync phase, progress %, target block
 
 **Container Deployment (Pain Point #2):**
-5. High/Medium priority CLI options (~15-20) configurable via environment variables
-6. Docker health checks available in compose files (with `/health` endpoint)
+5. Docker health checks available in compose files (enhance existing `/health` endpoint with sync status)
 
 **Timeline Milestones:**
 | Week | Milestone |
 |------|-----------|
 | 2 | Panics removed, error types improved, sync metrics in Prometheus |
-| 4 | Env vars added (High/Medium), health metrics working |
+| 4 | Health metrics working |
 | 6 | `ethrex status` command, startup/shutdown banners, troubleshooting guide |
 | 8 | Health endpoint, Docker health checks, production deployment guide |
 | 10 | Grafana dashboards, remaining documentation complete |
@@ -1214,7 +1148,7 @@ Each category of change requires corresponding verification:
 - **Context-discarding map_err:** 100+ locations
 - **TODOs about error handling:** 11 locations
 
-### Node Operator UX (15)
+### Node Operator UX (14)
 1. Startup banner lacks configuration details
 2. No CLI status command
 3. Sync progress not in Prometheus
@@ -1228,11 +1162,10 @@ Each category of change requires corresponding verification:
 11. No network diagnostics
 12. No systemd service files
 13. Incomplete Grafana dashboards
-14. No interactive REPL for node state inspection
-15. No state/block composition analysis tooling
+14. No state/block composition analysis tooling
 
-### Configuration (22)
-21 CLI options without environment variable equivalents + no Nix support
+### Configuration (4)
+3 CLI options without environment variable equivalents (`--force`, `--p2p.discv4`, `--p2p.discv5`) + no Nix support
 
 ### Documentation (4)
 1. Storage API schema undocumented
