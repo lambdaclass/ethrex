@@ -18,7 +18,7 @@ runs:
         echo "Rust version: ${rust_version}"
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@master
+      uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master
       with:
         toolchain: ${{ steps.rustver.outputs.rust_version }}
         components: ${{ inputs.components }}
