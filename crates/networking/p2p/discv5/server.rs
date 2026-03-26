@@ -744,10 +744,15 @@ impl DiscoveryServer {
             self.whoareyou_global_window_start = now;
         }
         if self.whoareyou_global_count >= GLOBAL_WHOAREYOU_RATE_LIMIT {
-            warn!(
-                protocol = "discv5",
-                "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), possible attack"
-            );
+            // Log once per window (when count first hits the limit) to avoid flooding
+            // logs during an attack while still signaling it's ongoing.
+            if self.whoareyou_global_count == GLOBAL_WHOAREYOU_RATE_LIMIT {
+                self.whoareyou_global_count = GLOBAL_WHOAREYOU_RATE_LIMIT + 1;
+                warn!(
+                    protocol = "discv5",
+                    "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), possible attack"
+                );
+            }
             return Ok(());
         }
 
