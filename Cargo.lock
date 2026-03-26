@@ -4321,7 +4321,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "hex",
  "lazy_static",
- "snap",
  "thiserror 2.0.18",
  "tinyvec",
 ]
