@@ -3374,11 +3374,19 @@ fn execute_polygon_system_calls(
         };
 
         for event in &events {
-            // Decode the hex data from Heimdall's EventRecord
-            let data_bytes = hex::decode(event.data.strip_prefix("0x").unwrap_or(&event.data))
-                .map_err(|e| {
-                    ChainError::Custom(format!("Invalid hex in Heimdall event {}: {e}", event.id))
-                })?;
+            // Decode event data: Heimdall may return hex (0x-prefixed or plain)
+            // or base64-encoded bytes depending on the API version.
+            let raw = event.data.strip_prefix("0x").unwrap_or(&event.data);
+            let data_bytes = if let Ok(bytes) = hex::decode(raw) {
+                bytes
+            } else if let Ok(bytes) =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw)
+            {
+                bytes
+            } else {
+                // Last resort: treat the string as raw UTF-8 bytes
+                event.data.as_bytes().to_vec()
+            };
 
             // RLP-encode the full EventRecord matching Bor's format:
             // [id, contract, data, tx_hash, log_index, chain_id_string]
