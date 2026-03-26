@@ -45,8 +45,7 @@ cargo run --release --features eip-8025 --bin ethrex -- \
 Verify the proof engine started:
 ```
 L1 ProofCoordinator bound to 127.0.0.1:9100
-EIP-8025 proof engine initialized
-L1 ProofCoordinator TCP server listening on 127.0.0.1:9100
+EIP-8025 proof coordinator started
 ```
 
 > **Note:** `--syncmode full` is required (not the default `snap`), otherwise the node remains in `SYNCING` state and rejects `engine_forkchoiceUpdatedV3` calls.
