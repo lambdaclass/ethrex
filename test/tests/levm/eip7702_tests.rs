@@ -1,16 +1,16 @@
-/// EIP-7702 Delegation Gas Tests
-///
-/// These tests verify the correct gas accounting for EIP-7702 delegated accounts.
-///
-/// Key insight: The delegation resolution gas cost (cold/warm access to delegated address)
-/// should ONLY be charged during CALL opcodes, NOT during the initial transaction setup.
-///
-/// EIP-7702 specifies delegation resolution for "opcodes which get code" (CALL, CALLCODE,
-/// DELEGATECALL, STATICCALL, EXTCODESIZE, EXTCODECOPY, EXTCODEHASH). The initial transaction
-/// is not an opcode, so it shouldn't charge EIP-2929 access costs for delegation resolution.
-///
-/// The delegated address IS added to accessed_addresses (warming it for subsequent calls),
-/// but without charging the cold access cost at transaction setup time.
+//! EIP-7702 Delegation Gas Tests
+//!
+//! These tests verify the correct gas accounting for EIP-7702 delegated accounts.
+//!
+//! Key insight: The delegation resolution gas cost (cold/warm access to delegated address)
+//! should ONLY be charged during CALL opcodes, NOT during the initial transaction setup.
+//!
+//! EIP-7702 specifies delegation resolution for "opcodes which get code" (CALL, CALLCODE,
+//! DELEGATECALL, STATICCALL, EXTCODESIZE, EXTCODECOPY, EXTCODEHASH). The initial transaction
+//! is not an opcode, so it shouldn't charge EIP-2929 access costs for delegation resolution.
+//!
+//! The delegated address IS added to accessed_addresses (warming it for subsequent calls),
+//! but without charging the cold access cost at transaction setup time.
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{
@@ -22,7 +22,6 @@ use ethrex_levm::{
     EVMConfig, Environment,
     constants::{SET_CODE_DELEGATION_BYTES, TX_BASE_COST},
     db::gen_db::GeneralizedDatabase,
-    gas_cost::COLD_ADDRESS_ACCESS_COST,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -163,16 +162,13 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
     // If cold access was incorrectly charged, we'd see an extra 2600 gas.
     let gas_used = result.gas_used;
 
-    // Gas must be at least the intrinsic tx cost, but less than intrinsic + cold access.
-    // If the bug was present, gas_used would be >= 21000 + 2600 = 23600
-    // With correct behavior, it should be around 21000 (just intrinsic gas)
-    assert!(
-        gas_used >= TX_BASE_COST && gas_used < TX_BASE_COST + COLD_ADDRESS_ACCESS_COST,
-        "Gas used ({}) outside expected range [{}, {}). \
+    // With empty calldata and STOP bytecode, gas should be exactly the intrinsic tx cost.
+    // If delegation cold access was incorrectly charged, gas_used would be 21000 + 2600 = 23600.
+    assert_eq!(
+        gas_used, TX_BASE_COST,
+        "Gas used ({}) != expected ({}). \
          Cold access should NOT be charged at transaction setup.",
-        gas_used,
-        TX_BASE_COST,
-        TX_BASE_COST + COLD_ADDRESS_ACCESS_COST,
+        gas_used, TX_BASE_COST,
     );
 
     // Verify the transaction succeeded (delegation resolution worked)
