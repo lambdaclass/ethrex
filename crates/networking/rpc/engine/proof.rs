@@ -23,18 +23,24 @@ use ssz_merkle::HashTreeRoot;
 use ssz_types::SszList;
 use tracing::{debug, info, warn};
 
+use std::time::Instant;
+
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::ExecutionPayload;
 use crate::utils::RpcErr;
 
 // ── Helper functions ────────────────────────────────────────────────
 
-/// Build a ProofGenId from block number and root.
-/// Uses the lower 4 bytes of block_number and the first 4 bytes of root.
+/// Build a ProofGenId by hashing block_number and root together.
+/// Uses keccak256(block_number_be ++ root) truncated to 8 bytes, avoiding
+/// collisions that the previous 4+4 byte scheme was susceptible to.
 fn make_proof_gen_id(block_number: u64, root: &H256) -> ProofGenId {
+    let mut preimage = [0u8; 40]; // 8 bytes block_number + 32 bytes root
+    preimage[..8].copy_from_slice(&block_number.to_be_bytes());
+    preimage[8..].copy_from_slice(root.as_bytes());
+    let hash = ethrex_common::utils::keccak(&preimage);
     let mut id = [0u8; 8];
-    id[..4].copy_from_slice(&block_number.to_be_bytes()[4..]);
-    id[4..].copy_from_slice(&root.as_bytes()[..4]);
+    id.copy_from_slice(&hash.as_bytes()[..8]);
     id
 }
 
@@ -164,6 +170,7 @@ impl RpcHandler for RequestProofsV1 {
                     block,
                     witness,
                     requested_proof_types: self.proof_attributes.proof_types.clone(),
+                    created_at: Instant::now(),
                 }),
             })
             .await
@@ -230,13 +237,18 @@ impl RpcHandler for VerifyExecutionProofV1 {
             .storage
             .get_block_number_by_root(&root)
             .map_err(|e| RpcErr::Internal(e.to_string()))?
-            .unwrap_or_else(|| {
-                warn!(
-                    root = %root,
-                    "Unknown root in verify_proof; storing with block_number=0"
-                );
-                0
-            });
+            .ok_or_else(|| {
+                warn!(root = %root, "Unknown root in verifyExecutionProof");
+                RpcErr::InvalidProofFormat(format!(
+                    "Unknown new_payload_request_root: {root}. \
+                     Call engine_requestProofsV1 first to register the root."
+                ))
+            })?;
+
+        // NOTE (PoC): In this proof-of-concept we do not cryptographically verify
+        // the proof. The exec backend does not generate real ZK proofs — it only
+        // re-executes the block. A production implementation must verify the proof
+        // against the committed public input before storing it.
 
         // Store the proof.
         context
@@ -345,7 +357,9 @@ fn compute_new_payload_request_root(
     execution_requests: &[Bytes],
 ) -> Result<[u8; 32], String> {
     // Build the full SSZ ExecutionPayload from the RPC payload.
-    let ssz_payload = rpc_payload_to_ssz(payload)?;
+    // The execution_requests are needed to populate the typed deposit/withdrawal/
+    // consolidation request sub-lists inside the SSZ ExecutionPayload.
+    let ssz_payload = rpc_payload_to_ssz(payload, execution_requests)?;
 
     // Build SSZ versioned_hashes list.
     let ssz_hashes: SszList<[u8; 32], 4096> = versioned_hashes
@@ -381,10 +395,18 @@ fn compute_new_payload_request_root(
 }
 
 /// Convert an RPC `ExecutionPayload` into a full SSZ `eip8025_ssz::ExecutionPayload`.
-fn rpc_payload_to_ssz(payload: &ExecutionPayload) -> Result<eip8025_ssz::ExecutionPayload, String> {
+///
+/// The `execution_requests` parameter carries the flat EIP-7685 requests
+/// (each prefixed with a type byte). These are parsed into the typed
+/// deposit/withdrawal/consolidation sub-lists that the CL's
+/// `ExecutionPayloadElectra` SSZ container requires.
+fn rpc_payload_to_ssz(
+    payload: &ExecutionPayload,
+    execution_requests: &[Bytes],
+) -> Result<eip8025_ssz::ExecutionPayload, String> {
     // Transactions: Vec<EncodedTransaction> -> SszList<SszList<u8, ...>, ...>
     let ssz_txs: Vec<SszList<u8, 1073741824>> = payload
-        .transactions()
+        .transactions
         .iter()
         .map(|tx| {
             tx.0.to_vec()
@@ -398,7 +420,8 @@ fn rpc_payload_to_ssz(payload: &ExecutionPayload) -> Result<eip8025_ssz::Executi
 
     // Withdrawals: Option<Vec<Withdrawal>> -> SszList<ssz::Withdrawal, 16>
     let ssz_withdrawals: SszList<eip8025_ssz::Withdrawal, 16> = payload
-        .withdrawals()
+        .withdrawals
+        .as_deref()
         .unwrap_or(&[])
         .iter()
         .map(|w| eip8025_ssz::Withdrawal {
@@ -413,11 +436,11 @@ fn rpc_payload_to_ssz(payload: &ExecutionPayload) -> Result<eip8025_ssz::Executi
 
     // base_fee_per_gas: u64 -> [u8; 32] (256-bit little-endian)
     let mut base_fee_bytes = [0u8; 32];
-    base_fee_bytes[..8].copy_from_slice(&payload.base_fee_per_gas().to_le_bytes());
+    base_fee_bytes[..8].copy_from_slice(&payload.base_fee_per_gas.to_le_bytes());
 
     // logs_bloom: Bloom (256 bytes) -> SszVector<u8, 256>
     let ssz_logs_bloom: eip8025_ssz::LogsBloom = payload
-        .logs_bloom()
+        .logs_bloom
         .0
         .to_vec()
         .try_into()
@@ -425,34 +448,28 @@ fn rpc_payload_to_ssz(payload: &ExecutionPayload) -> Result<eip8025_ssz::Executi
 
     // extra_data: Bytes -> SszList<u8, 32>
     let ssz_extra_data: SszList<u8, 32> = payload
-        .extra_data()
+        .extra_data
         .to_vec()
         .try_into()
         .map_err(|_| "extra_data too large".to_string())?;
 
-    // Deposit/withdrawal/consolidation requests: empty (not in Engine API payload).
-    // These are always empty because the EL payload doesn't include them — they're
-    // derived from the execution_requests field at the NewPayloadRequest level.
-    let ssz_deposit_requests: SszList<eip8025_ssz::DepositRequest, 8192> = vec![]
-        .try_into()
-        .map_err(|_| "empty deposit_requests conversion failed".to_string())?;
-    let ssz_withdrawal_requests: SszList<eip8025_ssz::WithdrawalRequest, 16> = vec![]
-        .try_into()
-        .map_err(|_| "empty withdrawal_requests conversion failed".to_string())?;
-    let ssz_consolidation_requests: SszList<eip8025_ssz::ConsolidationRequest, 1> = vec![]
-        .try_into()
-        .map_err(|_| "empty consolidation_requests conversion failed".to_string())?;
+    // Parse the flat EIP-7685 execution_requests into typed sub-lists.
+    // Each entry is: type_byte ++ concatenated_fixed_size_requests.
+    // The CL's ExecutionPayloadElectra includes these typed fields, so we must
+    // populate them for the SSZ hash_tree_root to match what the CL computes.
+    let (ssz_deposit_requests, ssz_withdrawal_requests, ssz_consolidation_requests) =
+        parse_typed_requests(execution_requests)?;
 
     Ok(eip8025_ssz::ExecutionPayload {
-        parent_hash: payload.parent_hash().0,
-        fee_recipient: eip8025_ssz::Bytes20(payload.fee_recipient().0),
-        state_root: payload.state_root().0,
-        receipts_root: payload.receipts_root().0,
+        parent_hash: payload.parent_hash.0,
+        fee_recipient: eip8025_ssz::Bytes20(payload.fee_recipient.0),
+        state_root: payload.state_root.0,
+        receipts_root: payload.receipts_root.0,
         logs_bloom: ssz_logs_bloom,
-        prev_randao: payload.prev_randao().0,
+        prev_randao: payload.prev_randao.0,
         block_number: payload.block_number,
-        gas_limit: payload.gas_limit(),
-        gas_used: payload.gas_used(),
+        gas_limit: payload.gas_limit,
+        gas_used: payload.gas_used,
         timestamp: payload.timestamp,
         extra_data: ssz_extra_data,
         base_fee_per_gas: base_fee_bytes,
@@ -548,4 +565,159 @@ fn json_header_to_ssz_root(header: &EngineNewPayloadRequestHeaderV1) -> Result<[
     let root = ssz_header.hash_tree_root();
     info!("SSZ root (json_header): 0x{}", hex::encode(root),);
     Ok(root)
+}
+
+// ── EIP-7685 request parsing ────────────────────────────────────────
+
+/// EIP-7685 request type bytes.
+const DEPOSIT_TYPE: u8 = 0x00;
+const WITHDRAWAL_TYPE: u8 = 0x01;
+const CONSOLIDATION_TYPE: u8 = 0x02;
+
+/// Fixed byte sizes for each request type (excluding the type prefix byte).
+const DEPOSIT_REQUEST_SIZE: usize = 48 + 32 + 8 + 96 + 8; // 192
+const WITHDRAWAL_REQUEST_SIZE: usize = 20 + 48 + 8; // 76
+const CONSOLIDATION_REQUEST_SIZE: usize = 20 + 48 + 48; // 116
+
+/// Parse flat EIP-7685 `execution_requests` into the three typed SSZ sub-lists
+/// expected by `ExecutionPayloadElectra`.
+///
+/// Each entry in `execution_requests` is `type_byte ++ request1 ++ request2 ++ ...`
+/// where each request is a fixed-size byte sequence.
+fn parse_typed_requests(
+    execution_requests: &[Bytes],
+) -> Result<
+    (
+        SszList<eip8025_ssz::DepositRequest, 8192>,
+        SszList<eip8025_ssz::WithdrawalRequest, 16>,
+        SszList<eip8025_ssz::ConsolidationRequest, 1>,
+    ),
+    String,
+> {
+    let mut deposits = Vec::new();
+    let mut withdrawals = Vec::new();
+    let mut consolidations = Vec::new();
+
+    for entry in execution_requests {
+        if entry.is_empty() {
+            continue;
+        }
+        let type_byte = entry[0];
+        let data = &entry[1..];
+
+        match type_byte {
+            DEPOSIT_TYPE => {
+                if data.len() % DEPOSIT_REQUEST_SIZE != 0 {
+                    return Err(format!(
+                        "Deposit requests data length {} is not a multiple of {DEPOSIT_REQUEST_SIZE}",
+                        data.len()
+                    ));
+                }
+                for chunk in data.chunks_exact(DEPOSIT_REQUEST_SIZE) {
+                    deposits.push(parse_deposit_request(chunk)?);
+                }
+            }
+            WITHDRAWAL_TYPE => {
+                if data.len() % WITHDRAWAL_REQUEST_SIZE != 0 {
+                    return Err(format!(
+                        "Withdrawal requests data length {} is not a multiple of {WITHDRAWAL_REQUEST_SIZE}",
+                        data.len()
+                    ));
+                }
+                for chunk in data.chunks_exact(WITHDRAWAL_REQUEST_SIZE) {
+                    withdrawals.push(parse_withdrawal_request(chunk)?);
+                }
+            }
+            CONSOLIDATION_TYPE => {
+                if data.len() % CONSOLIDATION_REQUEST_SIZE != 0 {
+                    return Err(format!(
+                        "Consolidation requests data length {} is not a multiple of {CONSOLIDATION_REQUEST_SIZE}",
+                        data.len()
+                    ));
+                }
+                for chunk in data.chunks_exact(CONSOLIDATION_REQUEST_SIZE) {
+                    consolidations.push(parse_consolidation_request(chunk)?);
+                }
+            }
+            other => {
+                // Unknown type — skip (forward-compatible with future request types).
+                debug!("Skipping unknown execution request type: 0x{other:02x}");
+            }
+        }
+    }
+
+    let ssz_deposits = deposits
+        .try_into()
+        .map_err(|_| "Too many deposit requests".to_string())?;
+    let ssz_withdrawals = withdrawals
+        .try_into()
+        .map_err(|_| "Too many withdrawal requests".to_string())?;
+    let ssz_consolidations = consolidations
+        .try_into()
+        .map_err(|_| "Too many consolidation requests".to_string())?;
+
+    Ok((ssz_deposits, ssz_withdrawals, ssz_consolidations))
+}
+
+/// Parse a 192-byte chunk into an SSZ `DepositRequest`.
+/// Layout: pubkey(48) ++ withdrawal_credentials(32) ++ amount(8 LE) ++ signature(96) ++ index(8 LE)
+fn parse_deposit_request(data: &[u8]) -> Result<eip8025_ssz::DepositRequest, String> {
+    let mut pubkey = [0u8; 48];
+    pubkey.copy_from_slice(&data[..48]);
+    let mut withdrawal_credentials = [0u8; 32];
+    withdrawal_credentials.copy_from_slice(&data[48..80]);
+    let amount = u64::from_le_bytes(
+        data[80..88]
+            .try_into()
+            .map_err(|_| "deposit amount conversion")?,
+    );
+    let mut signature = [0u8; 96];
+    signature.copy_from_slice(&data[88..184]);
+    let index = u64::from_le_bytes(
+        data[184..192]
+            .try_into()
+            .map_err(|_| "deposit index conversion")?,
+    );
+    Ok(eip8025_ssz::DepositRequest {
+        pubkey,
+        withdrawal_credentials,
+        amount,
+        signature,
+        index,
+    })
+}
+
+/// Parse a 76-byte chunk into an SSZ `WithdrawalRequest`.
+/// Layout: source_address(20) ++ validator_pubkey(48) ++ amount(8 LE)
+fn parse_withdrawal_request(data: &[u8]) -> Result<eip8025_ssz::WithdrawalRequest, String> {
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&data[..20]);
+    let mut validator_pubkey = [0u8; 48];
+    validator_pubkey.copy_from_slice(&data[20..68]);
+    let amount = u64::from_le_bytes(
+        data[68..76]
+            .try_into()
+            .map_err(|_| "withdrawal amount conversion")?,
+    );
+    Ok(eip8025_ssz::WithdrawalRequest {
+        source_address: eip8025_ssz::Bytes20(address),
+        validator_pubkey,
+        amount,
+    })
+}
+
+/// Parse a 116-byte chunk into an SSZ `ConsolidationRequest`.
+/// Layout: source_address(20) ++ source_pubkey(48) ++ target_pubkey(48)
+fn parse_consolidation_request(data: &[u8]) -> Result<eip8025_ssz::ConsolidationRequest, String> {
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&data[..20]);
+    let mut source_pubkey = [0u8; 48];
+    source_pubkey.copy_from_slice(&data[20..68]);
+    let mut target_pubkey = [0u8; 48];
+    target_pubkey.copy_from_slice(&data[68..116]);
+    Ok(eip8025_ssz::ConsolidationRequest {
+        source_address: eip8025_ssz::Bytes20(address),
+        source_pubkey,
+        target_pubkey,
+    })
 }

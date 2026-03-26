@@ -27,7 +27,7 @@ use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -46,6 +46,14 @@ const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum message size from a prover (10 MiB). This bounds memory usage
 /// per connection and prevents a malicious peer from causing OOM.
 const MAX_PROVER_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum number of pending proof requests. At one request per block (~12s),
+/// 256 entries covers ~50 minutes of unanswered requests.
+const MAX_PENDING_REQUESTS: usize = 256;
+
+/// Pending requests older than this are evicted. This prevents memory leaks
+/// when a proof type has no prover available.
+const PENDING_REQUEST_TTL: Duration = Duration::from_secs(30 * 60); // 30 minutes
 
 /// Error type for L1 proof coordinator operations.
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +80,8 @@ pub struct ProofRequest {
     pub witness: ExecutionWitness,
     /// Proof types requested by the beacon via `engine_requestProofsV1`.
     pub requested_proof_types: Vec<u64>,
+    /// When this request was created, used for TTL-based eviction.
+    pub created_at: Instant,
 }
 
 /// Cast messages for the L1ProofCoordinator.
@@ -345,27 +355,34 @@ impl L1ProofCoordinator {
             "Execution proof stored"
         );
 
-        // Remove from pending only when all requested proof types have been fulfilled.
+        // Remove from pending once all requested proof types have been fulfilled.
+        // When requested_proof_types is empty (meaning "accept any"), a single proof suffices.
         if let Some(req) = self.pending.get(&block_number) {
-            if !req.requested_proof_types.is_empty() {
-                let all_fulfilled = req.requested_proof_types.iter().all(|pt| {
+            let should_remove = if req.requested_proof_types.is_empty() {
+                // "Accept any type" — one proof is enough.
+                true
+            } else {
+                req.requested_proof_types.iter().all(|pt| {
                     self.store
                         .get_execution_proof(block_number, &root, *pt)
                         .ok()
                         .flatten()
                         .is_some()
-                });
-                if all_fulfilled {
-                    self.pending.remove(&block_number);
-                    debug!(
-                        block_number,
-                        "All requested proof types fulfilled; removed from pending"
-                    );
-                }
+                })
+            };
+            if should_remove {
+                self.pending.remove(&block_number);
+                debug!(
+                    block_number,
+                    "All requested proof types fulfilled; removed from pending"
+                );
             }
         }
 
         // Deliver via callback if configured.
+        // NOTE: No retry logic — if the callback fails, the proof is still stored
+        // in the DB and can be queried via engine_verifyNewPayloadRequestHeaderV1.
+        // A production implementation should add exponential-backoff retries.
         if let Some(callback_url) = &self.config.callback_url {
             let generated_proof = GeneratedProof {
                 proof_gen_id: Bytes::copy_from_slice(&proof_gen_id),
@@ -408,6 +425,18 @@ impl L1ProofCoordinator {
 
         Ok(())
     }
+
+    /// Remove pending requests that have exceeded the TTL.
+    fn evict_stale_requests(&mut self) {
+        let now = Instant::now();
+        let before = self.pending.len();
+        self.pending
+            .retain(|_bn, req| now.duration_since(req.created_at) < PENDING_REQUEST_TTL);
+        let evicted = before - self.pending.len();
+        if evicted > 0 {
+            info!(evicted, "Evicted stale pending proof requests (TTL expired)");
+        }
+    }
 }
 
 impl GenServer for L1ProofCoordinator {
@@ -429,6 +458,20 @@ impl GenServer for L1ProofCoordinator {
                 block_number,
                 request,
             } => {
+                // Evict stale entries before adding.
+                self.evict_stale_requests();
+
+                // Enforce capacity limit: evict the oldest (lowest block number) entry.
+                if self.pending.len() >= MAX_PENDING_REQUESTS {
+                    if let Some(&oldest_bn) = self.pending.keys().min() {
+                        self.pending.remove(&oldest_bn);
+                        warn!(
+                            evicted_block = oldest_bn,
+                            "Pending queue at capacity ({MAX_PENDING_REQUESTS}); evicted oldest request"
+                        );
+                    }
+                }
+
                 self.pending.insert(block_number, *request);
                 debug!(block_number, "Proof request added to queue");
             }

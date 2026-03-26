@@ -357,32 +357,10 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_list_roots() {
+    fn test_empty_vs_nonempty_list_roots_differ() {
         let payload = sample_payload();
         let header = payload.to_header();
-        // Print the roots for debugging
-        println!(
-            "transactions_root: 0x{}",
-            hex::encode(header.transactions_root)
-        );
-        println!(
-            "withdrawals_root: 0x{}",
-            hex::encode(header.withdrawals_root)
-        );
-        println!(
-            "deposit_requests_root: 0x{}",
-            hex::encode(header.deposit_requests_root)
-        );
-        println!(
-            "withdrawal_requests_root: 0x{}",
-            hex::encode(header.withdrawal_requests_root)
-        );
-        println!(
-            "consolidation_requests_root: 0x{}",
-            hex::encode(header.consolidation_requests_root)
-        );
 
-        // Now with truly empty lists
         let empty_payload = ExecutionPayload {
             transactions: vec![].try_into().unwrap(),
             withdrawals: vec![].try_into().unwrap(),
@@ -392,26 +370,22 @@ mod tests {
             ..sample_payload()
         };
         let empty_header = empty_payload.to_header();
-        println!("\n--- Empty lists ---");
-        println!(
-            "transactions_root: 0x{}",
-            hex::encode(empty_header.transactions_root)
+
+        // Non-empty lists (sample has 1 tx + 1 withdrawal) produce different roots
+        // than empty lists.
+        assert_ne!(
+            header.transactions_root, empty_header.transactions_root,
+            "Non-empty transactions root must differ from empty"
         );
-        println!(
-            "withdrawals_root: 0x{}",
-            hex::encode(empty_header.withdrawals_root)
+        assert_ne!(
+            header.withdrawals_root, empty_header.withdrawals_root,
+            "Non-empty withdrawals root must differ from empty"
         );
-        println!(
-            "deposit_requests_root: 0x{}",
-            hex::encode(empty_header.deposit_requests_root)
-        );
-        println!(
-            "withdrawal_requests_root: 0x{}",
-            hex::encode(empty_header.withdrawal_requests_root)
-        );
-        println!(
-            "consolidation_requests_root: 0x{}",
-            hex::encode(empty_header.consolidation_requests_root)
+
+        // deposit/withdrawal/consolidation requests are empty in both, so roots match.
+        assert_eq!(
+            header.deposit_requests_root, empty_header.deposit_requests_root,
+            "Both-empty deposit_requests roots must match"
         );
     }
 
