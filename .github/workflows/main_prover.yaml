@@ -3,6 +3,7 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
+    tags: ["*"]
     paths-ignore:
       - "docs/**"
   pull_request:
