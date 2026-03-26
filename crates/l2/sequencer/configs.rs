@@ -75,6 +75,7 @@ pub struct ProofCoordinatorConfig {
     pub validium: bool,
     pub tdx_private_key: Option<SecretKey>,
     pub qpl_tool_path: Option<String>,
+    pub prover_timeout_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +107,8 @@ pub struct AlignedConfig {
     /// Starting L1 block number for the proof aggregation search.
     /// This helps avoid scanning blocks from before proofs were being sent.
     pub from_block: Option<u64>,
+    /// Timeout in seconds before resending a proof that hasn't been verified on-chain.
+    pub resubmission_timeout_secs: u64,
 }
 
 #[derive(Clone, Debug)]

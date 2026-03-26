@@ -1,7 +1,7 @@
 use crate::{
     account::LevmAccount,
     constants::*,
-    errors::{ContextResult, InternalError, TxValidationError, VMError},
+    errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -33,7 +33,12 @@ impl Hook for DefaultHook {
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
-            if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+            // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
+            // Amsterdam removes this restriction (EIP-8037 reservoir model).
+            if vm.env.config.fork >= Fork::Osaka
+                && vm.env.config.fork < Fork::Amsterdam
+                && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+            {
                 return Err(VMError::TxValidation(
                     TxValidationError::TxMaxGasLimitExceeded {
                         tx_hash: vm.tx.hash(),
@@ -136,9 +141,56 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
+        // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
+        // Per EELS, collision at process_message_call level returns
+        // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
+        // The user pays tx.gas (everything), but block accounting only sees
+        // intrinsic gas (no execution gas was consumed).
+        if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
+            let gas_limit = vm.env.gas_limit;
+            // Block accounting: gas_used = intrinsic_regular + intrinsic_state
+            // state_gas_used already = intrinsic_state (no execution state gas)
+            let state_gas = vm
+                .state_gas_used
+                .saturating_sub(vm.intrinsic_state_gas_refund);
+            let floor = vm.get_min_gas_used()?;
+            // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
+            // = total_intrinsic_gas consumed so far, minus state portion
+            #[expect(
+                clippy::as_conversions,
+                reason = "gas_remaining is positive at collision"
+            )]
+            let gas_remaining = vm.current_call_frame.gas_remaining as u64;
+            let total_intrinsic = gas_limit
+                .saturating_sub(vm.state_gas_reservoir)
+                .saturating_sub(gas_remaining);
+            let regular_gas = total_intrinsic.saturating_sub(state_gas);
+            let effective_regular = regular_gas.max(floor);
+            ctx_result.gas_used = effective_regular
+                .checked_add(state_gas)
+                .ok_or(InternalError::Overflow)?;
+            // User pays everything (gas_left=0, state_gas_left=0)
+            ctx_result.gas_spent = gas_limit;
+            // Coinbase gets paid on what user pays
+            pay_coinbase(vm, gas_limit)?;
+            // Return 0 gas to sender (they lose everything)
+            return Ok(());
+        }
+
+        // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
+        // Per EELS, state_gas_left is preserved even on exceptional halt — only
+        // regular gas_left is burned.  The user does NOT pay for unspent reservoir.
+        if vm.env.config.fork >= Fork::Amsterdam {
+            ctx_result.gas_used = ctx_result.gas_used.saturating_sub(vm.state_gas_reservoir);
+        }
+
         // Save pre-refund gas for EIP-7778 block accounting
         let gas_used_pre_refund = ctx_result.gas_used;
 
+        // Note: compute_gas_refunded caps at gas_used / MAX_REFUND_QUOTIENT, where
+        // gas_used already has the reservoir subtracted (line above). This matches
+        // EELS, which applies the refund cap after reservoir removal but before the
+        // regular/state gas split.
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
         let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 
@@ -181,10 +233,28 @@ pub fn refund_sender(
     vm.substate.refunded_gas = refunded_gas;
 
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
+    // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
+    // Receipt cumulative_gas_used = post-refund total (what user pays).
     if vm.env.config.fork >= Fork::Amsterdam {
-        // Block accounting uses pre-refund gas
-        ctx_result.gas_used = gas_used_pre_refund;
-        // User pays post-refund gas
+        // EIP-7623 floor applies to the regular (non-state) gas component only.
+        let floor = vm.get_min_gas_used()?;
+        // Apply intrinsic state gas refund from existing authorities (EIP-7702/EIP-8037).
+        // This matches EELS where set_delegation permanently reduces tx_env.intrinsic_state_gas
+        // for existing authorities, regardless of execution outcome.
+        let state_gas = vm
+            .state_gas_used
+            .saturating_sub(vm.intrinsic_state_gas_refund);
+        // State gas from reverted children is added back to the reservoir
+        // (matching EELS incorporate_child_on_error), so gas_used_pre_refund
+        // already excludes it after the reservoir subtraction at line 184.
+        // EIP-8037 (bal@v5.4.0): regular_gas = total gas - state gas.
+        // Collision-burned gas counts as regular gas for 2D block accounting.
+        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
+        let effective_regular = regular_gas.max(floor);
+        ctx_result.gas_used = effective_regular
+            .checked_add(state_gas)
+            .ok_or(InternalError::Overflow)?;
+        // User pays post-refund gas (with floor)
         ctx_result.gas_spent = gas_spent;
     } else {
         // Pre-Amsterdam: both use post-refund value
@@ -246,15 +316,26 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
-    vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
+    // even if the priority fee is zero. System contract calls have gas_price = 0,
+    // so we use this to distinguish them from user transactions.
+    if !vm.env.gas_price.is_zero()
+        && let Some(recorder) = vm.db.bal_recorder.as_mut()
+    {
+        recorder.record_touched_address(vm.env.coinbase);
+    }
+
+    // Only pay coinbase if there's actually a fee to pay.
+    if !coinbase_fee.is_zero() {
+        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    }
 
     Ok(())
 }
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // EIP-7708: Emit Selfdestruct logs for accounts with non-zero balance
-    // This handles the case where a contract receives ETH after being flagged for SELFDESTRUCT
+    // EIP-7708: Emit Burn logs for accounts with non-zero balance marked for deletion
     // Must emit in lexicographical order of address
     if vm.env.config.fork >= Fork::Amsterdam {
         let mut addresses_with_balance: Vec<(Address, U256)> = vm
@@ -274,7 +355,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
         addresses_with_balance.sort_by_key(|(addr, _)| *addr);
 
         for (addr, balance) in addresses_with_balance {
-            let log = create_selfdestruct_log(addr, balance);
+            let log = create_burn_log(addr, balance);
             vm.substate.add_log(log);
         }
     }
@@ -288,6 +369,11 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         *account_to_remove = LevmAccount::default();
         account_to_remove.mark_destroyed();
+
+        // EIP-7928: Clean up BAL for selfdestructed account
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.track_selfdestruct(*address);
+        }
     }
 
     Ok(())
@@ -296,7 +382,10 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
 pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
     let calldata = vm.current_call_frame.calldata.clone();
-    let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
+    let (regular_gas, state_gas) = vm.get_intrinsic_gas()?;
+    let intrinsic_gas: u64 = regular_gas
+        .checked_add(state_gas)
+        .ok_or(ExceptionalHalt::OutOfGas)?;
 
     if vm.current_call_frame.gas_limit < intrinsic_gas {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
@@ -314,6 +403,18 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         .ok_or(InternalError::Overflow)?
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
+
+    // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if
+    // intrinsic regular gas or calldata floor exceeds the cap (no amount of gas_limit
+    // can make the TX valid since excess gas_limit becomes state gas reservoir).
+    // Must be checked before the floor check so the correct error is returned.
+    // NOTE: We use IntrinsicGasTooLow (not TxMaxGasLimitExceeded) intentionally —
+    // this matches the EELS exception mapping for this specific case.
+    if vm.env.config.fork >= Fork::Amsterdam
+        && regular_gas.max(floor_cost_by_tokens) > TX_MAX_GAS_LIMIT_AMSTERDAM
+    {
+        return Err(TxValidationError::IntrinsicGasTooLow.into());
+    }
 
     if vm.current_call_frame.gas_limit < floor_cost_by_tokens {
         return Err(TxValidationError::IntrinsicGasBelowFloorGasCost.into());
@@ -334,15 +435,22 @@ pub fn validate_max_fee_per_blob_gas(
         }
         .into());
     }
+
     Ok(())
 }
 
 pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
+    // [EIP-7954] - Amsterdam increases the limit
     let code_size = vm.current_call_frame.calldata.len();
-    if code_size > INIT_CODE_MAX_SIZE && vm.env.config.fork >= Fork::Shanghai {
+    let max_size = if vm.env.config.fork >= Fork::Amsterdam {
+        AMSTERDAM_INIT_CODE_MAX_SIZE
+    } else {
+        INIT_CODE_MAX_SIZE
+    };
+    if code_size > max_size && vm.env.config.fork >= Fork::Shanghai {
         return Err(TxValidationError::InitcodeSizeExceeded {
-            max_size: INIT_CODE_MAX_SIZE,
+            max_size,
             actual_size: code_size,
         }
         .into());
@@ -469,6 +577,10 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
 }
 
 pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
+    if vm.env.disable_balance_check {
+        return Ok(());
+    }
+
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
@@ -504,6 +616,10 @@ pub fn deduct_caller(
     gas_limit_price_product: U256,
     sender_address: Address,
 ) -> Result<(), VMError> {
+    if vm.env.disable_balance_check {
+        return Ok(());
+    }
+
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
@@ -563,8 +679,19 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     } else {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
-        let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+
+        // Record tx.to as touched in BAL (the target of message call transaction)
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(to);
+        }
+
+        let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to)?;
+
+        // If EIP-7702 delegation, also record the delegation target (code source) in BAL
+        if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(code_address);
+        }
 
         (bytecode, code_address)
     };

@@ -444,18 +444,11 @@ pub async fn create_deploy(
     .await?;
     let deploy_tx_hash = send_generic_transaction(client, deploy_tx, deployer).await?;
 
-    let nonce = client
-        .get_nonce(deployer.address(), BlockIdentifier::Tag(BlockTag::Latest))
-        .await?;
-    let mut encode = vec![];
-    (deployer.address(), nonce).encode(&mut encode);
+    let receipt = wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
 
-    //Taking the last 20bytes so it matches an H160 == Address length
-    let deployed_address = Address::from_slice(keccak(encode).as_fixed_bytes().get(12..).ok_or(
-        EthClientError::Custom("Failed to get deployed_address".to_owned()),
-    )?);
-
-    wait_for_transaction_receipt(deploy_tx_hash, client, 1000).await?;
+    let deployed_address = receipt.tx_info.contract_address.ok_or_else(|| {
+        EthClientError::Custom("Deploy transaction did not create a contract".to_owned())
+    })?;
 
     Ok((deploy_tx_hash, deployed_address))
 }
@@ -1338,15 +1331,8 @@ async fn _generic_call(
         .get(..4)
         .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
         .to_vec();
-
-    let mut calldata = Vec::new();
-    calldata.extend_from_slice(&selector);
-
-    let leading_zeros = 32 - ((calldata.len() - 4) % 32);
-    calldata.extend(vec![0; leading_zeros]);
-
     let hex_string = client
-        .call(contract_address, calldata.into(), Overrides::default())
+        .call(contract_address, selector.into(), Overrides::default())
         .await?;
 
     Ok(hex_string)

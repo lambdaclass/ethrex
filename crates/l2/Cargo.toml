@@ -31,6 +31,7 @@ ethrex-l2-rpc.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
+ethrex-monitor.workspace = true
 ethrex-p2p.workspace = true
 hex.workspace = true
 bytes.workspace = true
@@ -84,8 +85,8 @@ redundant_clone = "warn"
 [features]
 default = ["l2"]
 
-sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk"]
-risc0 = ["ethrex-guest-program/risc0"]
+sp1 = ["ethrex-guest-program/sp1-build-elf", "dep:sp1-sdk"]
+risc0 = ["ethrex-guest-program/risc0-build-elf"]
 
 rocksdb = []
 

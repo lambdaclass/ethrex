@@ -49,4 +49,5 @@ For more details checkout [deposits](../l2/fundamentals/deposits.md) and [withdr
 
 ## See also
 
-[Guest program](./guest_program.md) for the detailed steps of the program that the prover generates a proof of.
+- [Guest program](./guest_program.md) for the detailed steps of the program that the prover generates a proof of.
+- [Distributed proving](../l2/fundamentals/distributed_proving.md) for running multiple provers in parallel with multi-batch L1 verification.

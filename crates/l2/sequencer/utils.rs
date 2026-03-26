@@ -22,6 +22,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
+/// 4-byte ABI selectors for OnChainProposer custom errors.
+/// These are the first 4 bytes of keccak256 of the error signature.
+/// Used to detect specific revert reasons from the `data` field of RPC error responses.
+pub const INVALID_RISC0_PROOF_SELECTOR: &str = "0x14add973";
+pub const INVALID_SP1_PROOF_SELECTOR: &str = "0x7ff849b5";
+pub const INVALID_TDX_PROOF_SELECTOR: &str = "0x62013a95";
+pub const ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR: &str = "0x44602025";
+
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
 }
@@ -195,4 +203,18 @@ pub fn get_git_commit_hash() -> String {
 
 pub fn batch_checkpoint_name(batch_number: u64) -> String {
     format!("checkpoint_batch_{batch_number}")
+}
+
+/// Removes the checkpoint directory for the previous batch (`checkpoint_batch_{batch_number - 1}`).
+/// No-op when `batch_number` is 0.
+pub fn remove_batch_checkpoint(checkpoints_dir: &std::path::Path, batch_number: u64) {
+    let Some(prev) = batch_number.checked_sub(1) else {
+        return;
+    };
+    let cp = checkpoints_dir.join(batch_checkpoint_name(prev));
+    if cp.exists() {
+        let _ = std::fs::remove_dir_all(&cp).inspect_err(|e| {
+            tracing::error!("Failed to remove checkpoint {cp:?}: {e}");
+        });
+    }
 }

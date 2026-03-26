@@ -28,7 +28,8 @@ additional_services:
   - dora
 
 assertoor_params:
+  image: ethpandaops/assertoor:v0.0.17
   tests:
     - https://raw.githubusercontent.com/lambdaclass/ethrex/refs/heads/main/.github/config/assertoor/el-stability-check.yaml # Check that all el clients are synced with the corresponding cl
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/blob-transactions-test.yaml
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/c35b5c3a5fd543bcc843ee0e0af1e6255ca48dbd/playbooks/stable/blob-transactions-test.yaml
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/c35b5c3a5fd543bcc843ee0e0af1e6255ca48dbd/playbooks/stable/eoa-transactions-test.yaml

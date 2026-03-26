@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -260,6 +260,7 @@ pub struct ChainConfig {
     pub amsterdam_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
+    #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
     /// Network has already passed the terminal total difficult
     #[serde(default)]
@@ -279,7 +280,6 @@ lazy_static::lazy_static! {
         HashMap::from([
             (1, "mainnet"),
             (11155111, "sepolia"),
-            (17000, "holesky"),
             (560048, "hoodi"),
             (9, "L1 local devnet"),
             (65536999, "L2 local devnet"),
@@ -463,15 +463,32 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
-        if self.is_amsterdam_activated(block_timestamp) {
-            Some(self.blob_schedule.amsterdam.unwrap_or_default())
-        } else if self.is_bpo5_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo5.unwrap_or_default())
-        } else if self.is_bpo4_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo4.unwrap_or_default())
-        } else if self.is_bpo3_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo3.unwrap_or_default())
-        } else if self.is_bpo2_activated(block_timestamp) {
+        // Amsterdam (and BPO3-5) don't independently define blob params in Hive;
+        // they inherit from the highest activated BPO fork. If the fork-specific
+        // entry is None, fall through to find the right BPO schedule.
+        if self.is_amsterdam_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.amsterdam
+        {
+            return Some(schedule);
+        }
+        // Fall through to BPO chain
+        if self.is_bpo5_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo5
+        {
+            return Some(schedule);
+        }
+        if self.is_bpo4_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo4
+        {
+            return Some(schedule);
+        }
+        if self.is_bpo3_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.bpo3
+        {
+            return Some(schedule);
+        }
+        // Amsterdam implies BPO2 blob params when no explicit schedule is set.
+        if self.is_bpo2_activated(block_timestamp) || self.is_amsterdam_activated(block_timestamp) {
             Some(self.blob_schedule.bpo2)
         } else if self.is_bpo1_activated(block_timestamp) {
             Some(self.blob_schedule.bpo1)
@@ -683,7 +700,7 @@ impl Genesis {
         let withdrawals_root = self
             .config
             .is_shanghai_activated(self.timestamp)
-            .then_some(compute_withdrawals_root(&[]));
+            .then_some(compute_withdrawals_root(&[], &NativeCrypto));
 
         let parent_beacon_block_root = self
             .config
@@ -709,8 +726,8 @@ impl Genesis {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
             state_root: self.compute_state_root(),
-            transactions_root: compute_transactions_root(&[]),
-            receipts_root: compute_receipts_root(&[]),
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            receipts_root: compute_receipts_root(&[], &NativeCrypto),
             logs_bloom: Bloom::zero(),
             difficulty: self.difficulty,
             number: 0,
@@ -747,7 +764,7 @@ impl Genesis {
                 AccountState::from(account).encode_to_vec(),
             )
         });
-        Trie::compute_hash_from_unsorted_iter(iter)
+        Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
     }
 }
 #[cfg(test)]
@@ -880,8 +897,14 @@ mod tests {
             H256::from_str("0x2dab6a1d6d638955507777aecea699e6728825524facbd446bd4e86d44fa5ecd")
                 .unwrap()
         );
-        assert_eq!(header.transactions_root, compute_transactions_root(&[]));
-        assert_eq!(header.receipts_root, compute_receipts_root(&[]));
+        assert_eq!(
+            header.transactions_root,
+            compute_transactions_root(&[], &NativeCrypto)
+        );
+        assert_eq!(
+            header.receipts_root,
+            compute_receipts_root(&[], &NativeCrypto)
+        );
         assert_eq!(header.logs_bloom, Bloom::default());
         assert_eq!(header.difficulty, U256::from(1));
         assert_eq!(header.gas_limit, 25_000_000);
@@ -894,7 +917,10 @@ mod tests {
             header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
             INITIAL_BASE_FEE
         );
-        assert_eq!(header.withdrawals_root, Some(compute_withdrawals_root(&[])));
+        assert_eq!(
+            header.withdrawals_root,
+            Some(compute_withdrawals_root(&[], &NativeCrypto))
+        );
         assert_eq!(header.blob_gas_used, Some(0));
         assert_eq!(header.excess_blob_gas, Some(0));
         assert_eq!(header.parent_beacon_block_root, Some(H256::zero()));
