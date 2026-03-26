@@ -3408,8 +3408,10 @@ fn execute_polygon_system_calls(
         let sync_time = block.header.timestamp - delay;
 
         // Use the first event ID from the block body as the starting point.
+        // Fetch ALL events in the time window (limit=100 per page, pagination handles the rest).
+        // The block body may contain only one representative StateSyncData entry
+        // but there can be many events in the window.
         let from_id = state_sync_data[0].id;
-        let event_count = state_sync_data.len() as u64;
 
         debug!(
             block_number,
@@ -3424,7 +3426,7 @@ fn execute_polygon_system_calls(
                 .block_on(
                     engine
                         .heimdall
-                        .fetch_state_sync_events(from_id, sync_time, event_count),
+                        .fetch_state_sync_events(from_id, sync_time, 100),
                 )
                 .map_err(|e| {
                     ChainError::Custom(format!(
