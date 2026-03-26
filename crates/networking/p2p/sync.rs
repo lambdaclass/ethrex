@@ -46,6 +46,9 @@ lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
 }
 
+/// Retry delays in seconds for header fetch attempts (gentle backoff)
+const RETRY_DELAYS: [u64; 5] = [1, 2, 3, 5, 10];
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
     #[default]
