@@ -3407,15 +3407,41 @@ fn execute_polygon_system_calls(
         let delay = bor_config.get_state_sync_delay(block_number);
         let sync_time = block.header.timestamp - delay;
 
-        // Use the first event ID from the block body as the starting point.
-        // Fetch ALL events in the time window (limit=100 per page, pagination handles the rest).
-        // The block body may contain only one representative StateSyncData entry
-        // but there can be many events in the window.
-        let from_id = state_sync_data[0].id;
+        // Read lastStateId() from the StateReceiver contract (0x1001).
+        // Bor uses this to determine from_id = lastStateId + 1, NOT the block body.
+        // Selector: 0x5407ca67 = keccak256("lastStateId()")
+        let last_state_id_selector = bytes::Bytes::from_static(&[0x54, 0x07, 0xca, 0x67]);
+        let last_state_id = match vm.execute_polygon_system_call(
+            &block.header,
+            STATE_RECEIVER_CONTRACT,
+            SYSTEM_ADDRESS,
+            last_state_id_selector,
+            MAX_SYSTEM_CALL_GAS,
+        ) {
+            Ok(report) if report.is_success() && report.output.len() >= 32 => {
+                let bytes: [u8; 8] = report.output[24..32].try_into().expect("slice is 8 bytes");
+                u64::from_be_bytes(bytes)
+            }
+            Ok(report) => {
+                warn!(
+                    block_number,
+                    success = report.is_success(),
+                    output_len = report.output.len(),
+                    "lastStateId() call unexpected result — falling back to block body"
+                );
+                state_sync_data[0].id.saturating_sub(1)
+            }
+            Err(e) => {
+                warn!(block_number, error = %e, "lastStateId() call failed — falling back to block body");
+                state_sync_data[0].id.saturating_sub(1)
+            }
+        };
+        let from_id = last_state_id + 1;
 
         debug!(
             block_number,
             body_event_count = state_sync_data.len(),
+            last_state_id,
             from_id,
             sync_time,
             "Fetching state sync events from Heimdall"
