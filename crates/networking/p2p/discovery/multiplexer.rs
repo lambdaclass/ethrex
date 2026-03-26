@@ -22,11 +22,11 @@ use crate::discv4::{
     messages::Packet as Discv4Packet,
     server::{DiscoveryServer as Discv4Server, Discv4Message, InMessage as Discv4InMessage},
 };
-
 use crate::discv5::{
     messages::Packet as Discv5Packet,
     server::{DiscoveryServer as Discv5Server, Discv5Message, InMessage as Discv5InMessage},
 };
+use crate::metrics::METRICS;
 
 /// Minimum packet size for a valid discv4 packet.
 /// hash (32) + signature (65) + type (1) = 98 bytes
@@ -170,8 +170,10 @@ impl DiscoveryMultiplexer {
     async fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
         if is_discv4_packet(data) {
             self.route_to_discv4(data, from).await;
-        } else {
-            self.route_to_discv5(data, from).await;
+        } else if self.route_to_discv5(data, from).await == Some(false) {
+            // Packet failed both discv4 hash check and discv5 decode
+            debug!(from=?from, len=data.len(), "Received unrecognized discovery packet");
+            METRICS.record_unrecognized_discovery_packet();
         }
     }
 
@@ -200,13 +202,15 @@ impl DiscoveryMultiplexer {
     }
 
     /// Route a packet to the discv5 handler.
-    async fn route_to_discv5(&mut self, data: &[u8], from: SocketAddr) {
+    /// Returns `Some(true)` if decoded as discv5, `Some(false)` if decode failed,
+    /// `None` if discv5 is disabled or handle is unavailable.
+    async fn route_to_discv5(&mut self, data: &[u8], from: SocketAddr) -> Option<bool> {
         if !self.config.discv5_enabled {
-            return;
+            return None;
         }
 
         let Some(handle) = &mut self.discv5_handle else {
-            return;
+            return None;
         };
 
         // Decode the discv5 packet
@@ -216,9 +220,11 @@ impl DiscoveryMultiplexer {
                 if let Err(e) = handle.cast(Discv5InMessage::Message(Box::new(msg))).await {
                     debug!(error=?e, "Failed to send discv5 message to handler");
                 }
+                Some(true)
             }
             Err(e) => {
                 debug!(error=?e, "Failed to decode discv5 packet");
+                Some(false)
             }
         }
     }

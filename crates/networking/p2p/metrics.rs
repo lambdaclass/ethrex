@@ -54,6 +54,9 @@ pub struct Metrics {
     /// RLPx connection attempt failures grouped and counted by reason
     pub connection_attempt_failures: Arc<Mutex<BTreeMap<String, u64>>>,
 
+    /// Discovery packets that don't match discv4 or discv5
+    pub unrecognized_discovery_packets: IntCounter,
+
     /* Snap Sync */
     // Common
     pub sync_head_block: AtomicU64,
@@ -268,6 +271,16 @@ impl Metrics {
         self.pings_sent.inc();
 
         self.update_rate(&mut events, &self.pings_sent_rate);
+    }
+
+    pub fn record_unrecognized_discovery_packet(&self) {
+        self.unrecognized_discovery_packets.inc();
+
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_unrecognized_discovery_packets();
+        }
     }
 
     pub async fn record_new_rlpx_conn_disconnection(
@@ -675,6 +688,16 @@ impl Default for Metrics {
             .register(Box::new(storage_leaves_downloaded.clone()))
             .expect("Failed to register storage_leaves_downloaded counter");
 
+        let unrecognized_discovery_packets = IntCounter::new(
+            "unrecognized_discovery_packets",
+            "Total number of discovery packets not matching discv4 or discv5",
+        )
+        .expect("Failed to create unrecognized_discovery_packets counter");
+
+        registry
+            .register(Box::new(unrecognized_discovery_packets.clone()))
+            .expect("Failed to register unrecognized_discovery_packets counter");
+
         Metrics {
             _registry: registry,
             enabled: Arc::new(Mutex::new(false)),
@@ -704,6 +727,8 @@ impl Default for Metrics {
             disconnections_by_client_type: Arc::new(Mutex::new(BTreeMap::new())),
 
             connection_attempt_failures: Arc::new(Mutex::new(BTreeMap::new())),
+
+            unrecognized_discovery_packets,
 
             /* Snap Sync */
             // Common
