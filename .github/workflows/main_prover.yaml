@@ -3,13 +3,17 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
-    tags: ["*"]
     paths-ignore:
       - "docs/**"
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag to checkout"
+        required: false
+        default: "main"
 
 permissions:
   contents: read
@@ -32,6 +36,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
