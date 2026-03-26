@@ -23,6 +23,7 @@ bytes.workspace = true
 hex.workspace = true
 rustc-hash.workspace = true
 crossbeam.workspace = true
+rayon.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
 
