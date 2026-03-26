@@ -612,8 +612,8 @@ impl Blockchain {
         // scoped OS threads don't inherit the tokio context.
         let rt_handle = tokio::runtime::Handle::current();
 
-        let (execution_result, merkleization_result, warmer_duration) =
-            std::thread::scope(|s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
+            |s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
                 let warm_handle = std::thread::Builder::new()
@@ -695,6 +695,63 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
+
+                        // Diagnostic logging for receipts root mismatch (Polygon debugging)
+                        if matches!(self.options.r#type, BlockchainType::Polygon) {
+                            let computed_root =
+                                ethrex_common::types::compute_receipts_root(&execution_result.receipts);
+                            let expected_root = block.header.receipts_root;
+                            if computed_root != expected_root {
+                                warn!(
+                                    block_number = block.header.number,
+                                    block_hash = ?block.hash(),
+                                    tx_count = block.body.transactions.len(),
+                                    receipt_count = execution_result.receipts.len(),
+                                    gas_used_header = block.header.gas_used,
+                                    gas_used_exec = execution_result.block_gas_used,
+                                    cumulative_gas_last = execution_result.receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0),
+                                    expected = ?expected_root,
+                                    computed = ?computed_root,
+                                    "Pipeline: Receipts root mismatch"
+                                );
+                                for (i, receipt) in execution_result.receipts.iter().enumerate() {
+                                    let encoded = receipt.encode_inner_with_bloom();
+                                    let preview_len = encoded.len().min(64);
+                                    warn!(
+                                        receipt_idx = i,
+                                        tx_type = ?receipt.tx_type,
+                                        tx_type_byte = receipt.tx_type as u8,
+                                        succeeded = receipt.succeeded,
+                                        cumulative_gas = receipt.cumulative_gas_used,
+                                        log_count = receipt.logs.len(),
+                                        encoded_len = encoded.len(),
+                                        encoded_hex = hex::encode(&encoded[..preview_len]),
+                                        "Pipeline: Receipt detail"
+                                    );
+                                    for (j, log) in receipt.logs.iter().enumerate() {
+                                        warn!(
+                                            receipt_idx = i,
+                                            log_idx = j,
+                                            address = ?log.address,
+                                            topic_count = log.topics.len(),
+                                            topics = ?log.topics,
+                                            data_len = log.data.len(),
+                                            data_hex = hex::encode(&log.data),
+                                            "Pipeline: Log detail"
+                                        );
+                                    }
+                                }
+                                for (i, tx) in block.body.transactions.iter().enumerate() {
+                                    warn!(
+                                        tx_idx = i,
+                                        tx_type = ?tx.tx_type(),
+                                        tx_type_byte = tx.tx_type() as u8,
+                                        "Pipeline: Block tx type"
+                                    );
+                                }
+                            }
+                        }
+
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         if !matches!(self.options.r#type, BlockchainType::Polygon) {
                             validate_requests_hash(
@@ -762,7 +819,8 @@ impl Blockchain {
                     .ok()
                     .unwrap_or(Duration::ZERO);
                 Ok((execution_result, merkleization_result, warmer_duration))
-            })?;
+            },
+        )?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
