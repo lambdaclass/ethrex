@@ -11,7 +11,7 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, RwLock},
 };
-use tracing::instrument;
+use tracing::{debug, instrument};
 
 type AccountStateCache = FxHashMap<Address, Option<AccountState>>;
 
@@ -31,9 +31,17 @@ pub struct StoreVmDatabase {
 
 impl StoreVmDatabase {
     pub fn new(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
+        let block_hash = block_header.hash();
+        let parent_hash = block_header.parent_hash;
+        if store.get_binary_trie_root(parent_hash).is_none() {
+            debug!(
+                "Binary trie root not in layer cache for parent block {parent_hash:#x}; \
+                 state will be read from FKV (may be unavailable if not yet flushed)"
+            );
+        }
         Ok(StoreVmDatabase {
             store,
-            block_hash: block_header.hash(),
+            block_hash,
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
         })
@@ -44,9 +52,17 @@ impl StoreVmDatabase {
         block_header: BlockHeader,
         block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
+        let block_hash = block_header.hash();
+        let parent_hash = block_header.parent_hash;
+        if store.get_binary_trie_root(parent_hash).is_none() {
+            debug!(
+                "Binary trie root not in layer cache for parent block {parent_hash:#x}; \
+                 state will be read from FKV (may be unavailable if not yet flushed)"
+            );
+        }
         Ok(StoreVmDatabase {
             store,
-            block_hash: block_header.hash(),
+            block_hash,
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
         })

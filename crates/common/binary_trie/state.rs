@@ -224,13 +224,10 @@ impl BinaryTrieState {
             value: block_hash.as_bytes().to_vec(),
         });
 
-        // 4. In-memory rotation: clear dirty storage keys tracking.
-        {
-            let mut storage_keys = self.storage_keys.lock().unwrap();
-            for addr in &self.dirty_storage_keys {
-                storage_keys.remove(addr);
-            }
-        }
+        // 4. In-memory rotation: clear dirty tracking, keep entries in cache.
+        // Entries remain in storage_keys for fast reads; the next reload_from_checkpoint
+        // will repopulate from disk if needed. Only the dirty set is cleared so the
+        // next flush doesn't re-write unchanged entries.
         self.dirty_storage_keys.clear();
         self.blocks_since_flush = 0;
         self.last_flushed_block = block_number;
@@ -240,7 +237,7 @@ impl BinaryTrieState {
 
     /// Check if the flush threshold has been reached.
     /// Increments the block counter each call.
-    pub fn should_flush(&mut self) -> bool {
+    pub fn tick_and_check_flush(&mut self) -> bool {
         self.blocks_since_flush += 1;
         self.blocks_since_flush >= self.flush_threshold
     }
@@ -350,6 +347,14 @@ impl BinaryTrieState {
     /// Record a trie remove into the current block's diffs.
     fn record_remove(&mut self, key: [u8; 32]) {
         self.current_block_diffs.push((key, None));
+    }
+
+    /// Read a raw leaf from the binary trie by its 32-byte tree key.
+    ///
+    /// Returns `Some(value)` if the leaf exists, `None` otherwise.
+    /// Used by the storage layer's unified read path (`BinaryTrieWrapper`).
+    pub fn trie_get(&self, tree_key: [u8; 32]) -> Option<[u8; 32]> {
+        self.trie.get(tree_key)
     }
 
     /// Read account state from the binary trie.
@@ -696,7 +701,7 @@ impl BinaryTrieState {
     /// Check whether `address` has any tracked storage keys.
     ///
     /// Checks in-memory cache first; on a miss, reloads from backend.
-    fn has_storage_keys(&self, address: &Address) -> bool {
+    pub fn has_storage_keys(&self, address: &Address) -> bool {
         {
             let cache = self.storage_keys.lock().unwrap();
             if let Some(keys) = cache.get(address) {

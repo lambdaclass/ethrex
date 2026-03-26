@@ -504,7 +504,8 @@ impl Blockchain {
                         {
                             match storage_ref.handle_merkleization(&flat_updates) {
                                 Ok((list, root)) => (list, true, Some(root)),
-                                Err(_) => {
+                                Err(e) => {
+                                    warn!("Merkleization in pipeline failed, will retry: {e}");
                                     (AccountUpdatesList::from_updates(&flat_updates), false, None)
                                 }
                             }
@@ -830,8 +831,6 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
-            batch_mode: false,
-            flat_updates: account_updates_list.flat_updates,
         };
 
         self.storage
@@ -1399,8 +1398,6 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates: account_updates_list.code_updates,
-            batch_mode: true,
-            flat_updates: account_updates_list.flat_updates,
         };
 
         self.storage

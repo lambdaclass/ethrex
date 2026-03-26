@@ -66,6 +66,7 @@
 
 pub mod api;
 pub mod backend;
+pub mod binary_trie_read;
 pub mod error;
 pub mod rlp;
 pub mod store;

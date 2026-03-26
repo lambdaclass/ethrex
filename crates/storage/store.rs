@@ -126,10 +126,6 @@ impl ethrex_binary_trie::db::TrieBackend for StorageTrieBackend {
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
-/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
-/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
-const BATCH_COMMIT_THRESHOLD: usize = 4;
-
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
@@ -296,12 +292,6 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode).
-    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
-    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
-    pub batch_mode: bool,
-    /// Account updates to write to FKV tables for O(1) state reads.
-    pub flat_updates: Vec<AccountUpdate>,
 }
 
 /// Collection of account state changes from block execution.
@@ -1427,8 +1417,6 @@ impl Store {
             blocks,
             receipts,
             code_updates,
-            batch_mode: _,
-            flat_updates: _,
         } = update_batch;
 
         let mut tx = db.begin_write()?;
@@ -1542,6 +1530,9 @@ impl Store {
                         ) {
                             error!("Background FKV flush failed: {e}");
                         }
+                        if let Some(tx) = work.done_tx {
+                            let _ = tx.try_send(());
+                        }
                     }
                     Err(err) => {
                         debug!("Flush worker sender disconnected: {err}");
@@ -1635,6 +1626,22 @@ impl Store {
     /// On non-RocksDB backends, clears layers/root map and returns 0
     /// (the trie has no persistent checkpoint).
     pub fn reload_binary_trie(&self) -> Result<u64, StoreError> {
+        // Synchronous flush: ensure any in-flight background write completes before
+        // we reload from the checkpoint. We create a completion channel and send a
+        // no-op work item; the background thread signals done after processing it.
+        // The sync_channel(1) ensures we block until the previous work item has been
+        // picked up, and the done_rx.recv() waits for the no-op to be processed,
+        // guaranteeing all prior disk writes are complete.
+        let (done_tx, done_rx) = std::sync::mpsc::sync_channel::<()>(1);
+        let _ = self.flush_work_tx.send(FlushWork {
+            trie_ops: Vec::new(),
+            flat_updates: Vec::new(),
+            code_updates: Vec::new(),
+            done_tx: Some(done_tx),
+        });
+        // Wait for background thread to finish processing.
+        let _ = done_rx.recv();
+
         let bts = self
             .binary_trie_state
             .as_ref()
@@ -1646,12 +1653,15 @@ impl Store {
             .reload_from_checkpoint()
             .map_err(|e| StoreError::Custom(format!("binary trie reload failed: {e}")))?;
 
-        // Clear layer cache and root map — all layers are from the old fork.
+        // Clear all in-memory state from the old fork.
         if let Ok(mut cache) = self.binary_trie_layer_cache.write() {
             cache.clear();
         }
         if let Ok(mut map) = self.binary_trie_root_map.write() {
             map.clear();
+        }
+        if let Ok(mut pending) = self.pending_fkv_updates.write() {
+            pending.clear();
         }
 
         Ok(checkpoint)
@@ -1682,56 +1692,38 @@ impl Store {
             }))
     }
 
-    /// Read account state, checking the binary trie layer cache first,
-    /// then falling through to FKV on disk for committed state.
+    /// Read account state, checking the binary trie layer cache and trie state
+    /// first, then falling through to FKV on disk for committed state.
     pub fn get_account_state_by_block_hash(
         &self,
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        use ethrex_binary_trie::key_mapping::{
-            get_tree_key_for_basic_data, get_tree_key_for_code_hash, unpack_basic_data,
-        };
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use crate::binary_trie_read::BinaryTrieWrapper;
 
-        // Check layer cache if the block has a binary trie root.
-        if let Some(trie_root) = self.get_binary_trie_root(block_hash) {
+        // Check in-memory binary trie layers when the block has a known trie root.
+        if let (Some(trie_root), Some(bts)) = (
+            self.get_binary_trie_root(block_hash),
+            &self.binary_trie_state,
+        ) {
             let cache = self
                 .binary_trie_layer_cache
                 .read()
                 .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?;
+            let state = bts
+                .read()
+                .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
 
-            let basic_data_key = get_tree_key_for_basic_data(&address);
-            match cache.get(trie_root, &basic_data_key) {
-                Some(None) => return Ok(None), // Account deleted in a layer.
-                Some(Some(basic_data)) => {
-                    let (_version, _code_size, nonce, balance) = unpack_basic_data(&basic_data);
+            let wrapper = BinaryTrieWrapper {
+                trie_root,
+                layer_cache: &cache,
+                trie_state: &state,
+            };
 
-                    let code_hash_key = get_tree_key_for_code_hash(&address);
-                    let code_hash = match cache.get(trie_root, &code_hash_key) {
-                        Some(Some(hash)) => H256(hash),
-                        Some(None) | None => *EMPTY_KECCACK_HASH,
-                    };
-
-                    // For storage_root, fall through to FKV which has the
-                    // correct sentinel (FKV is still written per-block).
-                    let hashed_address = hash_address_fixed(&address);
-                    let read_tx = self.backend.begin_read()?;
-                    let storage_root = read_tx
-                        .get(ACCOUNT_FLATKEYVALUE, hashed_address.as_bytes())?
-                        .and_then(|bytes| AccountState::decode(&bytes).ok())
-                        .map(|s| s.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH);
-
-                    return Ok(Some(AccountState {
-                        nonce,
-                        balance,
-                        storage_root,
-                        code_hash,
-                    }));
-                }
-                None => {} // Not in layers, fall through to FKV.
+            if let Some(result) = wrapper.get_account_state(&address) {
+                return Ok(result);
             }
+            // Fall through to FKV if not found in any in-memory layer.
         }
 
         // Fall through to FKV for committed state.
@@ -1743,33 +1735,39 @@ impl Store {
         }
     }
 
-    /// Read a storage slot, checking the binary trie layer cache first,
-    /// then falling through to FKV on disk for committed state.
+    /// Read a storage slot, checking the binary trie layer cache and trie state
+    /// first, then falling through to FKV on disk for committed state.
     pub fn get_storage_at_by_block_hash(
         &self,
         block_hash: BlockHash,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        use ethrex_binary_trie::key_mapping::get_tree_key_for_storage_slot;
+        use crate::binary_trie_read::BinaryTrieWrapper;
 
-        // Check layer cache.
-        if let Some(trie_root) = self.get_binary_trie_root(block_hash) {
-            let storage_key_u256 = U256::from_big_endian(storage_key.as_bytes());
-            let tree_key = get_tree_key_for_storage_slot(&address, storage_key_u256);
-
+        // Check in-memory binary trie layers when the block has a known trie root.
+        if let (Some(trie_root), Some(bts)) = (
+            self.get_binary_trie_root(block_hash),
+            &self.binary_trie_state,
+        ) {
             let cache = self
                 .binary_trie_layer_cache
                 .read()
                 .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?;
+            let state = bts
+                .read()
+                .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
 
-            match cache.get(trie_root, &tree_key) {
-                Some(None) => return Ok(None), // Slot deleted in a layer.
-                Some(Some(value)) => {
-                    return Ok(Some(U256::from_big_endian(&value)));
-                }
-                None => {} // Not in layers, fall through to FKV.
+            let wrapper = BinaryTrieWrapper {
+                trie_root,
+                layer_cache: &cache,
+                trie_state: &state,
+            };
+
+            if let Some(result) = wrapper.get_storage_slot(&address, storage_key) {
+                return Ok(result);
             }
+            // Fall through to FKV if not found in any in-memory layer.
         }
 
         // Fall through to FKV for committed state.
@@ -1924,7 +1922,7 @@ impl Store {
             .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
 
         // Check if flush threshold reached.
-        if !state.should_flush() {
+        if !state.tick_and_check_flush() {
             return Ok(());
         }
 
@@ -1944,8 +1942,19 @@ impl Store {
                 trie_ops,
                 flat_updates: all_flat,
                 code_updates: all_code,
+                done_tx: None,
             })
             .map_err(|_| StoreError::Custom("flush worker disconnected".to_string()))?;
+
+        // Prune root map: remove entries whose trie roots are no longer in the
+        // layer cache. After a flush, the FKV tables will have the committed data,
+        // so reads for those blocks will correctly fall through to FKV.
+        if let (Ok(cache), Ok(mut map)) = (
+            self.binary_trie_layer_cache.read(),
+            self.binary_trie_root_map.write(),
+        ) {
+            map.retain(|_block_hash, trie_root| cache.contains_root(*trie_root));
+        }
 
         Ok(())
     }
@@ -1968,15 +1977,6 @@ impl Store {
         }
 
         Ok((all_flat, all_code))
-    }
-
-    /// Write a batch of FKV updates (account state + storage slots + code) to disk.
-    fn write_fkv_updates(
-        &self,
-        flat_updates: &[AccountUpdate],
-        code_updates: &[(H256, Code)],
-    ) -> Result<(), StoreError> {
-        write_fkv_updates_static(self.backend.as_ref(), flat_updates, code_updates)
     }
 
     // NOTE: remaining impl Store methods continue below, after write_fkv_updates_static.
@@ -2555,6 +2555,10 @@ struct FlushWork {
     trie_ops: Vec<ethrex_binary_trie::db::WriteOp>,
     flat_updates: Vec<AccountUpdate>,
     code_updates: Vec<(H256, Code)>,
+    /// Optional completion signal. When set, the background thread sends a unit
+    /// value after processing so the caller can wait for synchronous completion.
+    /// Used during reorg to ensure all in-flight writes are on disk before reload.
+    done_tx: Option<std::sync::mpsc::SyncSender<()>>,
 }
 
 pub struct AncestorIterator {

@@ -236,6 +236,11 @@ impl BinaryTrieLayerCache {
         self.rebuild_bloom();
     }
 
+    /// Returns true if the given trie root has a layer in the cache.
+    pub fn contains_root(&self, root: [u8; 32]) -> bool {
+        self.layers.contains_key(&root)
+    }
+
     /// Number of layers currently in the cache.
     pub fn len(&self) -> usize {
         self.layers.len()
