@@ -73,7 +73,7 @@ pub fn execution_program(
     let request_root = new_payload_request.hash_tree_root();
 
     // Transform SSZ NewPayloadRequest → Block
-    let block = new_payload_request_to_block(&new_payload_request)
+    let block = new_payload_request_to_block(&new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
 
     // Validate block_hash: the SSZ payload carries block_hash which must match
@@ -96,6 +96,7 @@ pub fn execution_program(
         execution_witness,
         ELASTICITY_MULTIPLIER,
         |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+        crypto.clone(),
     )?;
 
     Ok(ProgramOutput {
@@ -108,6 +109,7 @@ pub fn execution_program(
 #[cfg(feature = "eip-8025")]
 fn new_payload_request_to_block(
     req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    crypto: &dyn Crypto,
 ) -> Result<ethrex_common::types::Block, String> {
     use bytes::Bytes;
     use ethrex_common::constants::DEFAULT_OMMERS_HASH;
@@ -176,7 +178,7 @@ fn new_payload_request_to_block(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
         state_root: H256::from_slice(&payload.state_root),
-        transactions_root: compute_transactions_root(&body.transactions),
+        transactions_root: compute_transactions_root(&body.transactions, crypto),
         receipts_root: H256::from_slice(&payload.receipts_root),
         logs_bloom,
         difficulty: 0.into(),
@@ -188,7 +190,7 @@ fn new_payload_request_to_block(
         prev_randao: H256::from_slice(&payload.prev_randao),
         nonce: 0,
         base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(compute_withdrawals_root(&withdrawals)),
+        withdrawals_root: Some(compute_withdrawals_root(&withdrawals, crypto)),
         blob_gas_used: Some(payload.blob_gas_used),
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),

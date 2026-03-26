@@ -280,3 +280,4 @@ For blocks with no transactions, withdrawals, or execution requests, use these S
 | `verifyNewPayloadRequestHeaderV1` returns `SYNCING` | No proof stored yet | Wait for the prover to submit, or check prover logs for errors |
 | Prover shows no output after starting | Idle message is `debug!`-level and suppressed at `RUST_LOG=info` — this is normal | The first visible log appears only when a proof is requested |
 | Port 9100 "Address already in use" | Previous node process still running | Kill stale processes: `pkill -9 -f ethrex` and wait a few seconds |
+| Prover polls but finds no work despite `requestProofsV1` succeeding | Stale proofs from a previous run in the data directory | Delete the data directory (default: `~/Library/Application Support/ethrex` on macOS, `~/.local/share/ethrex` on Linux) and restart the node |
