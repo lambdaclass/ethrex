@@ -24,5 +24,5 @@ runs:
         components: ${{ inputs.components }}
 
     - name: Add Rust Cache
-      uses: Swatinem/rust-cache@98c8021b550208e191a6d4e3c1210774756feab5 # v2
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
