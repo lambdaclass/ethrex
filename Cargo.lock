@@ -4318,10 +4318,7 @@ version = "9.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
- "hex",
- "lazy_static",
  "thiserror 2.0.18",
- "tinyvec",
 ]
 
 [[package]]
