@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -15,10 +15,7 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::{
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    utils::keccak,
-};
+use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
@@ -49,10 +46,10 @@ impl Code {
         }
     }
 
-    pub fn from_bytecode(code: Bytes) -> Self {
+    pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self {
-            hash: keccak(code.as_ref()),
+            hash: H256(crypto.keccak256(code.as_ref())),
             bytecode: code,
             jump_targets,
         }
@@ -173,7 +170,7 @@ impl Default for Code {
 
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
-        let code = Code::from_bytecode(genesis.code);
+        let code = Code::from_bytecode(genesis.code, &NativeCrypto);
         Self {
             info: AccountInfo {
                 code_hash: code.hash,
@@ -190,8 +187,8 @@ impl From<GenesisAccount> for Account {
     }
 }
 
-pub fn code_hash(code: &Bytes) -> H256 {
-    keccak(code.as_ref())
+pub fn code_hash(code: &Bytes, crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(code.as_ref()))
 }
 
 impl RLPEncode for AccountInfo {
@@ -342,11 +339,14 @@ impl RLPDecode for AccountStateSlimCodec {
     }
 }
 
-pub fn compute_storage_root(storage: &BTreeMap<U256, U256>) -> H256 {
+pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
+        (!v.is_zero()).then_some((
+            crypto.keccak256(&k.to_big_endian()).to_vec(),
+            v.encode_to_vec(),
+        ))
     });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl From<&GenesisAccount> for AccountState {
@@ -354,8 +354,8 @@ impl From<&GenesisAccount> for AccountState {
         AccountState {
             nonce: value.nonce,
             balance: value.balance,
-            storage_root: compute_storage_root(&value.storage),
-            code_hash: code_hash(&value.code),
+            storage_root: compute_storage_root(&value.storage, &NativeCrypto),
+            code_hash: code_hash(&value.code, &NativeCrypto),
         }
     }
 }
@@ -389,7 +389,7 @@ mod test {
     #[test]
     fn test_code_hash() {
         let empty_code = Bytes::new();
-        let hash = code_hash(&empty_code);
+        let hash = code_hash(&empty_code, &NativeCrypto);
         assert_eq!(
             hash,
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")

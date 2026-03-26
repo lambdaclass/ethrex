@@ -1,7 +1,14 @@
-use crate::H256;
+use crate::{H160, H256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use std::{str::FromStr, sync::LazyLock};
+
+/// SYSTEM_ADDRESS used for system contract calls and BAL filtering.
+/// 0xfffffffffffffffffffffffffffffffffffffffe
+pub const SYSTEM_ADDRESS: H160 = H160([
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFE,
+]);
 
 // = Keccak256(RLP([])) as of EIP-3675
 pub static DEFAULT_OMMERS_HASH: LazyLock<H256> = LazyLock::new(|| {
@@ -70,3 +77,7 @@ pub const BLOB_BASE_COST: u64 = 8192;
 // === EIP-7825 constants ===
 // https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
+
+// === EIP-7928 BAL size cap constants ===
+/// GAS_BLOCK_ACCESS_LIST_ITEM = GAS_WARM_ACCESS (100) + TX_ACCESS_LIST_STORAGE_KEY_COST (1900)
+pub const BAL_ITEM_COST: u64 = 2000;

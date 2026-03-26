@@ -18,6 +18,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{Account, BlockHeader, Code, Fork, LegacyTransaction, Transaction, TxKind},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment,
     constants::{SET_CODE_DELEGATION_BYTES, TX_BASE_COST},
@@ -79,6 +80,7 @@ fn create_legacy_tx(nonce: u64, gas: u64, to: Address, value: U256, data: Bytes)
         r: U256::zero(),
         s: U256::zero(),
         inner_hash: OnceCell::new(),
+        sender_cache: OnceCell::new(),
     })
 }
 
@@ -119,7 +121,8 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
     );
 
     // Delegated account (A) - points to target (B)
-    let delegation_code = Code::from_bytecode(create_delegation_code(target_account));
+    let delegation_code =
+        Code::from_bytecode(create_delegation_code(target_account), &NativeCrypto);
     accounts.insert(
         delegated_account,
         Account {
@@ -133,7 +136,7 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
     );
 
     // Target account (B) - simple code
-    let target_code = Code::from_bytecode(simple_return_code());
+    let target_code = Code::from_bytecode(simple_return_code(), &NativeCrypto);
     accounts.insert(
         target_account,
         Account {
@@ -152,8 +155,15 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
 
     let tx = create_legacy_tx(0, gas_limit, delegated_account, U256::zero(), Bytes::new());
 
-    let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
-        .expect("Failed to create VM");
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("Failed to create VM");
 
     let result = vm.execute().expect("Execution failed");
 
@@ -204,7 +214,8 @@ fn test_delegated_address_is_warmed_after_resolution() {
     );
 
     // Delegated account points to target
-    let delegation_code = Code::from_bytecode(create_delegation_code(target_account));
+    let delegation_code =
+        Code::from_bytecode(create_delegation_code(target_account), &NativeCrypto);
     accounts.insert(
         delegated_account,
         Account {
@@ -218,7 +229,7 @@ fn test_delegated_address_is_warmed_after_resolution() {
     );
 
     // Target account with STOP
-    let target_code = Code::from_bytecode(simple_return_code());
+    let target_code = Code::from_bytecode(simple_return_code(), &NativeCrypto);
     accounts.insert(
         target_account,
         Account {
@@ -237,8 +248,15 @@ fn test_delegated_address_is_warmed_after_resolution() {
 
     let tx = create_legacy_tx(0, gas_limit, delegated_account, U256::zero(), Bytes::new());
 
-    let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1)
-        .expect("Failed to create VM");
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("Failed to create VM");
 
     let result = vm.execute().expect("Execution failed");
     assert!(result.is_success());

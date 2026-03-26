@@ -190,7 +190,7 @@ impl RevmState {
                         code: new_acc_info
                             .code
                             .map(|c| c.original_bytes().0)
-                            .map(Code::from_bytecode),
+                            .map(|code| Code::from_bytecode(code, &ethrex_crypto::NativeCrypto)),
                         added_storage: account
                             .storage
                             .iter()
@@ -225,7 +225,10 @@ impl RevmState {
                 if account.is_contract_changed()
                     && let Some(code) = new_acc_info.code
                 {
-                    account_update.code = Some(Code::from_bytecode(code.original_bytes().0));
+                    account_update.code = Some(Code::from_bytecode(
+                        code.original_bytes().0,
+                        &ethrex_crypto::NativeCrypto,
+                    ));
                 }
             }
             // Update account storage in DB

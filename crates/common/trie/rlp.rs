@@ -10,19 +10,29 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+use ethrex_crypto::NativeCrypto;
+
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
 use crate::{Nibbles, NodeHash};
 
+// SAFETY: `NativeCrypto` is used here instead of a `&dyn Crypto` parameter because
+// `RLPEncode` is a fixed trait signature that cannot accept extra parameters.
+// This is safe in the `commit()` path: `NodeRef::commit()` recursively populates
+// child `OnceLock` hashes before calling `encode()`, so `compute_hash_ref` returns
+// cached values without invoking keccak. If `encode()` were called on uncommitted
+// nodes (e.g. from `put_batch_no_alloc`), `NativeCrypto` would be used and the
+// result stored in the `OnceLock` — but this only happens in native storage paths
+// where `NativeCrypto` is the correct provider.
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let value_len = <[u8] as RLPEncode>::length(&self.value);
         let payload_len = self.choices.iter().fold(value_len, |acc, child| {
-            acc + RLPEncode::length(child.compute_hash_ref())
+            acc + RLPEncode::length(child.compute_hash_ref(&NativeCrypto))
         });
 
         encode_length(payload_len, buf);
         for child in self.choices.iter() {
-            match child.compute_hash_ref() {
+            match child.compute_hash_ref(&NativeCrypto) {
                 NodeHash::Hashed(hash) => hash.0.encode(buf),
                 NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
@@ -35,7 +45,7 @@ impl RLPEncode for BranchNode {
     fn encode_to_vec(&self) -> Vec<u8> {
         let value_len = <[u8] as RLPEncode>::length(&self.value);
         let choices_len = self.choices.iter().fold(0, |acc, child| {
-            acc + RLPEncode::length(child.compute_hash_ref())
+            acc + RLPEncode::length(child.compute_hash_ref(&NativeCrypto))
         });
         let payload_len = choices_len + value_len;
 
@@ -43,7 +53,7 @@ impl RLPEncode for BranchNode {
 
         encode_length(payload_len, &mut buf);
         for child in self.choices.iter() {
-            match child.compute_hash_ref() {
+            match child.compute_hash_ref(&NativeCrypto) {
                 NodeHash::Hashed(hash) => hash.0.encode(&mut buf),
                 NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => {
@@ -60,7 +70,7 @@ impl RLPEncode for BranchNode {
 impl RLPEncode for ExtensionNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let mut encoder = Encoder::new(buf).encode_bytes(&self.prefix.encode_compact());
-        encoder = self.child.compute_hash().encode(encoder);
+        encoder = self.child.compute_hash(&NativeCrypto).encode(encoder);
         encoder.finish();
     }
 }

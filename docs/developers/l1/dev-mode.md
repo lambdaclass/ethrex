@@ -6,7 +6,7 @@ This guide assumes you've read the dev [installation guide](../installing.md)
 
 ## Dev mode
 
-In dev mode ethrex acts as a local Ethereum development node it can be run with the following command
+In dev mode ethrex acts as a local Ethereum development node. It can be run with the following command
 
 ```sh
 ethrex --dev

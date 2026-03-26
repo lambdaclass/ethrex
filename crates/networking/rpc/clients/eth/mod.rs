@@ -208,6 +208,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -226,6 +227,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method,
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -315,6 +317,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_estimateGas".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -335,16 +338,20 @@ impl EthClient {
             gas_price: overrides.max_fee_per_gas.unwrap_or_default(),
             ..Default::default()
         };
+        let mut tx_json = json!({
+            "to": match tx.to {
+                TxKind::Call(addr) => format!("{addr:#x}"),
+                TxKind::Create => format!("{:#x}", Address::zero()),
+            },
+            "input": format!("0x{:#x}", tx.input),
+            "value": format!("{:#x}", tx.value),
+            "from": format!("{:#x}", tx.from),
+        });
+        if let Some(nonce) = overrides.nonce {
+            tx_json["nonce"] = json!(format!("{nonce:#x}"));
+        }
         let params = Some(vec![
-            json!({
-                "to": match tx.to {
-                    TxKind::Call(addr) => format!("{addr:#x}"),
-                    TxKind::Create => format!("{:#x}", Address::zero()),
-                },
-                "input": format!("0x{:#x}", tx.input),
-                "value": format!("{:#x}", tx.value),
-                "from": format!("{:#x}", tx.from),
-            }),
+            tx_json,
             overrides
                 .block
                 .map(Into::into)
@@ -403,6 +410,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_getTransactionCount".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -449,6 +457,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "debug_getRawBlock".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }),
         };
 
@@ -559,6 +568,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_getCode".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }
@@ -616,6 +626,7 @@ impl EthClient {
             RpcResponse::Error(error_response) => Err(RpcRequestError::RPCError {
                 method: "eth_blobBaseFee".to_string(),
                 message: error_response.error.message,
+                data: error_response.error.data,
             }
             .into()),
         }

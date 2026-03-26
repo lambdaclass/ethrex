@@ -79,6 +79,8 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 signature_r: tx.signature_r,
                 signature_s: tx.signature_s,
                 inner_hash: tx.inner_hash,
+                sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             })
         }
         LibmdbxTransaction::LegacyTransaction(tx) => {
@@ -96,6 +98,7 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 r: tx.r,
                 s: tx.s,
                 inner_hash: tx.inner_hash,
+                sender_cache: Default::default(),
             })
         }
         LibmdbxTransaction::EIP2930Transaction(tx) => {
@@ -115,6 +118,8 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 signature_r: tx.signature_r,
                 signature_s: tx.signature_s,
                 inner_hash: tx.inner_hash,
+                sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             })
         }
         LibmdbxTransaction::EIP4844Transaction(tx) => {
@@ -134,6 +139,8 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 signature_r: tx.signature_r,
                 signature_s: tx.signature_s,
                 inner_hash: tx.inner_hash,
+                sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             })
         }
         LibmdbxTransaction::EIP7702Transaction(tx) => {
@@ -163,6 +170,8 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 signature_r: tx.signature_r,
                 signature_s: tx.signature_s,
                 inner_hash: tx.inner_hash,
+                sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             })
         }
         LibmdbxTransaction::PrivilegedL2Transaction(tx) => {
@@ -181,6 +190,8 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                 access_list: tx.access_list,
                 from: tx.from,
                 inner_hash: tx.inner_hash,
+                sender_cache: Default::default(),
+                cached_canonical: Default::default(),
             })
         }
     }

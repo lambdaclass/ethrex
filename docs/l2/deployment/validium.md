@@ -42,7 +42,7 @@ ethrex l2 deploy \
 > 
 > `--tdx.verifier-address` to use an existing verifier instead of deploying one on the public network. Do not pass this flag if you want to deploy a new verifier.
 > 
-> Enabling multiple proving backend will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
+> Enabling multiple proving backends will require running multiple provers, one for each backend. Refer to the [Run multiple provers](./prover/multi-prover.md) section for more details.
 > 
 > If you enable more than one proving system (e.g., both `--sp1 true` and `--risc0 true`), all selected proving systems will be required (i.e., every batch must include a proof from each enabled system to settle on L1).
 
@@ -53,7 +53,7 @@ ethrex l2 deploy \
 >
 > - Replace `L1_RPC_URL` with your preferred RPC provider endpoint.
 > - Replace `PRIVATE_KEY` with the private key of an account funded on the target L1. This key will sign the transactions during deployment.
-> - Replace `PATH_TO_L2_GENESIS_FILE` with the path to your L2 genesis file.A genesis example is available in the fixtures directory of the [official GitHub repository](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json). This file initializes the `OnChainProposer` contract with the genesis state root.
+> - Replace `PATH_TO_L2_GENESIS_FILE` with the path to your L2 genesis file. A genesis example is available in the fixtures directory of the [official GitHub repository](https://github.com/lambdaclass/ethrex/blob/main/fixtures/genesis/l2.json). This file initializes the `OnChainProposer` contract with the genesis state root.
 > - The `CommonBridge` and `OnChainProposer` contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace `COMMON_BRIDGE_OWNER_ADDRESS` and `ON_CHAIN_PROPOSER_OWNER_ADDRESS` with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.
 > - The sequencer components (`L1Committer` and `L1ProofSender`) require funded accounts on the target L1 to advance the network. Replace `L1_COMMITTER_ADDRESS` and `L1_PROOF_SENDER_ADDRESS` with the addresses of those accounts.
 > - Replace `PATH_TO_ENV_FILE` with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.
