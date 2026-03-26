@@ -3091,7 +3091,7 @@ mod tests {
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
             hex!("8151d548273f6683169524b66ca9fe338b9ce42bc3540046c828fd939ae23bcb");
-        let result = compute_transactions_root(&body.transactions);
+        let result = compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto);
 
         assert_eq!(result, expected_root.into());
     }
@@ -3142,7 +3142,7 @@ mod tests {
         let logs = vec![];
         let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
 
-        let result = compute_receipts_root(&[receipt]);
+        let result = compute_receipts_root(&[receipt], &ethrex_crypto::NativeCrypto);
         let expected_root =
             hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
         assert_eq!(result, expected_root.into());

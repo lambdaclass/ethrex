@@ -21,6 +21,7 @@ use ethrex_common::{
     },
 };
 
+use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
 use ethrex_vm::{Evm, EvmError};
 
@@ -143,8 +144,8 @@ pub fn create_payload(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: args.fee_recipient,
         state_root: parent_block.state_root,
-        transactions_root: compute_transactions_root(&[]),
-        receipts_root: compute_receipts_root(&[]),
+        transactions_root: compute_transactions_root(&[], &NativeCrypto),
+        receipts_root: compute_receipts_root(&[], &NativeCrypto),
         logs_bloom: Bloom::default(),
         difficulty: U256::zero(),
         number: parent_block.number.saturating_add(1),
@@ -165,6 +166,7 @@ pub fn create_payload(
             .is_shanghai_activated(args.timestamp)
             .then_some(compute_withdrawals_root(
                 args.withdrawals.as_ref().unwrap_or(&Vec::new()),
+                &NativeCrypto,
             )),
         blob_gas_used: chain_config
             .is_cancun_activated(args.timestamp)
@@ -770,8 +772,9 @@ impl Blockchain {
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
-            compute_transactions_root(&context.payload.body.transactions);
-        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+            compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
+        context.payload.header.receipts_root =
+            compute_receipts_root(&context.receipts, &NativeCrypto);
         context.payload.header.requests_hash = context
             .requests
             .as_ref()
@@ -800,7 +803,7 @@ impl Blockchain {
             }
         }
 
-        context.payload.header.logs_bloom = bloom_from_logs(&logs);
+        context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
 }
