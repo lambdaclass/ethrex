@@ -34,7 +34,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
@@ -715,11 +715,16 @@ impl DiscoveryServer {
             src_id: self.local_node.node_id(),
             message: message.clone(),
         };
-        let encrypt_key = self
-            .peer_table
-            .get_session_info(node.node_id())
-            .await?
-            .map_or([0; 16], |s| s.outbound_key);
+        let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
+            Some(s) => s.outbound_key,
+            None => {
+                warn!(
+                    "No session found for {:?} in send_ordinary, falling back to zeroed key",
+                    node.node_id()
+                );
+                [0; 16]
+            }
+        };
 
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
@@ -744,11 +749,13 @@ impl DiscoveryServer {
         if let Some(key) = key {
             return Ok(key);
         }
-        Ok(self
-            .peer_table
-            .get_session_info(*node_id)
-            .await?
-            .map_or([0; 16], |s| s.outbound_key))
+        match self.peer_table.get_session_info(*node_id).await? {
+            Some(s) => Ok(s.outbound_key),
+            None => {
+                warn!("No session found for {node_id:?}, falling back to zeroed key");
+                Ok([0; 16])
+            }
+        }
     }
 
     /// Send an ordinary message directly to a node_id at the given address,
@@ -791,11 +798,16 @@ impl DiscoveryServer {
             record,
             message: message.clone(),
         };
-        let encrypt_key = self
-            .peer_table
-            .get_session_info(node.node_id())
-            .await?
-            .map_or([0; 16], |s| s.outbound_key);
+        let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
+            Some(s) => s.outbound_key,
+            None => {
+                warn!(
+                    "No session found for {:?} in send_handshake, falling back to zeroed key",
+                    node.node_id()
+                );
+                [0; 16]
+            }
+        };
 
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();

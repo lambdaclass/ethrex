@@ -14,9 +14,10 @@ use crate::{
     metrics::METRICS,
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
+    utils::distance,
 };
 use bytes::Bytes;
-use ethrex_common::{H256, U256};
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
@@ -925,16 +926,15 @@ impl PeerTableServer {
     }
 
     /// Get nodes at distances for discv5 (returns Vec<NodeRecord>).
-    /// Uses the discv5 spec log-distance: `bits(XOR)` = number of significant bits,
-    /// equivalent to `floor(log2(XOR)) + 1` for non-zero XOR. Distance 0 is reserved
-    /// for the local node itself (handled by the caller), so contacts start at distance ≥ 1.
+    /// Uses the discv5 spec log-distance: `floor(log2(XOR))` for non-zero XOR.
+    /// Distance 0 is reserved for the local node itself (handled by the caller),
+    /// so contacts start at distance >= 1.
     fn get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
         self.contacts
             .iter()
             .filter_map(|(contact_id, contact)| {
-                let xor = local_node_id ^ *contact_id;
-                let spec_dist = U256::from_big_endian(xor.as_bytes()).bits() as u32;
-                if distances.contains(&spec_dist) {
+                let dist = distance(&local_node_id, contact_id) as u32;
+                if distances.contains(&dist) {
                     contact.record.clone()
                 } else {
                     None
@@ -1080,9 +1080,7 @@ impl PeerTableServer {
     }
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-        let xor = node_id_1 ^ node_id_2;
-        let dist = U256::from_big_endian(xor.as_bytes());
-        dist.bits().saturating_sub(1)
+        distance(node_id_1, node_id_2)
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
