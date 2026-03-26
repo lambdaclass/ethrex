@@ -3295,15 +3295,45 @@ fn execute_polygon_system_calls(
 
     // Find the StateSyncTransaction in the block body (if any).
     // In Bor, this is the last transaction and contains the state sync event data.
-    let state_sync_data: Vec<_> = block
+    let state_sync_txs: Vec<_> = block
         .body
         .transactions
         .iter()
         .filter_map(|tx| match tx {
-            Transaction::StateSyncTransaction(st) => Some(&st.state_sync_data),
+            Transaction::StateSyncTransaction(st) => Some(st),
             _ => None,
         })
-        .flatten()
+        .collect();
+
+    // Debug dump: raw StateSyncTransaction info for diagnosing RLP decode issues
+    if !state_sync_txs.is_empty() {
+        let first_tx = state_sync_txs[0];
+        let rlp_bytes = first_tx.encode_to_vec();
+        let rlp_preview_len = rlp_bytes.len().min(200);
+        let rlp_hex: String = rlp_bytes[..rlp_preview_len]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        warn!(
+            block_number,
+            state_sync_tx_count = state_sync_txs.len(),
+            first_tx_event_count = first_tx.state_sync_data.len(),
+            rlp_total_len = rlp_bytes.len(),
+            rlp_hex = %rlp_hex,
+            "StateSyncTransaction debug dump"
+        );
+        // Log individual event IDs from the body
+        let event_ids: Vec<u64> = first_tx.state_sync_data.iter().map(|e| e.id).collect();
+        warn!(
+            block_number,
+            event_ids = ?event_ids,
+            "StateSyncTransaction body event IDs"
+        );
+    }
+
+    let state_sync_data: Vec<_> = state_sync_txs
+        .iter()
+        .flat_map(|st| &st.state_sync_data)
         .collect();
 
     // Use BorEngine's span-aware check if available, fall back to formula.
