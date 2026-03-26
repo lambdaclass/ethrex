@@ -54,6 +54,23 @@ pub async fn sync_cycle_full(
 
     let mut attempts = 0;
 
+    // Check if we have previously downloaded headers from a prior cycle.
+    // If so, resume from the lowest stored header instead of starting from the sync head.
+    if let Ok(Some(lowest)) = store.lowest_fullsync_header().await {
+        if lowest.number > 1 {
+            info!(
+                "Resuming header download from block {} (previously stored)",
+                lowest.number
+            );
+            sync_head = lowest.parent_hash;
+            end_block_number = store
+                .highest_fullsync_header_number()
+                .await
+                .unwrap_or(lowest.number);
+            single_batch = false;
+        }
+    }
+
     // Request and store all block headers from the advertised sync head
     loop {
         let Some(mut block_headers) = peers
@@ -62,8 +79,9 @@ pub async fn sync_cycle_full(
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
-                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    "Sync failed to find target block header after {attempts} attempts, saving progress and aborting"
                 );
+                // Don't clear headers — preserve progress for next cycle.
                 return Ok(());
             }
             attempts += 1;

@@ -1399,6 +1399,30 @@ impl Store {
         self.backend.clear_table(FULLSYNC_HEADERS)
     }
 
+    /// Returns the lowest block header stored in the fullsync headers table.
+    pub async fn lowest_fullsync_header(&self) -> Result<Option<BlockHeader>, StoreError> {
+        let read_tx = self.backend.begin_read()?;
+        let mut iter = read_tx.prefix_iterator(FULLSYNC_HEADERS, &[])?;
+        match iter.next() {
+            Some(Ok((_, value))) => Ok(Some(BlockHeader::decode(&value)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Returns the highest block number stored in the fullsync headers table.
+    pub async fn highest_fullsync_header_number(&self) -> Result<u64, StoreError> {
+        let read_tx = self.backend.begin_read()?;
+        let mut highest = 0u64;
+        for item in read_tx.prefix_iterator(FULLSYNC_HEADERS, &[])? {
+            let (key, _) = item?;
+            if key.len() >= 8 {
+                let num = u64::from_le_bytes(key[..8].try_into().unwrap());
+                highest = highest.max(num);
+            }
+        }
+        Ok(highest)
+    }
+
     /// Delete a key from a table
     pub fn delete(&self, table: &'static str, key: Vec<u8>) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
