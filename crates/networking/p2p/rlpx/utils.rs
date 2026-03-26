@@ -63,7 +63,9 @@ pub fn compress_pubkey(pk: H512) -> Option<PublicKey> {
 pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError> {
     let mut snappy_encoder = SnappyEncoder::new();
     let mut msg_data = vec![0; max_compress_len(encoded_data.len()) + 1];
-    let compressed_size = snappy_encoder.compress(&encoded_data, &mut msg_data)?;
+    let compressed_size = snappy_encoder
+        .compress(&encoded_data, &mut msg_data)
+        .map_err(|e| RLPEncodeError::InvalidCompression(e.to_string()))?;
 
     msg_data.truncate(compressed_size);
     Ok(msg_data)
@@ -71,5 +73,7 @@ pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError>
 
 pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     let mut snappy_decoder = SnappyDecoder::new();
-    Ok(snappy_decoder.decompress_vec(msg_data)?)
+    snappy_decoder
+        .decompress_vec(msg_data)
+        .map_err(|e| RLPDecodeError::InvalidCompression(e.to_string()))
 }

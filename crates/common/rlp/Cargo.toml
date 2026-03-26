@@ -6,14 +6,17 @@ authors.workspace = true
 documentation.workspace = true
 license.workspace = true
 
+[features]
+default = ["std"]
+std = ["bytes/std", "hex/std", "ethereum-types/std", "dep:lazy_static"]
+
 [dependencies]
 tinyvec = "1.6.0"
-thiserror.workspace = true
-bytes.workspace = true
-hex.workspace = true
-lazy_static.workspace = true
-ethereum-types.workspace = true
-snap.workspace = true
+thiserror = { version = "2.0.9", default-features = false }
+bytes = { version = "1.6.0", default-features = false }
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+ethereum-types = { version = "0.15.1", default-features = false, features = ["ethbloom"] }
+lazy_static = { workspace = true, optional = true }
 
 [lib]
 path = "./rlp.rs"
