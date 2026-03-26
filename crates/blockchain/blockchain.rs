@@ -3353,6 +3353,14 @@ fn execute_polygon_system_calls(
         let from_id = state_sync_data[0].id;
         let event_count = state_sync_data.len() as u64;
 
+        debug!(
+            block_number,
+            body_event_count = state_sync_data.len(),
+            from_id,
+            sync_time,
+            "Fetching state sync events from Heimdall"
+        );
+
         let events = if let Some(engine) = bor_engine {
             rt_handle
                 .block_on(
@@ -3373,7 +3381,14 @@ fn execute_polygon_system_calls(
             Vec::new()
         };
 
-        for event in &events {
+        debug!(
+            block_number,
+            heimdall_event_count = events.len(),
+            body_event_count = state_sync_data.len(),
+            "State sync events fetched"
+        );
+
+        for (idx, event) in events.iter().enumerate() {
             // Decode event data: Heimdall may return hex (0x-prefixed or plain)
             // or base64-encoded bytes depending on the API version.
             let raw = event.data.strip_prefix("0x").unwrap_or(&event.data);
@@ -3394,13 +3409,47 @@ fn execute_polygon_system_calls(
             ethrex_rlp::structs::Encoder::new(&mut record_bytes)
                 .encode_field(&event.id)
                 .encode_field(&event.contract)
-                .encode_field(&bytes::Bytes::from(data_bytes))
+                .encode_field(&bytes::Bytes::from(data_bytes.clone()))
                 .encode_field(&event.tx_hash)
                 .encode_field(&event.log_index)
                 .encode_field(&event.bor_chain_id)
                 .finish();
 
             let calldata = encode_commit_state(sync_time, &record_bytes);
+
+            // Debug logging for first event to compare bytes
+            if idx == 0 {
+                let data_hex: String = data_bytes
+                    .iter()
+                    .take(40)
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let rlp_hex: String = record_bytes
+                    .iter()
+                    .take(100)
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let calldata_hex: String = calldata
+                    .iter()
+                    .take(100)
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let raw_preview: String = event.data.chars().take(100).collect();
+                debug!(
+                    block_number,
+                    event_id = event.id,
+                    log_index = event.log_index,
+                    bor_chain_id = %event.bor_chain_id,
+                    data_raw_preview = %raw_preview,
+                    data_decoded_hex = %data_hex,
+                    data_decoded_len = data_bytes.len(),
+                    rlp_hex = %rlp_hex,
+                    rlp_len = record_bytes.len(),
+                    calldata_hex = %calldata_hex,
+                    calldata_len = calldata.len(),
+                    "commitState debug: first event bytes"
+                );
+            }
 
             match vm.execute_polygon_system_call(
                 &block.header,
