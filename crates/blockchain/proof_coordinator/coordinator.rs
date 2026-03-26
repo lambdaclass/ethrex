@@ -434,7 +434,10 @@ impl L1ProofCoordinator {
             .retain(|_bn, req| now.duration_since(req.created_at) < PENDING_REQUEST_TTL);
         let evicted = before - self.pending.len();
         if evicted > 0 {
-            info!(evicted, "Evicted stale pending proof requests (TTL expired)");
+            info!(
+                evicted,
+                "Evicted stale pending proof requests (TTL expired)"
+            );
         }
     }
 }
