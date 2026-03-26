@@ -3426,7 +3426,7 @@ fn execute_polygon_system_calls(
                 .block_on(
                     engine
                         .heimdall
-                        .fetch_state_sync_events(from_id, sync_time, 100),
+                        .fetch_state_sync_events(from_id, sync_time, 50),
                 )
                 .map_err(|e| {
                     ChainError::Custom(format!(
