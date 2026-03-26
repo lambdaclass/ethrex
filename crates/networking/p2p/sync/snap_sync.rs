@@ -1056,55 +1056,216 @@ async fn insert_accounts(
 
     let t2 = std::time::Instant::now();
     // Build state trie in parallel (16 sub-tries by first nibble).
-    // Single pass: iterate all accounts, decode once, collect code hashes and
-    // storage accounts while partitioning into 16 buckets by first nibble.
-    use ethrex_trie::trie_sorted::trie_from_sorted_parallel;
+    // Each sub-trie uses a streaming RocksDB iterator (no bulk memory).
+    // Side effects (code hashes, storage accounts) are collected per-thread.
+    use crossbeam::channel::bounded as crossbeam_bounded;
+    use ethrex_rlp::encode::RLPEncode;
+    use ethrex_trie::{
+        Nibbles, Node, NodeHash, NodeRef, ThreadPool,
+        node::{BranchNode, ExtensionNode},
+        trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_subtrie},
+    };
+    use std::sync::Mutex;
+    use std::thread::scope as thread_scope;
 
-    let mut buckets: Vec<Vec<(H256, Vec<u8>)>> = (0..16).map(|_| Vec::new()).collect();
-    let mut collected_code_hashes: Vec<H256> = Vec::new();
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for item in iter {
-        let (k, v) = item.expect("We shouldn't have a rocksdb error here");
-        METRICS
-            .account_tries_inserted
-            .fetch_add(1, Ordering::Relaxed);
-        let account_state = AccountState::decode(&v).expect("We should have accounts here");
-        if account_state.storage_root != *EMPTY_TRIE_HASH {
-            storage_accounts.accounts_with_storage_root.insert(
-                H256::from_slice(&k),
-                (Some(account_state.storage_root), Vec::new()),
-            );
-        }
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            collected_code_hashes.push(account_state.code_hash);
-        }
-        let nibble = (k[0] >> 4) as usize;
-        buckets[nibble].push((H256::from_slice(&k), v.to_vec()));
+    let snapshot = db.snapshot();
+    let trie_db = trie.db();
+    let thread_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
+    let per_thread_code_hashes: Mutex<Vec<Vec<H256>>> = Mutex::new(Vec::new());
+    let per_thread_storage_accounts: Mutex<Vec<Vec<(H256, H256)>>> = Mutex::new(Vec::new());
+
+    // A RocksDB iterator filtered to a single first-nibble range.
+    struct NibbleIterator<'a> {
+        iter: rocksdb::DBRawIterator<'a>,
+        nibble: u8,
+        code_hashes: Vec<H256>,
+        storage_accounts: Vec<(H256, H256)>,
     }
-    info!(
-        "[PROFILE] account insertion: partitioning took {:?} ({} code hashes, {} accounts)",
-        t2.elapsed(),
-        collected_code_hashes.len(),
-        buckets.iter().map(|b| b.len()).sum::<usize>(),
-    );
+    impl<'a> Iterator for NibbleIterator<'a> {
+        type Item = (H256, Vec<u8>);
+        fn next(&mut self) -> Option<Self::Item> {
+            if !self.iter.valid() {
+                return None;
+            }
+            let key = self.iter.key()?;
+            if (key[0] >> 4) != self.nibble {
+                return None;
+            }
+            let value = self.iter.value()?;
+            let account_hash = H256::from_slice(key);
+            let value_vec = value.to_vec();
+            METRICS
+                .account_tries_inserted
+                .fetch_add(1, Ordering::Relaxed);
+            let account_state =
+                AccountState::decode(&value_vec).expect("We should have accounts here");
+            if account_state.storage_root != *EMPTY_TRIE_HASH {
+                self.storage_accounts
+                    .push((account_hash, account_state.storage_root));
+            }
+            if account_state.code_hash != *EMPTY_KECCACK_HASH {
+                self.code_hashes.push(account_state.code_hash);
+            }
+            self.iter.next();
+            Some((account_hash, value_vec))
+        }
+    }
 
-    let t_build = std::time::Instant::now();
-    let bucket_slots: Vec<std::sync::Mutex<Option<Vec<(H256, Vec<u8>)>>>> = buckets
-        .into_iter()
-        .map(|b| std::sync::Mutex::new(Some(b)))
-        .collect();
-    let compute_state_root = trie_from_sorted_parallel(trie.db(), |nibble| {
-        let data = bucket_slots[nibble as usize]
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or_default();
-        Box::new(data.into_iter())
+    let choices: [NodeRef; 16] = thread_scope(|s| {
+        let pool = Arc::new(ThreadPool::new(thread_count, s));
+        let handles: Vec<_> = (0u8..16)
+            .map(|nibble| {
+                let pool = pool.clone();
+                let (buf_tx, buf_rx) =
+                    crossbeam_bounded::<Vec<(Nibbles, Node)>>(buffers_per_subtrie);
+                for _ in 0..buffers_per_subtrie {
+                    let _ = buf_tx.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
+                }
+                let per_thread_code_hashes = &per_thread_code_hashes;
+                let per_thread_storage_accounts = &per_thread_storage_accounts;
+                let snapshot = &snapshot;
+                s.spawn(move || {
+                    let mut raw_iter = snapshot.raw_iterator();
+                    let mut start_key = [0u8; 32];
+                    start_key[0] = nibble << 4;
+                    raw_iter.seek(start_key);
+
+                    let mut nibble_iter = NibbleIterator {
+                        iter: raw_iter,
+                        nibble,
+                        code_hashes: Vec::new(),
+                        storage_accounts: Vec::new(),
+                    };
+
+                    let child_ref = trie_from_sorted_subtrie(
+                        trie_db, &mut nibble_iter, pool, buf_tx, buf_rx,
+                    )?;
+
+                    // Collect side effects
+                    if !nibble_iter.code_hashes.is_empty() {
+                        per_thread_code_hashes
+                            .lock()
+                            .unwrap()
+                            .push(nibble_iter.code_hashes);
+                    }
+                    if !nibble_iter.storage_accounts.is_empty() {
+                        per_thread_storage_accounts
+                            .lock()
+                            .unwrap()
+                            .push(nibble_iter.storage_accounts);
+                    }
+
+                    Ok::<Option<(u8, NodeRef)>, ethrex_trie::trie_sorted::TrieGenerationError>(
+                        child_ref.map(|r| (nibble, r)),
+                    )
+                })
+            })
+            .collect();
+
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        for handle in handles {
+            if let Some((nibble, node_ref)) = handle.join().unwrap()? {
+                choices[nibble as usize] = node_ref;
+            }
+        }
+        Ok::<[NodeRef; 16], ethrex_trie::trie_sorted::TrieGenerationError>(choices)
     })
     .map_err(SyncError::TrieGenerationError)?;
+
+    // Assemble root from 16 sub-trie results
+    let valid_count = choices.iter().filter(|c| c.is_valid()).count();
+    let mut nodehash_buffer = Vec::with_capacity(512);
+    let compute_state_root = if valid_count == 0 {
+        *EMPTY_TRIE_HASH
+    } else if valid_count == 1 {
+        let (index, child) = choices
+            .into_iter()
+            .enumerate()
+            .find(|(_, c)| c.is_valid())
+            .unwrap();
+        // Read the child node to collapse extension/leaf
+        let child_path = Nibbles::from_hex(vec![index as u8]);
+        let child_rlp = trie_db
+            .get(child_path.clone())
+            .map_err(|e| SyncError::Trie(e))?
+            .expect("Sub-trie wrote this node");
+        let mut child_node =
+            Node::decode(&child_rlp).map_err(SyncError::Rlp)?;
+        match &mut child_node {
+            Node::Branch(_) => {
+                let ext: Node = ExtensionNode {
+                    prefix: child_path.clone(),
+                    child: NodeHash::from_encoded(&child_rlp).into(),
+                }
+                .into();
+                let hash = ext.compute_hash_no_alloc(&mut nodehash_buffer).finalize();
+                trie_db
+                    .put_batch(vec![(Nibbles::default(), ext.encode_to_vec())])
+                    .map_err(SyncError::Trie)?;
+                hash
+            }
+            Node::Extension(ext) => {
+                ext.prefix.prepend(index as u8);
+                let hash = ext.compute_hash_no_alloc(&mut nodehash_buffer).finalize();
+                trie_db
+                    .put_batch(vec![
+                        (child_path, vec![]),
+                        (Nibbles::default(), child_node.encode_to_vec()),
+                    ])
+                    .map_err(SyncError::Trie)?;
+                hash
+            }
+            Node::Leaf(leaf) => {
+                leaf.partial.prepend(index as u8);
+                let hash = leaf.compute_hash_no_alloc(&mut nodehash_buffer).finalize();
+                trie_db
+                    .put_batch(vec![
+                        (child_path, vec![]),
+                        (Nibbles::default(), child_node.encode_to_vec()),
+                    ])
+                    .map_err(SyncError::Trie)?;
+                hash
+            }
+        }
+    } else {
+        let root_node: Node = BranchNode {
+            choices,
+            value: vec![],
+        }
+        .into();
+        let hash = root_node
+            .compute_hash_no_alloc(&mut nodehash_buffer)
+            .finalize();
+        trie_db
+            .put_batch(vec![(Nibbles::default(), root_node.encode_to_vec())])
+            .map_err(SyncError::Trie)?;
+        hash
+    };
+
+    // Merge per-thread side effects
+    let collected_code_hashes: Vec<H256> = per_thread_code_hashes
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .collect();
+    for (account_hash, storage_root) in per_thread_storage_accounts
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .flatten()
+    {
+        storage_accounts
+            .accounts_with_storage_root
+            .insert(account_hash, (Some(storage_root), Vec::new()));
+    }
     info!(
-        "[PROFILE] account insertion: parallel trie building took {:?}",
-        t_build.elapsed(),
+        "[PROFILE] account insertion: parallel trie building took {:?} (collected {} code hashes)",
+        t2.elapsed(),
+        collected_code_hashes.len(),
     );
 
     // Flush collected code hashes (async)
@@ -1115,6 +1276,7 @@ async fn insert_accounts(
     }
     info!("[PROFILE] account insertion: code hash flush ({} hashes) took {:?}", collected_code_hashes.len(), t3.elapsed());
 
+    drop(snapshot);
     drop(db); // close db before removing directory
 
     std::fs::remove_dir_all(account_state_snapshots_dir)
