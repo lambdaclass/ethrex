@@ -20,7 +20,7 @@ use ethrex_common::{
 };
 use ethrex_levm::{
     EVMConfig, Environment,
-    constants::SET_CODE_DELEGATION_BYTES,
+    constants::{SET_CODE_DELEGATION_BYTES, TX_BASE_COST},
     db::gen_db::GeneralizedDatabase,
     gas_cost::COLD_ADDRESS_ACCESS_COST,
     tracing::LevmCallTracer,
@@ -98,9 +98,10 @@ fn create_legacy_tx(nonce: u64, gas: u64, to: Address, value: U256, data: Bytes)
 /// This test verifies the gas consumed matches expected (without cold access cost).
 #[test]
 fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
-    let sender = Address::from_low_u64_be(1);
-    let delegated_account = Address::from_low_u64_be(2); // Account A
-    let target_account = Address::from_low_u64_be(3); // Account B
+    // Use addresses outside precompile range (1-9) to avoid unintended side effects
+    let sender = Address::from_low_u64_be(0x100);
+    let delegated_account = Address::from_low_u64_be(0x200); // Account A
+    let target_account = Address::from_low_u64_be(0x300); // Account B
 
     // Create accounts
     let mut accounts = FxHashMap::default();
@@ -119,20 +120,29 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
     );
 
     // Delegated account (A) - points to target (B)
-    let delegation_code = create_delegation_code(target_account);
+    let delegation_code = Code::from_bytecode(create_delegation_code(target_account));
     accounts.insert(
         delegated_account,
         Account {
-            code: Code::from_bytecode(delegation_code),
+            info: ethrex_common::types::AccountInfo {
+                code_hash: delegation_code.hash,
+                ..Default::default()
+            },
+            code: delegation_code,
             ..Default::default()
         },
     );
 
     // Target account (B) - simple code
+    let target_code = Code::from_bytecode(simple_return_code());
     accounts.insert(
         target_account,
         Account {
-            code: Code::from_bytecode(simple_return_code()),
+            info: ethrex_common::types::AccountInfo {
+                code_hash: target_code.hash,
+                ..Default::default()
+            },
+            code: target_code,
             ..Default::default()
         },
     );
@@ -153,16 +163,16 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
     // If cold access was incorrectly charged, we'd see an extra 2600 gas.
     let gas_used = result.gas_used;
 
-    // Verify gas is reasonable (less than base + cold access cost buffer)
+    // Gas must be at least the intrinsic tx cost, but less than intrinsic + cold access.
     // If the bug was present, gas_used would be >= 21000 + 2600 = 23600
     // With correct behavior, it should be around 21000 (just intrinsic gas)
     assert!(
-        gas_used < 21000 + COLD_ADDRESS_ACCESS_COST,
-        "Gas used ({}) suggests cold access was incorrectly charged. \
-         Expected less than {} (21000 intrinsic + {} cold access)",
+        gas_used >= TX_BASE_COST && gas_used < TX_BASE_COST + COLD_ADDRESS_ACCESS_COST,
+        "Gas used ({}) outside expected range [{}, {}). \
+         Cold access should NOT be charged at transaction setup.",
         gas_used,
-        21000 + COLD_ADDRESS_ACCESS_COST,
-        COLD_ADDRESS_ACCESS_COST
+        TX_BASE_COST,
+        TX_BASE_COST + COLD_ADDRESS_ACCESS_COST,
     );
 
     // Verify the transaction succeeded (delegation resolution worked)
@@ -178,9 +188,10 @@ fn test_initial_tx_to_delegated_account_no_cold_access_charge() {
 /// in accessed_addresses (warming it for subsequent operations within the same tx).
 #[test]
 fn test_delegated_address_is_warmed_after_resolution() {
-    let sender = Address::from_low_u64_be(1);
-    let delegated_account = Address::from_low_u64_be(2);
-    let target_account = Address::from_low_u64_be(3);
+    // Use addresses outside precompile range (1-9) to avoid unintended side effects
+    let sender = Address::from_low_u64_be(0x100);
+    let delegated_account = Address::from_low_u64_be(0x200);
+    let target_account = Address::from_low_u64_be(0x300);
 
     let mut accounts = FxHashMap::default();
 
@@ -197,19 +208,29 @@ fn test_delegated_address_is_warmed_after_resolution() {
     );
 
     // Delegated account points to target
+    let delegation_code = Code::from_bytecode(create_delegation_code(target_account));
     accounts.insert(
         delegated_account,
         Account {
-            code: Code::from_bytecode(create_delegation_code(target_account)),
+            info: ethrex_common::types::AccountInfo {
+                code_hash: delegation_code.hash,
+                ..Default::default()
+            },
+            code: delegation_code,
             ..Default::default()
         },
     );
 
     // Target account with STOP
+    let target_code = Code::from_bytecode(simple_return_code());
     accounts.insert(
         target_account,
         Account {
-            code: Code::from_bytecode(simple_return_code()),
+            info: ethrex_common::types::AccountInfo {
+                code_hash: target_code.hash,
+                ..Default::default()
+            },
+            code: target_code,
             ..Default::default()
         },
     );
@@ -227,7 +248,7 @@ fn test_delegated_address_is_warmed_after_resolution() {
     assert!(result.is_success());
 
     // After execution, target_account should be in accessed_addresses
-    // This verifies the delegation resolution added it even without charging gas
+    // This verifies the delegation resolution warmed the target address
     let is_accessed = vm.substate.is_address_accessed(&target_account);
     assert!(
         is_accessed,
