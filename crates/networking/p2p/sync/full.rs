@@ -77,20 +77,22 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
+            attempts += 1;
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
-                    "Sync failed to find target block header after {attempts} attempts, saving progress and aborting"
+                    "Sync failed to find target block header after {attempts} consecutive failures, saving progress and aborting"
                 );
                 // Don't clear headers — preserve progress for next cycle.
                 return Ok(());
             }
-            attempts += 1;
             warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 1s"
             );
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         };
+        // Reset consecutive failure counter on success.
+        attempts = 0;
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
         let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
