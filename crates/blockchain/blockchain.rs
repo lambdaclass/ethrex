@@ -3347,16 +3347,21 @@ fn execute_polygon_system_calls(
         let delay = bor_config.get_state_sync_delay(block_number);
         let sync_time = block.header.timestamp - delay;
 
+        let chain_id = chain_config.chain_id;
         for data in &state_sync_data {
-            // The `data` field may be either hex-encoded ASCII (from Heimdall JSON
-            // where Data is a hex string) or raw bytes (from RLP decoding).
-            // Try hex decode first; if it's not valid UTF-8 or hex, use raw bytes.
-            let record_bytes = if let Ok(hex_str) = std::str::from_utf8(&data.data) {
-                let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-                hex::decode(hex_str).unwrap_or_else(|_| data.data.to_vec())
-            } else {
-                data.data.to_vec()
-            };
+            // RLP-encode the full EventRecord matching Bor's format:
+            // [id, contract, data, tx_hash, log_index, chain_id_string]
+            // The contract only reads fields 0-2 but the full encoding must
+            // match Bor's for identical gas usage and receipts root.
+            let mut record_bytes = Vec::new();
+            ethrex_rlp::structs::Encoder::new(&mut record_bytes)
+                .encode_field(&data.id)
+                .encode_field(&data.contract)
+                .encode_field(&data.data)
+                .encode_field(&data.tx_hash)
+                .encode_field(&0u64)
+                .encode_field(&chain_id.to_string())
+                .finish();
 
             let calldata = encode_commit_state(sync_time, &record_bytes);
 
