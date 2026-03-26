@@ -13,7 +13,7 @@ on:
       ref:
         description: "Branch or tag to checkout"
         required: false
-        default: "main"
+        default: ""
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
