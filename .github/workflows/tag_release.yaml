@@ -73,7 +73,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Free Disk Space
         if: ${{ matrix.os == 'linux' }}
@@ -90,7 +90,7 @@ jobs:
         uses: ./.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
         with:
           platforms: amd64
 
@@ -101,7 +101,7 @@ jobs:
         uses: ./.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
-        uses: Jimver/cuda-toolkit@v0.2.24
+        uses: Jimver/cuda-toolkit@c35baa1a18fd1fc9dcf47c5bd839bf30559c0bc3 # v0.2.24
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
         id: cuda-toolkit
         with:
@@ -110,7 +110,7 @@ jobs:
           sub-packages: '["nvcc"]'
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -132,14 +132,14 @@ jobs:
           mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
           path: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: verification_keys
           path: verification_keys/
@@ -156,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -207,13 +207,13 @@ jobs:
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ env.ELF_ARTIFACT }}
           path: ${{ env.ELF_ARTIFACT }}
 
       - name: Upload ethrex guest verification keys - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ matrix.zkvm }}_verification_keys
           path: ${{ matrix.zkvm }}_verification_keys/
@@ -234,31 +234,31 @@ jobs:
           echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
 
       - name: Download SP1 elf artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/sp1/
 
       - name: Download SP1 verification keys artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: sp1_verification_keys
           path: ethrex_guests/sp1/
 
       - name: Download RISC0 elf artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ethrex-riscv32im-risc0-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/risc0/
 
       - name: Download RISC0 verification keys artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: risc0_verification_keys
           path: ethrex_guests/risc0/
 
       - name: Download ZisK elf artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/zisk/
@@ -269,7 +269,7 @@ jobs:
           tar -czvf ../ethrex-guests.tar.gz .
 
       - name: Upload ethrex guests artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ethrex-guests.tar.gz
           path: ethrex-guests.tar.gz
@@ -280,10 +280,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download verification keys artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: verification_keys
           path: crates/l2/contracts/src/
@@ -294,7 +294,7 @@ jobs:
           tar -czvf ../../../../ethrex-contracts.tar.gz .
 
       - name: Upload contracts artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ethrex-contracts.tar.gz
           path: ethrex-contracts.tar.gz
@@ -322,7 +322,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -385,7 +385,7 @@ jobs:
 
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -416,12 +416,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ./bin
           pattern: "ethrex*" # This includes the binaries, elf files, ethrex-verification-keys.tar.gz, and ethrex-contracts.tar.gz
@@ -436,7 +436,7 @@ jobs:
 
       - name: Update CHANGELOG
         id: changelog
-        uses: requarks/changelog-action@v1
+        uses: requarks/changelog-action@6d71e098526ee17bae963f058d34cd763378337f # v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fromTag: ${{ github.ref_name }}
@@ -444,7 +444,7 @@ jobs:
           writeToFile: false
 
       - name: Finalize Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

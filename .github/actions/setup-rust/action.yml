@@ -18,11 +18,11 @@ runs:
         echo "Rust version: ${rust_version}"
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@master
+      uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master
       with:
         toolchain: ${{ steps.rustver.outputs.rust_version }}
         components: ${{ inputs.components }}
 
     - name: Add Rust Cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
