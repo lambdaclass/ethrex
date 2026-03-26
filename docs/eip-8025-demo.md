@@ -112,23 +112,9 @@ engine.newPayloadV4 $payload.executionPayload [] 0x00000000000000000000000000000
 
 Expected: `status = VALID`
 
-### Step 5 — Request Proof Generation (`engine_requestProofsV1`)
+### Step 5 — Verify Proof Availability (Before Proving)
 
-```
-proof = engine.requestProofsV1 $payload.executionPayload [] 0x0000000000000000000000000000000000000000000000000000000000000000 [] {"proofTypes":[0]}
-```
-
-Expected: a `ProofGenId` (8-byte hex string, e.g. `"0x00000001abcdef01"`). Stored in `$proof` for later retrieval.
-
-Internally, the proof engine:
-1. Re-executes the block to generate an `ExecutionWitness`
-2. Builds a `ProgramInput` (block + witness)
-3. Computes the SSZ `hash_tree_root` of the `NewPayloadRequest`
-4. Queues the input for the coordinator
-
-### Step 6 — Verify Proof Availability (Before Proving)
-
-Before the prover has run, check whether a proof exists for this block. Use the same `verifyNewPayloadRequestHeaderV1` call that will succeed in Step 10:
+Before requesting any proof, check whether one exists for this block. Use the same `verifyNewPayloadRequestHeaderV1` call that will succeed in Step 10:
 
 ```
 engine.verifyNewPayloadRequestHeaderV1 {
@@ -163,7 +149,21 @@ engine.verifyNewPayloadRequestHeaderV1 {
 
 **Expected: `status = SYNCING`**
 
-No proofs have been generated yet, so the endpoint correctly reports that proof verification is still pending. Compare with Step 10 where the same call returns `VALID` after the prover completes.
+No proofs exist yet, so the endpoint correctly reports that proof verification is still pending. Compare with Step 10 where the same call returns `VALID` after the prover completes.
+
+### Step 6 — Request Proof Generation (`engine_requestProofsV1`)
+
+```
+proof = engine.requestProofsV1 $payload.executionPayload [] 0x0000000000000000000000000000000000000000000000000000000000000000 [] {"proofTypes":[0]}
+```
+
+Expected: a `ProofGenId` (8-byte hex string, e.g. `"0x00000001abcdef01"`). Stored in `$proof` for later retrieval.
+
+Internally, the proof engine:
+1. Re-executes the block to generate an `ExecutionWitness`
+2. Builds a `ProgramInput` (block + witness)
+3. Computes the SSZ `hash_tree_root` of the `NewPayloadRequest`
+4. Queues the input for the coordinator
 
 ### Step 7 — Prover Pulls, Executes, and Submits
 
@@ -180,7 +180,7 @@ The prover pulled the `ProgramInput` from the coordinator via the `ProofData<Pro
 
 ### Step 8 — Receive the Proof via Callback
 
-After Step 5, the REPL automatically starts a one-shot HTTP listener on port 9200. When the prover finishes (Step 7), the coordinator POSTs a `GeneratedProof` to this listener.
+After Step 6, the REPL automatically starts a one-shot HTTP listener on port 9200. When the prover finishes (Step 7), the coordinator POSTs a `GeneratedProof` to this listener.
 
 Watch the REPL output:
 
@@ -275,14 +275,14 @@ Beacon Node (REPL)          ethrex (EL)                    Prover (l1_prover)
 4. newPayloadV4 ──────────▶ Validate & execute block
                       ◀─── VALID
 
-5. requestProofsV1 ───────▶ Generate witness
+5. verifyNewPayload  ────▶ Compute SSZ root from header
+   RequestHeaderV1         Look up proofs (count == 0)
+                      ◀─── SYNCING (no proof yet)
+
+6. requestProofsV1 ───────▶ Generate witness
                             Compute SSZ root
                             Queue ProgramInput
                       ◀─── ProofGenId
-
-6. verifyNewPayload  ────▶ Compute SSZ root from header
-   RequestHeaderV1         Look up proofs (count == 0)
-                      ◀─── SYNCING (no proof yet)
                                                            7. Pull ProgramInput (TCP)
                                                               Execute block (ExecBackend)
                                                               Submit proof (TCP)

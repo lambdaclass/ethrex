@@ -43,5 +43,10 @@ async fn main() {
         commit_hash: String::new(),
     };
 
-    start_prover::<ProgramInput>(BackendType::Exec, config).await;
+    tokio::select! {
+        _ = start_prover::<ProgramInput>(BackendType::Exec, config) => {}
+        _ = tokio::signal::ctrl_c() => {
+            println!("\nShutting down...");
+        }
+    }
 }
