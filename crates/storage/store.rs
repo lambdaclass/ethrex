@@ -1946,9 +1946,17 @@ impl Store {
             })
             .map_err(|_| StoreError::Custom("flush worker disconnected".to_string()))?;
 
-        // Prune root map: remove entries whose trie roots are no longer in the
-        // layer cache. After a flush, the FKV tables will have the committed data,
-        // so reads for those blocks will correctly fall through to FKV.
+        // Commit old layers and prune the root map.
+        // This mirrors main's TrieLayerCache commit: when enough layers accumulate,
+        // the oldest are merged and removed. Reads for committed blocks fall through
+        // to FKV on disk.
+        if let Some(current_root) = self.get_binary_trie_root(block_hash) {
+            if let Ok(mut cache) = self.binary_trie_layer_cache.write() {
+                if let Some(commit_root) = cache.get_commitable(current_root) {
+                    cache.commit(commit_root);
+                }
+            }
+        }
         if let (Ok(cache), Ok(mut map)) = (
             self.binary_trie_layer_cache.read(),
             self.binary_trie_root_map.write(),
