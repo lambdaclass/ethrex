@@ -536,8 +536,7 @@ impl Nibbles {
 
     /// Returns the nibbles after the given offset
     pub fn offset(&self, offset: usize) -> Nibbles {
-        let mut already_consumed =
-            Vec::with_capacity(self.already_consumed.len() + offset);
+        let mut already_consumed = Vec::with_capacity(self.already_consumed.len() + offset);
         already_consumed.extend_from_slice(&self.already_consumed);
         already_consumed.extend_from_slice(&self.data[..offset]);
         Nibbles {
