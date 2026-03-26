@@ -3343,24 +3343,53 @@ fn execute_polygon_system_calls(
     }
 
     // 2. commitState for each state sync event
+    // Fetch complete EventRecords from Heimdall (has log_index + bor_chain_id
+    // that the block body's StateSyncData lacks).
     if !state_sync_data.is_empty() {
         let delay = bor_config.get_state_sync_delay(block_number);
         let sync_time = block.header.timestamp - delay;
 
-        let chain_id = chain_config.chain_id;
-        for data in &state_sync_data {
+        // Use the first event ID from the block body as the starting point.
+        let from_id = state_sync_data[0].id;
+        let event_count = state_sync_data.len() as u64;
+
+        let events = if let Some(engine) = bor_engine {
+            rt_handle
+                .block_on(
+                    engine
+                        .heimdall
+                        .fetch_state_sync_events(from_id, sync_time, event_count),
+                )
+                .map_err(|e| {
+                    ChainError::Custom(format!(
+                        "Failed to fetch state sync events from Heimdall: {e}"
+                    ))
+                })?
+        } else {
+            warn!(
+                block_number,
+                "No BorEngine available for state sync — skipping commitState"
+            );
+            Vec::new()
+        };
+
+        for event in &events {
+            // Decode the hex data from Heimdall's EventRecord
+            let data_bytes = hex::decode(event.data.strip_prefix("0x").unwrap_or(&event.data))
+                .map_err(|e| {
+                    ChainError::Custom(format!("Invalid hex in Heimdall event {}: {e}", event.id))
+                })?;
+
             // RLP-encode the full EventRecord matching Bor's format:
             // [id, contract, data, tx_hash, log_index, chain_id_string]
-            // The contract only reads fields 0-2 but the full encoding must
-            // match Bor's for identical gas usage and receipts root.
             let mut record_bytes = Vec::new();
             ethrex_rlp::structs::Encoder::new(&mut record_bytes)
-                .encode_field(&data.id)
-                .encode_field(&data.contract)
-                .encode_field(&data.data)
-                .encode_field(&data.tx_hash)
-                .encode_field(&0u64)
-                .encode_field(&chain_id.to_string())
+                .encode_field(&event.id)
+                .encode_field(&event.contract)
+                .encode_field(&bytes::Bytes::from(data_bytes))
+                .encode_field(&event.tx_hash)
+                .encode_field(&event.log_index)
+                .encode_field(&event.bor_chain_id)
                 .finish();
 
             let calldata = encode_commit_state(sync_time, &record_bytes);
@@ -3381,7 +3410,7 @@ fn execute_polygon_system_calls(
                 Err(e) => {
                     // Non-fatal: log and continue to next event
                     warn!(
-                        event_id = data.id,
+                        event_id = event.id,
                         error = %e,
                         "Polygon commitState system call failed (non-fatal)"
                     );
