@@ -56,18 +56,16 @@ pub async fn sync_cycle_full(
 
     // Check if we have previously downloaded headers from a prior cycle.
     // If so, resume from the lowest stored header instead of starting from the sync head.
-    if let Ok(Some(lowest)) = store.lowest_fullsync_header().await {
-        if lowest.number > 1 {
-            info!(
-                "Resuming header download from block {} (previously stored)",
-                lowest.number
-            );
-            sync_head = lowest.parent_hash;
-            end_block_number = store
-                .highest_fullsync_header_number()
-                .await
-                .unwrap_or(lowest.number);
-            single_batch = false;
+    if let Ok(Some((lowest_num, highest_num))) = store.fullsync_header_range().await {
+        if lowest_num > 1 {
+            if let Ok(Some(lowest_header)) = store.get_fullsync_header(lowest_num).await {
+                info!(
+                    "Resuming header download from block {lowest_num} (stored range {lowest_num}..={highest_num})"
+                );
+                sync_head = lowest_header.parent_hash;
+                end_block_number = highest_num;
+                single_batch = false;
+            }
         }
     }
 

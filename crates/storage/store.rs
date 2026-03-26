@@ -1399,28 +1399,41 @@ impl Store {
         self.backend.clear_table(FULLSYNC_HEADERS)
     }
 
-    /// Returns the lowest block header stored in the fullsync headers table.
-    pub async fn lowest_fullsync_header(&self) -> Result<Option<BlockHeader>, StoreError> {
+    /// Returns the lowest and highest block numbers in the fullsync headers table.
+    /// Scans all entries since keys are LE-encoded and byte order != numeric order.
+    pub async fn fullsync_header_range(
+        &self,
+    ) -> Result<Option<(BlockNumber, BlockNumber)>, StoreError> {
         let read_tx = self.backend.begin_read()?;
-        let mut iter = read_tx.prefix_iterator(FULLSYNC_HEADERS, &[])?;
-        match iter.next() {
-            Some(Ok((_, value))) => Ok(Some(BlockHeader::decode(&value)?)),
-            _ => Ok(None),
-        }
-    }
-
-    /// Returns the highest block number stored in the fullsync headers table.
-    pub async fn highest_fullsync_header_number(&self) -> Result<u64, StoreError> {
-        let read_tx = self.backend.begin_read()?;
+        let mut lowest = u64::MAX;
         let mut highest = 0u64;
+        let mut found = false;
         for item in read_tx.prefix_iterator(FULLSYNC_HEADERS, &[])? {
             let (key, _) = item?;
             if key.len() >= 8 {
                 let num = u64::from_le_bytes(key[..8].try_into().unwrap());
+                lowest = lowest.min(num);
                 highest = highest.max(num);
+                found = true;
             }
         }
-        Ok(highest)
+        if found {
+            Ok(Some((lowest, highest)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns the block header at the given number from the fullsync headers table.
+    pub async fn get_fullsync_header(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        let read_tx = self.backend.begin_read()?;
+        match read_tx.get(FULLSYNC_HEADERS, &block_number.to_le_bytes())? {
+            Some(bytes) => Ok(Some(BlockHeader::decode(&bytes)?)),
+            None => Ok(None),
+        }
     }
 
     /// Delete a key from a table
