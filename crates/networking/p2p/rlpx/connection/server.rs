@@ -15,7 +15,7 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            blocks::{BlockBodies, BlockHeaders},
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::{GetReceipts, Receipts68, Receipts69},
             status::{StatusMessage68, StatusMessage69},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
@@ -36,6 +36,7 @@ use crate::{
     types::Node,
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction};
@@ -1366,7 +1367,7 @@ async fn handle_incoming_message(
             let is_polygon = chain_id == 137 || chain_id == 80002;
             if is_polygon {
                 // Request full block headers+bodies for unknown hashes.
-                let unknown: Vec<_> = new_block_hashes
+                let unknown: Vec<(H256, u64)> = new_block_hashes
                     .block_hashes
                     .iter()
                     .filter(|(hash, _)| {
@@ -1377,19 +1378,176 @@ async fn handle_incoming_message(
                             .flatten()
                             .is_none()
                     })
+                    .copied()
                     .collect();
 
-                if !unknown.is_empty() {
-                    // TODO(polygon): Implement full block fetch flow.
-                    // This requires handle_outgoing_request() (not send()) so the
-                    // response is routed back to us, followed by GetBlockBodies
-                    // to retrieve full blocks. For now we log and rely on NewBlock
-                    // announcements for block import.
+                for &(hash, number) in &unknown {
                     debug!(
                         peer=%state.node,
-                        count=unknown.len(),
-                        "Received NewBlockHashes for unknown Polygon blocks (fetch not yet implemented)"
+                        block_number = number,
+                        hash = ?hash,
+                        "Fetching block from NewBlockHashes announcement"
                     );
+
+                    // Send GetBlockHeaders and GetBlockBodies for this hash
+                    let header_id: u64 = rand::random();
+                    let body_id: u64 = rand::random();
+
+                    let (header_tx, header_rx) = tokio::sync::oneshot::channel::<Message>();
+                    let (body_tx, body_rx) = tokio::sync::oneshot::channel::<Message>();
+
+                    handle_outgoing_request(
+                        state,
+                        Message::GetBlockHeaders(GetBlockHeaders {
+                            id: header_id,
+                            startblock: HashOrNumber::Hash(hash),
+                            limit: 1,
+                            skip: 0,
+                            reverse: false,
+                        }),
+                        header_tx,
+                    )
+                    .await?;
+
+                    handle_outgoing_request(
+                        state,
+                        Message::GetBlockBodies(GetBlockBodies {
+                            id: body_id,
+                            block_hashes: vec![hash],
+                        }),
+                        body_tx,
+                    )
+                    .await?;
+
+                    // Spawn a task to await both responses and process the block
+                    let blockchain = state.blockchain.clone();
+                    let storage = state.storage.clone();
+                    tokio::spawn(async move {
+                        let timeout = std::time::Duration::from_secs(5);
+                        let (header_resp, body_resp) = tokio::join!(
+                            tokio::time::timeout(timeout, header_rx),
+                            tokio::time::timeout(timeout, body_rx),
+                        );
+
+                        // Extract header
+                        let header = match header_resp {
+                            Ok(Ok(Message::BlockHeaders(mut bh)))
+                                if !bh.block_headers.is_empty() =>
+                            {
+                                bh.block_headers.swap_remove(0)
+                            }
+                            _ => {
+                                debug!(
+                                    block_number = number,
+                                    "Failed to fetch header for NewBlockHashes"
+                                );
+                                return;
+                            }
+                        };
+
+                        // Extract body
+                        let body = match body_resp {
+                            Ok(Ok(Message::BlockBodies(mut bb))) if !bb.block_bodies.is_empty() => {
+                                bb.block_bodies.swap_remove(0)
+                            }
+                            _ => {
+                                debug!(
+                                    block_number = number,
+                                    "Failed to fetch body for NewBlockHashes"
+                                );
+                                return;
+                            }
+                        };
+
+                        let block = ethrex_common::types::Block::new(header, body);
+                        let blk_number = block.header.number;
+                        let blk_hash = block.hash();
+
+                        // Check parent exists
+                        let parent_hash = block.header.parent_hash;
+                        let parent_exists = storage
+                            .get_block_header_by_hash(parent_hash)
+                            .ok()
+                            .flatten()
+                            .is_some();
+
+                        if !parent_exists {
+                            blockchain.buffer_polygon_pending_block(block);
+                            debug!(
+                                block_number = blk_number,
+                                "Fetched block buffered (parent missing)"
+                            );
+                            return;
+                        }
+
+                        // Process via pipeline
+                        let bc = blockchain.clone();
+                        let result =
+                            tokio::task::spawn_blocking(move || bc.add_block_pipeline(block, None))
+                                .await;
+                        match result {
+                            Ok(Ok(())) => {
+                                let latest = storage.get_latest_block_number().await.unwrap_or(0);
+                                if blk_number > latest {
+                                    let _ = storage
+                                        .forkchoice_update(vec![], blk_number, blk_hash, None, None)
+                                        .await;
+                                }
+                                debug!(
+                                    block_number = blk_number,
+                                    "Processed block from NewBlockHashes"
+                                );
+
+                                // Chain-follow buffered blocks
+                                let mut next_parent = blk_hash;
+                                loop {
+                                    let Some(pending) =
+                                        blockchain.take_polygon_pending_block(next_parent)
+                                    else {
+                                        break;
+                                    };
+                                    let pending_hash = pending.hash();
+                                    let pending_number = pending.header.number;
+                                    let bc_inner = blockchain.clone();
+                                    match tokio::task::spawn_blocking(move || {
+                                        bc_inner.add_block_pipeline(pending, None)
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(())) => {
+                                            let latest = storage
+                                                .get_latest_block_number()
+                                                .await
+                                                .unwrap_or(0);
+                                            if pending_number > latest {
+                                                let _ = storage
+                                                    .forkchoice_update(
+                                                        vec![],
+                                                        pending_number,
+                                                        pending_hash,
+                                                        None,
+                                                        None,
+                                                    )
+                                                    .await;
+                                            }
+                                            debug!(
+                                                block_number = pending_number,
+                                                "Processed buffered block (chain-follow)"
+                                            );
+                                            next_parent = pending_hash;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                warn!(block_number = blk_number, error = %e, "Failed to process fetched block");
+                            }
+                            Err(e) => {
+                                warn!(block_number = blk_number, error = %e, "Fetched block task panicked");
+                            }
+                        }
+                    });
                 }
             }
             // Non-Polygon chains: silently ignore.
