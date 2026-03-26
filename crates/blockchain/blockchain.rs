@@ -3348,22 +3348,15 @@ fn execute_polygon_system_calls(
         let sync_time = block.header.timestamp - delay;
 
         for data in &state_sync_data {
-            // The `data` field in StateSyncData is the hex-encoded record bytes from Heimdall.
-            // In Bor's Go code, StateSyncData.Data is a `string` type (hex chars).
-            // When RLP-decoded into our Rust `Bytes`, it contains the ASCII hex characters.
-            let hex_str = std::str::from_utf8(&data.data).map_err(|e| {
-                ChainError::Custom(format!(
-                    "Invalid UTF-8 in state sync data for event {}: {e}",
-                    data.id
-                ))
-            })?;
-            let record_bytes =
-                hex::decode(hex_str.strip_prefix("0x").unwrap_or(hex_str)).map_err(|e| {
-                    ChainError::Custom(format!(
-                        "Invalid hex in state sync data for event {}: {e}",
-                        data.id
-                    ))
-                })?;
+            // The `data` field may be either hex-encoded ASCII (from Heimdall JSON
+            // where Data is a hex string) or raw bytes (from RLP decoding).
+            // Try hex decode first; if it's not valid UTF-8 or hex, use raw bytes.
+            let record_bytes = if let Ok(hex_str) = std::str::from_utf8(&data.data) {
+                let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+                hex::decode(hex_str).unwrap_or_else(|_| data.data.to_vec())
+            } else {
+                data.data.to_vec()
+            };
 
             let calldata = encode_commit_state(sync_time, &record_bytes);
 
