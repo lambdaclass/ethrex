@@ -127,7 +127,46 @@ Internally, the proof engine:
 3. Computes the SSZ `hash_tree_root` of the `NewPayloadRequest`
 4. Queues the input for the coordinator
 
-### Step 6 — Prover Pulls, Executes, and Submits
+### Step 6 — Verify Proof Availability (Before Proving)
+
+Before the prover has run, check whether a proof exists for this block. Use the same `verifyNewPayloadRequestHeaderV1` call that will succeed in Step 10:
+
+```
+engine.verifyNewPayloadRequestHeaderV1 {
+  "executionPayloadHeader": {
+    "parentHash":    "$payload.executionPayload.parentHash",
+    "feeRecipient":  "$payload.executionPayload.feeRecipient",
+    "stateRoot":     "$payload.executionPayload.stateRoot",
+    "receiptsRoot":  "$payload.executionPayload.receiptsRoot",
+    "logsBloom":     "$payload.executionPayload.logsBloom",
+    "prevRandao":    "$payload.executionPayload.prevRandao",
+    "blockNumber":   "$payload.executionPayload.blockNumber",
+    "gasLimit":      "$payload.executionPayload.gasLimit",
+    "gasUsed":       "$payload.executionPayload.gasUsed",
+    "timestamp":     "$payload.executionPayload.timestamp",
+    "extraData":     "$payload.executionPayload.extraData",
+    "baseFeePerGas": "$payload.executionPayload.baseFeePerGas",
+    "blockHash":     "$payload.executionPayload.blockHash",
+    "blobGasUsed":   "$payload.executionPayload.blobGasUsed",
+    "excessBlobGas": "$payload.executionPayload.excessBlobGas",
+
+    "transactionsRoot":        "0x7ffe241ea60187fdb0187bfa22de35d1f9bed7ab061d9401fd47e34a54fbede1",
+    "withdrawalsRoot":         "0x792930bbd5baac43bcc798ee49aa8185ef76bb3b44ba62b91d86ae569e4bb535",
+    "depositRequestsRoot":     "0x4a8c3a07c8d23adc5bac61157555c3c784d53d9bc110c1370809bd23cd93777d",
+    "withdrawalRequestsRoot":  "0x792930bbd5baac43bcc798ee49aa8185ef76bb3b44ba62b91d86ae569e4bb535",
+    "consolidationRequestsRoot":"0xf5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+  },
+  "versionedHashes": [],
+  "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "executionRequests": []
+}
+```
+
+**Expected: `status = SYNCING`**
+
+No proofs have been generated yet, so the endpoint correctly reports that proof verification is still pending. Compare with Step 10 where the same call returns `VALID` after the prover completes.
+
+### Step 7 — Prover Pulls, Executes, and Submits
 
 Watch Terminal 2. Within a few seconds:
 
@@ -140,9 +179,9 @@ INFO Proof for payload #1 accepted
 
 The prover pulled the `ProgramInput` from the coordinator via the `ProofData<ProgramInput>` TCP protocol, executed the block statelessly with `ExecBackend`, and submitted the result. The coordinator stored the proof in the `EXECUTION_PROOFS` table.
 
-### Step 7 — Receive the Proof via Callback
+### Step 8 — Receive the Proof via Callback
 
-After Step 5, the REPL automatically starts a one-shot HTTP listener on port 9200. When the prover finishes (Step 6), the coordinator POSTs a `GeneratedProof` to this listener.
+After Step 5, the REPL automatically starts a one-shot HTTP listener on port 9200. When the prover finishes (Step 7), the coordinator POSTs a `GeneratedProof` to this listener.
 
 Watch the REPL output:
 
@@ -156,7 +195,7 @@ Proof received via callback! Stored in $generatedProof
 
 The proof is now stored in `$generatedProof` with fields `proofGenId` and `executionProof`.
 
-### Step 8 — Verify the Proof (`engine_verifyExecutionProofV1`)
+### Step 9 — Verify the Proof (`engine_verifyExecutionProofV1`)
 
 Submit the received proof back to the EL for verification:
 
@@ -168,7 +207,7 @@ Expected: `status = VALID`
 
 This validates the proof and stores it in `EXECUTION_PROOFS`.
 
-### Step 9 — Verify Proof Availability (`engine_verifyNewPayloadRequestHeaderV1`)
+### Step 10 — Verify Proof Availability (`engine_verifyNewPayloadRequestHeaderV1`)
 
 Build the headerized version of the payload. The header replaces variable-length list fields (transactions, withdrawals, requests) with their SSZ `hash_tree_root` values.
 
@@ -212,6 +251,8 @@ This confirms:
 2. At least 1 proof was found in storage for that root
 3. The block's execution validity is confirmed by proof
 
+Compare with Step 6 where the same call returned `SYNCING` — the only difference is that the prover has since generated and submitted a proof.
+
 > **`baseFeePerGas` encoding:** The server accepts both u64 QUANTITY hex (e.g. `"0x342770c0"`) from the payload and full 32-byte big-endian hex (e.g. `"0x00...342770c0"`). You can use `$payload.executionPayload.baseFeePerGas` directly.
 
 > **List roots for non-empty blocks:** The `transactionsRoot`, `withdrawalsRoot`, and request roots above apply to empty lists only. If the block contains transactions or withdrawals, these roots must be computed from the actual list contents using SSZ `hash_tree_root`.
@@ -239,18 +280,22 @@ Beacon Node (REPL)          ethrex (EL)                    Prover (l1_prover)
                             Compute SSZ root
                             Queue ProgramInput
                       ◀─── ProofGenId
-                                                           6. Pull ProgramInput (TCP)
-                                                           7. Execute block (ExecBackend)
-                                                           8. Submit proof (TCP)
+
+6. verifyNewPayload  ────▶ Compute SSZ root from header
+   RequestHeaderV1         Look up proofs (count == 0)
+                      ◀─── SYNCING (no proof yet)
+                                                           7. Pull ProgramInput (TCP)
+                                                              Execute block (ExecBackend)
+                                                              Submit proof (TCP)
                             Store in EXECUTION_PROOFS ◀───── ProofSubmitACK
 
-   POST GeneratedProof ────▶  9. Coordinator POSTs to
+   POST GeneratedProof ────▶  8. Coordinator POSTs to
 ◀──── (callback to REPL)        callback_url (port 9200)
 
-10. verifyExecutionProofV1 ▶ Validate & re-store proof
+ 9. verifyExecutionProofV1 ▶ Validate & re-store proof
                        ◀─── VALID
 
-11. verifyNewPayload  ────▶ Compute SSZ root from header
+10. verifyNewPayload  ────▶ Compute SSZ root from header
     RequestHeaderV1         Look up proofs (count >= 1)
                       ◀─── VALID
 ```
