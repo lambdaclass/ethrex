@@ -520,7 +520,9 @@ where
         .unwrap_or(8);
     let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
 
-    // Run 16 sub-trie builds in parallel, sharing a ThreadPool for DB flushes.
+    // 16 sub-trie threads are spawned (one per nibble). On machines with fewer
+    // than 16 cores, the OS schedules them across available cores — only
+    // `thread_count` run concurrently. The ThreadPool handles DB flush tasks.
     let choices: [NodeRef; 16] = scope(|s| {
         let pool = Arc::new(ThreadPool::new(thread_count, s));
         let handles: Vec<_> = (0u8..16)
