@@ -3896,6 +3896,7 @@ dependencies = [
 name = "ethrex-blockchain"
 version = "9.0.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "ethrex-common",
  "ethrex-crypto",
