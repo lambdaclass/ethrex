@@ -1387,10 +1387,10 @@ impl LEVM {
         }
         // EVM coinbase: used for COINBASE opcode and EIP-3651 warm set.
         // On Polygon, header.coinbase is always 0x0. Bor sets Context.Coinbase to the
-        // block author (recovered from the header seal signature via ecrecover).
-        // Fee distribution uses a separate BorConfig coinbase via PolygonHook.
+        // BorConfig fee recipient (same as PolygonHook.fee_coinbase).
+        // The block AUTHOR (signer) is separate and only used for consensus validation.
         let coinbase = match &vm_type {
-            VMType::Polygon(pfc) if !pfc.author.is_zero() => pfc.author,
+            VMType::Polygon(pfc) => pfc.coinbase,
             _ => block_header.coinbase,
         };
         let env = Environment {
