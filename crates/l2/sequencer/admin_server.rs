@@ -14,7 +14,12 @@ use crate::sequencer::l1_watcher::{
 use crate::sequencer::metrics::{
     CallMessage as MetricsCallMessage, MetricsGatherer, OutMessage as MetricsOutMessage,
 };
-use crate::sequencer::state_updater::{CallMessage as StateUpdaterCallMessage, StateUpdater};
+use crate::based::block_fetcher::{
+    BlockFetcher, CallMessage as BlockFetcherCallMessage, OutMessage as BlockFetcherOutMessage,
+};
+use crate::sequencer::state_updater::{
+    CallMessage as StateUpdaterCallMessage, OutMessage as StateUpdaterOutMessage, StateUpdater,
+};
 use axum::extract::{Path, State};
 use axum::http::Uri;
 use axum::response::IntoResponse;
@@ -44,6 +49,7 @@ pub struct Admin {
     pub l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     pub block_producer: Option<GenServerHandle<BlockProducer>>,
     pub state_updater: Option<GenServerHandle<StateUpdater>>,
+    pub block_fetcher: Option<GenServerHandle<BlockFetcher>>,
     #[cfg(feature = "metrics")]
     pub metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 }
@@ -81,6 +87,7 @@ pub async fn start_api(
     l1_proof_sender: Option<GenServerHandle<L1ProofSender>>,
     block_producer: Option<GenServerHandle<BlockProducer>>,
     state_updater: Option<GenServerHandle<StateUpdater>>,
+    block_fetcher: Option<GenServerHandle<BlockFetcher>>,
     #[cfg(feature = "metrics")] metrics_gatherer: Option<GenServerHandle<MetricsGatherer>>,
 ) -> Result<WithGracefulShutdown<TcpListener, Router, Router, impl Future<Output = ()>>, AdminError>
 {
@@ -90,6 +97,7 @@ pub async fn start_api(
         l1_proof_sender,
         block_producer,
         state_updater,
+        block_fetcher,
         #[cfg(feature = "metrics")]
         metrics_gatherer,
     };
@@ -226,6 +234,40 @@ async fn health(
                     _ => return None,
                 })
             })
+            .await,
+        );
+    }
+
+    if admin.state_updater.is_some() {
+        response.insert(
+            "state_updater".to_string(),
+            genserver_health(
+                admin.state_updater,
+                StateUpdaterCallMessage::Health,
+                |msg| {
+                    Some(match msg {
+                        StateUpdaterOutMessage::Health(h) => h,
+                        _ => return None,
+                    })
+                },
+            )
+            .await,
+        );
+    }
+
+    if admin.block_fetcher.is_some() {
+        response.insert(
+            "block_fetcher".to_string(),
+            genserver_health(
+                admin.block_fetcher,
+                BlockFetcherCallMessage::Health,
+                |msg| {
+                    Some(match msg {
+                        BlockFetcherOutMessage::Health(h) => h,
+                        _ => return None,
+                    })
+                },
+            )
             .await,
         );
     }

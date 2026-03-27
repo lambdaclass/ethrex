@@ -1,4 +1,9 @@
-use std::{cmp::min, sync::Arc, time::Duration};
+use std::{
+    cmp::min,
+    collections::BTreeMap,
+    sync::Arc,
+    time::Duration,
+};
 
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice};
 use ethrex_common::types::BlobsBundle;
@@ -10,10 +15,10 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rpc::{EthClient, types::receipt::RpcLog};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{RollupStoreError, StoreRollup};
+use serde::Serialize;
 use spawned_concurrency::{
     error::GenServerError,
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_after},
+    tasks::{CallResponse, CastResponse, GenServer, GenServerHandle, send_after},
 };
 use tracing::{debug, error, info};
 
@@ -64,6 +69,11 @@ pub enum BlockFetcherError {
 }
 
 #[derive(Clone)]
+pub enum CallMessage {
+    Health,
+}
+
+#[derive(Clone)]
 pub enum InMessage {
     Fetch,
 }
@@ -71,6 +81,17 @@ pub enum InMessage {
 #[derive(Clone, PartialEq)]
 pub enum OutMessage {
     Done,
+    Health(BlockFetcherHealth),
+}
+
+#[derive(Clone, Serialize, PartialEq)]
+pub struct BlockFetcherHealth {
+    pub eth_client_healthcheck: BTreeMap<String, serde_json::Value>,
+    pub on_chain_proposer_address: Address,
+    pub fetch_interval_ms: u64,
+    pub last_l1_block_fetched: String,
+    pub fetch_block_step: String,
+    pub sequencer_state: String,
 }
 
 pub struct BlockFetcher {
@@ -117,13 +138,14 @@ impl BlockFetcher {
         rollup_store: StoreRollup,
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
-    ) -> Result<(), BlockFetcherError> {
+    ) -> Result<GenServerHandle<Self>, BlockFetcherError> {
         let state = Self::new(cfg, store, rollup_store, blockchain, sequencer_state).await?;
         let mut block_fetcher = state.start();
         block_fetcher
             .cast(InMessage::Fetch)
             .await
-            .map_err(BlockFetcherError::InternalError)
+            .map_err(BlockFetcherError::InternalError)?;
+        Ok(block_fetcher)
     }
 
     async fn fetch(&mut self) -> Result<(), BlockFetcherError> {
@@ -335,13 +357,36 @@ impl BlockFetcher {
         }
         Ok(())
     }
+
+    async fn health(&self) -> CallResponse<Self> {
+        let eth_client_healthcheck = self.eth_client.test_urls().await;
+
+        CallResponse::Reply(OutMessage::Health(BlockFetcherHealth {
+            eth_client_healthcheck,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            fetch_interval_ms: self.fetch_interval_ms,
+            last_l1_block_fetched: self.last_l1_block_fetched.to_string(),
+            fetch_block_step: self.fetch_block_step.to_string(),
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+        }))
+    }
 }
 
 impl GenServer for BlockFetcher {
-    type CallMsg = Unused;
+    type CallMsg = CallMessage;
     type CastMsg = InMessage;
     type OutMsg = OutMessage;
     type Error = BlockFetcherError;
+
+    async fn handle_call(
+        &mut self,
+        message: Self::CallMsg,
+        _handle: &GenServerHandle<Self>,
+    ) -> CallResponse<Self> {
+        match message {
+            CallMessage::Health => self.health().await,
+        }
+    }
 
     async fn handle_cast(
         &mut self,
