@@ -245,6 +245,12 @@ impl OpcodeHandler for OpSLoadHandler {
         vm.record_storage_slot_to_bal(address, storage_slot_key);
 
         let value = vm.get_storage_value(address, key)?;
+
+        eprintln!(
+            "SLOAD_DEBUG addr={:?} key={:?} val={} depth={}",
+            address, key, value, vm.current_call_frame.depth
+        );
+
         vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
