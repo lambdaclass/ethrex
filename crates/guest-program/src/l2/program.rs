@@ -50,6 +50,7 @@ pub fn execution_program(
             Evm::new_for_l2(db.clone(), fee_config, crypto.clone())
                 .map_err(crate::common::ExecutionError::Evm)
         },
+        crypto.clone(),
     )?;
 
     // Extract and process messages

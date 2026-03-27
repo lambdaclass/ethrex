@@ -1,5 +1,5 @@
 use crate::{
-    constants::POST_OSAKA_GAS_LIMIT_CAP,
+    constants::{POST_OSAKA_GAS_LIMIT_CAP, TX_MAX_GAS_LIMIT_AMSTERDAM},
     db::gen_db::GeneralizedDatabase,
     errors::{ContextResult, ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{DefaultHook, default_hook, hook::Hook},
@@ -48,6 +48,19 @@ const SIMULATION_MAX_FEE: u64 = 100;
 
 pub struct L2Hook {
     pub fee_config: FeeConfig,
+    /// Cached fee-token ratio from `prepare_execution_fee_token`.
+    /// Reused in `finalize_non_privileged_execution` to ensure both phases
+    /// use the same ratio, even if the tx modifies the ratio contract mid-execution.
+    cached_fee_token_ratio: Option<U256>,
+}
+
+impl L2Hook {
+    pub fn new(fee_config: FeeConfig) -> Self {
+        Self {
+            fee_config,
+            cached_fee_token_ratio: None,
+        }
+    }
 }
 
 impl Hook for L2Hook {
@@ -55,7 +68,8 @@ impl Hook for L2Hook {
         if vm.env.is_privileged {
             return prepare_execution_privileged(vm);
         } else if vm.env.fee_token.is_some() {
-            prepare_execution_fee_token(vm)?;
+            let ratio = prepare_execution_fee_token(vm)?;
+            self.cached_fee_token_ratio = Some(ratio);
         } else {
             DefaultHook.prepare_execution(vm)?;
         }
@@ -86,6 +100,7 @@ impl Hook for L2Hook {
                 ctx_result,
                 &self.fee_config,
                 vm.env.fee_token.is_some(),
+                self.cached_fee_token_ratio,
             )?;
         }
 
@@ -101,6 +116,7 @@ fn finalize_non_privileged_execution(
     ctx_result: &mut ContextResult,
     fee_config: &FeeConfig,
     use_fee_token: bool,
+    cached_fee_token_ratio: Option<U256>,
 ) -> Result<(), crate::errors::VMError> {
     if !ctx_result.is_success() {
         default_hook::undo_value_transfer(vm)?;
@@ -130,19 +146,78 @@ fn finalize_non_privileged_execution(
     // EIP-7778: pre-refund gas for block accounting
     let total_gas_pre_refund = ctx_result.gas_used;
 
-    default_hook::delete_self_destruct_accounts(vm)?;
+    // Clear the backup so that Phase 2's rollback only undoes mutations
+    // from apply_finalize_mutations, not the gas-overuse revert above.
+    vm.current_call_frame.call_frame_backup.clear();
 
-    let fee_token_ratio = if let Some(fee_token) = vm.env.fee_token {
-        get_fee_token_ratio(vm, fee_token)?
-            .try_into()
-            .map_err(|_| {
+    // === Phase 1: Fallible computations (no state mutations) ===
+    // Perform contract calls and conversions that can fail BEFORE any
+    // mutations, so an error here leaves the DB state unchanged.
+    let fee_token_ratio: u64 = match (cached_fee_token_ratio, use_fee_token) {
+        (Some(cached), _) => {
+            // Use the ratio cached during prepare to ensure consistency.
+            // Re-fetching here would read post-execution state, which the tx
+            // may have modified — leading to lock/settlement mismatches.
+            cached.try_into().map_err(|_| {
                 VMError::Internal(InternalError::Custom(
                     "Failed to convert fee token ratio".to_owned(),
                 ))
             })?
-    } else {
-        1u64
+        }
+        (None, true) => {
+            return Err(VMError::Internal(InternalError::Custom(
+                "use_fee_token is true but fee_token_ratio was not cached".to_owned(),
+            )));
+        }
+        (None, false) => 1u64,
     };
+
+    // === Phase 2: State mutations (with rollback on error) ===
+    // Mutations record original values in call_frame_backup via
+    // backup_account_info / backup_storage_slot. If any step fails,
+    // we restore the cache to undo all partial mutations.
+    let result = apply_finalize_mutations(
+        vm,
+        ctx_result,
+        fee_config,
+        use_fee_token,
+        fee_token_ratio,
+        l1_gas,
+        gas_refunded,
+        execution_gas,
+        actual_gas_used,
+        total_gas_pre_refund,
+    );
+
+    if let Err(e) = result {
+        // Rollback DB cache to undo partial Phase 2 mutations.
+        // Note: substate (logs, selfdestruct) is NOT rolled back here because
+        // the substate parent was already consumed by handle_state_backup()
+        // during run_execution(). This is safe because the Err propagates to
+        // the caller, which discards the entire VM context.
+        vm.restore_cache_state()?;
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Applies all finalize mutations atomically: if any step fails, the caller
+/// reverts the DB cache using `restore_cache_state`.
+#[allow(clippy::too_many_arguments)]
+fn apply_finalize_mutations(
+    vm: &mut VM<'_>,
+    ctx_result: &mut ContextResult,
+    fee_config: &FeeConfig,
+    use_fee_token: bool,
+    fee_token_ratio: u64,
+    l1_gas: u64,
+    gas_refunded: u64,
+    execution_gas: u64,
+    actual_gas_used: u64,
+    total_gas_pre_refund: u64,
+) -> Result<(), crate::errors::VMError> {
+    default_hook::delete_self_destruct_accounts(vm)?;
 
     if let Some(l1_fee_config) = fee_config.l1_fee_config {
         pay_to_l1_fee_vault(
@@ -469,7 +544,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 /// Prepares the execution of a fee token transaction.
 /// Similar to default_hook preparation but allows paying fees with ERC20 tokens.
 /// Maintains separation between L1 and L2 functionality.
-fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VMError> {
+fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::VMError> {
     let fee_token = vm
         .env
         .fee_token
@@ -505,7 +580,20 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
 
     if vm.env.config.fork >= Fork::Prague {
         default_hook::validate_min_gas_limit(vm)?;
-        if vm.env.config.fork >= Fork::Osaka && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
+        // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
+        // Amsterdam removes this restriction (EIP-8037 reservoir model).
+        if vm.env.config.fork < Fork::Amsterdam && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM {
+            return Err(VMError::TxValidation(
+                TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: vm.tx.hash(),
+                    tx_gas_limit: vm.tx.gas_limit(),
+                },
+            ));
+        }
+        if vm.env.config.fork >= Fork::Osaka
+            && vm.env.config.fork < Fork::Amsterdam
+            && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
                     tx_hash: vm.tx.hash(),
@@ -581,7 +669,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<(), crate::errors::VME
     default_hook::transfer_value(vm)?;
 
     default_hook::set_bytecode_and_code_address(vm)?;
-    Ok(())
+    Ok(fee_token_ratio)
 }
 
 /// Deducts the caller's balance in the fee token for the upfront gas cost.
@@ -670,8 +758,25 @@ fn transfer_fee_token(vm: &mut VM<'_>, data: Bytes) -> Result<(), VMError> {
             TxValidationError::InsufficientAccountFunds,
         ));
     }
-    let fee_storage = db_clone.get_account(fee_token)?.storage.clone();
-    vm.db.get_account_mut(fee_token)?.storage = fee_storage;
+    let new_storage = db_clone.get_account(fee_token)?.storage.clone();
+    let current_storage = vm.db.get_account(fee_token)?.storage.clone();
+
+    // Back up original values for changed slots so restore_cache_state can revert them
+    for (key, new_value) in &new_storage {
+        let old_value = current_storage.get(key).copied().unwrap_or_default();
+        if old_value != *new_value {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+    // Back up slots that will be removed by the bulk replacement
+    for (key, &old_value) in &current_storage {
+        if !new_storage.contains_key(key) {
+            vm.backup_storage_slot(fee_token, *key, old_value)?;
+        }
+    }
+
+    // Apply new storage
+    vm.db.get_account_mut(fee_token)?.storage = new_storage;
 
     // update the initial state account
     let initial_state_fee_token = db_clone

@@ -466,7 +466,7 @@ pub async fn compare_levm_revm_account_updates(
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,
-                Code::from_bytecode(pre_state_value.code.clone()),
+                Code::from_bytecode(pre_state_value.code.clone(), &ethrex_crypto::NativeCrypto),
                 pre_state_value.nonce,
                 account_storage,
             );
@@ -613,6 +613,7 @@ pub async fn _ensure_post_state_revm(
                             gas_used: 42,
                             gas_spent: 42,
                             gas_refunded: 42,
+                            state_gas_used: 0,
                             logs: vec![],
                             output: Bytes::new(),
                         }),
@@ -635,6 +636,7 @@ pub async fn _ensure_post_state_revm(
                                 gas_used: 42,
                                 gas_spent: 42,
                                 gas_refunded: 42,
+                                state_gas_used: 0,
                                 logs: vec![],
                                 output: Bytes::new(),
                             }),
