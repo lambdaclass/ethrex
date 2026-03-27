@@ -60,6 +60,10 @@ pub struct L1WatcherConfig {
     pub check_interval_ms: u64,
     pub max_block_step: U256,
     pub watcher_block_delay: u64,
+    /// Starting L1 block number for the watcher.
+    /// When set, the watcher starts scanning from this block instead of
+    /// the contract deployment block, avoiding long catch-up times on restart.
+    pub start_l1_block: Option<u64>,
     pub l1_blob_base_fee_update_interval: u64,
     pub l2_rpc_urls: Vec<Url>,
     pub l2_chain_ids: Vec<u64>,

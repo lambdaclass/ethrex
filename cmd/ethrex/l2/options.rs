@@ -201,6 +201,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
                 watcher_block_delay: opts.watcher_opts.watcher_block_delay,
+                start_l1_block: opts.watcher_opts.start_l1_block,
                 l1_blob_base_fee_update_interval: opts.watcher_opts.l1_fee_update_interval_ms,
                 l2_rpc_urls: opts.watcher_opts.l2_rpc_urls.unwrap_or_default(),
                 l2_chain_ids: opts.watcher_opts.l2_chain_ids.unwrap_or_default(),
@@ -421,6 +422,15 @@ pub struct WatcherOptions {
     )]
     pub watcher_block_delay: u64,
     #[arg(
+        long = "watcher.start-l1-block",
+        value_name = "UINT64",
+        env = "ETHREX_WATCHER_START_L1_BLOCK",
+        help = "L1 block number to start scanning from, skipping older blocks. \
+                Useful when restarting a node to avoid re-scanning from the contract deployment block.",
+        help_heading = "L1 Watcher options"
+    )]
+    pub start_l1_block: Option<u64>,
+    #[arg(
         long = "watcher.l1-fee-update-interval-ms",
         value_name = "ADDRESS",
         default_value = "60000",
@@ -458,6 +468,7 @@ impl Default for WatcherOptions {
             watch_interval_ms: 1000,
             max_block_step: 5000,
             watcher_block_delay: 0,
+            start_l1_block: None,
             l1_fee_update_interval_ms: 60000,
             router_address: None,
             l2_rpc_urls: None,
