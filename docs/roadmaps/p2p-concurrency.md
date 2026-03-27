@@ -1,5 +1,7 @@
 # P2P & Concurrency Roadmap for ethrex
 
+> **Last updated:** 2026-03-27
+
 ## Overview
 
 This roadmap organizes all pending work for P2P networking and concurrency in ethrex into two parallel lines of work with clear phases. The goal is to use `spawned-concurrency` (GenServer pattern) for all concurrency handling where applicable.
@@ -28,39 +30,53 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P0 | ~~Merge rate limit WHOAREYOU packets (discv5)~~ | [#5909](https://github.com/lambdaclass/ethrex/pull/5909) | **Merged** (Feb 9) |
-| P0 | Bound whoareyou_rate_limit map with LRU cache | [#6125](https://github.com/lambdaclass/ethrex/issues/6125) | Open issue |
+| P0 | ~~Bound whoareyou_rate_limit map with LRU cache + global rate limit~~ | [#6125](https://github.com/lambdaclass/ethrex/issues/6125), [#6383](https://github.com/lambdaclass/ethrex/pull/6383) | **In Review** (1/3 approvals, CI green) |
 | P0 | ~~Merge dual discovery protocol support (discv4+discv5)~~ | [#5962](https://github.com/lambdaclass/ethrex/pull/5962) | **Merged** (Feb 25) |
 | P0 | ~~Remove experimental-discv5 feature flag~~ | [#6015](https://github.com/lambdaclass/ethrex/pull/6015), [#5971](https://github.com/lambdaclass/ethrex/issues/5971) | **Merged** (Mar 4) |
 | P1 | Unify discovery GenServers into single DiscoveryServer | [#5990](https://github.com/lambdaclass/ethrex/issues/5990) | Open issue |
-| P2 | Move discovery tests to dedicated folders | [#5992](https://github.com/lambdaclass/ethrex/issues/5992) | Open issue |
-
-**Branches:** `discv5-discovery-multiplexer`, `discv5-remove-experimental-feature-flag`, `discv5-server-rate-limit`
+| P1 | Track unrecognized discovery packets | [#6400](https://github.com/lambdaclass/ethrex/issues/6400), [#6408](https://github.com/lambdaclass/ethrex/pull/6408) | Open PR |
+| P1 | Explicitly filter discv4/discv5 packets in multiplexer | [#6398](https://github.com/lambdaclass/ethrex/pull/6398) | Open PR |
+| P2 | ~~Move p2p inline tests to test crate~~ | [#5992](https://github.com/lambdaclass/ethrex/issues/5992), [#6354](https://github.com/lambdaclass/ethrex/pull/6354) | **Merged** (Mar 16) |
 
 ### Phase 2: DiscV5 Security Hardening
 
-**Goal:** Complete security measures for discv5 protocol before mandatory deadline.
+**Goal:** Complete security measures for discv5 protocol.
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P0 | ~~Verify ID-signature on handshake receipt~~ | [#5832](https://github.com/lambdaclass/ethrex/issues/5832), [#6055](https://github.com/lambdaclass/ethrex/pull/6055) | **Merged** (Jan 30) |
 | P0 | ~~Store validated ENR from handshake~~ | [#6109](https://github.com/lambdaclass/ethrex/pull/6109) | **Merged** (Feb 23) |
-| — | ~~DiscV5 codec encoder~~ | — | **NOT A BUG** - Encoding handled via `Packet::encode()` directly, codec only for receiving |
 | P1 | ~~Request updated ENR when PONG enr_seq differs~~ | [#5910](https://github.com/lambdaclass/ethrex/pull/5910), [#5850](https://github.com/lambdaclass/ethrex/issues/5850) | **Merged** (Feb 11) |
 | P1 | ~~Update existing contact ENR on NODES response~~ | [#6172](https://github.com/lambdaclass/ethrex/pull/6172) | **Merged** (Feb 19) |
 | P1 | ~~Detect external IP via PONG recipient_addr voting~~ | [#5914](https://github.com/lambdaclass/ethrex/pull/5914), [#5851](https://github.com/lambdaclass/ethrex/issues/5851) | **Merged** (Feb 24) |
 | P1 | ~~Add anti-amplification check to discv5 handle_find_node~~ | [#6200](https://github.com/lambdaclass/ethrex/pull/6200) | **Merged** (Feb 23) |
+| P1 | ~~P2P sync stall fixes and discovery hardening~~ | [#6394](https://github.com/lambdaclass/ethrex/pull/6394) | **Merged** (Mar 25) |
+| P1 | Validate PONG req_id matches a pending ping | [#6167](https://github.com/lambdaclass/ethrex/issues/6167) | Open issue |
+| P1 | Fix discv5 Hive test failures | [#6401](https://github.com/lambdaclass/ethrex/pull/6401) | Open PR |
+| P2 | Prune session_ips in cleanup_stale_entries | [#6404](https://github.com/lambdaclass/ethrex/issues/6404) | Open issue |
+| P2 | FindNode should return local ENR for distance=0 | [#6030](https://github.com/lambdaclass/ethrex/issues/6030) | Open issue |
+| P2 | Periodically update local ENR | [#5493](https://github.com/lambdaclass/ethrex/issues/5493) | Open issue |
 
-**Branches:** `discv5-server-external-ip-detection`
+### Phase 2.1: DiscV5 Protocol Tests
+
+**Goal:** Improve test coverage for discv5 message encoding/decoding.
+
+| Priority | Task | Issue/PR | Status |
+|----------|------|----------|--------|
+| P2 | Add PONG message encode/decode tests | [#5991](https://github.com/lambdaclass/ethrex/issues/5991), [#6343](https://github.com/lambdaclass/ethrex/pull/6343) | Open PR |
+| P2 | Add FindNode message encode/decode tests | [#5993](https://github.com/lambdaclass/ethrex/issues/5993) | Open issue |
+| P2 | Add Nodes message encode/decode tests | [#5994](https://github.com/lambdaclass/ethrex/issues/5994) | Open issue |
 
 ### Phase 2.5: DiscV4 Maintenance (DEPRIORITIZED)
 
-**Goal:** Minimal maintenance until DiscV5 mandatory deadline. Low priority.
+**Goal:** Minimal maintenance until Glamsterdam hard fork. Low priority.
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P3 | Ignore unrequested Neighbors messages | [#3746](https://github.com/lambdaclass/ethrex/issues/3746) | Open issue - **DEPRIORITIZED** |
 | P3 | Complete DiscV4 ENRResponse validation | — | TODO at `discv4/server.rs:215-222` - **DEPRIORITIZED** |
 | P3 | Add DiscV4 per-peer rate limiting | — | **DEPRIORITIZED** - DiscV5 already has this |
+| P3 | Reimplement DiscV4 tests | [#4423](https://github.com/lambdaclass/ethrex/issues/4423) | Open issue - **DEPRIORITIZED** |
 
 ### Phase 3: Peer Management & Kademlia
 
@@ -73,10 +89,9 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P1 | ~~Allow min-score peers to handle 1 concurrent request~~ | [#6272](https://github.com/lambdaclass/ethrex/pull/6272) | **Merged** (Feb 27) |
 | P1 | Detect performance degradation with large contact tables | [#5972](https://github.com/lambdaclass/ethrex/issues/5972) | Open issue |
 | P1 | Fix running out of peers mid-syncing | [#3050](https://github.com/lambdaclass/ethrex/issues/3050) | Open issue |
+| P1 | Leech detection and rate limiting | [#5522](https://github.com/lambdaclass/ethrex/issues/5522) | Open issue |
 | P2 | ~~Avoid collect in peer table get_contact functions~~ | [#5641](https://github.com/lambdaclass/ethrex/pull/5641) | **Closed** |
 | P2 | ~~Avoid iterating whole table on FINDNODE~~ | [#5644](https://github.com/lambdaclass/ethrex/pull/5644) | **Closed** |
-
-**Branches:** `feature/enhanced-peer-scoring`, `fix-deadlock-discv4`
 
 ### Phase 4: RLPx & Protocol Improvements
 
@@ -86,14 +101,15 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 |----------|------|----------|--------|
 | P1 | ~~Avoid extra allocations in RLPx handshake~~ | [#5531](https://github.com/lambdaclass/ethrex/pull/5531) | **Merged** (Feb 23) |
 | P1 | ~~Avoid double authdata allocation in discv5 header~~ | [#5811](https://github.com/lambdaclass/ethrex/pull/5811) | **Merged** (Mar 2) |
+| P1 | ~~Fix consistent encoding for blob tx size in NewPooledTransactionHashes~~ | [#6256](https://github.com/lambdaclass/ethrex/pull/6256) | **Merged** (Feb 24) |
+| P1 | ~~Fix broadcast_pool race and offload tx pool insertion~~ | [#6253](https://github.com/lambdaclass/ethrex/pull/6253) | **Merged** (Feb 24) |
+| P1 | ~~Implement eth/70 partial receipt fetching~~ | [#6327](https://github.com/lambdaclass/ethrex/pull/6327) (EIP-7542) | **Merged** (Mar 25) |
+| P1 | Implement eth/71 Block Access List exchange | [#6306](https://github.com/lambdaclass/ethrex/pull/6306) (EIP-8159) | Open PR |
 | P1 | Compute RLPx capability message ID dynamically | [#4545](https://github.com/lambdaclass/ethrex/issues/4545) | Open issue |
 | P2 | Remove magic numbers in rlpx/connection | [#4123](https://github.com/lambdaclass/ethrex/issues/4123) | Open issue |
 | P2 | Enable TCP_NODELAY on P2P TCP socket | [#5042](https://github.com/lambdaclass/ethrex/issues/5042) | Open issue |
-| P1 | ~~Fix consistent encoding for blob tx size in NewPooledTransactionHashes~~ | [#6256](https://github.com/lambdaclass/ethrex/pull/6256) | **Merged** (Feb 24) |
-| P1 | ~~Fix broadcast_pool race and offload tx pool insertion~~ | [#6253](https://github.com/lambdaclass/ethrex/pull/6253) | **Merged** (Feb 24) |
 | P2 | Improve transaction broadcasting mechanism | [#3388](https://github.com/lambdaclass/ethrex/issues/3388) | Open issue |
-
-**Branches:** `rlpx-console`, `ethrex_rlpx_console`
+| P2 | TXBroadcaster batching may delay tx propagation | [#5833](https://github.com/lambdaclass/ethrex/issues/5833) | Open issue |
 
 ### Phase 5: Network Configuration
 
@@ -101,9 +117,11 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P2 | Decouple local interface from announced address | [#5425](https://github.com/lambdaclass/ethrex/issues/5425) | Good first issue |
-| P2 | Support different addresses for discv4/RLPx | [#5424](https://github.com/lambdaclass/ethrex/issues/5424) | Good first issue |
-| P2 | Add IPv6 support | [#5354](https://github.com/lambdaclass/ethrex/issues/5354) | Good first issue |
+| P1 | Dual-stack IPv6 support in discv5 | [#6371](https://github.com/lambdaclass/ethrex/issues/6371), [#6377](https://github.com/lambdaclass/ethrex/pull/6377), [#6376](https://github.com/lambdaclass/ethrex/pull/6376) | Open PRs |
+| P2 | Decouple bind address from external address | [#5425](https://github.com/lambdaclass/ethrex/issues/5425), [#6374](https://github.com/lambdaclass/ethrex/pull/6374) | Open PR |
+| P2 | Decouple discv4 address from RLPx address | [#5424](https://github.com/lambdaclass/ethrex/issues/5424), [#6375](https://github.com/lambdaclass/ethrex/pull/6375) | Open PR |
+| P2 | Add flag to specify P2P/discovery address | [#5290](https://github.com/lambdaclass/ethrex/issues/5290) | Open issue |
+| P2 | Add IPv6 support | [#5354](https://github.com/lambdaclass/ethrex/issues/5354) | Open issue |
 
 ---
 
@@ -137,8 +155,6 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 > - **Phase 4: Sync Orchestration** - Split `sync.rs` into focused modules, extract snap client from peer_handler
 > - **Phase 5: Error Handling** - Create unified `SnapError` enum, remove redundant error types
 
-**Branches:** `snap_sync_final_p2p_perf`, `fix_snap_sync_trie_spawned`
-
 ### Phase 2: Parallel Operations
 
 **Goal:** Maximize parallel execution for sync performance.
@@ -153,8 +169,6 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P2 | Reduce allocations in account range verification | [#6072](https://github.com/lambdaclass/ethrex/pull/6072) | Open |
 | P2 | 4 performance optimizations for faster sync | [#5903](https://github.com/lambdaclass/ethrex/pull/5903) | Open |
 
-**Branches:** `snap-sync/001-peer-capacity-tracking`, `snap-sync/009-peer-quality-scoring`
-
 ### Phase 3: Spawned GenServer Migration
 
 **Goal:** Convert remaining raw spawns to GenServer pattern.
@@ -162,12 +176,11 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
 | P0 | Use spawned sync GenServer for threaded code | [#5599](https://github.com/lambdaclass/ethrex/pull/5599), [#5565](https://github.com/lambdaclass/ethrex/issues/5565) | Open |
+| P0 | Migrate actors to spawned 0.5.0 macro API | [#6295](https://github.com/lambdaclass/ethrex/pull/6295) | Open PR |
 | P1 | Add RLPx Downloader actor | [#4420](https://github.com/lambdaclass/ethrex/issues/4420) | Open issue |
 | P1 | Spawnify PeerHandler (TODO in code) | — | Code TODO at `peer_handler.rs:153` |
 | P2 | Further refactor proof_coordinator with spawned (L2) | [#3009](https://github.com/lambdaclass/ethrex/issues/3009) | Open issue |
 | P2 | Fix Block Producer blocking issues (L2) | [#3057](https://github.com/lambdaclass/ethrex/issues/3057) | Open issue |
-
-**Branches:** `peer_handler_spawned_actor`, `handle_spawned_errors`, `spawned_aligned`
 
 **Current raw tokio::spawn locations to migrate:**
 - `cmd/ethrex/ethrex.rs` - Version check task
@@ -197,27 +210,28 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 ## Execution Order Recommendation
 
 ### Immediate (Merge Ready)
-1. ~~[#5909](https://github.com/lambdaclass/ethrex/pull/5909) - WHOAREYOU rate limiting~~ **Merged**
-2. ~~[#5962](https://github.com/lambdaclass/ethrex/pull/5962) - Dual discovery protocol~~ **Merged**
-3. ~~[#5975](https://github.com/lambdaclass/ethrex/pull/5975) - Snap sync reorganization~~ **Merged**
-4. [#6113](https://github.com/lambdaclass/ethrex/pull/6113) - Async disk I/O
-5. ~~[#6079](https://github.com/lambdaclass/ethrex/pull/6079) - Parallel storage merkelization~~ **Merged**
+1. [#6383](https://github.com/lambdaclass/ethrex/pull/6383) - WHOAREYOU LRU cache + global rate limit (1/3 approvals)
+2. [#6401](https://github.com/lambdaclass/ethrex/pull/6401) - Fix discv5 Hive test failures
+3. [#6113](https://github.com/lambdaclass/ethrex/pull/6113) - Async disk I/O (approved)
 
 ### Short-term (Next 2-4 weeks)
-1. ~~Complete Phase 1 of P2P (dual discovery [#5962](https://github.com/lambdaclass/ethrex/pull/5962), remove feature flag [#6015](https://github.com/lambdaclass/ethrex/pull/6015))~~ **Merged**
-2. Complete remaining Concurrency Phase 1 (async disk I/O [#6113](https://github.com/lambdaclass/ethrex/pull/6113))
-3. Address LRU cache for rate limiting [#6125](https://github.com/lambdaclass/ethrex/issues/6125)
-4. ~~Complete remaining discv5 security (ENR from handshake [#6109](https://github.com/lambdaclass/ethrex/pull/6109), external IP [#5914](https://github.com/lambdaclass/ethrex/pull/5914))~~ **Merged**
+1. Merge remaining discovery hardening ([#6383](https://github.com/lambdaclass/ethrex/pull/6383), [#6401](https://github.com/lambdaclass/ethrex/pull/6401))
+2. Complete IPv6/dual-stack support ([#6377](https://github.com/lambdaclass/ethrex/pull/6377), [#6376](https://github.com/lambdaclass/ethrex/pull/6376))
+3. Address decoupling ([#6374](https://github.com/lambdaclass/ethrex/pull/6374), [#6375](https://github.com/lambdaclass/ethrex/pull/6375))
+4. Merge eth/71 BAL exchange ([#6306](https://github.com/lambdaclass/ethrex/pull/6306))
+5. Validate PONG req_id ([#6167](https://github.com/lambdaclass/ethrex/issues/6167)) and prune session_ips ([#6404](https://github.com/lambdaclass/ethrex/issues/6404))
 
 ### Medium-term (1-2 months)
 1. Kademlia table reimplementation [#4245](https://github.com/lambdaclass/ethrex/issues/4245)
-2. GenServer migration for PeerHandler and sync components
+2. GenServer migration for PeerHandler and sync components ([#6295](https://github.com/lambdaclass/ethrex/pull/6295))
 3. Peer scoring improvements [#4861](https://github.com/lambdaclass/ethrex/issues/4861)
+4. Leech detection [#5522](https://github.com/lambdaclass/ethrex/issues/5522)
 
 ### Long-term (Ongoing)
-1. IPv6 support
+1. DNS-based node discovery (EIP-1459)
 2. Lock monitoring tooling
 3. Code quality improvements (magic numbers, tech debt)
+4. P2P metrics and observability
 
 ---
 
@@ -240,51 +254,46 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 ## Issue/PR Summary
 
-| Category | Open Issues | Open PRs | Draft PRs | Merged |
-|----------|-------------|----------|-----------|--------|
-| Discovery Protocol | 8 | 3 | 1 | 3 (#5909, #5962, #6015) |
-| Discovery Security | 2 | 0 | 0 | 6 (#6055, #5910, #6172, #6109, #5914, #6200) |
-| Peer Management | 5 | 0 | 0 | 1 (#6272) |
-| RLPx/Protocol | 4 | 0 | 0 | 4 (#5531, #5811, #6256, #6253) |
-| Network Config | 3 | 0 | 0 | 0 |
-| Snap Sync | 2 | 4 | 1 | 1 (#5975) |
-| Parallel Operations | 2 | 3 | 1 | 2 (#6079, #6191) |
-| GenServer Migration | 5 | 1 | 0 | 0 |
-| Blocking/Performance | 3 | 1 | 1 | 0 |
-| **Total** | **34** | **12** | **4** | **17** |
+| Category | Open Issues | Open PRs | Merged |
+|----------|-------------|----------|--------|
+| Discovery Protocol | 3 | 3 (#6383, #6408, #6398) | 5 (#5909, #5962, #6015, #6354, #6394) |
+| Discovery Security | 4 (#6167, #6404, #6030, #5493) | 2 (#6401, #6343) | 7 (#6055, #5910, #6172, #6109, #5914, #6200, #6394) |
+| Discovery Tests | 2 (#5993, #5994) | 1 (#6343) | 0 |
+| Peer Management | 6 | 0 | 1 (#6272) |
+| RLPx/Protocol | 5 | 1 (#6306) | 5 (#5531, #5811, #6256, #6253, #6327) |
+| Network Config | 4 | 4 (#6377, #6376, #6374, #6375) | 0 |
+| Snap Sync | 2 | 4 | 1 (#5975) |
+| Parallel Operations | 2 | 3 | 2 (#6079, #6191) |
+| GenServer Migration | 5 | 2 (#5599, #6295) | 0 |
+| Blocking/Performance | 3 | 1 | 0 |
+| **Total** | **36** | **21** | **21** |
 
 ---
 
 ## SPEC COMPLIANCE GAPS & UNTRACKED RISKS
 
-Based on review of official Ethereum devp2p specifications (RLPx, DiscV4, DiscV5, eth/68-70, snap/1), ENR (EIP-778), and comparison with ethrex implementation.
+Based on review of official Ethereum devp2p specifications (RLPx, DiscV4, DiscV5, eth/68-71, snap/1), ENR (EIP-778), and comparison with ethrex implementation.
 
 ### Critical/High Priority - Security Risks
 
 | Gap | Severity | Location | Spec Requirement | Status |
 |-----|----------|----------|------------------|--------|
-| ~~DiscV5 codec encoder~~ | ~~HIGH~~ | `discv5/codec.rs:39` | ~~Required for encoding~~ | **NOT A BUG** - Encoding via `Packet::encode()` |
-| **Missing Neighbors request tracking (discv5)** | MEDIUM | `discv5/server.rs:523` | Accept only solicited Neighbors | TODO references #3746 |
+| **Missing Neighbors request tracking (discv5)** | MEDIUM | `discv5/server.rs` | Accept only solicited Neighbors | TODO references #3746 |
+| **Unsolicited PONG acceptance** | MEDIUM | `discv5/server.rs` | Validate req_id matches pending ping | Open [#6167](https://github.com/lambdaclass/ethrex/issues/6167) |
 | **RLPx message size limit enforcement** | MEDIUM | `rlpx/connection/codec.rs` | Reject decompressed >16 MiB | **NEEDS VERIFICATION** |
-| ~~DiscV4 ENRResponse validation~~ | ~~HIGH~~ | `discv4/server.rs:215-222` | ~~Must verify signature~~ | **DEPRIORITIZED** - DiscV4 sunset Jan 2026 |
-| ~~DiscV4 rate limiting~~ | ~~MEDIUM~~ | `discv4/server.rs` | ~~Prevent amplification~~ | **DEPRIORITIZED** - DiscV4 sunset Jan 2026 |
+| ~~DiscV4 ENRResponse validation~~ | ~~HIGH~~ | `discv4/server.rs:215-222` | ~~Must verify signature~~ | **DEPRIORITIZED** - DiscV4 sunset |
+| ~~DiscV4 rate limiting~~ | ~~MEDIUM~~ | `discv4/server.rs` | ~~Prevent amplification~~ | **DEPRIORITIZED** - DiscV4 sunset |
 
 ### Missing Protocol Features
 
 | Feature | Spec | Current State | Priority |
 |---------|------|---------------|----------|
-| **eth/70 protocol support** | EIP-7542 | Not implemented | P1 - Being rolled out |
+| **eth/71 Block Access List exchange** | EIP-8159 | In Progress ([#6306](https://github.com/lambdaclass/ethrex/pull/6306)) | P1 |
 | **DiscV5 Topic Advertisement** | discv5-wire.md | Not implemented | P2 - Optional but useful |
 | **DNS-based node discovery** | EIP-1459 | Not implemented | P2 - Complementary to UDP |
 | **ENR "eth" field validation** | devp2p/enr.md | Partial (fork ID only) | P2 |
-
-### eth/70 Protocol Details (EIP-7542)
-New messages needed:
-- `RequestBlockRange (0x0b)` - Query peer's available block range
-- `SendBlockRange (0x0c)` - Respond with block range
-- Enhanced Status message with explicit `blockRange: [startBlock, endBlock]`
-
-**Rationale:** Supports history expiry (May 1, 2025 baseline) where clients may drop pre-merge history.
+| **P2P bandwidth/connection metrics** | Best practice | Not implemented | P2 - Observability |
+| **Inbound/outbound peer ratio** | Best practice | Not enforced | P3 |
 
 ### Security Best Practices - Gaps
 
@@ -309,32 +318,24 @@ New messages needed:
 
 ### Recommended New Issues to Create
 
-1. **[P1] Add eth/70 protocol support**
-   - New RequestBlockRange/SendBlockRange messages
-   - Enhanced Status with explicit block range
-   - Supports upcoming history expiry
-
-2. **[P2] Verify RLPx decompression size limits**
+1. **[P2] Verify RLPx decompression size limits**
    - Spec requires rejecting messages >16 MiB decompressed
    - Audit snappy decompression paths
    - Add explicit size check before decompression
 
-3. **[P2] Add DNS-based node discovery (EIP-1459)**
+2. **[P2] Add DNS-based node discovery (EIP-1459)**
    - Complementary to UDP-based discovery
    - Helps bootstrap in restrictive network environments
    - Used by all major clients (geth, nethermind, etc.)
 
-4. **[P2] Implement DiscV5 Topic Advertisement**
+3. **[P2] Implement DiscV5 Topic Advertisement**
    - Optional but enables service discovery
    - Useful for finding specific node types (e.g., light clients)
 
-5. ~~[P3] Complete DiscV4 ENRResponse validation~~ **DEPRIORITIZED**
-   - DiscV4 being sunset at Glamsterdam hard fork
-   - Only maintain if causing active issues
-
-6. ~~[P3] Add DiscV4 per-peer rate limiting~~ **DEPRIORITIZED**
-   - DiscV4 being sunset at Glamsterdam hard fork
-   - DiscV5 already has proper rate limiting
+4. **[P2] Add P2P metrics and observability**
+   - Bandwidth per peer, message rates, discovery stats
+   - Connection diversity metrics (subnet/ASN distribution)
+   - Help diagnose sync stalls and peer issues in production
 
 ---
 
@@ -342,18 +343,27 @@ New messages needed:
 
 | Protocol | Compliance | Critical Gaps | Priority |
 |----------|------------|---------------|----------|
-| **DiscV5** | 99% | Neighbors validation | **HIGH** - Deadline passed, hardening ongoing |
+| **DiscV5** | 95% | PONG validation, Neighbors tracking, session cleanup | **HIGH** - Hardening ongoing |
 | **DiscV4** | 95% | ENRResponse validation | **LOW** - Sunset at Glamsterdam |
 | **RLPx** | 98% | Size limit verification | MEDIUM |
 | **eth/68** | 100% | None | — |
 | **eth/69** | 95% | Block range handling | MEDIUM |
-| **eth/70** | 0% | Not implemented | **HIGH** - History expiry |
+| **eth/70** | 100% | ~~Not implemented~~ **Done** ([#6327](https://github.com/lambdaclass/ethrex/pull/6327)) | — |
+| **eth/71** | In Progress | BAL exchange ([#6306](https://github.com/lambdaclass/ethrex/pull/6306)) | HIGH |
 | **snap/1** | 95% | None critical | — |
 | **ENR** | 95% | Full "eth" field validation | LOW |
 
-**Overall Assessment:** ethrex is substantially compliant with current Ethereum P2P specifications. The main gaps are:
-1. **eth/70 support** - Needed for history expiry (upcoming requirement)
-2. **DiscV5 remaining TODOs** - Neighbors request validation (only remaining security item)
-3. **DNS-based discovery** - Operational resilience (nice-to-have)
+**Overall Assessment:** ethrex is substantially compliant with current Ethereum P2P specifications. Since the last update (Feb 5), significant progress has been made:
+- **eth/70** went from 0% to 100% complete
+- **eth/71** implementation is in progress
+- Discovery security hardening continues with 7+ PRs merged
+- IPv6/dual-stack support has active PRs
+- Test coverage improved with p2p test migration to dedicated crate
 
-**DiscV4 gaps are deprioritized** due to Glamsterdam hard fork sunset.
+**Remaining priorities:**
+1. **Discovery hardening** - PONG validation (#6167), session cleanup (#6404), Hive fixes (#6401)
+2. **eth/71 support** - BAL exchange for Amsterdam hard fork
+3. **IPv6/dual-stack** - Required by external users (#6371)
+4. **DNS-based discovery** - Operational resilience (nice-to-have)
+
+**DiscV4 gaps remain deprioritized** due to Glamsterdam hard fork sunset.
