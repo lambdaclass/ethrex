@@ -272,6 +272,111 @@ impl StorageBackend for RocksDBBackend {
 
         Ok(())
     }
+
+    fn set_sync_mode(&self) -> Result<(), StoreError> {
+        let core_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8);
+
+        // Relax compaction triggers to avoid write stalls during bulk ingestion.
+        // During sync we write faster than compaction can keep up, so we allow
+        // more L0 files to accumulate before triggering slowdowns/stops.
+        let sync_cf_opts: &[(&str, &str)] = &[
+            ("level0_file_num_compaction_trigger", "64"),
+            ("level0_slowdown_writes_trigger", "128"),
+            ("level0_stop_writes_trigger", "256"),
+        ];
+
+        let write_buffer_count = core_count.to_string();
+        let trie_sync_opts: Vec<(&str, &str)> = {
+            let mut opts = sync_cf_opts.to_vec();
+            opts.push(("max_write_buffer_number", &write_buffer_count));
+            opts
+        };
+
+        let trie_cfs = [
+            ACCOUNT_TRIE_NODES,
+            STORAGE_TRIE_NODES,
+            ACCOUNT_FLATKEYVALUE,
+            STORAGE_FLATKEYVALUE,
+        ];
+
+        for cf_name in trie_cfs {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                self.db
+                    .set_options_cf(&cf, &trie_sync_opts)
+                    .map_err(|e| {
+                        StoreError::Custom(format!(
+                            "Failed to set sync options for {cf_name}: {e}"
+                        ))
+                    })?;
+            }
+        }
+
+        // Relax default DB-level compaction triggers too
+        self.db.set_options(sync_cf_opts).map_err(|e| {
+            StoreError::Custom(format!("Failed to set DB-level sync options: {e}"))
+        })?;
+
+        info!(
+            "RocksDB sync mode enabled: relaxed compaction triggers, {} write buffers for trie CFs",
+            core_count
+        );
+        Ok(())
+    }
+
+    fn set_normal_mode(&self) -> Result<(), StoreError> {
+        // Restore normal compaction triggers (matching values from open())
+        let trie_normal_opts: &[(&str, &str)] = &[
+            ("level0_file_num_compaction_trigger", "4"),
+            ("level0_slowdown_writes_trigger", "20"),
+            ("level0_stop_writes_trigger", "36"),
+            ("max_write_buffer_number", "6"),
+        ];
+
+        let default_normal_opts: &[(&str, &str)] = &[
+            ("level0_file_num_compaction_trigger", "4"),
+            ("level0_slowdown_writes_trigger", "20"),
+            ("level0_stop_writes_trigger", "36"),
+        ];
+
+        let trie_cfs = [
+            ACCOUNT_TRIE_NODES,
+            STORAGE_TRIE_NODES,
+            ACCOUNT_FLATKEYVALUE,
+            STORAGE_FLATKEYVALUE,
+        ];
+
+        for cf_name in trie_cfs {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                self.db
+                    .set_options_cf(&cf, trie_normal_opts)
+                    .map_err(|e| {
+                        StoreError::Custom(format!(
+                            "Failed to restore normal options for {cf_name}: {e}"
+                        ))
+                    })?;
+            }
+        }
+
+        self.db.set_options(default_normal_opts).map_err(|e| {
+            StoreError::Custom(format!("Failed to restore DB-level normal options: {e}"))
+        })?;
+
+        info!("RocksDB normal mode restored, starting manual compaction on trie CFs");
+
+        // Trigger manual compaction on trie CFs to consolidate L0 files
+        // accumulated during sync.
+        for cf_name in trie_cfs {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                self.db
+                    .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+                info!("Triggered compaction for {cf_name}");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Read-only view for RocksDB
