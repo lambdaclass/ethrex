@@ -45,6 +45,15 @@ pub const RECEIPTS: &str = "receipts";
 /// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
 pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
+/// Canonical transaction index: [`[u8; 32]`] => [`Vec<u8>`]
+/// - [`[u8; 32]`] = `tx_hash.as_bytes()` (32 bytes)
+/// - [`Vec<u8>`] = `(block_number, block_hash, tx_index).encode_to_vec()`
+///
+/// Provides O(1) transaction lookup by hash, pointing only to the canonical chain.
+/// Updated during `forkchoice_update` and falls back to `TRANSACTION_LOCATIONS`
+/// prefix scan for non-indexed transactions (migration period).
+pub const CANONICAL_TX_INDEX: &str = "canonical_tx_index";
+
 /// Chain data column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `chain_data_key(ChainDataIndex::ChainConfig)`
 /// - [`Vec<u8>`] = `serde_json::to_string(chain_config)`
@@ -102,7 +111,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -112,6 +121,7 @@ pub const TABLES: [&str; 19] = [
     HEADERS,
     PENDING_BLOCKS,
     TRANSACTION_LOCATIONS,
+    CANONICAL_TX_INDEX,
     RECEIPTS,
     SNAP_STATE,
     INVALID_CHAINS,
