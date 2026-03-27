@@ -324,7 +324,28 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
+            error!(
+                "Gas validation failed for block {} (hash {:#x}):\n\
+                 {e}\n\
+                 Transactions: {}\n\
+                 Per-tx cumulative gas: {:?}",
+                block.header.number,
+                block.hash(),
+                block.body.transactions.len(),
+                execution_result
+                    .receipts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| format!(
+                        "tx[{i}]: cumulative_gas={}, type={:?}",
+                        r.cumulative_gas_used,
+                        block.body.transactions.get(i).map(|t| t.tx_type()),
+                    ))
+                    .collect::<Vec<_>>(),
+            );
+            return Err(e.into());
+        }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
@@ -450,7 +471,30 @@ impl Blockchain {
                         let (execution_result, produced_bal) = result?;
 
                         // Validate execution went alright
-                        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        if let Err(e) =
+                            validate_gas_used(execution_result.block_gas_used, &block.header)
+                        {
+                            error!(
+                                "Gas validation failed for block {} (hash {:#x}):\n\
+                                 {e}\n\
+                                 Transactions: {}\n\
+                                 Per-tx cumulative gas: {:?}",
+                                block.header.number,
+                                block.hash(),
+                                block.body.transactions.len(),
+                                execution_result
+                                    .receipts
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, r)| format!(
+                                        "tx[{i}]: cumulative_gas={}, type={:?}",
+                                        r.cumulative_gas_used,
+                                        block.body.transactions.get(i).map(|t| t.tx_type()),
+                                    ))
+                                    .collect::<Vec<_>>(),
+                            );
+                            return Err(e.into());
+                        }
                         validate_receipts_root(
                             &block.header,
                             &execution_result.receipts,
@@ -580,7 +624,28 @@ impl Blockchain {
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
+            error!(
+                "Gas validation failed for block {} (hash {:#x}):\n\
+                 {e}\n\
+                 Transactions: {}\n\
+                 Per-tx cumulative gas: {:?}",
+                block.header.number,
+                block.hash(),
+                block.body.transactions.len(),
+                execution_result
+                    .receipts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| format!(
+                        "tx[{i}]: cumulative_gas={}, type={:?}",
+                        r.cumulative_gas_used,
+                        block.body.transactions.get(i).map(|t| t.tx_type()),
+                    ))
+                    .collect::<Vec<_>>(),
+            );
+            return Err(e.into());
+        }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
