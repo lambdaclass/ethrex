@@ -69,6 +69,8 @@ impl OpcodeHandler for OpCoinbaseHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::COINBASE)?;
 
+        eprintln!("COINBASE_DEBUG val={:?}", vm.env.coinbase);
+
         vm.current_call_frame
             .stack
             .push(address_to_word(vm.env.coinbase))?;
