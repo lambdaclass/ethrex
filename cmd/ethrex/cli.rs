@@ -726,6 +726,11 @@ pub async fn import_blocks(
     let mut store = init_store(datadir, genesis.clone()).await?;
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
         .map_err(|e| ChainError::Custom(e.to_string()))?;
+    // Get the trie checkpoint so we know which blocks need re-execution on resume.
+    let trie_checkpoint_block = {
+        let bts = binary_trie_state.read().unwrap();
+        bts.last_flushed_block()
+    };
     store.set_binary_trie_state(binary_trie_state);
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -776,15 +781,16 @@ pub async fn import_blocks(
                 last_progress_log = Instant::now();
             }
 
-            // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+            // Check if the block is already in the blockchain.
+            // On resume, blocks between the trie checkpoint and DB head
+            // need re-execution to rebuild binary trie state.
+            let block_in_db = store.get_block_number(hash).await.map_err(|_e| {
                 ChainError::Custom(String::from(
                     "Couldn't check if block is already in the blockchain",
                 ))
             })?;
 
-            if block_number.is_some() {
-                info!("Block {} is already in the blockchain", block.hash());
+            if block_in_db.is_some() && number <= trie_checkpoint_block {
                 continue;
             }
 
@@ -852,6 +858,10 @@ pub async fn import_blocks_bench(
     let mut store = init_store(datadir, genesis.clone()).await?;
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)
         .map_err(|e| ChainError::Custom(e.to_string()))?;
+    let trie_checkpoint_block = {
+        let bts = binary_trie_state.read().unwrap();
+        bts.last_flushed_block()
+    };
     store.set_binary_trie_state(binary_trie_state);
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
@@ -902,15 +912,14 @@ pub async fn import_blocks_bench(
                 last_progress_log = Instant::now();
             }
 
-            // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            let block_number = store.get_block_number(hash).await.map_err(|_e| {
+            // Check if the block is already in the blockchain.
+            let block_in_db = store.get_block_number(hash).await.map_err(|_e| {
                 ChainError::Custom(String::from(
                     "Couldn't check if block is already in the blockchain",
                 ))
             })?;
 
-            if block_number.is_some() {
-                info!("Block {} is already in the blockchain", block.hash());
+            if block_in_db.is_some() && number <= trie_checkpoint_block {
                 continue;
             }
 
