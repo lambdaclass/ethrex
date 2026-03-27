@@ -97,21 +97,21 @@ The following are important for production readiness and will be addressed in su
 | File | Lines | Issue |
 |------|-------|-------|
 | `backend/in_memory.rs` | 33, 46, 64, 158, 175 | "Failed to acquire lock" - distinguishes read/write but discards underlying error |
-| `store.rs` | 522, 914, 928, 942, 971, 1109, 1967, 2596 | "Invalid BlockNumber bytes" - repeated 8x |
-| `store.rs` | 681, 707, 729, 778 | Account code cache lock - generic |
-| `store.rs` | 2430, 2463, 2488, 2528, 2649, 2699, 2704, 2708, 2769, 2844, 2874, 2903 | Trie cache locks - 12 locations |
+| `store.rs` | 530, 945, 959, 973, 1002, 1150, 2754 | "Invalid BlockNumber bytes" - repeated 7x |
+| `store.rs` | 689, 715, 730, 760, 809 | Code cache locks (account_code_cache + code_metadata_cache) - 5 locations |
+| `store.rs` | 2142, 2194, 2543, 2575, 2598, 2684, 2807, 2858, 2863, 2867, 2933, 3012, 3043, 3072 | Trie/progress cache locks - 14 locations |
 
 **Blockchain Module** (`crates/blockchain/`):
 
 | File | Lines | Issue |
 |------|-------|-------|
 | `blockchain.rs` | 1173, 1359, 1496 | "Parent state not found" - 3x |
-| `blockchain.rs` | 904-905, 1086-1087, 1342-1343 | "Failed to lock state trie witness" - 3x |
-| `blockchain.rs` | 914-915, 1233-1234 | "Failed to get root state node" - 2x |
-| `blockchain.rs` | 1065-1066, 1330-1331 | "Failed to lock storage trie witness" - 2x |
-| `blockchain.rs` | 1541-1542, 2264 | "Fee config lock poisoned" - 2x |
-| `tracing.rs` | 76, 161-162 | "Unexpected Runtime Error" / "Tracing timeout" |
-| `vm.rs` | 102 | "LockError" - generic |
+| `blockchain.rs` | 1184-1185, 1368-1369, 1616-1617 | "Failed to lock state trie witness" - 3x |
+| `blockchain.rs` | 1194-1195, 1507-1508 | "Failed to get root state node" - 2x |
+| `blockchain.rs` | 1347-1348, 1604-1605 | "Failed to lock storage trie witness" - 2x |
+| `blockchain.rs` | 1843-1844, 3051-3052 | "Fee config lock was poisoned" - 2x |
+| `tracing.rs` | 76, 161 | "Unexpected Runtime Error" / "Tracing Timeout" |
+| `vm.rs` | 89, 106, 155 | "LockError" - 3 locations |
 
 **Solution:** Replace with typed error variants that preserve the original error:
 ```rust
@@ -167,7 +167,7 @@ InvalidPeerId,  // What makes it invalid?
 **Existing TODOs confirm this is known:**
 - `crates/storage/error.rs:5` - `// TODO improve errors`
 - `crates/common/rlp/error.rs:3, 24` - `// TODO: improve errors`
-- `crates/networking/p2p/rlpx/error.rs:21` - `// TODO improve errors`
+- `crates/networking/p2p/rlpx/error.rs:22` - `// TODO improve errors`
 
 **Solution:** Add context to error variants:
 ```rust
@@ -244,7 +244,7 @@ error!(account = %address, block = %block_num, "Account storage not found");
 
 **Opportunity:** ethrex already has a startup banner with clean INFO-level log output. The existing format is visually appealing and should be preserved. The improvement is to extend the banner with additional configuration details so operators can confirm their setup at a glance.
 
-**Current** (`cmd/ethrex/ethrex.rs:142`):
+**Current** (`cmd/ethrex/ethrex.rs:166`):
 ```
 INFO ethrex version: ethrex/v9.0.0-main-3713957c1226a4e80736a4a03eebeb70a9918113/x86_64-unknown-linux-gnu/rustc-v1.90.0
 ```
@@ -272,12 +272,13 @@ INFO P2P:        0.0.0.0:30303
 
 **Problem:** No way to query node status from CLI. Must use RPC HTTP calls or parse logs.
 
-**Current CLI Subcommands** (`cmd/ethrex/cli.rs:382-460`):
+**Current CLI Subcommands** (`cmd/ethrex/cli.rs`):
 - `removedb` - Remove database
 - `import` - Import blocks from file
 - `import-bench` - Benchmark import
 - `export` - Export blocks to file
 - `compute-state-root` - Compute genesis state root
+- `repl` - Interactive REPL for Ethereum JSON-RPC
 
 No `status` command exists.
 
@@ -305,7 +306,7 @@ Uptime:         2h 14m
 
 **Problem:** Sync progress exists only in console logs, not in Prometheus. Operators can't build dashboards or alerts.
 
-**Currently Tracked Internally** (`crates/networking/p2p/metrics.rs:57-97`) but NOT exposed to Prometheus:
+**Currently Tracked Internally** (`crates/networking/p2p/metrics.rs:57-100`) but NOT exposed to Prometheus:
 
 | Internal Field | Type | Description |
 |----------------|------|-------------|
@@ -413,27 +414,23 @@ ethrex_safe_block: IntGauge,
 
 **Problem:** Minimal shutdown feedback.
 
-**Current** (`cmd/ethrex/ethrex.rs:41-50`):
+**Current** (`cmd/ethrex/ethrex.rs:35-49`):
 ```
 INFO: Server shut down started...
 INFO: Storing config at {path}...
 INFO: Server shutting down!
 ```
 
-**Solution:** Display shutdown summary:
+**Solution:** Extend existing shutdown logs with a final state summary:
 ```
-INFO: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-INFO:   GRACEFUL SHUTDOWN
-INFO: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO: Server shut down started...
 INFO: Disconnecting 12 peers
 INFO: Saving node configuration
 INFO: Closing database
-INFO: 
-INFO: Final State:
-INFO:   Last Block:      #18,523,456
-INFO:   Session Time:    2h 14m 30s
-INFO:   Blocks Synced:   1,234,567
-INFO: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFO: Last Block:    #18,523,456
+INFO: Session Time:  2h 14m 30s
+INFO: Blocks Synced: 1,234,567
+INFO: Server shut down complete.
 ```
 
 **Files:** `cmd/ethrex/ethrex.rs`
@@ -599,7 +596,7 @@ WantedBy=multi-user.target
 
 **Problem:** Unknown network names silently become file paths. Typo "hoddi" instead of "hoodi" fails with confusing file-not-found error.
 
-**Current Behavior** (`crates/common/config/networks.rs:53-64`):
+**Current Behavior** (`crates/common/config/networks.rs:48-58`):
 ```rust
 impl From<&str> for Network {
     fn from(s: &str) -> Self {
@@ -640,15 +637,15 @@ Or provide a path to a genesis.json file.
 
 | File | Line | Trigger | Message |
 |------|------|---------|---------|
-| `initializers.rs` | 80 | Log dir creation fails | expect() |
-| `initializers.rs` | 94 | Log file open fails | expect() |
-| `initializers.rs` | 112 | Tracing subscriber setup | expect() |
-| `initializers.rs` | 247-250 | Dev mode without feature | panic!("Build with dev feature") |
-| `initializers.rs` | 333 | Secret key parsing | expect() |
-| `initializers.rs` | 340, 344 | Key file I/O | expect() |
-| `initializers.rs` | 351, 355, 358 | Port parsing | expect() |
-| `initializers.rs` | 399, 404, 409 | Socket address parsing | expect() |
-| `initializers.rs` | 417 | SYNC_BLOCK_NUM env parse | expect() |
+| `initializers.rs` | 81 | Log dir creation fails | expect() |
+| `initializers.rs` | 95 | Log file open fails | expect() |
+| `initializers.rs` | 113 | Tracing subscriber setup | expect() |
+| `initializers.rs` | 250 | Dev mode without feature | panic!("Build with dev feature") |
+| `initializers.rs` | 340 | Secret key parsing | expect() |
+| `initializers.rs` | 347, 351 | Key file I/O | expect() |
+| `initializers.rs` | 358, 362, 365 | Port parsing | expect() |
+| `initializers.rs` | 399, 406, 411 | Socket address parsing | expect() |
+| `initializers.rs` | 424 | SYNC_BLOCK_NUM env parse | expect() |
 | `utils.rs` | 51, 54, 57 | JWT file I/O | expect() |
 | `utils.rs` | 69-70 | Chain file I/O | expect() |
 | `utils.rs` | 96 | Home directory detection | expect() |
@@ -682,7 +679,7 @@ let port: u16 = port_str.parse()
 
 **Problem:** Malformed genesis files cause cryptic errors later during block execution.
 
-**Current Validation** (`crates/common/types/genesis.rs:70-100`):
+**Current Validation** (`crates/common/types/genesis.rs:70-101`):
 - Checks post-merge fork configuration (but only warns, doesn't reject)
 - Checks blob schedule presence (but only warns)
 - JSON schema validation via serde
