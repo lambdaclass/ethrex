@@ -1273,11 +1273,11 @@ async fn handle_incoming_message(
                                 bc.add_block_pipeline(block, None)
                             })
                             .await;
-                            // Clear in-flight mark now that execution finished.
-                            blockchain.clear_polygon_in_flight(&blk_hash);
                             let result = match result {
                                 Ok(r) => r,
                                 Err(e) => {
+                                    // Clear in-flight on panic so the block can be retried.
+                                    blockchain.clear_polygon_in_flight(&blk_hash);
                                     warn!(block_number = blk_number, error = %e, "Polygon block task panicked");
                                     return;
                                 }
@@ -1354,6 +1354,8 @@ async fn handle_incoming_message(
                                     }
                                 }
                                 Err(e) => {
+                                    // Clear in-flight on error so the block can be retried.
+                                    blockchain.clear_polygon_in_flight(&blk_hash);
                                     warn!(block_number = blk_number, error = %e, "Failed to process Polygon block");
                                 }
                             }
@@ -1367,10 +1369,12 @@ async fn handle_incoming_message(
             let chain_id = state.storage.get_chain_config().chain_id;
             let is_polygon = chain_id == 137 || chain_id == 80002;
             if is_polygon {
-                // Request full block headers+bodies for unknown hashes.
+                // Request full block headers+bodies for unknown, non-in-flight hashes.
+                let latest_nbh = state.storage.get_latest_block_number().await.unwrap_or(0);
                 let unknown: Vec<(H256, u64)> = new_block_hashes
                     .block_hashes
                     .iter()
+                    .filter(|(_, num)| *num > latest_nbh)
                     .filter(|(hash, _)| {
                         state
                             .storage
@@ -1463,6 +1467,12 @@ async fn handle_incoming_message(
                         let block = ethrex_common::types::Block::new(header, body);
                         let blk_number = block.header.number;
                         let blk_hash = block.hash();
+
+                        // Skip if already processed or in-flight
+                        let latest = storage.get_latest_block_number().await.unwrap_or(0);
+                        if blk_number <= latest || !blockchain.mark_polygon_in_flight(blk_hash) {
+                            return;
+                        }
 
                         // Check parent exists
                         let parent_hash = block.header.parent_hash;
