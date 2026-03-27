@@ -1016,30 +1016,70 @@ async fn insert_accounts(
     use std::sync::Mutex;
     use std::thread::scope as thread_scope;
 
+    use crate::snap::constants::CODE_HASH_WRITE_BUFFER_SIZE;
+    use crate::utils::{dump_to_file, get_code_hashes_snapshot_file, get_code_hashes_snapshots_dir};
+
     let snapshot = db.snapshot();
     let trie_db = trie.db();
     let thread_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8);
     let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
-    let per_thread_code_hashes: Mutex<Vec<Vec<H256>>> = Mutex::new(Vec::new());
     let per_thread_storage_accounts: Mutex<Vec<Vec<(H256, H256)>>> = Mutex::new(Vec::new());
+    // Code hashes are flushed incrementally to disk from each thread to avoid
+    // accumulating ~2 GB in memory on mainnet. A shared atomic counter assigns
+    // unique file indices across threads.
+    let code_hash_file_index = std::sync::atomic::AtomicU64::new(
+        code_hash_collector.next_file_index(),
+    );
+    let code_hashes_dir = get_code_hashes_snapshots_dir(datadir);
 
     // A RocksDB iterator filtered to a single first-nibble range.
+    // Flushes code hashes to disk incrementally when buffer is full.
     struct NibbleIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
         nibble: u8,
         code_hashes: Vec<H256>,
         storage_accounts: Vec<(H256, H256)>,
+        code_hash_file_index: &'a std::sync::atomic::AtomicU64,
+        code_hashes_dir: &'a std::path::Path,
+    }
+    impl NibbleIterator<'_> {
+        fn flush_code_hashes_if_needed(&mut self) {
+            if self.code_hashes.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
+                let file_idx = self
+                    .code_hash_file_index
+                    .fetch_add(1, Ordering::Relaxed);
+                let file_name =
+                    get_code_hashes_snapshot_file(self.code_hashes_dir, file_idx);
+                let hashes: Vec<H256> = std::mem::take(&mut self.code_hashes);
+                let encoded = hashes.encode_to_vec();
+                let _ = dump_to_file(&file_name, encoded);
+            }
+        }
+        fn flush_remaining_code_hashes(&mut self) {
+            if !self.code_hashes.is_empty() {
+                let file_idx = self
+                    .code_hash_file_index
+                    .fetch_add(1, Ordering::Relaxed);
+                let file_name =
+                    get_code_hashes_snapshot_file(self.code_hashes_dir, file_idx);
+                let hashes: Vec<H256> = std::mem::take(&mut self.code_hashes);
+                let encoded = hashes.encode_to_vec();
+                let _ = dump_to_file(&file_name, encoded);
+            }
+        }
     }
     impl<'a> Iterator for NibbleIterator<'a> {
         type Item = (H256, Vec<u8>);
         fn next(&mut self) -> Option<Self::Item> {
             if !self.iter.valid() {
+                self.flush_remaining_code_hashes();
                 return None;
             }
             let key = self.iter.key()?;
             if (key[0] >> 4) != self.nibble {
+                self.flush_remaining_code_hashes();
                 return None;
             }
             let value = self.iter.value()?;
@@ -1056,12 +1096,16 @@ async fn insert_accounts(
             }
             if account_state.code_hash != *EMPTY_KECCACK_HASH {
                 self.code_hashes.push(account_state.code_hash);
+                self.flush_code_hashes_if_needed();
             }
             self.iter.next();
             Some((account_hash, value_vec))
         }
     }
 
+    // 16 sub-trie threads are spawned (one per nibble). On machines with fewer
+    // than 16 cores, the OS schedules them across available cores. The ThreadPool
+    // handles DB flush tasks for all sub-tries concurrently.
     let choices: [NodeRef; 16] = thread_scope(|s| {
         let pool = Arc::new(ThreadPool::new(thread_count, s));
         let handles: Vec<_> = (0u8..16)
@@ -1072,9 +1116,10 @@ async fn insert_accounts(
                 for _ in 0..buffers_per_subtrie {
                     let _ = buf_tx.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
                 }
-                let per_thread_code_hashes = &per_thread_code_hashes;
                 let per_thread_storage_accounts = &per_thread_storage_accounts;
                 let snapshot = &snapshot;
+                let code_hash_file_index = &code_hash_file_index;
+                let code_hashes_dir = &code_hashes_dir;
                 s.spawn(move || {
                     let mut raw_iter = snapshot.raw_iterator();
                     let mut start_key = [0u8; 32];
@@ -1086,19 +1131,15 @@ async fn insert_accounts(
                         nibble,
                         code_hashes: Vec::new(),
                         storage_accounts: Vec::new(),
+                        code_hash_file_index,
+                        code_hashes_dir,
                     };
 
                     let child_ref = trie_from_sorted_subtrie(
                         trie_db, &mut nibble_iter, pool, buf_tx, buf_rx,
                     )?;
 
-                    // Collect side effects
-                    if !nibble_iter.code_hashes.is_empty() {
-                        per_thread_code_hashes
-                            .lock()
-                            .unwrap()
-                            .push(nibble_iter.code_hashes);
-                    }
+                    // Collect storage accounts (small — just (H256, H256) pairs)
                     if !nibble_iter.storage_accounts.is_empty() {
                         per_thread_storage_accounts
                             .lock()
@@ -1193,13 +1234,7 @@ async fn insert_accounts(
         hash
     };
 
-    // Merge per-thread side effects
-    let collected_code_hashes: Vec<H256> = per_thread_code_hashes
-        .into_inner()
-        .unwrap()
-        .into_iter()
-        .flatten()
-        .collect();
+    // Merge per-thread storage accounts (code hashes already flushed to disk by each thread)
     for (account_hash, storage_root) in per_thread_storage_accounts
         .into_inner()
         .unwrap()
@@ -1210,19 +1245,12 @@ async fn insert_accounts(
             .accounts_with_storage_root
             .insert(account_hash, (Some(storage_root), Vec::new()));
     }
+    // Update the code hash collector's file index to account for files written by threads
+    code_hash_collector.set_file_index(code_hash_file_index.load(Ordering::Relaxed));
     info!(
-        "[PROFILE] account insertion: parallel trie building took {:?} (collected {} code hashes)",
+        "[PROFILE] account insertion: parallel trie building took {:?}",
         t2.elapsed(),
-        collected_code_hashes.len(),
     );
-
-    // Flush collected code hashes (async)
-    let t3 = std::time::Instant::now();
-    for hash in &collected_code_hashes {
-        code_hash_collector.add(*hash);
-        code_hash_collector.flush_if_needed().await?;
-    }
-    info!("[PROFILE] account insertion: code hash flush ({} hashes) took {:?}", collected_code_hashes.len(), t3.elapsed());
 
     drop(snapshot);
     drop(db); // close db before removing directory
