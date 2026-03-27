@@ -222,17 +222,6 @@ pub fn eip7702_recover_address(
     rlp_buf.push(MAGIC);
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
     let msg = crypto.keccak256(&rlp_buf);
-    let cache_key = ethrex_common::H256::from(msg);
-
-    // Fast path: check process-level signer cache
-    {
-        let mut cache = ethrex_common::types::transaction::GLOBAL_SIGNER_CACHE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(&addr) = cache.get(&cache_key) {
-            return Ok(Some(addr));
-        }
-    }
 
     let y_parity: u8 =
         TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?;
@@ -243,13 +232,7 @@ pub fn eip7702_recover_address(
     sig[64] = y_parity;
 
     match crypto.recover_signer(&sig, &msg) {
-        Ok(address) => {
-            ethrex_common::types::transaction::GLOBAL_SIGNER_CACHE
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .put(cache_key, address);
-            Ok(Some(address))
-        }
+        Ok(address) => Ok(Some(address)),
         Err(_) => Ok(None),
     }
 }
