@@ -14,12 +14,17 @@ pub use mempool::MempoolTransaction;
 
 const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 
-/// Global cache mapping transaction hash → recovered sender address.
-/// Populated by all code paths that call `recover_signer` (p2p, RPC, etc.)
-/// so that subsequent lookups (e.g. during `engine_newPayloadV4`) avoid
-/// redundant secp256k1 recovery (~200µs per tx).
+/// Global cache mapping message hash → recovered signer address.
+/// Populated by all code paths that perform secp256k1 recovery (tx sender,
+/// EIP-7702 authorization tuples, etc.) so that subsequent lookups avoid
+/// redundant recovery (~200µs per call).
 /// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
-static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
+///
+/// Lock with `.unwrap_or_else(|e| e.into_inner())` — a poisoned mutex just means
+/// a thread panicked mid-update; the LruCache invariants are maintained by the
+/// std Mutex (data is still accessible), and a missing entry only costs one
+/// redundant recovery, so it's safe to keep using.
+pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
     Mutex::new(LruCache::new(
         NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
     ))
@@ -1115,18 +1120,21 @@ impl Transaction {
         sender_cache
             .get_or_try_init(|| {
                 let tx_hash = self.hash();
-                // Fast path: check process-level signer cache (populated by p2p, prior blocks, etc.)
-                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.lock()
-                    && let Some(&addr) = cache.get(&tx_hash)
-                {
+                // Fast path: check process-level signer cache
+                let mut cache = GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Some(&addr) = cache.get(&tx_hash) {
                     return Ok(addr);
                 }
+                drop(cache);
                 // Slow path: actual secp256k1 recovery
                 let sender = self.compute_sender(crypto)?;
                 // Store in global cache for future lookups (LRU evicts oldest on overflow)
-                if let Ok(mut cache) = GLOBAL_SIGNER_CACHE.lock() {
-                    cache.put(tx_hash, sender);
-                }
+                GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .put(tx_hash, sender);
                 Ok(sender)
             })
             .copied()
