@@ -16,6 +16,19 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 
 ---
 
+## Future Goals
+
+The following are important for production readiness and will be addressed in subsequent plans:
+
+- **Security hardening** — RPC rate limiting, DoS protection, discovery amplification mitigation
+- **`debug_*` RPC namespace** — `debug_traceTransaction`, `debug_traceBlockByNumber`, etc.
+- **Database migration tooling** — Schema migrations between ethrex versions
+- **Backup/restore procedures** — RocksDB state backup and recovery
+- **IPC transport** — Unix socket support for local RPC communication
+- **Chain data pruning** — State pruning strategy and `--gcmode` equivalent
+
+---
+
 ## Key Findings by Category
 
 | Category | Issues Found | Severity | Impact |
@@ -31,7 +44,7 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 
 ### 1.1 Remove Production Panics
 
-**Problem:** 7+ `panic!()` calls in non-initialization production code paths with no context. Node crashes are unrecoverable.
+**Problem:** 5 `panic!()` calls in non-initialization production code paths with no context. Node crashes are unrecoverable.
 
 **Critical Locations:**
 
@@ -39,11 +52,9 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 |------|------|---------|----------|
 | `crates/storage/utils.rs` | 28 | Invalid ChainDataIndex casting | Critical |
 | `crates/storage/utils.rs` | 58 | Invalid SnapStateIndex casting | Critical |
-| `crates/storage/layering.rs` | 94 | State cycle detection | Critical |
-| `crates/networking/p2p/sync/storage_healing.rs` | 444 | Node response validation | Critical |
-| `crates/networking/p2p/sync/state_healing.rs` | 397 | Parent node existence check | Critical |
-| `crates/networking/p2p/peer_handler.rs` | 1333 | Account hash zero check | High |
-| `cmd/ethrex/cli.rs` | 862 | Database error on export ("Internal DB Error") | High |
+| `crates/storage/layering.rs` | 125 | State cycle detection | Critical |
+| `crates/networking/p2p/snap/client.rs` | 736 | Account hash zero check | High |
+| `cmd/ethrex/cli.rs` | 973 | Database error on export ("Internal DB Error") | High |
 
 **Note:** The `panic!` at `cmd/ethrex/initializers.rs:247-250` (dev mode without feature flag) is covered in Section 3.3 with other initialization panics.
 
@@ -56,27 +67,23 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 
 ---
 
-### 1.2 Replace unreachable!() in Network Code
+### 1.2 Replace unreachable!() in Non-GenServer Code
 
-**Problem:** 40 `unreachable!()` calls in discovery and related code assume perfect protocol compliance. Network code should handle unexpected messages gracefully.
+**Problem:** Several `unreachable!()` calls exist in production code paths outside the peer table.
 
-**DiscoveryV5 Peer Table** (`crates/networking/p2p/discv5/peer_table.rs`):
-- Lines: 399, 416, 424, 432, 440, 449, 458, 471, 484, 500, 515, 536, 557, 573, 591, 603, 637, 645, 666
-- All in message matching patterns for peer table operations
+**Note:** The 21 `unreachable!()` calls in `crates/networking/p2p/peer_table.rs` are **not removable** — they are structural artifacts of the `spawned-concurrency` GenServer design. `handle.call()` returns a full `OutMessage` enum (~15 variants), but each call site only ever produces one variant. The `_ => unreachable!()` is type-system required. A new version of the Spawned library may address this.
 
-**DiscoveryV4 Peer Table** (`crates/networking/p2p/discv4/peer_table.rs`):
-- Lines: 364, 381, 389, 397, 405, 414, 423, 436, 449, 464, 506, 522, 539, 551, 578, 586, 607
-- Same pattern as V5
+**Actionable locations:**
 
-**Additional locations:**
-- `cmd/ethrex/initializers.rs:580` - Genesis block missing after store
-- `crates/networking/p2p/discv4/server.rs:621` - Unmatched peer table response
-- `crates/blockchain/blockchain.rs:577` - Root node type assertion
-- `crates/common/trie/verify_range.rs:285` - Trie node reference type
+| File | Line | Context |
+|------|------|---------|
+| `cmd/ethrex/initializers.rs` | 706 | Genesis block missing after store |
+| `crates/networking/p2p/discv4/server.rs` | 678 | Unmatched peer table response |
+| `crates/common/trie/verify_range.rs` | 285 | Trie node reference type |
 
-**Solution:** Replace with proper error variants or log warnings for unexpected messages.
+**Solution:** For each location, verify whether the arm is genuinely unreachable (type-system artifact) or reachable via malformed input. Only replace with error handling where the arm can actually be hit.
 
-**Effort:** 2-3 days
+**Effort:** 1 day
 **Breaking:** No (internal)
 
 ---
@@ -89,7 +96,7 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 
 | File | Lines | Issue |
 |------|-------|-------|
-| `backend/in_memory.rs` | 30, 89, 106, 122, 153, 168 | "Failed to acquire lock" - no read/write distinction |
+| `backend/in_memory.rs` | 33, 46, 64, 158, 175 | "Failed to acquire lock" - distinguishes read/write but discards underlying error |
 | `store.rs` | 522, 914, 928, 942, 971, 1109, 1967, 2596 | "Invalid BlockNumber bytes" - repeated 8x |
 | `store.rs` | 681, 707, 729, 778 | Account code cache lock - generic |
 | `store.rs` | 2430, 2463, 2488, 2528, 2649, 2699, 2704, 2708, 2769, 2844, 2874, 2903 | Trie cache locks - 12 locations |
@@ -98,9 +105,7 @@ This plan identifies **50+ actionable improvements** across 4 categories to enha
 
 | File | Lines | Issue |
 |------|-------|-------|
-| `blockchain.rs` | 65 | "Failed to join task" |
-| `blockchain.rs` | 114-115 | "Failed to convert payload" |
-| `blockchain.rs` | 893, 1077, 1222 | "Parent state not found" - 3x |
+| `blockchain.rs` | 1173, 1359, 1496 | "Parent state not found" - 3x |
 | `blockchain.rs` | 904-905, 1086-1087, 1342-1343 | "Failed to lock state trie witness" - 3x |
 | `blockchain.rs` | 914-915, 1233-1234 | "Failed to get root state node" - 2x |
 | `blockchain.rs` | 1065-1066, 1330-1331 | "Failed to lock storage trie witness" - 2x |
@@ -193,21 +198,19 @@ DecodeError {
 
 ### 1.6 Address Known Error Handling TODOs
 
-**Problem:** 11 TODO comments indicate incomplete error handling in critical paths.
+**Problem:** 9 TODO comments indicate incomplete error handling in critical paths.
 
 | File | Line | TODO |
 |------|------|------|
 | `crates/networking/rpc/utils.rs` | 170-171 | "Actually return different errors for each case" |
-| `crates/networking/p2p/sync/storage_healing.rs` | 296 | "if we have a store error we should stop" |
-| `crates/networking/p2p/sync/storage_healing.rs` | 369 | "add error handling" |
-| `crates/networking/p2p/sync/state_healing.rs` | 256 | "check errors to determine whether current block is stale" |
-| `crates/networking/p2p/sync/state_healing.rs` | 265 | "add error handling" |
-| `crates/networking/p2p/types.rs` | 324-325 | "decode as optional to ignore errors, should return error" |
-| `crates/networking/p2p/peer_handler.rs` | 103 | "Better error handling" |
-| `crates/networking/p2p/peer_handler.rs` | 692 | "check the error type and handle it properly" |
-| `crates/networking/p2p/rlpx/connection/server.rs` | 775 | "build proper matching between error types and disconnect reasons" |
-| `crates/common/trie/node/leaf.rs` | 96 | "handle override case (error?)" |
-| `crates/common/trie/node/branch.rs` | 140 | "handle override case (error?)" |
+| `crates/networking/p2p/sync/healing/storage.rs` | 300 | "if we have a store error we should stop" |
+| `crates/networking/p2p/sync/healing/storage.rs` | 378 | "add error handling" |
+| `crates/networking/p2p/sync/healing/state.rs` | 247 | "check errors to determine whether current block is stale" |
+| `crates/networking/p2p/sync/healing/state.rs` | 256 | "add error handling" |
+| `crates/networking/p2p/peer_handler.rs` | 58 | "Better error handling" |
+| `crates/networking/p2p/rlpx/connection/server.rs` | 785 | "build proper matching between error types and disconnect reasons" |
+| `crates/common/trie/node/leaf.rs` | 97 | "handle override case (error?)" |
+| `crates/common/trie/node/branch.rs` | 147 | "handle override case (error?)" |
 
 **Solution:** Address each TODO systematically.
 
@@ -602,7 +605,6 @@ impl From<&str> for Network {
     fn from(s: &str) -> Self {
         match s {
             "hoodi" => PublicNetwork(PublicNetwork::Hoodi),
-            "holesky" => PublicNetwork(PublicNetwork::Holesky),
             "mainnet" => PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => PublicNetwork(PublicNetwork::Sepolia),
             _ => GenesisPath(PathBuf::from(s)),  // Silent fallback!
@@ -617,9 +619,8 @@ Error: Unknown network 'hoddi'
 
 Did you mean one of these?
   - hoodi
-  - holesky
 
-Available networks: mainnet, sepolia, holesky, hoodi
+Available networks: mainnet, sepolia, hoodi
 
 Or provide a path to a genesis.json file.
 ```
@@ -1143,10 +1144,10 @@ Each category of change requires corresponding verification:
 ## Appendix: Detailed Issue Counts
 
 ### Error Handling (150+)
-- **Panics:** 7 non-init production locations + 14 initialization expect/panic locations (3 additional are test-only)
-- **Unreachable:** 40 locations (DiscV4/V5 peer tables + additional)
+- **Panics:** 5 non-init production locations + 14 initialization expect/panic locations (3 additional are test-only)
+- **Unreachable:** 21 in peer_table.rs (GenServer artifacts, not removable) + 3 actionable locations
 - **Context-discarding map_err:** 100+ locations
-- **TODOs about error handling:** 11 locations
+- **TODOs about error handling:** 9 locations
 
 ### Node Operator UX (14)
 1. Startup banner lacks configuration details
