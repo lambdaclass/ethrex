@@ -38,7 +38,7 @@ fn make_proof_gen_id(block_number: u64, root: &H256) -> ProofGenId {
     let mut preimage = [0u8; 40]; // 8 bytes block_number + 32 bytes root
     preimage[..8].copy_from_slice(&block_number.to_be_bytes());
     preimage[8..].copy_from_slice(root.as_bytes());
-    let hash = ethrex_common::utils::keccak(&preimage);
+    let hash = ethrex_common::utils::keccak(preimage);
     let mut id = [0u8; 8];
     id.copy_from_slice(&hash.as_bytes()[..8]);
     id
@@ -579,21 +579,18 @@ const DEPOSIT_REQUEST_SIZE: usize = 48 + 32 + 8 + 96 + 8; // 192
 const WITHDRAWAL_REQUEST_SIZE: usize = 20 + 48 + 8; // 76
 const CONSOLIDATION_REQUEST_SIZE: usize = 20 + 48 + 48; // 116
 
+type ParsedRequests = (
+    SszList<eip8025_ssz::DepositRequest, 8192>,
+    SszList<eip8025_ssz::WithdrawalRequest, 16>,
+    SszList<eip8025_ssz::ConsolidationRequest, 1>,
+);
+
 /// Parse flat EIP-7685 `execution_requests` into the three typed SSZ sub-lists
 /// expected by `ExecutionPayloadElectra`.
 ///
 /// Each entry in `execution_requests` is `type_byte ++ request1 ++ request2 ++ ...`
 /// where each request is a fixed-size byte sequence.
-fn parse_typed_requests(
-    execution_requests: &[Bytes],
-) -> Result<
-    (
-        SszList<eip8025_ssz::DepositRequest, 8192>,
-        SszList<eip8025_ssz::WithdrawalRequest, 16>,
-        SszList<eip8025_ssz::ConsolidationRequest, 1>,
-    ),
-    String,
-> {
+fn parse_typed_requests(execution_requests: &[Bytes]) -> Result<ParsedRequests, String> {
     let mut deposits = Vec::new();
     let mut withdrawals = Vec::new();
     let mut consolidations = Vec::new();

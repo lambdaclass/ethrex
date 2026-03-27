@@ -313,6 +313,8 @@ impl L1ProofCoordinator {
 
         // Look up the root, proof_gen_id and requested proof types from pending.
         // The prover reports its own type — validate it against the requested types.
+        // TODO: handle reorgs — if the canonical chain changes, the stored root
+        // for this block_number may no longer be correct.
         let (root, proof_gen_id) = match self.pending.get(&block_number) {
             Some(p) => {
                 if !p.requested_proof_types.is_empty()
@@ -465,14 +467,14 @@ impl GenServer for L1ProofCoordinator {
                 self.evict_stale_requests();
 
                 // Enforce capacity limit: evict the oldest (lowest block number) entry.
-                if self.pending.len() >= MAX_PENDING_REQUESTS {
-                    if let Some(&oldest_bn) = self.pending.keys().min() {
-                        self.pending.remove(&oldest_bn);
-                        warn!(
-                            evicted_block = oldest_bn,
-                            "Pending queue at capacity ({MAX_PENDING_REQUESTS}); evicted oldest request"
-                        );
-                    }
+                if self.pending.len() >= MAX_PENDING_REQUESTS
+                    && let Some(&oldest_bn) = self.pending.keys().min()
+                {
+                    self.pending.remove(&oldest_bn);
+                    warn!(
+                        evicted_block = oldest_bn,
+                        "Pending queue at capacity ({MAX_PENDING_REQUESTS}); evicted oldest request"
+                    );
                 }
 
                 self.pending.insert(block_number, *request);

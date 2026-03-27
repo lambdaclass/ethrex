@@ -9,8 +9,6 @@ use bytes::Bytes;
 use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
 
-/// Maximum execution proofs that can be attached to a payload.
-pub const MAX_EXECUTION_PROOFS_PER_PAYLOAD: usize = 4;
 /// Minimum required execution proofs per payload.
 pub const MIN_REQUIRED_EXECUTION_PROOFS: usize = 1;
 

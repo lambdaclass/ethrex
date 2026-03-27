@@ -21,10 +21,7 @@ pub fn main() {
     #[cfg(feature = "eip-8025")]
     let (new_payload_request, execution_witness) = decode_eip8025(&input).unwrap();
     #[cfg(not(feature = "eip-8025"))]
-    let input = {
-        use rkyv::rancor::Error;
-        rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap()
-    };
+    let input = { rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap() };
     println!("cycle-tracker-report-end: read_input");
 
     let crypto = Arc::new(Sp1Crypto);

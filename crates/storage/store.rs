@@ -2076,7 +2076,7 @@ impl Store {
     /// Store a mapping from new_payload_request_root to block_number (EIP-8025).
     /// Persists the root→block association so it survives node restarts.
     pub fn store_root_to_block(&self, root: H256, block_number: u64) -> Result<(), StoreError> {
-        let mut key = Vec::with_capacity(35);
+        let mut key = Vec::with_capacity(36);
         key.extend_from_slice(b"rtb:");
         key.extend_from_slice(root.as_bytes());
         // NOTE: we're not using apply_prefix here — key is already unique.
@@ -2085,7 +2085,7 @@ impl Store {
 
     /// Look up the block number for a given new_payload_request_root (EIP-8025).
     pub fn get_block_number_by_root(&self, root: &H256) -> Result<Option<u64>, StoreError> {
-        let mut key = Vec::with_capacity(35);
+        let mut key = Vec::with_capacity(36);
         key.extend_from_slice(b"rtb:");
         key.extend_from_slice(root.as_bytes());
         let data: Option<Vec<u8>> = self.read(EXECUTION_PROOFS, key)?;
@@ -2154,17 +2154,9 @@ impl Store {
         Ok(proofs)
     }
 
-    /// Count how many distinct proofs exist for a given block number + root.
-    pub fn count_execution_proofs(
-        &self,
-        block_number: u64,
-        new_payload_request_root: &H256,
-    ) -> Result<usize, StoreError> {
-        Ok(self
-            .get_execution_proofs(block_number, new_payload_request_root)?
-            .len())
-    }
-
+    // TODO: cleanup only deletes rtb: entries for roots that had proofs stored.
+    // Roots that were mapped (via store_root_to_block) but never received a proof
+    // are leaked. Consider cleaning those up as well.
     fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
         if latest_block_number <= MAX_PROOF_BLOCKS {
             return Ok(());
