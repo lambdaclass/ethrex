@@ -169,7 +169,7 @@ pub struct RpcReceiptTxInfo {
 
 impl RpcReceiptTxInfo {
     pub fn from_transaction(
-        transaction: Transaction,
+        transaction: &Transaction,
         index: u64,
         gas_used: u64,
         block_blob_gas_price: u64,
@@ -185,7 +185,7 @@ impl RpcReceiptTxInfo {
             ))?
             .as_u64();
         let transaction_index = index;
-        let (blob_gas_price, blob_gas_used) = match &transaction {
+        let (blob_gas_price, blob_gas_used) = match transaction {
             Transaction::EIP4844Transaction(tx) => (
                 Some(block_blob_gas_price),
                 Some(tx.blob_versioned_hashes.len() as u64 * GAS_PER_BLOB as u64),
