@@ -9,6 +9,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 # Frame pointers for profiling (default off, set FRAME_POINTERS=1 to enable)
 FRAME_POINTERS ?= 0
 
+CLIPPY_DENY := -D warnings -D clippy::unused_async
+
 ifeq ($(FRAME_POINTERS),1)
 PROFILING_CFG := --config .cargo/profiling.toml
 endif
@@ -18,17 +20,17 @@ build: ## 🔨 Build the client
 
 lint-l1:
 	cargo clippy --lib --bins -F debug,sync-test \
-		--release -- -D warnings
+		--release -- $(CLIPPY_DENY)
 
 lint-l2:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql \
 		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
-		--release -- -D warnings
+		--release -- $(CLIPPY_DENY)
 
 lint-gpu:
 	cargo clippy --all-targets -F debug,sync-test,l2,l2-sql,,sp1,risc0,gpu \
 		--workspace --exclude ethrex-prover --exclude ethrex-guest-program \
-		--release -- -D warnings
+		--release -- $(CLIPPY_DENY)
 
 lint: lint-l1 lint-l2 ## 🧹 Linter check
 
