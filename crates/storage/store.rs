@@ -1738,11 +1738,8 @@ impl Store {
     ) -> Result<Option<AccountState>, StoreError> {
         use crate::binary_trie_read::BinaryTrieWrapper;
 
-        // Check in-memory binary trie layers when the block has a known trie root.
-        if let (Some(trie_root), Some(bts)) = (
-            self.get_binary_trie_root(block_hash),
-            &self.binary_trie_state,
-        ) {
+        // Check in-memory binary trie state + layer cache.
+        if let Some(bts) = &self.binary_trie_state {
             let cache = self
                 .binary_trie_layer_cache
                 .read()
@@ -1750,6 +1747,11 @@ impl Store {
             let state = bts
                 .read()
                 .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
+
+            // Use trie root from the root map if available (for layer cache lookups).
+            // If not in the map (e.g., after restart), use a zero root — the wrapper
+            // will skip layer cache and read directly from trie state.
+            let trie_root = self.get_binary_trie_root(block_hash).unwrap_or([0u8; 32]);
 
             let wrapper = BinaryTrieWrapper {
                 trie_root,
@@ -1760,7 +1762,7 @@ impl Store {
             if let Some(result) = wrapper.get_account_state(&address) {
                 return Ok(result);
             }
-            // Fall through to FKV if not found in any in-memory layer.
+            // Fall through to FKV if not found in any in-memory layer or trie state.
         }
 
         // Fall through to FKV for committed state.
@@ -1782,11 +1784,8 @@ impl Store {
     ) -> Result<Option<U256>, StoreError> {
         use crate::binary_trie_read::BinaryTrieWrapper;
 
-        // Check in-memory binary trie layers when the block has a known trie root.
-        if let (Some(trie_root), Some(bts)) = (
-            self.get_binary_trie_root(block_hash),
-            &self.binary_trie_state,
-        ) {
+        // Check in-memory binary trie state + layer cache.
+        if let Some(bts) = &self.binary_trie_state {
             let cache = self
                 .binary_trie_layer_cache
                 .read()
@@ -1794,6 +1793,8 @@ impl Store {
             let state = bts
                 .read()
                 .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
+
+            let trie_root = self.get_binary_trie_root(block_hash).unwrap_or([0u8; 32]);
 
             let wrapper = BinaryTrieWrapper {
                 trie_root,

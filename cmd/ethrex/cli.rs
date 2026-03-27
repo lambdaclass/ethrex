@@ -732,13 +732,8 @@ pub async fn import_blocks(
     // The trie metadata checkpoint may be ahead of the actual FKV state on disk.
     let trie_checkpoint_block = {
         let bts = binary_trie_state.read().unwrap();
-        let checkpoint = bts.last_flushed_block();
-        let flush_threshold = bts.flush_threshold();
-        checkpoint.saturating_sub(flush_threshold * 2)
+        bts.last_flushed_block()
     };
-    if trie_checkpoint_block > 0 {
-        info!("Will re-execute blocks from {trie_checkpoint_block} to rebuild state");
-    }
     store.set_binary_trie_state(binary_trie_state);
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     let path_metadata = metadata(path).expect("Failed to read path");
@@ -868,13 +863,8 @@ pub async fn import_blocks_bench(
         .map_err(|e| ChainError::Custom(e.to_string()))?;
     let trie_checkpoint_block = {
         let bts = binary_trie_state.read().unwrap();
-        let checkpoint = bts.last_flushed_block();
-        let flush_threshold = bts.flush_threshold();
-        checkpoint.saturating_sub(flush_threshold * 2)
+        bts.last_flushed_block()
     };
-    if trie_checkpoint_block > 0 {
-        info!("Will re-execute blocks from {trie_checkpoint_block} to rebuild state");
-    }
     store.set_binary_trie_state(binary_trie_state);
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
