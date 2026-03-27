@@ -14,10 +14,10 @@ pub use mempool::MempoolTransaction;
 
 const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 
-/// Global cache mapping message hash → recovered signer address.
-/// Populated by all code paths that perform secp256k1 recovery (tx sender,
-/// EIP-7702 authorization tuples, etc.) so that subsequent lookups avoid
-/// redundant recovery (~200µs per call).
+/// Global cache mapping transaction hash → recovered sender address.
+/// Keyed by tx hash (unique per transaction), so each entry is safe to reuse.
+/// Not suitable for EIP-7702 authorization tuples where the same message hash
+/// can correspond to different signers (the message excludes the signature).
 /// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
 ///
 /// Lock with `.unwrap_or_else(|e| e.into_inner())` — a poisoned mutex just means
