@@ -1213,13 +1213,12 @@ async fn handle_incoming_message(
                 let block_hash = new_block.block.hash();
                 let block_number = new_block.block.header.number;
 
-                // Skip blocks we already have.
-                if state
-                    .storage
-                    .get_block_header_by_hash(block_hash)?
-                    .is_some()
-                {
-                    debug!(peer=%state.node, block_number, "Ignoring already-known block");
+                // Skip blocks we already have or that are already being processed.
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                if block_number <= latest {
+                    // Already processed — skip silently.
+                } else if !state.blockchain.mark_polygon_in_flight(block_hash) {
+                    debug!(peer=%state.node, block_number, "Block already in-flight, skipping");
                 } else {
                     debug!(
                         peer=%state.node,
@@ -1274,6 +1273,8 @@ async fn handle_incoming_message(
                                 bc.add_block_pipeline(block, None)
                             })
                             .await;
+                            // Clear in-flight mark now that execution finished.
+                            blockchain.clear_polygon_in_flight(&blk_hash);
                             let result = match result {
                                 Ok(r) => r,
                                 Err(e) => {

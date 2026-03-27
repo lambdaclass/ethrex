@@ -193,6 +193,9 @@ pub struct Blockchain {
     /// In-memory buffer for Polygon NewBlock blocks whose parent hasn't arrived yet.
     /// Keyed by parent_hash so we can chain-follow after processing a block.
     polygon_pending_blocks: std::sync::Mutex<HashMap<H256, Block>>,
+    /// Set of block hashes currently being executed by spawned tasks.
+    /// Prevents duplicate execution when multiple peers announce the same block.
+    polygon_in_flight_blocks: std::sync::Mutex<HashSet<H256>>,
     /// Epoch-seconds timestamp of the last successfully processed block.
     /// Used by the bridge fallback to avoid re-triggering when P2P NewBlock is flowing.
     last_block_processed_at: AtomicU64,
@@ -316,6 +319,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             polygon_sync_head: std::sync::Mutex::new(None),
             polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
+            polygon_in_flight_blocks: std::sync::Mutex::new(HashSet::new()),
             last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
@@ -330,6 +334,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             polygon_sync_head: std::sync::Mutex::new(None),
             polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
+            polygon_in_flight_blocks: std::sync::Mutex::new(HashSet::new()),
             last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
@@ -3101,6 +3106,21 @@ impl Blockchain {
             .lock()
             .ok()?
             .remove(&parent_hash)
+    }
+
+    /// Mark a block hash as currently being processed. Returns false if already in-flight.
+    pub fn mark_polygon_in_flight(&self, hash: H256) -> bool {
+        self.polygon_in_flight_blocks
+            .lock()
+            .map(|mut set| set.insert(hash))
+            .unwrap_or(false)
+    }
+
+    /// Remove a block hash from the in-flight set after processing completes.
+    pub fn clear_polygon_in_flight(&self, hash: &H256) {
+        if let Ok(mut set) = self.polygon_in_flight_blocks.lock() {
+            set.remove(hash);
+        }
     }
 
     /// Record that a block was just successfully processed.
