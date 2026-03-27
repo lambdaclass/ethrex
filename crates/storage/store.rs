@@ -1876,11 +1876,12 @@ impl Store {
         &self,
         block_hash: BlockHash,
         block_number: u64,
+        block_count: u64,
         account_updates: &[AccountUpdate],
     ) -> Result<AccountUpdatesList, StoreError> {
         let (result, trie_root) = self.handle_merkleization(account_updates)?;
         self.set_binary_trie_root(block_hash, trie_root);
-        self.flush_binary_trie_if_needed(block_number, block_hash)?;
+        self.flush_binary_trie_if_needed(block_number, block_hash, block_count)?;
         Ok(result)
     }
 
@@ -1950,6 +1951,7 @@ impl Store {
         &self,
         block_number: u64,
         block_hash: BlockHash,
+        block_count: u64,
     ) -> Result<(), StoreError> {
         let bts = self
             .binary_trie_state
@@ -1960,7 +1962,7 @@ impl Store {
             .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
 
         // Check if flush threshold reached.
-        if !state.tick_and_check_flush() {
+        if !state.tick_and_check_flush(block_count) {
             return Ok(());
         }
 

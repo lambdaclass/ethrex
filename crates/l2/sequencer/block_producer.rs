@@ -228,9 +228,12 @@ impl BlockProducer {
         let block_hash = block.hash();
 
         // Apply account updates to the binary trie.
-        let account_updates_list =
-            self.store
-                .apply_account_updates_batch(block_hash, block_number, &account_updates)?;
+        let account_updates_list = self.store.apply_account_updates_batch(
+            block_hash,
+            block_number,
+            1,
+            &account_updates,
+        )?;
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;

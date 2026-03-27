@@ -236,9 +236,9 @@ impl BinaryTrieState {
     }
 
     /// Check if the flush threshold has been reached.
-    /// Increments the block counter each call.
-    pub fn tick_and_check_flush(&mut self) -> bool {
-        self.blocks_since_flush += 1;
+    /// Increments the block counter by `block_count` (1 for pipeline, batch size for batch).
+    pub fn tick_and_check_flush(&mut self, block_count: u64) -> bool {
+        self.blocks_since_flush += block_count;
         self.blocks_since_flush >= self.flush_threshold
     }
 

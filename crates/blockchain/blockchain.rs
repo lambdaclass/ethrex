@@ -911,7 +911,7 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(block.hash(), block.header.number, &updates)
+            .apply_account_updates_batch(block.hash(), block.header.number, 1, &updates)
             .map_err(ChainError::StoreError)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
@@ -1060,6 +1060,7 @@ impl Blockchain {
                 .apply_account_updates_batch(
                     block.hash(),
                     block_number,
+                    1,
                     &account_updates_list.flat_updates,
                 )
                 .map_err(ChainError::StoreError)?
@@ -1069,7 +1070,7 @@ impl Blockchain {
                 self.storage.set_binary_trie_root(block.hash(), root);
             }
             self.storage
-                .flush_binary_trie_if_needed(block_number, block.hash())
+                .flush_binary_trie_if_needed(block_number, block.hash(), 1)
                 .map_err(ChainError::StoreError)?;
             account_updates_list
         };
@@ -1456,7 +1457,12 @@ impl Blockchain {
         // Acceptable during initial sync where intermediate blocks are not reorged.
         let account_updates_list = self
             .storage
-            .apply_account_updates_batch(last_block.hash(), last_block_number, &account_updates)
+            .apply_account_updates_batch(
+                last_block.hash(),
+                last_block_number,
+                blocks_len as u64,
+                &account_updates,
+            )
             .map_err(|e| (ChainError::StoreError(e), None))?;
 
         let update_batch = UpdateBatch {
