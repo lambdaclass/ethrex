@@ -19,7 +19,7 @@ use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
 pub use ethrex_common::types::AccountUpdate;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
@@ -42,6 +42,9 @@ pub struct GeneralizedDatabase {
     /// Used for parallel per-tx DBs where `get_state_transitions_tx` is never called
     /// (state transitions come from BAL instead).
     skip_initial_tracking: bool,
+    /// Optional tracker for BAL validation: records addresses accessed via load_account.
+    /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
+    pub accessed_accounts: Option<FxHashSet<Address>>,
 }
 
 impl GeneralizedDatabase {
@@ -56,6 +59,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            accessed_accounts: None,
         }
     }
 
@@ -87,6 +91,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
+            accessed_accounts: None,
         }
     }
 
@@ -144,6 +149,7 @@ impl GeneralizedDatabase {
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
+            accessed_accounts: None,
         }
     }
 
@@ -151,6 +157,9 @@ impl GeneralizedDatabase {
     /// Loads account
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
+        if let Some(tracker) = &mut self.accessed_accounts {
+            tracker.insert(address);
+        }
         match self.current_accounts_state.entry(address) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
@@ -658,45 +667,26 @@ impl<'a> VM<'a> {
         Ok(new_nonce)
     }
 
-    /// Gets original storage value of an account, caching it if not already cached.
-    /// Also saves the original value for future gas calculations.
-    pub fn get_original_storage(
+    /// SSTORE-specialized storage access path that returns current and original values together.
+    /// This keeps the SSTORE hot path tighter by avoiding extra method-level plumbing.
+    #[inline(always)]
+    pub fn access_storage_slot_for_sstore(
         &mut self,
         address: Address,
         key: H256,
-    ) -> Result<U256, InternalError> {
-        if let Some(value) = self.storage_original_values.get(&(address, key)) {
-            return Ok(*value);
-        }
-
-        let value = self.get_storage_value(address, key)?;
-        self.storage_original_values.insert((address, key), value);
-        Ok(value)
-    }
-
-    /// Accesses to an account's storage slot and returns the value in it.
-    ///
-    /// Accessed storage slots are stored in the `accessed_storage_slots` set.
-    /// Accessed storage slots take place in some gas cost computation.
-    ///
-    /// Note: This function does NOT record to BAL. Per EIP-7928, BAL recording
-    /// must happen after gas checks pass. Use `record_storage_slot_to_bal()`
-    /// separately after the gas check succeeds.
-    pub fn access_storage_slot(
-        &mut self,
-        address: Address,
-        key: H256,
-    ) -> Result<(U256, bool), InternalError> {
-        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
+    ) -> Result<(U256, U256, bool), InternalError> {
         let storage_slot_was_cold = self.substate.add_accessed_slot(address, key);
-
-        let storage_slot = self.get_storage_value(address, key)?;
-
-        // Note: BAL recording is NOT done here per EIP-7928.
-        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
-        // Call record_storage_slot_to_bal() after gas check passes.
-
-        Ok((storage_slot, storage_slot_was_cold))
+        let current_value = self.get_storage_value(address, key)?;
+        let original_value = match self
+            .storage_original_values
+            .entry(address)
+            .or_default()
+            .entry(key)
+        {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => *entry.insert(current_value),
+        };
+        Ok((current_value, original_value, storage_slot_was_cold))
     }
 
     /// Records a storage slot read to BAL after gas checks have passed.
@@ -730,8 +720,12 @@ impl<'a> VM<'a> {
 
         let value = self.db.get_value_from_database(address, key)?;
 
-        // Update the account with the fetched value
-        let account = self.get_account_mut(address)?;
+        // Cache-fill only: this is a read-path miss, not a state mutation.
+        let account = self
+            .db
+            .current_accounts_state
+            .get_mut(&address)
+            .ok_or(InternalError::AccountNotFound)?;
         account.storage.insert(key, value);
 
         Ok(value)

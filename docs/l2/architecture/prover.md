@@ -29,7 +29,7 @@ When a prover sends a `BatchRequest`, the coordinator decides what to respond ba
 
 1. **Prover type check**: is the prover's type (SP1, RISC0, Exec, TDX) in the set of proof types required by this deployment? If not, the coordinator responds with `ProverTypeNotNeeded`. This is a permanent rejection — the prover binary is incompatible with this coordinator's configuration.
 
-2. **Resolve next batch**: the coordinator computes the next batch to prove as `1 + latest_sent_batch_proof` (the batch immediately after the last one whose proof was submitted to L1).
+2. **Resolve next batch**: the coordinator computes the next batch to prove as `1 + latest_verified_batch_proof` (the batch immediately after the last one verified on-chain).
 
 3. **Proof already exists**: does a proof from this prover type already exist for the batch? If so, the coordinator responds with an empty `BatchResponse` — there's nothing for this prover to do right now.
 

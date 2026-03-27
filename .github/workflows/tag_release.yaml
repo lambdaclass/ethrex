@@ -144,8 +144,8 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1 and RISC0 since
-  # they need to be built without the l2 features.
+  # There's a separate job to build the guest programs for SP1, RISC0, and ZisK
+  # since they need to be built without the l2 features.
   build-ethrex-guest:
     strategy:
       matrix:
@@ -190,7 +190,7 @@ jobs:
         run: |
           # Sanitize ref name by replacing '/' with '-' for valid file names
           SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
-          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }},ci"
+          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }}-build-elf,ci"
           mkdir -p ${{ matrix.zkvm }}_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
             mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
@@ -218,8 +218,8 @@ jobs:
           name: ${{ matrix.zkvm }}_verification_keys
           path: ${{ matrix.zkvm }}_verification_keys/
 
-  # Creates ethrex-guests.tar.gz artifact including both SP1 and
-  # RISC0 elf and verification keys.
+  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
+  # elf and verification keys.
   package-ethrex-guest:
     needs:
       - build-ethrex-guest

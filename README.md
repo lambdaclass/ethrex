@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/ethrex_banner.png" alt="ethrex banner" width="300">
+</p>
+
 # ethrex
 
 Minimalist, stable, modular, fast, and ZK native implementation of the Ethereum protocol in Rust.

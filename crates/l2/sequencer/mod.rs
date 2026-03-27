@@ -148,7 +148,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
-        checkpoints_dir,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -180,6 +180,7 @@ pub async fn start_l2(
             cfg.clone(),
             rollup_store.clone(),
             needed_proof_types.clone(),
+            checkpoints_dir.clone(),
         )));
     }
     let state_updater = StateUpdater::spawn(

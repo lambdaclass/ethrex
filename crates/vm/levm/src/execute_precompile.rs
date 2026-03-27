@@ -146,8 +146,7 @@ pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Resu
     } = input;
 
     // 1. Build GuestProgramState from witness
-    let guest_state: GuestProgramState = execution_witness
-        .try_into()
+    let guest_state: GuestProgramState = GuestProgramState::from_witness(execution_witness, crypto)
         .map_err(|e| custom_err(format!("Failed to build GuestProgramState: {e}")))?;
 
     // Validate chain_id matches witness chain config
@@ -161,12 +160,12 @@ pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Resu
     // Initialize block header hashes from witness headers (the witness already
     // contains the relevant headers for BLOCKHASH).
     guest_state
-        .initialize_block_header_hashes(&[])
+        .initialize_block_header_hashes(&[], crypto)
         .map_err(|e| custom_err(format!("Failed to initialize block header hashes: {e}")))?;
 
     // 2. Verify initial state root
     let initial_root = guest_state
-        .state_trie_root()
+        .state_trie_root(crypto)
         .map_err(|e| custom_err(format!("Failed to compute initial state root: {e}")))?;
     if initial_root != pre_state_root {
         return Err(custom_err(format!(
@@ -187,8 +186,8 @@ pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Resu
     })?;
 
     // 4. Build synthetic block header from individual fields
-    let parent_hash = guest_state.parent_block_header.compute_block_hash();
-    let transactions_root = ethrex_common::types::compute_transactions_root(&transactions);
+    let parent_hash = guest_state.parent_block_header.compute_block_hash(crypto);
+    let transactions_root = ethrex_common::types::compute_transactions_root(&transactions, crypto);
 
     let header = ethrex_common::types::BlockHeader {
         parent_hash,
@@ -202,7 +201,7 @@ pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Resu
         state_root: expected_post_state_root,
         transactions_root,
         difficulty: U256::zero(),
-        withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[])),
+        withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[], crypto)),
         ..Default::default()
     };
 
@@ -247,7 +246,7 @@ pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Resu
         db.state
             .lock()
             .map_err(|e| custom_err(format!("Lock poisoned: {e}")))?
-            .apply_account_updates(&account_updates)
+            .apply_account_updates(&account_updates, crypto)
             .map_err(|e| custom_err(format!("Failed to apply account updates: {e}")))?;
 
         (logs, gas_used)
@@ -258,7 +257,7 @@ pub fn execute_inner(input: ExecutePrecompileInput, crypto: &dyn Crypto) -> Resu
         .state
         .lock()
         .map_err(|e| custom_err(format!("Lock poisoned: {e}")))?
-        .state_trie_root()
+        .state_trie_root(crypto)
         .map_err(|e| custom_err(format!("Failed to compute final state root: {e}")))?;
 
     if final_root != expected_post_state_root {
@@ -400,7 +399,7 @@ fn execute_block(
     }
 
     // Validate receipts root
-    ethrex_common::validate_receipts_root(&block.header, &receipts)
+    ethrex_common::validate_receipts_root(&block.header, &receipts, crypto)
         .map_err(|e| custom_err(format!("Receipts root validation failed: {e}")))?;
 
     Ok((all_logs, cumulative_gas_used))

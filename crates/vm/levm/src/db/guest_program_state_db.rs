@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H256, NativeCrypto, U256,
     types::{
         AccountState, ChainConfig, Code, CodeMetadata, block_execution_witness::GuestProgramState,
     },
@@ -14,6 +14,9 @@ use crate::errors::DatabaseError;
 ///
 /// Uses a `Mutex` for interior mutability because `GuestProgramState` methods
 /// require `&mut self` (they lazily populate caches like `account_hashes_by_address`).
+///
+/// Uses [`NativeCrypto`] for trie hashing since this DB only runs inside the L1
+/// EXECUTE precompile, where all crypto operations use native implementations.
 pub struct GuestProgramStateDb {
     pub state: Mutex<GuestProgramState>,
 }
@@ -26,13 +29,16 @@ impl GuestProgramStateDb {
     }
 }
 
+/// Shared crypto provider for trie operations.
+static CRYPTO: NativeCrypto = NativeCrypto;
+
 impl Database for GuestProgramStateDb {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         Ok(self
             .state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
-            .get_account_state(address)
+            .get_account_state(address, &CRYPTO)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default())
     }
@@ -42,7 +48,7 @@ impl Database for GuestProgramStateDb {
             .state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
-            .get_storage_slot(address, key)
+            .get_storage_slot(address, key, &CRYPTO)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default())
     }
@@ -51,7 +57,7 @@ impl Database for GuestProgramStateDb {
         self.state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
-            .get_block_hash(block_number)
+            .get_block_hash(block_number, &CRYPTO)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 

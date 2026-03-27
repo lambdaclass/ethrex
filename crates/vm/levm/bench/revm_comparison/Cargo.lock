@@ -521,7 +521,7 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-fp-struct#219174187bd78154cec35b0809799fc2c991a579"
+source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors#78cad0378b17fc3157b83f514be192bf46edf9a1"
 dependencies = [
  "digest 0.10.7",
  "ff",
@@ -1087,6 +1087,7 @@ name = "ethrex-blockchain"
 version = "9.0.0"
 dependencies = [
  "bytes",
+ "crossbeam",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-metrics",
@@ -1115,6 +1116,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "hex-simd",
+ "indexmap",
  "k256",
  "kzg-rs",
  "lazy_static",
