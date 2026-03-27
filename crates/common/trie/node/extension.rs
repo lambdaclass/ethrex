@@ -1,3 +1,4 @@
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::ValueRLP;
@@ -42,8 +43,13 @@ impl ExtensionNode {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.compute_hash().finalize(),
-                        extension_node_hash: self.compute_hash().finalize(),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -81,8 +87,13 @@ impl ExtensionNode {
             let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.compute_hash().finalize(),
-                        extension_node_hash: self.compute_hash().finalize(),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -111,8 +122,12 @@ impl ExtensionNode {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::ExtensionNodeChildDiffers(
                                 ExtensionNodeErrorData {
-                                    node_hash: new_node.compute_hash().finalize(),
-                                    extension_node_hash: self.compute_hash().finalize(),
+                                    node_hash: new_node
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
+                                    extension_node_hash: self
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
                                     node_path: path.current(),
                                 },
@@ -123,8 +138,12 @@ impl ExtensionNode {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::ExtensionNodeChildNotFound(
                                 ExtensionNodeErrorData {
-                                    node_hash: new_node.compute_hash().finalize(),
-                                    extension_node_hash: self.compute_hash().finalize(),
+                                    node_hash: new_node
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
+                                    extension_node_hash: self
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
                                     node_path: path.current(),
                                 },
@@ -168,8 +187,13 @@ impl ExtensionNode {
             let Some(child_node) = self.child.get_node_mut(db, path.current())? else {
                 return Err(TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.compute_hash().finalize(),
-                        extension_node_hash: self.compute_hash().finalize(),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -214,15 +238,15 @@ impl ExtensionNode {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
-        self.compute_hash_no_alloc(&mut vec![])
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+        self.compute_hash_no_alloc(&mut vec![], crypto)
     }
 
     /// Computes the node's hash, using the provided buffer
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
         self.encode(buf);
-        let hash = NodeHash::from_encoded(buf);
+        let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash
     }
@@ -246,8 +270,13 @@ impl ExtensionNode {
             let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
-                        node_hash: self.child.clone().compute_hash().finalize(),
-                        extension_node_hash: self.compute_hash().finalize(),
+                        node_hash: self
+                            .child
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
+                        extension_node_hash: self
+                            .compute_hash(&NativeCrypto)
+                            .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
                         node_path: path.current(),
                     }),
@@ -271,6 +300,7 @@ impl ExtensionNode {
 
 #[cfg(test)]
 mod test {
+    use ethrex_crypto::NativeCrypto;
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     use super::*;
@@ -517,16 +547,16 @@ mod test {
         let leaf_node_a = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x12, 0x34]);
         let leaf_node_b = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x56, 0x78]);
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash().into();
-        choices[1] = leaf_node_b.compute_hash().into();
+        choices[0] = leaf_node_a.compute_hash(&NativeCrypto).into();
+        choices[1] = leaf_node_b.compute_hash(&NativeCrypto).into();
         let branch_node = BranchNode::new(choices);
         let node = ExtensionNode::new(
             Nibbles::from_hex(vec![0, 0]),
-            branch_node.compute_hash().into(),
+            branch_node.compute_hash(&NativeCrypto).into(),
         );
 
         assert_eq!(
-            node.compute_hash().as_ref(),
+            node.compute_hash(&NativeCrypto).as_ref(),
             &[
                 0xDD, 0x82, 0x00, 0x00, 0xD9, 0xC4, 0x30, 0x82, 0x12, 0x34, 0xC4, 0x30, 0x82, 0x56,
                 0x78, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
@@ -555,16 +585,16 @@ mod test {
             vec![0x34, 0x56, 0x78, 0x9A, 0xBC],
         );
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash().into();
-        choices[1] = leaf_node_b.compute_hash().into();
+        choices[0] = leaf_node_a.compute_hash(&NativeCrypto).into();
+        choices[1] = leaf_node_b.compute_hash(&NativeCrypto).into();
         let branch_node = BranchNode::new(choices);
         let node = ExtensionNode::new(
             Nibbles::from_hex(vec![0, 0]),
-            branch_node.compute_hash().into(),
+            branch_node.compute_hash(&NativeCrypto).into(),
         );
 
         assert_eq!(
-            node.compute_hash().as_ref(),
+            node.compute_hash(&NativeCrypto).as_ref(),
             &[
                 0xFA, 0xBA, 0x42, 0x79, 0xB3, 0x9B, 0xCD, 0xEB, 0x7C, 0x53, 0x0F, 0xD7, 0x6E, 0x5A,
                 0xA3, 0x48, 0xD3, 0x30, 0x76, 0x26, 0x14, 0x84, 0x55, 0xA0, 0xAE, 0xFE, 0x0F, 0x52,

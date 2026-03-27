@@ -1,7 +1,7 @@
 use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
-    gas_cost::CODE_DEPOSIT_COST,
+    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE},
     utils::create_eth_transfer_log,
     vm::VM,
 };
@@ -73,7 +73,7 @@ impl<'a> VM<'a> {
             // Set bytecode to the newly created contract.
             let contract_address = self.current_call_frame.to;
             let code = self.current_call_frame.output.clone();
-            self.update_account_bytecode(contract_address, Code::from_bytecode(code))?;
+            self.update_account_bytecode(contract_address, Code::from_bytecode(code, self.crypto))?;
         }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
@@ -156,31 +156,52 @@ impl<'a> VM<'a> {
 
     /// Validates that the contract creation was successful, otherwise it returns an ExceptionalHalt.
     fn validate_contract_creation(&mut self) -> Result<(), VMError> {
-        let callframe = &mut self.current_call_frame;
-        let code = &callframe.output;
+        let fork = self.env.config.fork;
+        let code = &self.current_call_frame.output;
 
         let code_length: u64 = code
             .len()
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?;
 
-        let code_deposit_cost: u64 = code_length
-            .checked_mul(CODE_DEPOSIT_COST)
-            .ok_or(InternalError::Overflow)?;
-
-        // Revert Scenarios
         // 1. If the first byte of code is 0xEF
         if code.first().is_some_and(|v| v == &EOF_PREFIX) {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 
-        // 2. If the code_length > MAX_CODE_SIZE
-        if code_length > MAX_CODE_SIZE {
-            return Err(ExceptionalHalt::ContractOutputTooBig.into());
-        }
+        // EIP-8037 (Amsterdam+): Per EELS process_create_message (bal@v5.4.0):
+        // 1. Size check first (reject oversized before any gas charges)
+        // 2. Keccak hash cost (regular gas)
+        // 3. State gas for code deposit
+        if fork >= Fork::Amsterdam {
+            // Size check BEFORE gas charges
+            if code_length > AMSTERDAM_MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
 
-        // 3. current_consumed_gas + code_deposit_cost > gas_limit
-        callframe.increase_consumed_gas(code_deposit_cost)?;
+            let words = code_length.div_ceil(32);
+            let regular = words
+                .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
+                .ok_or(InternalError::Overflow)?;
+            let state = code_length
+                .checked_mul(COST_PER_STATE_BYTE)
+                .ok_or(InternalError::Overflow)?;
+
+            // Regular gas (keccak hash cost) before state gas
+            self.current_call_frame.increase_consumed_gas(regular)?;
+            if state > 0 {
+                self.increase_state_gas(state)?;
+            }
+        } else {
+            // Pre-Amsterdam: size check first, then regular gas charge
+            if code_length > MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
+            let regular = code_length
+                .checked_mul(CODE_DEPOSIT_COST)
+                .ok_or(InternalError::Overflow)?;
+            self.current_call_frame.increase_consumed_gas(regular)?;
+        }
 
         Ok(())
     }
