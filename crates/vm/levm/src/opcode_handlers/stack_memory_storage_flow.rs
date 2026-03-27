@@ -282,20 +282,13 @@ impl OpcodeHandler for OpSStoreHandler {
         // the slot MUST appear as a read because the implicit SLOAD has already happened.
         vm.record_storage_slot_to_bal(to, storage_slot_key);
 
-        let sstore_cost = gas_cost::sstore(
-            original_value,
-            current_value,
-            value,
-            storage_slot_was_cold,
-        )?;
-        vm.current_call_frame.increase_consumed_gas(sstore_cost)?;
-
-        eprintln!(
-            "SSTORE_DEBUG addr={:?} key={:?} orig={} cur={} new={} cold={} cost={} refund_before={}",
-            to, key, original_value, current_value, value,
-            storage_slot_was_cold, sstore_cost, vm.substate.refunded_gas
-        );
-
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::sstore(
+                original_value,
+                current_value,
+                value,
+                storage_slot_was_cold,
+            )?)?;
         if value != current_value {
             // EIP-2929
             const REMOVE_SLOT_COST: i64 = 4800;

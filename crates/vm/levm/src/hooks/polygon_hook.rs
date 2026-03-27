@@ -90,21 +90,6 @@ impl Hook for PolygonHook {
         // Polygon gas computation: same EIP-7623 floor gas as Ethereum Prague.
         let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 
-        // Debug: dump gas breakdown for diagnosis
-        let intrinsic = vm.get_intrinsic_gas().unwrap_or(0);
-        let gas_remaining = vm.current_call_frame.gas_remaining;
-        eprintln!(
-            "POLYGON_GAS_DEBUG origin={:?} gas_pre_refund={} refund_accrued={} refund_capped={} gas_spent={} gas_limit={} intrinsic={} gas_remaining={}",
-            vm.env.origin,
-            gas_used_pre_refund,
-            vm.substate.refunded_gas,
-            gas_refunded,
-            gas_spent,
-            vm.env.gas_limit,
-            intrinsic,
-            gas_remaining,
-        );
-
         refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
 
         let gas_spent_u256 = U256::from(gas_spent);
