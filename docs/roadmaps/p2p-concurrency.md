@@ -50,7 +50,6 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P1 | ~~Update existing contact ENR on NODES response~~ | [#6172](https://github.com/lambdaclass/ethrex/pull/6172) | **Merged** (Feb 19) |
 | P1 | ~~Detect external IP via PONG recipient_addr voting~~ | [#5914](https://github.com/lambdaclass/ethrex/pull/5914), [#5851](https://github.com/lambdaclass/ethrex/issues/5851) | **Merged** (Feb 24) |
 | P1 | ~~Add anti-amplification check to discv5 handle_find_node~~ | [#6200](https://github.com/lambdaclass/ethrex/pull/6200) | **Merged** (Feb 23) |
-| P1 | ~~P2P sync stall fixes and discovery hardening~~ | [#6394](https://github.com/lambdaclass/ethrex/pull/6394) | **Merged** (Mar 25) |
 | P1 | Validate PONG req_id matches a pending ping | [#6167](https://github.com/lambdaclass/ethrex/issues/6167) | Open issue |
 | P1 | Fix discv5 Hive test failures | [#6401](https://github.com/lambdaclass/ethrex/pull/6401) | Open PR |
 | P2 | Prune session_ips in cleanup_stale_entries | [#6404](https://github.com/lambdaclass/ethrex/issues/6404) | Open issue |
@@ -103,7 +102,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P1 | ~~Avoid double authdata allocation in discv5 header~~ | [#5811](https://github.com/lambdaclass/ethrex/pull/5811) | **Merged** (Mar 2) |
 | P1 | ~~Fix consistent encoding for blob tx size in NewPooledTransactionHashes~~ | [#6256](https://github.com/lambdaclass/ethrex/pull/6256) | **Merged** (Feb 24) |
 | P1 | ~~Fix broadcast_pool race and offload tx pool insertion~~ | [#6253](https://github.com/lambdaclass/ethrex/pull/6253) | **Merged** (Feb 24) |
-| P1 | ~~Implement eth/70 partial receipt fetching~~ | [#6327](https://github.com/lambdaclass/ethrex/pull/6327) (EIP-7542) | **Merged** (Mar 25) |
+| P1 | ~~Implement eth/70 partial receipt fetching~~ | [#6327](https://github.com/lambdaclass/ethrex/pull/6327) (EIP-7542) | **Merged** (Mar 12) |
 | P1 | Implement eth/71 Block Access List exchange | [#6306](https://github.com/lambdaclass/ethrex/pull/6306) (EIP-8159) | Open PR |
 | P1 | Compute RLPx capability message ID dynamically | [#4545](https://github.com/lambdaclass/ethrex/issues/4545) | Open issue |
 | P2 | Remove magic numbers in rlpx/connection | [#4123](https://github.com/lambdaclass/ethrex/issues/4123) | Open issue |
@@ -256,7 +255,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Category | Open Issues | Open PRs | Merged |
 |----------|-------------|----------|--------|
-| Discovery Protocol | 3 | 3 (#6383, #6408, #6398) | 5 (#5909, #5962, #6015, #6354, #6394) |
+| Discovery Protocol | 3 | 3 (#6383, #6408, #6398) | 4 (#5909, #5962, #6015, #6354) |
 | Discovery Security | 4 (#6167, #6404, #6030, #5493) | 2 (#6401, #6343) | 7 (#6055, #5910, #6172, #6109, #5914, #6200, #6394) |
 | Discovery Tests | 2 (#5993, #5994) | 1 (#6343) | 0 |
 | Peer Management | 6 | 0 | 1 (#6272) |
@@ -266,7 +265,7 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | Parallel Operations | 2 | 3 | 2 (#6079, #6191) |
 | GenServer Migration | 5 | 2 (#5599, #6295) | 0 |
 | Blocking/Performance | 3 | 1 | 0 |
-| **Total** | **36** | **21** | **21** |
+| **Total** | **36** | **21** | **20** |
 
 ---
 
