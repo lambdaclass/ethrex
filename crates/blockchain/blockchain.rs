@@ -699,6 +699,26 @@ impl Blockchain {
                         }
 
                         // Validate execution went alright
+                        if matches!(self.options.r#type, BlockchainType::Polygon)
+                            && execution_result.block_gas_used != block.header.gas_used
+                        {
+                            // Compact dump: one line per receipt with cumulative gas
+                            let gas_list: Vec<String> = execution_result.receipts.iter().enumerate()
+                                .map(|(i, r)| format!("{}:{}", i, r.cumulative_gas_used))
+                                .collect();
+                            warn!(
+                                block_number = block.header.number,
+                                gas_used = execution_result.block_gas_used,
+                                expected = block.header.gas_used,
+                                diff = execution_result.block_gas_used as i64 - block.header.gas_used as i64,
+                                receipt_count = execution_result.receipts.len(),
+                                "Pipeline: Gas mismatch"
+                            );
+                            // Print in chunks to avoid log line limits
+                            for chunk in gas_list.chunks(50) {
+                                warn!(receipts = chunk.join(","), "Pipeline: Gas cumulative");
+                            }
+                        }
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
 
                         // Diagnostic logging for receipts root mismatch (Polygon debugging)
