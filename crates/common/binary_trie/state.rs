@@ -273,6 +273,11 @@ impl BinaryTrieState {
         self.last_flushed_block
     }
 
+    /// Returns the flush threshold (number of blocks between disk commits).
+    pub fn flush_threshold(&self) -> u64 {
+        self.flush_threshold
+    }
+
     /// Reload the trie and storage keys from the last disk checkpoint,
     /// discarding all in-memory mutations since the last flush.
     ///
