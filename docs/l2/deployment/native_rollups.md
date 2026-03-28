@@ -358,11 +358,21 @@ cd ~/Documents/blockscout/docker-compose
 docker compose -f geth.yml up -d
 ```
 
-Wait ~30 seconds for indexing, then open http://localhost.
+Wait for Blockscout to finish indexing before proceeding. The more blocks L1 has already mined, the longer this takes (typically 1-2 minutes). You can check progress at http://localhost or via the API:
+
+```shell
+curl -s 'http://localhost/api/v2/main-page/indexing-status' | python3 -m json.tool
+# Wait until "finished_indexing_blocks": true and "indexed_blocks_ratio": "1.00"
+```
+
+Then open http://localhost.
 
 #### Verify the NativeRollup contract
 
 Verifying the contract in Blockscout lets it decode function selectors (like `0x069c7eee`) into human-readable method names (like `advance`). This uses Blockscout's built-in verification API — it's completely local and free.
+
+> [!IMPORTANT]
+> The contract must be fully indexed before verification works. If the script fails with `Address is not a smart-contract`, wait another 30 seconds and retry — Blockscout is still processing.
 
 From the ethrex repo root, run:
 

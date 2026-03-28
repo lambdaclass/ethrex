@@ -120,9 +120,31 @@ def main():
 
     print(f"Flattening NativeRollup.sol + MPTProof.sol...")
     source = flatten_source()
+    standard_input = build_standard_input(source)
+
+    # Wait for Blockscout to recognize the address as a smart contract.
+    # This can take 1-2 minutes depending on how many blocks need indexing.
+    print(f"Waiting for Blockscout to index {address}...")
+    for attempt in range(30):
+        try:
+            conn = http.client.HTTPConnection(host, port)
+            conn.request("GET", f"/api/v2/smart-contracts/{address}")
+            resp = conn.getresponse()
+            body = resp.read()
+            conn.close()
+            if resp.status == 200:
+                print(f"  Contract indexed after {attempt * 5}s")
+                break
+        except Exception:
+            pass
+        if attempt < 29:
+            time.sleep(5)
+    else:
+        print("Timed out waiting for Blockscout to index the contract (150s).", file=sys.stderr)
+        print("Check that Blockscout is running and connected to L1.", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Submitting verification for {address} to {blockscout_url}...")
-    standard_input = build_standard_input(source)
     result = submit_verification(host, port, address, standard_input)
     print(f"  {result.get('message', result)}")
 
