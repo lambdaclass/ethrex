@@ -27,11 +27,13 @@ rustc-hash.workspace = true
 rayon.workspace = true
 
 bitvec = { version = "1.0.1", features = ["alloc"] }
+ssz = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
 
 [dev-dependencies]
 hex.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
+ethrex-trie = { workspace = true }
 
 [features]
 default = []
@@ -39,6 +41,7 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
+stateless-validation = ["ethrex-common/stateless-validation", "dep:ssz"]
 perf_opcode_timings = []
 # zkVM feature stubs — implementations have moved to ethrex-crypto's NativeCrypto/ZkVMCrypto
 sp1 = []

@@ -7,6 +7,7 @@ use crate::l2::fees::{
     GetOperatorFeeVaultAddress,
 };
 use crate::l2::messages::GetL1MessageProof;
+use crate::l2::native_withdrawal_proof::GetNativeWithdrawalProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
 use axum::{Json, Router, http::StatusCode, routing::post};
@@ -110,6 +111,8 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil,
             block_worker_channel,
+            #[cfg(feature = "stateless-validation")]
+            proof_engine: None,
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -238,6 +241,7 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_getOperatorFee" => GetOperatorFee::call(req, context).await,
         "ethrex_getL1FeeVaultAddress" => GetL1FeeVaultAddress::call(req, context).await,
         "ethrex_getL1BlobBaseFee" => GetL1BlobBaseFeeRequest::call(req, context).await,
+        "ethrex_getNativeWithdrawalProof" => GetNativeWithdrawalProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
         }

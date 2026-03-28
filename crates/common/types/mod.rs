@@ -11,6 +11,8 @@ pub mod l2;
 pub mod payload;
 mod receipt;
 pub mod requests;
+#[cfg(feature = "stateless-validation")]
+pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;
 
