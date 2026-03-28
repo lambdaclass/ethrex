@@ -5,6 +5,8 @@ pub mod fork_choice;
 pub mod payload;
 #[cfg(feature = "stateless-validation")]
 pub mod proof;
+#[cfg(feature = "stateless-validation")]
+pub mod proof_types;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},

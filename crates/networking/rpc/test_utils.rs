@@ -260,7 +260,8 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            Default::default(),
+            #[cfg(feature = "stateless-validation")]
+            None,
         )
         .await
         .unwrap()
@@ -296,7 +297,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
         #[cfg(feature = "stateless-validation")]
-        proof_engine: None,
+        proof_coordinator: None,
     }
 }
 

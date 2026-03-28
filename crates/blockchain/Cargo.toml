@@ -25,6 +25,7 @@ spawned-concurrency = { workspace = true, optional = true }
 ethrex-guest-program = { workspace = true, optional = true, default-features = false }
 ssz = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
 ssz-merkle = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
+ethrex-prover = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
@@ -59,6 +60,9 @@ stateless-validation = [
     "dep:ethrex-guest-program",
     "dep:ssz",
     "dep:ssz-merkle",
+    "dep:ethrex-prover",
+    "tokio/io-util",
+    "tokio/net",
 ]
 
 [lints.clippy]

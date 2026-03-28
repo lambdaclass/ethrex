@@ -43,9 +43,15 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
+<<<<<<< HEAD
 # EIP-8025 SSZ dependencies (optional)
 ssz-merkle = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
 ssz-types = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
+=======
+# EIP-8025 dependencies (optional)
+ssz-merkle = { git = "https://github.com/lambdaclass/libssz", optional = true }
+ssz-types = { git = "https://github.com/lambdaclass/libssz", optional = true }
+>>>>>>> origin/eip-8025
 
 # Clients
 envy = "0.4.2"

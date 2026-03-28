@@ -550,6 +550,14 @@ pub enum Subcommand {
         #[arg(short = 'e', long, default_value = "http://localhost:8545")]
         endpoint: String,
 
+        /// Authenticated RPC endpoint URL (for engine namespace)
+        #[arg(long = "authrpc.endpoint", default_value = "http://localhost:8551")]
+        authrpc_endpoint: String,
+
+        /// Path to JWT secret file for authenticated RPC (hex-encoded)
+        #[arg(long = "authrpc.jwtsecret")]
+        authrpc_jwtsecret: Option<String>,
+
         /// Path to command history file
         #[arg(long, default_value = "~/.ethrex/history")]
         history_file: String,
@@ -557,6 +565,14 @@ pub enum Subcommand {
         /// Execute a single command and exit
         #[arg(short = 'x', long)]
         execute: Option<String>,
+
+        /// Port to listen for EIP-8025 proof callbacks (GeneratedProof POSTs)
+        #[arg(long = "proof-callback-port", default_value = "9200")]
+        proof_callback_port: u16,
+
+        /// Timeout in seconds for the proof callback listener (proof generation can take minutes)
+        #[arg(long = "proof-callback-timeout", default_value = "300")]
+        proof_callback_timeout: u64,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -662,10 +678,23 @@ impl Subcommand {
             }
             Subcommand::Repl {
                 endpoint,
+                authrpc_endpoint,
+                authrpc_jwtsecret,
                 history_file,
                 execute,
+                proof_callback_port,
+                proof_callback_timeout,
             } => {
-                ethrex_repl::run(endpoint, history_file, execute).await;
+                ethrex_repl::run(
+                    endpoint,
+                    authrpc_endpoint,
+                    authrpc_jwtsecret,
+                    history_file,
+                    execute,
+                    proof_callback_port,
+                    proof_callback_timeout,
+                )
+                .await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
