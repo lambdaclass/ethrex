@@ -8,7 +8,7 @@ For architecture and implementation details, see [docs/eip-8025.md](eip-8025.md)
 
 ## Prerequisites
 
-Build ethrex with the `eip-8025` feature and the L1 prover binary:
+Build ethrex with the `stateless-validation` feature and the L1 prover binary:
 
 ```bash
 cargo build --release --features stateless-validation,dev --bin ethrex
@@ -16,6 +16,12 @@ cargo build --release --features "stateless-validation,l1-prover-bin" -p ethrex-
 ```
 
 Ensure `jwt.hex` exists in the repo root (generated automatically by the node on first run if missing).
+
+Clean up any previous state to avoid stale proof data:
+
+```bash
+rm -rf /tmp/ethrex_eip8025
+```
 
 ---
 
@@ -25,24 +31,25 @@ The demo uses three terminals:
 
 | Terminal | Component | Role |
 |----------|-----------|------|
-| 1 | ethrex node | L1 execution client with proof engine |
+| 1 | ethrex node | L1 execution client with proof coordinator |
 | 2 | L1 prover | Connects to coordinator, pulls work, executes |
 | 3 | ethrex-repl | Interactive demo driver (acts as mock beacon node) |
 
 ### Terminal 1: Start the Node
 
 ```bash
-cargo run --release --features stateless-validation --bin ethrex -- \
+./target/release/ethrex \
   --network fixtures/genesis/l1.json \
   --http.port 8545 \
   --authrpc.port 8551 \
   --authrpc.jwtsecret jwt.hex \
   --syncmode full \
   --p2p.disabled \
+  --datadir /tmp/ethrex_eip8025 \
   --proof.callback-url http://localhost:9200
 ```
 
-Verify the proof engine started:
+Verify the proof coordinator started:
 ```
 L1 ProofCoordinator bound to 127.0.0.1:9100
 EIP-8025 proof coordinator started
@@ -63,7 +70,7 @@ The prover polls the coordinator every 2 seconds. When there is no pending work 
 ### Terminal 3: Start the REPL
 
 ```bash
-cargo run --release -p ethrex-repl -- \
+./target/release/ethrex-repl \
   -e http://localhost:8545 \
   --authrpc.jwtsecret jwt.hex
 ```
@@ -159,7 +166,7 @@ proof = engine.requestProofsV1 $payload.executionPayload [] 0x000000000000000000
 
 Expected: a `ProofGenId` (8-byte hex string, e.g. `"0x00000001abcdef01"`). Stored in `$proof` for later retrieval.
 
-Internally, the proof engine:
+Internally, the proof coordinator:
 1. Re-executes the block to generate an `ExecutionWitness`
 2. Builds a `ProgramInput` (block + witness)
 3. Computes the SSZ `hash_tree_root` of the `NewPayloadRequest`
@@ -324,4 +331,4 @@ For blocks with no transactions, withdrawals, or execution requests, use these S
 | `verifyNewPayloadRequestHeaderV1` returns `SYNCING` | No proof stored yet | Wait for the prover to submit, or check prover logs for errors |
 | Prover shows no output after starting | Idle message is `debug!`-level and suppressed at `RUST_LOG=info` — this is normal | The first visible log appears only when a proof is requested |
 | Port 9100 "Address already in use" | Previous node process still running | Kill stale processes: `pkill -9 -f ethrex` and wait a few seconds |
-| Prover polls but finds no work despite `requestProofsV1` succeeding | Stale proofs from a previous run in the data directory | Delete the data directory (default: `~/Library/Application Support/ethrex` on macOS, `~/.local/share/ethrex` on Linux) and restart the node |
+| Prover polls but finds no work despite `requestProofsV1` succeeding | Stale proofs from a previous run in the data directory | Delete the data directory (`rm -rf /tmp/ethrex_eip8025`) and restart the node |
