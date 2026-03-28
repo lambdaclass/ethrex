@@ -4,14 +4,14 @@ use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        AccountState, BlockHeader, ChainConfig,
+        BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError, RpcExecutionWitness},
     },
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie};
 use serde_json::Value;
 use tracing::debug;
 

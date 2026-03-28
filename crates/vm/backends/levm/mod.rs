@@ -237,6 +237,7 @@ impl LEVM {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,

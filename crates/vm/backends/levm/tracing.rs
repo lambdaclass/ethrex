@@ -54,6 +54,7 @@ impl LEVM {
     }
 
     /// Run transaction with callTracer activated.
+    #[allow(clippy::too_many_arguments)]
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,

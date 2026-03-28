@@ -14,7 +14,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -648,7 +648,7 @@ fn collect_accounts_from_node(
     nodes: &BTreeMap<H256, Node>,
     crypto: &dyn Crypto,
 ) {
-    use ethrex_trie::{Nibbles, NodeRef};
+    use ethrex_trie::NodeRef;
 
     match node {
         Node::Branch(branch) => {
