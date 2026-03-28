@@ -21,6 +21,8 @@ participants:
   cl_image: ethpandaops/lodestar:bal-devnet-3
   el_type: ethrex
   el_image: ethrex:local
+  el_extra_params:
+  - --syncmode=full
   count: 1
 ethereum_genesis_generator_params:
   image: ethpandaops/ethereum-genesis-generator:5.3.1

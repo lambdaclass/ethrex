@@ -2,7 +2,7 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM},
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -397,9 +397,14 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
 
-    // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+    // floor_cost_by_tokens = TX_BASE_COST + floor_per_token * tokens_in_calldata
+    let floor_per_token = if vm.env.config.fork >= Fork::Amsterdam {
+        TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM
+    } else {
+        TOTAL_COST_FLOOR_PER_TOKEN
+    };
     let floor_cost_by_tokens = tokens_in_calldata
-        .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+        .checked_mul(floor_per_token)
         .ok_or(InternalError::Overflow)?
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
