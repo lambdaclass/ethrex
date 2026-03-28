@@ -164,47 +164,86 @@ impl NativeL1Advancer {
                 );
                 // Log all differing fields
                 if block_header.parent_hash != reconstructed.header.parent_hash {
-                    error!("  parent_hash: {:?} vs {:?}", block_header.parent_hash, reconstructed.header.parent_hash);
+                    error!(
+                        "  parent_hash: {:?} vs {:?}",
+                        block_header.parent_hash, reconstructed.header.parent_hash
+                    );
                 }
                 if block_header.ommers_hash != reconstructed.header.ommers_hash {
-                    error!("  ommers_hash: {:?} vs {:?}", block_header.ommers_hash, reconstructed.header.ommers_hash);
+                    error!(
+                        "  ommers_hash: {:?} vs {:?}",
+                        block_header.ommers_hash, reconstructed.header.ommers_hash
+                    );
                 }
                 if block_header.state_root != reconstructed.header.state_root {
-                    error!("  state_root: {:?} vs {:?}", block_header.state_root, reconstructed.header.state_root);
+                    error!(
+                        "  state_root: {:?} vs {:?}",
+                        block_header.state_root, reconstructed.header.state_root
+                    );
                 }
                 if block_header.transactions_root != reconstructed.header.transactions_root {
-                    error!("  transactions_root: {:?} vs {:?}", block_header.transactions_root, reconstructed.header.transactions_root);
+                    error!(
+                        "  transactions_root: {:?} vs {:?}",
+                        block_header.transactions_root, reconstructed.header.transactions_root
+                    );
                 }
                 if block_header.receipts_root != reconstructed.header.receipts_root {
-                    error!("  receipts_root: {:?} vs {:?}", block_header.receipts_root, reconstructed.header.receipts_root);
+                    error!(
+                        "  receipts_root: {:?} vs {:?}",
+                        block_header.receipts_root, reconstructed.header.receipts_root
+                    );
                 }
                 if block_header.logs_bloom != reconstructed.header.logs_bloom {
                     error!("  logs_bloom differs");
                 }
                 if block_header.base_fee_per_gas != reconstructed.header.base_fee_per_gas {
-                    error!("  base_fee: {:?} vs {:?}", block_header.base_fee_per_gas, reconstructed.header.base_fee_per_gas);
+                    error!(
+                        "  base_fee: {:?} vs {:?}",
+                        block_header.base_fee_per_gas, reconstructed.header.base_fee_per_gas
+                    );
                 }
                 if block_header.withdrawals_root != reconstructed.header.withdrawals_root {
-                    error!("  withdrawals_root: {:?} vs {:?}", block_header.withdrawals_root, reconstructed.header.withdrawals_root);
+                    error!(
+                        "  withdrawals_root: {:?} vs {:?}",
+                        block_header.withdrawals_root, reconstructed.header.withdrawals_root
+                    );
                 }
                 if block_header.blob_gas_used != reconstructed.header.blob_gas_used {
-                    error!("  blob_gas_used: {:?} vs {:?}", block_header.blob_gas_used, reconstructed.header.blob_gas_used);
+                    error!(
+                        "  blob_gas_used: {:?} vs {:?}",
+                        block_header.blob_gas_used, reconstructed.header.blob_gas_used
+                    );
                 }
                 if block_header.excess_blob_gas != reconstructed.header.excess_blob_gas {
-                    error!("  excess_blob_gas: {:?} vs {:?}", block_header.excess_blob_gas, reconstructed.header.excess_blob_gas);
+                    error!(
+                        "  excess_blob_gas: {:?} vs {:?}",
+                        block_header.excess_blob_gas, reconstructed.header.excess_blob_gas
+                    );
                 }
-                if block_header.parent_beacon_block_root != reconstructed.header.parent_beacon_block_root {
-                    error!("  parent_beacon_block_root: {:?} vs {:?}", block_header.parent_beacon_block_root, reconstructed.header.parent_beacon_block_root);
+                if block_header.parent_beacon_block_root
+                    != reconstructed.header.parent_beacon_block_root
+                {
+                    error!(
+                        "  parent_beacon_block_root: {:?} vs {:?}",
+                        block_header.parent_beacon_block_root,
+                        reconstructed.header.parent_beacon_block_root
+                    );
                 }
                 if block_header.requests_hash != reconstructed.header.requests_hash {
-                    error!("  requests_hash: {:?} vs {:?}", block_header.requests_hash, reconstructed.header.requests_hash);
+                    error!(
+                        "  requests_hash: {:?} vs {:?}",
+                        block_header.requests_hash, reconstructed.header.requests_hash
+                    );
                 }
                 if block_header.extra_data != reconstructed.header.extra_data {
-                    error!("  extra_data: {:?} vs {:?}", block_header.extra_data, reconstructed.header.extra_data);
+                    error!(
+                        "  extra_data: {:?} vs {:?}",
+                        block_header.extra_data, reconstructed.header.extra_data
+                    );
                 }
-                return Err(NativeL1AdvancerError::Encoding(
-                    format!("SSZ round-trip hash mismatch: original={original_hash:?} reconstructed={reconstructed_hash:?}")
-                ));
+                return Err(NativeL1AdvancerError::Encoding(format!(
+                    "SSZ round-trip hash mismatch: original={original_hash:?} reconstructed={reconstructed_hash:?}"
+                )));
             }
             info!("SSZ round-trip OK: block_hash={:?}", original_hash);
         }
@@ -234,7 +273,9 @@ impl NativeL1Advancer {
             &[
                 Value::Uint(U256::from(l1_messages_count)),
                 Value::Bytes(Bytes::from(ssz_input.to_vec())),
-                Value::FixedBytes(Bytes::from(header.compute_block_hash(&NativeCrypto).as_bytes().to_vec())),
+                Value::FixedBytes(Bytes::from(
+                    header.compute_block_hash(&NativeCrypto).as_bytes().to_vec(),
+                )),
                 Value::FixedBytes(Bytes::from(header.state_root.as_bytes().to_vec())),
             ],
         )
@@ -506,9 +547,9 @@ impl GenServer for NativeL1Advancer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::{Block, BlockBody, BlockHeader};
-    use ethrex_common::types::block_execution_witness::ExecutionWitness;
     use ethrex_common::H256;
+    use ethrex_common::types::block_execution_witness::ExecutionWitness;
+    use ethrex_common::types::{Block, BlockBody, BlockHeader};
     use ethrex_crypto::NativeCrypto;
     use std::sync::Arc;
 
@@ -539,7 +580,10 @@ mod tests {
             prev_randao: H256::zero(),
             extra_data: bytes::Bytes::new(),
             // Shanghai fields
-            withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(&[], &NativeCrypto)),
+            withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(
+                &[],
+                &NativeCrypto,
+            )),
             // Cancun fields (present in L2 blocks even though chain is Shanghai)
             blob_gas_used: Some(0),
             excess_blob_gas: Some(0),
@@ -588,27 +632,90 @@ mod tests {
         let reconstructed_hash = reconstructed_block.hash();
 
         // Compare field by field to make debugging easier
-        assert_eq!(header.parent_hash, reconstructed_block.header.parent_hash, "parent_hash mismatch");
-        assert_eq!(header.coinbase, reconstructed_block.header.coinbase, "coinbase mismatch");
-        assert_eq!(header.state_root, reconstructed_block.header.state_root, "state_root mismatch");
-        assert_eq!(header.transactions_root, reconstructed_block.header.transactions_root, "transactions_root mismatch");
-        assert_eq!(header.receipts_root, reconstructed_block.header.receipts_root, "receipts_root mismatch");
-        assert_eq!(header.number, reconstructed_block.header.number, "number mismatch");
-        assert_eq!(header.gas_limit, reconstructed_block.header.gas_limit, "gas_limit mismatch");
-        assert_eq!(header.gas_used, reconstructed_block.header.gas_used, "gas_used mismatch");
-        assert_eq!(header.timestamp, reconstructed_block.header.timestamp, "timestamp mismatch");
-        assert_eq!(header.base_fee_per_gas, reconstructed_block.header.base_fee_per_gas, "base_fee_per_gas mismatch");
-        assert_eq!(header.prev_randao, reconstructed_block.header.prev_randao, "prev_randao mismatch");
-        assert_eq!(header.extra_data, reconstructed_block.header.extra_data, "extra_data mismatch");
-        assert_eq!(header.withdrawals_root, reconstructed_block.header.withdrawals_root, "withdrawals_root mismatch");
-        assert_eq!(header.blob_gas_used, reconstructed_block.header.blob_gas_used, "blob_gas_used mismatch");
-        assert_eq!(header.excess_blob_gas, reconstructed_block.header.excess_blob_gas, "excess_blob_gas mismatch");
-        assert_eq!(header.parent_beacon_block_root, reconstructed_block.header.parent_beacon_block_root, "parent_beacon_block_root mismatch");
-        assert_eq!(header.requests_hash, reconstructed_block.header.requests_hash, "requests_hash mismatch");
-        assert_eq!(header.logs_bloom, reconstructed_block.header.logs_bloom, "logs_bloom mismatch");
-        assert_eq!(header.difficulty, reconstructed_block.header.difficulty, "difficulty mismatch");
-        assert_eq!(header.nonce, reconstructed_block.header.nonce, "nonce mismatch");
-        assert_eq!(header.ommers_hash, reconstructed_block.header.ommers_hash, "ommers_hash mismatch");
+        assert_eq!(
+            header.parent_hash, reconstructed_block.header.parent_hash,
+            "parent_hash mismatch"
+        );
+        assert_eq!(
+            header.coinbase, reconstructed_block.header.coinbase,
+            "coinbase mismatch"
+        );
+        assert_eq!(
+            header.state_root, reconstructed_block.header.state_root,
+            "state_root mismatch"
+        );
+        assert_eq!(
+            header.transactions_root, reconstructed_block.header.transactions_root,
+            "transactions_root mismatch"
+        );
+        assert_eq!(
+            header.receipts_root, reconstructed_block.header.receipts_root,
+            "receipts_root mismatch"
+        );
+        assert_eq!(
+            header.number, reconstructed_block.header.number,
+            "number mismatch"
+        );
+        assert_eq!(
+            header.gas_limit, reconstructed_block.header.gas_limit,
+            "gas_limit mismatch"
+        );
+        assert_eq!(
+            header.gas_used, reconstructed_block.header.gas_used,
+            "gas_used mismatch"
+        );
+        assert_eq!(
+            header.timestamp, reconstructed_block.header.timestamp,
+            "timestamp mismatch"
+        );
+        assert_eq!(
+            header.base_fee_per_gas, reconstructed_block.header.base_fee_per_gas,
+            "base_fee_per_gas mismatch"
+        );
+        assert_eq!(
+            header.prev_randao, reconstructed_block.header.prev_randao,
+            "prev_randao mismatch"
+        );
+        assert_eq!(
+            header.extra_data, reconstructed_block.header.extra_data,
+            "extra_data mismatch"
+        );
+        assert_eq!(
+            header.withdrawals_root, reconstructed_block.header.withdrawals_root,
+            "withdrawals_root mismatch"
+        );
+        assert_eq!(
+            header.blob_gas_used, reconstructed_block.header.blob_gas_used,
+            "blob_gas_used mismatch"
+        );
+        assert_eq!(
+            header.excess_blob_gas, reconstructed_block.header.excess_blob_gas,
+            "excess_blob_gas mismatch"
+        );
+        assert_eq!(
+            header.parent_beacon_block_root, reconstructed_block.header.parent_beacon_block_root,
+            "parent_beacon_block_root mismatch"
+        );
+        assert_eq!(
+            header.requests_hash, reconstructed_block.header.requests_hash,
+            "requests_hash mismatch"
+        );
+        assert_eq!(
+            header.logs_bloom, reconstructed_block.header.logs_bloom,
+            "logs_bloom mismatch"
+        );
+        assert_eq!(
+            header.difficulty, reconstructed_block.header.difficulty,
+            "difficulty mismatch"
+        );
+        assert_eq!(
+            header.nonce, reconstructed_block.header.nonce,
+            "nonce mismatch"
+        );
+        assert_eq!(
+            header.ommers_hash, reconstructed_block.header.ommers_hash,
+            "ommers_hash mismatch"
+        );
 
         // The final check: block hash must match
         assert_eq!(

@@ -61,6 +61,7 @@ stateless-validation = [
     "dep:ssz",
     "dep:ssz-merkle",
     "dep:ethrex-prover",
+    "ethrex-prover?/stateless-validation",
     "tokio/io-util",
     "tokio/net",
 ]

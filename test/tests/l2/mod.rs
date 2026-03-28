@@ -3,11 +3,11 @@ mod error_selectors;
 mod integration_tests;
 #[cfg(feature = "stateless-validation")]
 mod native_rollup;
-#[cfg(feature = "stateless-validation")]
-mod ssz_round_trip;
 mod sdk;
 #[cfg(feature = "l2")]
 mod shared_bridge;
+#[cfg(feature = "stateless-validation")]
+mod ssz_round_trip;
 #[cfg(feature = "l2")]
 mod state_reconstruct;
 mod storage;

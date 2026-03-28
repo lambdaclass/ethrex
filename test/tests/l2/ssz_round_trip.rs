@@ -73,12 +73,11 @@ fn block_to_ssz_to_block_preserves_hash() {
     };
 
     // Block → SSZ
-    let ssz_bytes = build_ssz_stateless_input(&header, &body, &witness)
-        .expect("SSZ encoding failed");
+    let ssz_bytes =
+        build_ssz_stateless_input(&header, &body, &witness).expect("SSZ encoding failed");
 
     // SSZ → deserialize
-    let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes)
-        .expect("SSZ decoding failed");
+    let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes).expect("SSZ decoding failed");
 
     // SSZ → Block
     let reconstructed_block =
@@ -144,7 +143,10 @@ fn block_to_ssz_to_block_preserves_hash() {
         header.difficulty, reconstructed_block.header.difficulty,
         "difficulty mismatch"
     );
-    assert_eq!(header.nonce, reconstructed_block.header.nonce, "nonce mismatch");
+    assert_eq!(
+        header.nonce, reconstructed_block.header.nonce,
+        "nonce mismatch"
+    );
     assert_eq!(
         header.ommers_hash, reconstructed_block.header.ommers_hash,
         "ommers_hash mismatch"

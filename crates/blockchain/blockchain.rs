@@ -48,7 +48,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 #[cfg(feature = "stateless-validation")]
-pub mod proof_engine;
+pub mod proof_coordinator;
 #[cfg(feature = "stateless-validation")]
 pub mod stateless;
 pub mod tracing;

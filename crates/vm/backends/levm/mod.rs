@@ -2,7 +2,6 @@ pub mod db;
 mod tracing;
 
 use super::BlockExecutionResult;
-use ethrex_levm::StatelessValidator;
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -28,6 +27,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
+use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{

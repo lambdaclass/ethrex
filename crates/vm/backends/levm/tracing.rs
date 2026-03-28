@@ -32,7 +32,15 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, crypto, stateless_validator)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                crypto,
+                stateless_validator,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.

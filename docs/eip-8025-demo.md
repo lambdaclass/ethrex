@@ -11,8 +11,8 @@ For architecture and implementation details, see [docs/eip-8025.md](eip-8025.md)
 Build ethrex with the `eip-8025` feature and the L1 prover binary:
 
 ```bash
-cargo build --release --features eip-8025,dev --bin ethrex
-cargo build --release --features "eip-8025,l1-prover-bin" -p ethrex-prover --bin l1_prover
+cargo build --release --features stateless-validation,dev --bin ethrex
+cargo build --release --features "stateless-validation,l1-prover-bin" -p ethrex-prover --bin l1_prover
 ```
 
 Ensure `jwt.hex` exists in the repo root (generated automatically by the node on first run if missing).
@@ -32,7 +32,7 @@ The demo uses three terminals:
 ### Terminal 1: Start the Node
 
 ```bash
-cargo run --release --features eip-8025 --bin ethrex -- \
+cargo run --release --features stateless-validation --bin ethrex -- \
   --network fixtures/genesis/l1.json \
   --http.port 8545 \
   --authrpc.port 8551 \

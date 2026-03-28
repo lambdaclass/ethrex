@@ -497,7 +497,7 @@ async fn send_response<I: serde::Serialize>(
 
 /// Start the proof coordinator and return a handle for sending messages to it.
 ///
-/// Call this during node startup when the `eip-8025` feature is enabled.
+/// Call this during node startup when the `stateless-validation` feature is enabled.
 /// The returned `CoordinatorHandle` is used by RPC handlers to enqueue
 /// new proof requests via `CoordCastMsg::AddRequest`.
 pub async fn start_proof_coordinator(

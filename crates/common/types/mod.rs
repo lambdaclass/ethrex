@@ -5,7 +5,7 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "stateless-validation")]
 pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;

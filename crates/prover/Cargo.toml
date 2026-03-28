@@ -44,7 +44,7 @@ openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", pa
 [[bin]]
 name = "l1_prover"
 path = "src/bin/l1_prover.rs"
-required-features = ["eip-8025", "l1-prover-bin"]
+required-features = ["stateless-validation", "l1-prover-bin"]
 
 [lib]
 name = "ethrex_prover"
@@ -70,7 +70,7 @@ profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda"]
 l2 = ["ethrex-guest-program/l2"]
-eip-8025 = ["ethrex-guest-program/eip-8025", "ethrex-common/eip-8025"]
+stateless-validation = ["ethrex-guest-program/stateless-validation", "ethrex-common/stateless-validation"]
 l1-prover-bin = ["dep:tracing-subscriber"]
 
 # temporary feature until we fix cargo-zisk setup-rom from failing in the CI

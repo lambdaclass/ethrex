@@ -26,7 +26,7 @@ impl ExecBackend {
         let crypto = Arc::new(NativeCrypto);
         // In EIP-8025 mode, execution_program takes (NewPayloadRequest, ExecutionWitness)
         // which doesn't match ProgramInput. Use execute_blocks directly instead.
-        #[cfg(feature = "eip-8025")]
+        #[cfg(feature = "stateless-validation")]
         {
             use ethrex_common::types::ELASTICITY_MULTIPLIER;
             use ethrex_vm::Evm;
@@ -46,7 +46,7 @@ impl ExecBackend {
                 valid: true,
             })
         }
-        #[cfg(not(feature = "eip-8025"))]
+        #[cfg(not(feature = "stateless-validation"))]
         {
             ethrex_guest_program::execution::execution_program(input, crypto)
                 .map_err(BackendError::execution)

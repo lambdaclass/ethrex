@@ -250,7 +250,14 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
     ) -> Result<ExecutionResult, EvmError> {
-        LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref(), self.stateless_validator.as_deref())
+        LEVM::simulate_tx_from_generic(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
+        )
     }
 
     pub fn create_access_list(

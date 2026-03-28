@@ -4,7 +4,7 @@
 //! executes via ExecBackend, and submits the proof back.
 //!
 //! Usage:
-//!   cargo run --features eip-8025 -p ethrex-prover --bin l1_prover -- \
+//!   cargo run --features stateless-validation -p ethrex-prover --bin l1_prover -- \
 //!     --coordinator http://localhost:9100
 
 use clap::Parser;

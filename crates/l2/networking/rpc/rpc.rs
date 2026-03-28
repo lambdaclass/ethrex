@@ -112,7 +112,7 @@ pub async fn start_api(
             gas_ceil,
             block_worker_channel,
             #[cfg(feature = "stateless-validation")]
-            proof_engine: None,
+            proof_coordinator: None,
         },
         valid_delegation_addresses,
         sponsor_pk,

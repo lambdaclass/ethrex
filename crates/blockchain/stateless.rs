@@ -167,16 +167,24 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         use ssz::SszDecode;
 
         // Deserialize SSZ input
-        tracing::debug!("StatelessExecutor: deserializing {} bytes of SSZ input", input.len());
-        let stateless_input = SszStatelessInput::from_ssz_bytes(input)
-            .map_err(|e| {
-                tracing::error!("StatelessExecutor: SSZ decode failed: {e}");
-                VMError::Internal(InternalError::Custom(format!("SSZ decode: {e}")))
-            })?;
+        tracing::debug!(
+            "StatelessExecutor: deserializing {} bytes of SSZ input",
+            input.len()
+        );
+        let stateless_input = SszStatelessInput::from_ssz_bytes(input).map_err(|e| {
+            tracing::error!("StatelessExecutor: SSZ decode failed: {e}");
+            VMError::Internal(InternalError::Custom(format!("SSZ decode: {e}")))
+        })?;
         tracing::info!(
             "StatelessExecutor: decoded SSZ input - block_number={}, gas_used={}, chain_id={}, witness_headers={}, witness_state_nodes={}, witness_codes={}",
-            stateless_input.new_payload_request.execution_payload.block_number,
-            stateless_input.new_payload_request.execution_payload.gas_used,
+            stateless_input
+                .new_payload_request
+                .execution_payload
+                .block_number,
+            stateless_input
+                .new_payload_request
+                .execution_payload
+                .gas_used,
             stateless_input.chain_config.chain_id,
             stateless_input.witness.headers.len(),
             stateless_input.witness.state.len(),

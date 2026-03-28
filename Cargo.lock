@@ -3903,6 +3903,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-guest-program",
  "ethrex-metrics",
+ "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
@@ -4326,7 +4327,6 @@ dependencies = [
  "clap",
  "ethrex-common",
  "ethrex-guest-program",
- "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
  "openvm-continuations",
@@ -4344,6 +4344,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber 0.3.22",
  "url",
 ]
 
@@ -4355,6 +4356,7 @@ dependencies = [
  "colored",
  "ethereum-types 0.15.1",
  "hex",
+ "jsonwebtoken",
  "reqwest",
  "rustyline",
  "serde",
