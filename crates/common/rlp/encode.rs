@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethereum_types::U256;
+use alloy_primitives::{Address, Bloom, FixedBytes, U256};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::constants::RLP_NULL;
@@ -321,14 +321,14 @@ impl RLPEncode for String {
 
 impl RLPEncode for U256 {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let leading_zeros_in_bytes: usize = (self.leading_zeros() / 8) as usize;
-        let bytes = self.to_big_endian();
+        let leading_zeros_in_bytes = self.leading_zeros() / 8;
+        let bytes = self.to_be_bytes::<32>();
         bytes[leading_zeros_in_bytes..].encode(buf)
     }
 
     fn length(&self) -> usize {
-        let ilog = self.bits().saturating_sub(1);
-        impl_length_integers(ilog as u32, (self.low_u32() & 0xff) as u8)
+        let ilog = self.bit_len().saturating_sub(1);
+        impl_length_integers(ilog as u32, (self.as_limbs()[0] & 0xff) as u8)
     }
 }
 
@@ -495,104 +495,38 @@ impl RLPEncode for Bytes {
     }
 }
 
-// encoding for Ethereum types
+// encoding for alloy-primitives types
 
-impl RLPEncode for ethereum_types::H32 {
+impl<const N: usize> RLPEncode for FixedBytes<N> {
     fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
+        self.as_slice().encode(buf)
     }
 
     #[inline]
     fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
+        RLPEncode::length(self.as_slice())
     }
 }
 
-impl RLPEncode for ethereum_types::H64 {
+impl RLPEncode for Address {
     fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
+        self.as_slice().encode(buf)
     }
 
     #[inline]
     fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
+        RLPEncode::length(self.as_slice())
     }
 }
 
-impl RLPEncode for ethereum_types::H128 {
+impl RLPEncode for Bloom {
     fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
+        self.as_slice().encode(buf)
     }
 
     #[inline]
     fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::Address {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H256 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H264 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::H512 {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::Signature {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.as_bytes().encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(self.as_bytes())
-    }
-}
-
-impl RLPEncode for ethereum_types::Bloom {
-    fn encode(&self, buf: &mut dyn BufMut) {
-        self.0.encode(buf)
-    }
-
-    #[inline]
-    fn length(&self) -> usize {
-        RLPEncode::length(&self.0)
+        RLPEncode::length(self.as_slice())
     }
 }
 

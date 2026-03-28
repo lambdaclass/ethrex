@@ -152,13 +152,13 @@ mod test {
             )
             .unwrap(),
             logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
+            difficulty: U256::ZERO,
             number: 1,
             gas_limit: 0x016345785d8a0000,
             gas_used: 0xa8de,
             timestamp: 0x03e8,
             extra_data: Bytes::new(),
-            prev_randao: H256::zero(),
+            prev_randao: H256::ZERO,
             nonce: 0x0000000000000000,
             base_fee_per_gas: Some(0x07),
             withdrawals_root: Some(
@@ -169,7 +169,7 @@ mod test {
             ),
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
+            parent_beacon_block_root: Some(H256::ZERO),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };

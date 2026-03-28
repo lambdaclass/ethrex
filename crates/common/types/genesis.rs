@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Address, Bloom, H256, U256};
+use crate::{Address, Bloom, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
@@ -705,7 +705,7 @@ impl Genesis {
         let parent_beacon_block_root = self
             .config
             .is_cancun_activated(self.timestamp)
-            .then_some(H256::zero());
+            .then_some(H256::ZERO);
 
         let requests_hash = self
             .config
@@ -722,13 +722,13 @@ impl Genesis {
         let slot_number = self.slot_number;
 
         BlockHeader {
-            parent_hash: H256::zero(),
+            parent_hash: H256::ZERO,
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
             state_root: self.compute_state_root(),
             transactions_root: compute_transactions_root(&[]),
             receipts_root: compute_receipts_root(&[]),
-            logs_bloom: Bloom::zero(),
+            logs_bloom: Bloom::ZERO,
             difficulty: self.difficulty,
             number: 0,
             gas_limit: self.gas_limit,
@@ -772,7 +772,7 @@ mod tests {
     use std::str::FromStr;
     use std::{fs::File, io::BufReader};
 
-    use ethereum_types::H160;
+    use crate::H160;
 
     use crate::types::INITIAL_BASE_FEE;
 

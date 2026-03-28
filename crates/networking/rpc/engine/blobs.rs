@@ -227,7 +227,7 @@ mod tests {
             cancun_time: Some(0),
             prague_time: Some(0),
             osaka_time: osaka_active.then_some(0),
-            deposit_contract_address: Address::zero(),
+            deposit_contract_address: Address::ZERO,
             ..Default::default()
         }
     }
@@ -317,7 +317,7 @@ mod tests {
     async fn blobs_v3_rejects_too_many_hashes() {
         let context = context_with_chain_config(true).await;
         let request = BlobsV3Request {
-            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
+            blob_versioned_hashes: vec![H256::ZERO; GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
         };
 
         let err = request.handle(context).await.unwrap_err();

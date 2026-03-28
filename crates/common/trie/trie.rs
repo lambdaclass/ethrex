@@ -12,8 +12,10 @@ pub mod threadpool;
 mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
-use ethereum_types::H256;
+use alloy_primitives::B256;
 use ethrex_crypto::keccak::keccak_hash;
+
+pub type H256 = B256;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
 use rustc_hash::FxHashSet;
@@ -38,9 +40,7 @@ use lazy_static::lazy_static;
 
 lazy_static! {
     // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256(
-        keccak_hash([RLP_NULL]),
-    );
+    pub static ref EMPTY_TRIE_HASH: H256 = B256::from(keccak_hash([RLP_NULL]));
 }
 
 /// RLP-encoded trie path

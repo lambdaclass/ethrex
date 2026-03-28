@@ -7,7 +7,6 @@ documentation.workspace = true
 license.workspace = true
 
 [dependencies]
-ethereum-types.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true

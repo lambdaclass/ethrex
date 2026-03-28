@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
-use ethereum_types::{H160, H256, U256};
+use ethrex_common::{AddressExt, H160, H256, U256, U256Ext};
 use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;
@@ -512,7 +512,7 @@ fn build_proxy_init_code(implementation_address: Address) -> Result<Bytes, Deplo
 
     init_code.extend(H256::from(implementation_address).0);
     init_code.extend(H256::from_low_u64_be(0x40).0);
-    init_code.extend(H256::zero().0);
+    init_code.extend(H256::ZERO.0);
 
     Ok(Bytes::from(init_code))
 }

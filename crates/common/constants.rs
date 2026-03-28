@@ -1,11 +1,11 @@
-use crate::{H160, H256};
+use crate::{Address, FixedBytes, H256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::constants::RLP_NULL;
 use std::{str::FromStr, sync::LazyLock};
 
 /// SYSTEM_ADDRESS used for system contract calls and BAL filtering.
 /// 0xfffffffffffffffffffffffffffffffffffffffe
-pub const SYSTEM_ADDRESS: H160 = H160([
+pub const SYSTEM_ADDRESS: Address = Address::new([
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE,
 ]);
@@ -42,7 +42,8 @@ pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
     )
 });
 
-pub static EMPTY_TRIE_HASH: LazyLock<H256> = LazyLock::new(|| H256(keccak_hash([RLP_NULL])));
+pub static EMPTY_TRIE_HASH: LazyLock<H256> =
+    LazyLock::new(|| FixedBytes(keccak_hash([RLP_NULL])));
 
 // Request related
 pub static DEPOSIT_TOPIC: LazyLock<H256> = LazyLock::new(|| {

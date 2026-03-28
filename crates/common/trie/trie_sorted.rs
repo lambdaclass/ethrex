@@ -4,7 +4,7 @@ use crate::{
     threadpool::ThreadPool,
 };
 use crossbeam::channel::{Receiver, Sender, bounded};
-use ethereum_types::H256;
+use crate::H256;
 use std::{sync::Arc, thread::scope};
 
 /// The elements of the stack represent the branch node that is the parent of the current
@@ -204,7 +204,7 @@ where
                 .expect("This channel shouldn't close");
         }
 
-        let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
+        let next_value_path = Nibbles::from_bytes(next_value.0.as_slice());
 
         // If the current parent isn't a parent of the next value, that means
         // that the current value doesn't have a sibling to the right
@@ -364,7 +364,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use ethereum_types::U256;
+    use alloy_primitives::U256;
     use ethrex_rlp::encode::RLPEncode;
 
     use crate::{InMemoryTrieDB, Trie};
@@ -427,7 +427,7 @@ mod test {
         for (string, value) in [
             (
                 "290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563",
-                U256::from_str("1191240792495687806002885977912460542139236513636").unwrap(),
+                U256::from_str_radix("1191240792495687806002885977912460542139236513636", 10).unwrap(),
             ),
             (
                 "295841a49a1089f4b560f91cfbb0133326654dcbb1041861fc5dde96c724a22f",
@@ -446,7 +446,7 @@ mod test {
             "0532f23d3bd5277790ece5a6cb6fc684bc473a91ffe3a0334049527c4f6987e9",
             "0552f23d3bd5277790ece5a6cb6fc684bc473a91ffe3a0334049527c4f6987e9",
         ] {
-            slots.insert(H256::from_str(string).unwrap(), U256::zero());
+            slots.insert(H256::from_str(string).unwrap(), U256::ZERO);
         }
         slots
     }
@@ -467,7 +467,7 @@ mod test {
         let expected_data = Arc::new(Mutex::new(BTreeMap::new()));
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(expected_data.clone())));
         for account in accounts.iter() {
-            trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
+            trie.insert(account.0.as_slice().to_vec(), account.1.encode_to_vec())
                 .unwrap();
         }
 
@@ -499,7 +499,7 @@ mod test {
 
         let mut trie: Trie = Trie::empty_in_memory();
         for account in slots.iter() {
-            trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
+            trie.insert(account.0.as_slice().to_vec(), account.1.encode_to_vec())
                 .unwrap();
         }
 

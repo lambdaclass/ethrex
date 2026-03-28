@@ -1,9 +1,9 @@
 use crate::errors::InternalError;
-use ethrex_common::U256;
+use ethrex_common::{U256, U256Ext};
 
 /// Special constant for debugging. 0xFEDEBEBECAFEDECEBADA
 /// It has to match with the constant set in the Solidity contract for this purpose.
-pub const MAGIC_PRINT_OFFSET: U256 = U256([0xBEBECAFEDECEBADA, 0xFEDE, 0, 0]);
+pub const MAGIC_PRINT_OFFSET: U256 = U256::from_limbs([0xBEBECAFEDECEBADA, 0xFEDE, 0, 0]);
 
 #[derive(Default)]
 pub struct DebugMode {

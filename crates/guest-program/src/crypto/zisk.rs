@@ -1,4 +1,4 @@
-use ethereum_types::Address;
+use ethrex_common::{Address, U256};
 use ethrex_crypto::{Crypto, CryptoError};
 
 use super::shared::{
@@ -85,28 +85,26 @@ impl Crypto for ZiskCrypto {
 
     /// ZisK-accelerated 256-bit modular multiplication via native circuit instruction.
     fn mulmod256(&self, a: &[u8; 32], b: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
-        use ethereum_types::U256;
-
-        let m_u256 = U256::from_big_endian(m);
+        let m_u256 = U256::from_be_bytes(*m);
         if m_u256.is_zero() {
             return [0u8; 32];
         }
 
-        let a_u256 = U256::from_big_endian(a);
-        let b_u256 = U256::from_big_endian(b);
+        let a_u256 = U256::from_be_bytes(*a);
+        let b_u256 = U256::from_be_bytes(*b);
 
-        let mut result = U256::zero();
+        let mut result = U256::ZERO;
         // SAFETY: ziskos FFI is safe when called with valid 4-element u64 arrays.
-        // U256::0 is [u64; 4] in little-endian word order, matching ziskos ABI.
+        // U256 limbs are [u64; 4] in little-endian word order, matching ziskos ABI.
         unsafe {
             ziskos::zisklib::mulmod256_c(
-                a_u256.0.as_ptr(),
-                b_u256.0.as_ptr(),
-                m_u256.0.as_ptr(),
-                result.0.as_mut_ptr(),
+                a_u256.as_limbs().as_ptr(),
+                b_u256.as_limbs().as_ptr(),
+                m_u256.as_limbs().as_ptr(),
+                result.as_limbs_mut().as_mut_ptr(),
             );
         }
-        result.to_big_endian()
+        result.to_be_bytes()
     }
 }
 

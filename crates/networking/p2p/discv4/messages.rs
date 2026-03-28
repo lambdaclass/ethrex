@@ -3,7 +3,7 @@ use crate::{
     utils::{current_unix_time, node_id},
 };
 use bytes::BufMut;
-use ethrex_common::{H256, H512, H520, utils::keccak};
+use ethrex_common::{H256, H512, Signature as H520, utils::keccak};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,

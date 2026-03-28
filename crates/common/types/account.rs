@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bytes::{BufMut, Bytes};
-use ethereum_types::{H256, U256};
+use crate::{H256, H256Ext, U256, U256Ext};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
@@ -184,7 +184,7 @@ impl From<GenesisAccount> for Account {
             storage: genesis
                 .storage
                 .iter()
-                .map(|(k, v)| (H256(k.to_big_endian()), *v))
+                .map(|(k, v)| (H256::new(k.to_big_endian()), *v))
                 .collect(),
         }
     }
@@ -296,7 +296,7 @@ impl RLPDecode for AccountStateSlimCodec {
                         (data, rlp) = rlp
                             .split_first_chunk::<32>()
                             .ok_or(RLPDecodeError::InvalidLength)?;
-                        H256(*data)
+                        H256::new(*data)
                     }
                     _ => return Err(RLPDecodeError::InvalidLength),
                 };
@@ -315,7 +315,7 @@ impl RLPDecode for AccountStateSlimCodec {
                         (data, rlp) = rlp
                             .split_first_chunk::<32>()
                             .ok_or(RLPDecodeError::InvalidLength)?;
-                        H256(*data)
+                        H256::new(*data)
                     }
                     _ => return Err(RLPDecodeError::InvalidLength),
                 };

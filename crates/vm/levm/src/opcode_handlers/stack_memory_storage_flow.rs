@@ -27,7 +27,7 @@ use crate::{
     utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
-use ethrex_common::{H256, U256, types::Fork};
+use ethrex_common::{H256, U256, U256Ext, types::Fork};
 use std::{mem, slice};
 
 /// Implementation for the `POP` opcode.
@@ -50,9 +50,10 @@ impl OpcodeHandler for OpGasHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
 
+        #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.gas_remaining.into())?;
+            .push(U256::from_u64(vm.current_call_frame.gas_remaining as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -67,9 +68,10 @@ impl OpcodeHandler for OpPcHandler {
 
         // Note: Since the PC has been preincremented, subtracting 1 from it to get the operation's
         //   offset will never cause an underflow condition.
+        #[expect(clippy::as_conversions, reason = "pc fits u64")]
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.pc.wrapping_sub(1).into())?;
+            .push(U256::from_u64(vm.current_call_frame.pc.wrapping_sub(1) as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -175,9 +177,10 @@ impl OpcodeHandler for OpMSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::MSIZE)?;
 
+        #[expect(clippy::as_conversions, reason = "memory len fits u64")]
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.memory.len().into())?;
+            .push(U256::from_u64(vm.current_call_frame.memory.len() as u64))?;
 
         Ok(OpcodeResult::Continue)
     }

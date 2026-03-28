@@ -12,7 +12,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    Address, Bloom, H256, H512, U256,
+    Address, Bloom, H256, H512, U256, U256Ext as _,
     constants::DEFAULT_REQUESTS_HASH,
     types::{
         Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, Genesis,
@@ -64,13 +64,13 @@ fn test_header(block_num: u64) -> BlockHeader {
         )
         .unwrap(),
         logs_bloom: Bloom::from([0; 256]),
-        difficulty: U256::zero(),
+        difficulty: U256::ZERO,
         number: block_num,
         gas_limit: 0x016345785d8a0000,
         gas_used: 0xa8de,
         timestamp: 0x03e8,
         extra_data: Bytes::new(),
-        prev_randao: H256::zero(),
+        prev_randao: H256::ZERO,
         nonce: 0x0000000000000000,
         base_fee_per_gas: Some(BASE_PRICE_IN_WEI),
         withdrawals_root: Some(
@@ -79,7 +79,7 @@ fn test_header(block_num: u64) -> BlockHeader {
         ),
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
-        parent_beacon_block_root: Some(H256::zero()),
+        parent_beacon_block_root: Some(H256::ZERO),
         requests_hash: Some(*DEFAULT_REQUESTS_HASH),
         ..Default::default()
     }
@@ -117,7 +117,7 @@ fn legacy_tx_for_test(nonce: u64) -> Transaction {
         gas_price: U256::from(nonce) * U256::from(BASE_PRICE_IN_WEI),
         gas: 10000,
         to: TxKind::Create,
-        value: 100.into(),
+        value: U256::from(100u64),
         data: Default::default(),
         v: U256::from(0x1b),
         r: U256::from_big_endian(&hex!(
@@ -140,7 +140,7 @@ fn eip1559_tx_for_test(nonce: u64) -> Transaction {
         max_priority_fee_per_gas: (nonce - 1) * BASE_PRICE_IN_WEI,
         gas_limit: 10000,
         to: TxKind::Create,
-        value: 100.into(),
+        value: U256::from(100u64),
         data: Default::default(),
         access_list: vec![],
         signature_y_parity: true,

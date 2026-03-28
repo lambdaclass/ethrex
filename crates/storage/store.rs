@@ -22,7 +22,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, AddressExt as _, H256, H256Ext as _, U256, U256Ext as _,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
@@ -1889,7 +1889,7 @@ impl Store {
                 self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
-                    let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
+                    let hashed_key = hash_key(&H256::from(storage_key.to_big_endian()));
                     storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                 }
             }
@@ -2402,7 +2402,7 @@ impl Store {
         &self,
         state_root: H256,
     ) -> Result<impl Iterator<Item = (H256, AccountState)>, StoreError> {
-        self.iter_accounts_from(state_root, H256::zero())
+        self.iter_accounts_from(state_root, H256::ZERO)
     }
 
     // Returns an iterator across all accounts in the state trie given by the state_root
@@ -2434,7 +2434,7 @@ impl Store {
         state_root: H256,
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        self.iter_storage_from(state_root, hashed_address, H256::zero())
+        self.iter_storage_from(state_root, hashed_address, H256::ZERO)
     }
 
     pub fn get_account_range_proof(
@@ -2502,7 +2502,7 @@ impl Store {
             return Ok(vec![]);
         };
         // We can't access the storage trie without the account's address hash
-        let Ok(hashed_address) = account_path.clone().try_into().map(H256) else {
+        let Ok(hashed_address) = account_path.clone().try_into().map(H256::new) else {
             return Ok(vec![]);
         };
         let storage_trie =

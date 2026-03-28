@@ -338,7 +338,7 @@ pub async fn periodically_show_peer_stats_during_syncing(
             let sync_head_hash = *METRICS.sync_head_hash.lock().await;
 
             // Only show banner when sync_head data is populated (not genesis/default)
-            if sync_head_block > 0 && sync_head_hash != H256::zero() {
+            if sync_head_block > 0 && sync_head_hash != H256::ZERO {
                 let head_short = format!("{:x}", sync_head_hash);
                 let head_short = &head_short[..8.min(head_short.len())];
 

@@ -99,7 +99,7 @@ impl StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))?;
         let cached = loaded.map(|state| AccountStateCacheEntry {
             state,
-            hashed_address: H256::from(keccak_hash(address.to_fixed_bytes())),
+            hashed_address: H256::from(keccak_hash(address)),
         });
         self.account_state_cache
             .write()

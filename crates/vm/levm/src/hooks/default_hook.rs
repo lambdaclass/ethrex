@@ -2,7 +2,7 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{self, BLOB_GAS_PER_BLOB, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -10,7 +10,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, H256, H256Ext, U256, U256Ext,
     types::{Code, Fork},
 };
 
@@ -52,7 +52,7 @@ impl Hook for DefaultHook {
         let gaslimit_price_product = vm
             .env
             .gas_price
-            .checked_mul(vm.env.gas_limit.into())
+            .checked_mul(U256::from_u64(vm.env.gas_limit))
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
         validate_sender_balance(vm, sender_info.balance)?;
@@ -272,7 +272,7 @@ pub fn refund_sender(
     let wei_return_amount = vm
         .env
         .gas_price
-        .checked_mul(U256::from(gas_to_return))
+        .checked_mul(U256::from_u64(gas_to_return))
         .ok_or(InternalError::Overflow)?;
 
     vm.increase_account_balance(vm.env.origin, wei_return_amount)?;
@@ -312,7 +312,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_sub(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Underflow)?;
 
-    let coinbase_fee = U256::from(gas_to_pay)
+    let coinbase_fee = U256::from_u64(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
@@ -595,7 +595,7 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<
         .env
         .tx_max_fee_per_gas
         .unwrap_or(vm.env.gas_price)
-        .checked_mul(vm.env.gas_limit.into())
+        .checked_mul(U256::from_u64(vm.env.gas_limit))
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
     let balance_for_valid_tx = gas_fee_for_valid_tx
@@ -623,11 +623,20 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = calculate_blob_gas_cost(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    // Use the pre-computed base_blob_fee_per_gas from the environment (set once per block
+    // in setup_env) instead of recomputing via fake_exponential for every transaction.
+    let blob_count: u64 = vm
+        .env
+        .tx_blob_hashes
+        .len()
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let blob_gas_used: u64 = blob_count
+        .checked_mul(BLOB_GAS_PER_BLOB)
+        .unwrap_or_default();
+    let blob_gas_cost = U256::from_u64(blob_gas_used)
+        .checked_mul(vm.env.base_blob_fee_per_gas)
+        .ok_or(InternalError::Overflow)?;
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
@@ -673,7 +682,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
         (
             // SAFETY: we don't need the hash for the initcode
-            Code::from_bytecode_unchecked(calldata, H256::zero()),
+            Code::from_bytecode_unchecked(calldata, H256::ZERO),
             vm.current_call_frame.to,
         )
     } else {

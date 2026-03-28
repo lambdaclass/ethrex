@@ -311,7 +311,7 @@ impl BranchNode {
 
 #[cfg(test)]
 mod test {
-    use ethereum_types::H256;
+    use crate::H256;
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     use super::*;

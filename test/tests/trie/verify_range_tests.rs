@@ -1,5 +1,5 @@
 #![expect(clippy::unnecessary_to_owned, clippy::useless_vec)]
-use ethereum_types::H256;
+use ethrex_common::H256;
 use ethrex_trie::{Trie, verify_range};
 use proptest::collection::{btree_set, vec};
 use proptest::prelude::any;
@@ -19,10 +19,10 @@ fn verify_range_proof_of_absence() {
     proof.extend(trie.get_proof(&vec![0x01; 32]).unwrap());
 
     let root = trie.hash_no_commit();
-    let keys = &[H256([0x01u8; 32])];
+    let keys = &[H256::new([0x01u8; 32])];
     let values = &[vec![0x00u8]];
 
-    let mut first_key = H256([0xFF; 32]);
+    let mut first_key = H256::new([0xFF; 32]);
     first_key.0[0] = 0;
 
     let fetch_more = verify_range(root, &first_key, keys, values, &proof).unwrap();
@@ -41,7 +41,7 @@ fn verify_range_regular_case_only_branch_nodes() {
     let mut proof = trie.get_proof(&[50; 32].to_vec()).unwrap();
     proof.extend(trie.get_proof(&[75; 32].to_vec()).unwrap());
     let root = trie.hash().unwrap();
-    let keys = (50_u8..=75).map(|i| H256([i; 32])).collect::<Vec<_>>();
+    let keys = (50_u8..=75).map(|i| H256::new([i; 32])).collect::<Vec<_>>();
     let values = (50_u8..=75).map(|i| [i; 32].to_vec()).collect::<Vec<_>>();
     let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
     // Our trie contains more elements to the right

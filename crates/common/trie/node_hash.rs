@@ -1,4 +1,4 @@
-use ethereum_types::H256;
+use crate::H256;
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
 
@@ -33,7 +33,7 @@ impl AsRef<[u8]> for NodeHash {
     fn as_ref(&self) -> &[u8] {
         match self {
             NodeHash::Inline((slice, len)) => &slice[0..(*len as usize)],
-            NodeHash::Hashed(x) => x.as_bytes(),
+            NodeHash::Hashed(x) => x.as_slice(),
         }
     }
 }
@@ -67,7 +67,7 @@ impl NodeHash {
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
     pub fn finalize(self) -> H256 {
         match self {
-            NodeHash::Inline(_) => H256(keccak_hash(self.as_ref())),
+            NodeHash::Inline(_) => H256::from(keccak_hash(self.as_ref())),
             NodeHash::Hashed(x) => x,
         }
     }
@@ -94,14 +94,14 @@ impl NodeHash {
 
     pub fn len(&self) -> usize {
         match self {
-            NodeHash::Hashed(h256) => h256.as_bytes().len(),
+            NodeHash::Hashed(h256) => h256.as_slice().len(),
             NodeHash::Inline(value) => value.1 as usize,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match self {
-            NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
+            NodeHash::Hashed(h256) => h256.as_slice().is_empty(),
             NodeHash::Inline(value) => value.1 == 0,
         }
     }

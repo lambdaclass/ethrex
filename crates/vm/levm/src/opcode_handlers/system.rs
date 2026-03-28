@@ -23,7 +23,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{Address, H256, H256Ext, U256, U256Ext, evm::calculate_create_address, types::Fork};
 use ethrex_common::{tracing::CallType, types::Code};
 
 pub struct OpCallHandler;
@@ -776,7 +776,7 @@ impl<'a> VM<'a> {
             new_address,
             new_address,
             // SAFETY: init code hash is never used
-            Code::from_bytecode_unchecked(code, H256::zero()),
+            Code::from_bytecode_unchecked(code, H256::ZERO),
             value,
             Bytes::new(),
             false,

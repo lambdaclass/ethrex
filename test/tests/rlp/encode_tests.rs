@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use ethereum_types::{Address, U256};
+use ethrex_common::{Address, U256, U256Ext};
 use ethrex_rlp::constants::{RLP_EMPTY_LIST, RLP_NULL};
 use ethrex_rlp::encode::RLPEncode;
 use hex_literal::hex;

@@ -1,6 +1,6 @@
 use crate::{CommitterConfig, EthConfig, SequencerConfig, sequencer::errors::MetricsGathererError};
 use ::ethrex_storage_rollup::StoreRollup;
-use ethereum_types::Address;
+use ethrex_common::Address;
 use ethrex_l2_sdk::{get_last_committed_batch, get_last_verified_batch};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{

@@ -17,7 +17,7 @@ use ethrex_common::types::block_access_list::{
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
 use ethrex_common::{
-    Address, BigEndianHash, H256, U256,
+    Address, BigEndianHash, H256, H256Ext, U256, U256Ext,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
@@ -111,6 +111,11 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Compute blob base fee once for the entire block (inputs don't change per-tx)
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let cached_blob_fee =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+
         let mut receipts = Vec::new();
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
@@ -151,7 +156,17 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+            let env = Self::setup_env(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                Some(cached_blob_fee),
+            )?;
+            let mut vm =
+                VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+            let report = vm.execute().map_err(EvmError::from)?;
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -366,7 +381,7 @@ impl LEVM {
 
             // Any remaining unread storage_reads are extraneous BAL entries.
             if let Some((addr, key)) = unread_storage_reads.iter().next() {
-                let slot = ethrex_common::BigEndianHash::into_uint(key);
+                let slot = <H256 as BigEndianHash>::into_uint(key);
                 return Err(EvmError::Custom(format!(
                     "BAL validation failed: storage_read for account {addr:?} slot \
                      {slot} was never actually read during block execution"
@@ -404,6 +419,11 @@ impl LEVM {
         }
 
         Self::prepare_block(block, db, vm_type, crypto)?;
+
+        // Compute blob base fee once for the entire block (inputs don't change per-tx)
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let cached_blob_fee =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
@@ -452,6 +472,7 @@ impl LEVM {
                 &mut shared_stack_pool,
                 false,
                 crypto,
+                Some(cached_blob_fee),
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -847,6 +868,12 @@ impl LEVM {
         let header = &block.header;
         let n_txs = txs_with_sender.len();
 
+        // Compute blob base fee once for the entire block (inputs don't change per-tx)
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let cached_blob_fee =
+            get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
+
         // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
         //    This covers ALL state changes: system calls, txs, withdrawals.
         let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
@@ -942,6 +969,7 @@ impl LEVM {
                     &mut stack_pool,
                     false,
                     crypto,
+                    Some(cached_blob_fee),
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1629,6 +1657,7 @@ impl LEVM {
                         stack_pool,
                         true,
                         crypto,
+                        None,
                     );
                 }
             },
@@ -1694,7 +1723,7 @@ impl LEVM {
             .iter()
             .flat_map(|ac| {
                 ac.all_storage_slots()
-                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
+                    .map(move |slot| (ac.address, H256Ext::from_uint(&slot)))
             })
             .collect();
         store
@@ -1744,6 +1773,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
+        cached_blob_fee: Option<U256>,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = calculate_gas_price_for_tx(
@@ -1754,6 +1784,10 @@ impl LEVM {
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let base_blob_fee_per_gas = match cached_blob_fee {
+            Some(fee) => fee,
+            None => get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+        };
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
@@ -1764,17 +1798,17 @@ impl LEVM {
             prev_randao: Some(block_header.prev_randao),
             slot_number: block_header
                 .slot_number
-                .map(U256::from)
+                .map(U256::from_u64)
                 .unwrap_or(U256::zero()),
-            chain_id: chain_config.chain_id.into(),
-            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+            chain_id: U256::from_u64(chain_config.chain_id),
+            base_fee_per_gas: U256::from_u64(block_header.base_fee_per_gas.unwrap_or_default()),
+            base_blob_fee_per_gas,
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from_u64),
+            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from_u64),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
@@ -1798,7 +1832,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, None)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         vm.execute().map_err(VMError::into)
@@ -1818,8 +1852,9 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
+        cached_blob_fee: Option<U256>,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, cached_blob_fee)?;
         env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
@@ -1883,7 +1918,7 @@ impl LEVM {
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
 
             let initial_balance = account.info.balance;
-            account.info.balance += increment.into();
+            account.info.balance += U256::from(increment);
             let new_balance = account.info.balance;
 
             // Record balance change for BAL (EIP-7928)
@@ -2199,14 +2234,13 @@ pub fn extract_all_requests_levm(
 pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
     if tx.gas_price != 0 {
         // Legacy gas field was specified, use it
-        tx.gas_price.into()
+        U256::from_u64(tx.gas_price)
     } else {
         // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
-        min(
+        U256::from_u64(min(
             tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
             tx.max_fee_per_gas.unwrap_or(0),
-        )
-        .into()
+        ))
     }
 }
 
@@ -2236,7 +2270,7 @@ pub fn calculate_gas_price_for_tx(
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
+    Ok(U256::from_u64(min(max_priority_fee + fee_per_gas, max_fee_per_gas)))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
@@ -2288,14 +2322,14 @@ fn env_from_generic(
     } else if config.fork >= Fork::Amsterdam {
         header
             .slot_number
-            .map(U256::from)
+            .map(U256::from_u64)
             .ok_or(VMError::Internal(InternalError::Custom(
                 "slot_number must be present in Amsterdam+ blocks".to_string(),
             )))?
     } else {
         // Pre-Amsterdam: slot_number should be None, default to zero
         // This value should never be used since SLOTNUM opcode doesn't exist pre-Amsterdam
-        header.slot_number.map(U256::from).unwrap_or(U256::zero())
+        header.slot_number.map(U256::from_u64).unwrap_or(U256::zero())
     };
 
     Ok(Environment {
@@ -2309,15 +2343,15 @@ fn env_from_generic(
         timestamp: header.timestamp,
         prev_randao: Some(header.prev_randao),
         slot_number,
-        chain_id: chain_config.chain_id.into(),
-        base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+        chain_id: U256::from_u64(chain_config.chain_id),
+        base_fee_per_gas: U256::from_u64(header.base_fee_per_gas.unwrap_or_default()),
         base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
         gas_price,
         block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used,
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
-        tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
-        tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
+        tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from_u64),
+        tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from_u64),
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,

@@ -14,7 +14,7 @@ use crate::{
     types::Node,
 };
 use aes::cipher::{KeyIvInit, StreamCipher};
-use ethrex_common::{H128, H256, H512, Signature};
+use ethrex_common::{FixedBytes, H256, H256Ext as _, H512, Signature};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -166,7 +166,7 @@ async fn send_auth<S: AsyncWrite + std::marker::Unpin>(
     let peer_pk =
         compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
-    let local_nonce = H256::random_using(&mut rand::thread_rng());
+    let local_nonce = H256::new(rand::thread_rng().r#gen());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
 
     let msg = encode_auth_message(signer, local_nonce, &peer_pk, &local_ephemeral_key)?;
@@ -186,7 +186,7 @@ async fn send_ack<S: AsyncWrite + std::marker::Unpin>(
     let peer_pk =
         compress_pubkey(remote_public_key).ok_or_else(|| PeerConnectionError::InvalidPeerId)?;
 
-    let local_nonce = H256::random_using(&mut rand::thread_rng());
+    let local_nonce = H256::new(rand::thread_rng().r#gen());
     let local_ephemeral_key = SecretKey::new(&mut rand::thread_rng());
 
     let msg = encode_ack_message(&local_ephemeral_key, local_nonce, &peer_pk)?;
@@ -442,7 +442,7 @@ fn encrypt_message(
     let mac_key = sha256(&secret_keys[16..]);
 
     // Use the AES secret to encrypt the auth message.
-    let iv = H128::random_using(&mut rng);
+    let iv = FixedBytes::<16>::new(rng.r#gen());
     let mut aes_cipher = Aes128Ctr64BE::new_from_slices(aes_key, &iv.0)?;
     aes_cipher.try_apply_keystream(&mut encoded_msg)?;
     let encrypted_auth_msg = encoded_msg;

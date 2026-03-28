@@ -22,7 +22,7 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{U256, U256Ext};
 
 /// Implementation for the `LT` opcode.
 pub struct OpLtHandler;
@@ -35,7 +35,7 @@ impl OpcodeHandler for OpLtHandler {
         #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
-            .push(((lhs < rhs) as u64).into())?;
+            .push(U256::from_u64((lhs < rhs) as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -52,7 +52,7 @@ impl OpcodeHandler for OpGtHandler {
         #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
-            .push(((lhs > rhs) as u64).into())?;
+            .push(U256::from_u64((lhs > rhs) as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -75,7 +75,7 @@ impl OpcodeHandler for OpSLtHandler {
                 (false, true) => U256::zero(),
                 (true, false) => U256::one(),
                 #[expect(clippy::as_conversions, reason = "safe")]
-                _ => ((lhs < rhs) as u64).into(),
+                _ => U256::from_u64((lhs < rhs) as u64),
             })?;
 
         Ok(OpcodeResult::Continue)
@@ -99,7 +99,7 @@ impl OpcodeHandler for OpSGtHandler {
                 (false, true) => U256::one(),
                 (true, false) => U256::zero(),
                 #[expect(clippy::as_conversions, reason = "safe")]
-                _ => ((lhs > rhs) as u64).into(),
+                _ => U256::from_u64((lhs > rhs) as u64),
             })?;
 
         Ok(OpcodeResult::Continue)
@@ -117,7 +117,7 @@ impl OpcodeHandler for OpEqHandler {
         #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
-            .push(((lhs == rhs) as u64).into())?;
+            .push(U256::from_u64((lhs == rhs) as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -135,7 +135,7 @@ impl OpcodeHandler for OpIsZeroHandler {
         #[expect(clippy::as_conversions, reason = "safe")]
         vm.current_call_frame
             .stack
-            .push((value.is_zero() as u64).into())?;
+            .push(U256::from_u64(value.is_zero() as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -213,7 +213,7 @@ impl OpcodeHandler for OpByteHandler {
                     clippy::arithmetic_side_effects,
                     reason = "x < 32 guard prevents overflow"
                 )]
-                Ok(x) if x < 32 => value.byte(31 - x).into(),
+                Ok(x) if x < 32 => U256::from_u64(value.byte(31 - x) as u64),
                 _ => U256::zero(),
             })?;
 

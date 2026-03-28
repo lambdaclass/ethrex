@@ -1,4 +1,4 @@
-use ethereum_types::{Address, H256, U256};
+use ethrex_common::{Address, H256, H256Ext, U256, U256Ext};
 use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
 use ethrex_common::utils::keccak;
 use serde::{Deserialize, Serialize};
@@ -72,7 +72,7 @@ pub fn compute_privileged_transactions_hash(
     privileged_transaction_hashes: Vec<H256>,
 ) -> Result<H256, PrivilegedTransactionError> {
     if privileged_transaction_hashes.is_empty() {
-        return Ok(H256::zero());
+        return Ok(H256::ZERO);
     }
 
     let privileged_transaction_hashes_len: u16 = privileged_transaction_hashes.len().try_into()?;

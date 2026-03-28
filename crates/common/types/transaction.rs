@@ -2,7 +2,8 @@ use std::{cmp::min, fmt::Display};
 
 use crate::utils::keccak;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use crate::{Address, H256, U256};
+use crate::{AddressExt, H256Ext, U256Ext};
 use ethrex_crypto::{Crypto, CryptoError};
 pub use mempool::MempoolTransaction;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -429,7 +430,7 @@ impl Transaction {
         };
 
         Some(U256::saturating_add(
-            U256::saturating_mul(price, self.gas_limit().into()),
+            U256::saturating_mul(price, U256::from_u64(self.gas_limit())),
             self.value(),
         ))
     }
@@ -1500,17 +1501,17 @@ impl PrivilegedL2Transaction {
 
         // The nonce should be a U256,
         // in solidity the transactionId is a U256.
-        let u256_nonce = U256::from(self.nonce);
+        let u256_nonce = U256::from_u64(self.nonce);
         let nonce = u256_nonce.to_big_endian();
 
         Some(crate::utils::keccak(
             [
-                U256::from(self.chain_id).to_big_endian().as_ref(),
+                U256::from_u64(self.chain_id).to_big_endian().as_ref(),
                 self.from.as_bytes(),
                 to.as_bytes(),
                 &nonce,
                 &value,
-                &U256::from(self.gas_limit).to_big_endian(),
+                &U256::from_u64(self.gas_limit).to_big_endian(),
                 keccak(&self.data).as_bytes(),
             ]
             .concat(),
@@ -1707,7 +1708,7 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
-    use ethereum_types::H160;
+    use crate::H160;
     use serde::Deserialize;
     use serde::{Deserializer, de::Error};
     use serde_json::Value;
@@ -3030,7 +3031,7 @@ mod tests {
     use crate::types::{
         AuthorizationTuple, BlockBody, Receipt, compute_receipts_root, compute_transactions_root,
     };
-    use ethereum_types::H160;
+    use crate::H160;
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
     use std::str::FromStr;
@@ -3394,7 +3395,7 @@ mod tests {
             data: Bytes::from_static(b"03"),
             access_list: vec![(
                 H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B3").unwrap(),
-                vec![H256::zero()],
+                vec![H256::ZERO],
             )],
             signature_y_parity: true,
             signature_r: U256::one(),

@@ -1,8 +1,8 @@
 use bytes::{Buf, Bytes};
-use ethrex_common::H160;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
+    Address, H256, U256, U256Ext, types::Fork, types::Fork::*,
+    utils::u256_from_big_endian,
 };
 use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
@@ -60,13 +60,13 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 ];
 
 pub struct Precompile {
-    pub address: H160,
+    pub address: Address,
     pub name: &'static str,
     pub active_since_fork: Fork,
 }
 
 pub const ECRECOVER: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x01,
     ]),
@@ -75,7 +75,7 @@ pub const ECRECOVER: Precompile = Precompile {
 };
 
 pub const SHA2_256: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x02,
     ]),
@@ -84,7 +84,7 @@ pub const SHA2_256: Precompile = Precompile {
 };
 
 pub const RIPEMD_160: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x03,
     ]),
@@ -93,7 +93,7 @@ pub const RIPEMD_160: Precompile = Precompile {
 };
 
 pub const IDENTITY: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x04,
     ]),
@@ -102,7 +102,7 @@ pub const IDENTITY: Precompile = Precompile {
 };
 
 pub const MODEXP: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x05,
     ]),
@@ -111,7 +111,7 @@ pub const MODEXP: Precompile = Precompile {
 };
 
 pub const ECADD: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x06,
     ]),
@@ -120,7 +120,7 @@ pub const ECADD: Precompile = Precompile {
 };
 
 pub const ECMUL: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x07,
     ]),
@@ -129,7 +129,7 @@ pub const ECMUL: Precompile = Precompile {
 };
 
 pub const ECPAIRING: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x08,
     ]),
@@ -138,7 +138,7 @@ pub const ECPAIRING: Precompile = Precompile {
 };
 
 pub const BLAKE2F: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x09,
     ]),
@@ -147,7 +147,7 @@ pub const BLAKE2F: Precompile = Precompile {
 };
 
 pub const POINT_EVALUATION: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0a,
     ]),
@@ -156,7 +156,7 @@ pub const POINT_EVALUATION: Precompile = Precompile {
 };
 
 pub const BLS12_G1ADD: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0b,
     ]),
@@ -165,7 +165,7 @@ pub const BLS12_G1ADD: Precompile = Precompile {
 };
 
 pub const BLS12_G1MSM: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0c,
     ]),
@@ -174,7 +174,7 @@ pub const BLS12_G1MSM: Precompile = Precompile {
 };
 
 pub const BLS12_G2ADD: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0d,
     ]),
@@ -183,7 +183,7 @@ pub const BLS12_G2ADD: Precompile = Precompile {
 };
 
 pub const BLS12_G2MSM: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0e,
     ]),
@@ -192,7 +192,7 @@ pub const BLS12_G2MSM: Precompile = Precompile {
 };
 
 pub const BLS12_PAIRING_CHECK: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x0f,
     ]),
@@ -201,7 +201,7 @@ pub const BLS12_PAIRING_CHECK: Precompile = Precompile {
 };
 
 pub const BLS12_MAP_FP_TO_G1: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x10,
     ]),
@@ -210,7 +210,7 @@ pub const BLS12_MAP_FP_TO_G1: Precompile = Precompile {
 };
 
 pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x11,
     ]),
@@ -219,7 +219,7 @@ pub const BLS12_MAP_FP2_TO_G2: Precompile = Precompile {
 };
 
 pub const P256VERIFY: Precompile = Precompile {
-    address: H160([
+    address: Address::new([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x01, 0x00,
     ]),
@@ -309,29 +309,29 @@ pub fn execute_precompile(
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
-        precompiles[ECRECOVER.address.0[19] as usize] = Some(ecrecover as PrecompileFn);
-        precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
-        precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
-        precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
-        precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
-        precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
-        precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing as PrecompileFn);
-        precompiles[BLAKE2F.address.0[19] as usize] = Some(blake2f as PrecompileFn);
-        precompiles[POINT_EVALUATION.address.0[19] as usize] =
+        precompiles[ECRECOVER.address.0.0[19] as usize] = Some(ecrecover as PrecompileFn);
+        precompiles[IDENTITY.address.0.0[19] as usize] = Some(identity as PrecompileFn);
+        precompiles[SHA2_256.address.0.0[19] as usize] = Some(sha2_256 as PrecompileFn);
+        precompiles[RIPEMD_160.address.0.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
+        precompiles[MODEXP.address.0.0[19] as usize] = Some(modexp as PrecompileFn);
+        precompiles[ECADD.address.0.0[19] as usize] = Some(ecadd as PrecompileFn);
+        precompiles[ECMUL.address.0.0[19] as usize] = Some(ecmul as PrecompileFn);
+        precompiles[ECPAIRING.address.0.0[19] as usize] = Some(ecpairing as PrecompileFn);
+        precompiles[BLAKE2F.address.0.0[19] as usize] = Some(blake2f as PrecompileFn);
+        precompiles[POINT_EVALUATION.address.0.0[19] as usize] =
             Some(point_evaluation as PrecompileFn);
-        precompiles[BLS12_G1ADD.address.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
-        precompiles[BLS12_G1MSM.address.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
-        precompiles[BLS12_G2ADD.address.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
-        precompiles[BLS12_G2MSM.address.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
-        precompiles[BLS12_PAIRING_CHECK.address.0[19] as usize] =
+        precompiles[BLS12_G1ADD.address.0.0[19] as usize] = Some(bls12_g1add as PrecompileFn);
+        precompiles[BLS12_G1MSM.address.0.0[19] as usize] = Some(bls12_g1msm as PrecompileFn);
+        precompiles[BLS12_G2ADD.address.0.0[19] as usize] = Some(bls12_g2add as PrecompileFn);
+        precompiles[BLS12_G2MSM.address.0.0[19] as usize] = Some(bls12_g2msm as PrecompileFn);
+        precompiles[BLS12_PAIRING_CHECK.address.0.0[19] as usize] =
             Some(bls12_pairing_check as PrecompileFn);
-        precompiles[BLS12_MAP_FP_TO_G1.address.0[19] as usize] =
+        precompiles[BLS12_MAP_FP_TO_G1.address.0.0[19] as usize] =
             Some(bls12_map_fp_to_g1 as PrecompileFn);
-        precompiles[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] =
+        precompiles[BLS12_MAP_FP2_TO_G2.address.0.0[19] as usize] =
             Some(bls12_map_fp2_to_g2 as PrecompileFn);
         precompiles
-            [u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            [u16::from_be_bytes([P256VERIFY.address.0.0[18], P256VERIFY.address.0.0[19]]) as usize] =
             Some(p_256_verify as PrecompileFn);
         precompiles
     };
@@ -585,13 +585,13 @@ pub fn modexp(
     let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
 
     if fork >= Fork::Osaka {
-        if base_size > U256::from(1024) {
+        if base_size > U256::from_u64(1024) {
             return Err(PrecompileError::ModExpBaseTooLarge.into());
         }
-        if exponent_size > U256::from(1024) {
+        if exponent_size > U256::from_u64(1024) {
             return Err(PrecompileError::ModExpExpTooLarge.into());
         }
-        if modulus_size > U256::from(1024) {
+        if modulus_size > U256::from_u64(1024) {
             return Err(PrecompileError::ModExpModulusTooLarge.into());
         }
     }
@@ -743,7 +743,7 @@ pub fn ecmul(
     Ok(Bytes::copy_from_slice(&result))
 }
 
-const ALT_BN128_PRIME: U256 = U256([
+const ALT_BN128_PRIME: U256 = U256::from_limbs([
     0x3c208c16d87cfd47,
     0x97816a916871ca8d,
     0xb85045b68181585d,

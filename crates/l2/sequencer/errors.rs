@@ -3,7 +3,7 @@ use crate::sequencer::admin_server::AdminError;
 use crate::sequencer::state_updater::StateUpdaterError;
 use crate::utils::error::UtilsError;
 use aligned_sdk::gateway::provider::GatewayError;
-use ethereum_types::FromStrRadixErr;
+use ruint::ParseError as FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidBlockError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;

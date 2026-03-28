@@ -1,7 +1,7 @@
 use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherError};
 use aes_gcm::{Aes128Gcm, KeyInit, aead::AeadMutInPlace};
 use bytes::{BufMut, Bytes};
-use ethrex_common::H256;
+use ethrex_common::{H256, H256Ext as _};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,

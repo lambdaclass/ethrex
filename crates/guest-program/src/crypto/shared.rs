@@ -3,7 +3,7 @@
 /// These functions are implemented in pure Rust using crates that are
 /// patched by each zkVM toolchain (k256, substrate-bn) to use their
 /// respective circuit accelerators transparently via Cargo patches.
-use ethereum_types::Address;
+use ethrex_common::Address;
 use ethrex_crypto::{CryptoError, keccak::keccak_hash};
 
 // ── k256 ECDSA ───────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 use crate::H256;
 use bytes::Bytes;
-use ethereum_types::Address;
+use crate::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -2,7 +2,7 @@ use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
-use ethereum_types::U256;
+use ethrex_common::{H256Ext, U256, U256Ext};
 use ethrex_common::{
     H256,
     types::{
@@ -912,7 +912,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: ethereum_types::Signature,
+        signature: ethrex_common::Signature,
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
             vec![
@@ -924,7 +924,7 @@ impl StoreEngineRollup for SQLStore {
                     "INSERT INTO block_signatures VALUES (?1, ?2)",
                     (
                         Vec::from(block_hash.to_fixed_bytes()),
-                        Vec::from(signature.as_fixed_bytes()),
+                        Vec::from(signature.as_slice()),
                     )
                         .into_params()?,
                 ),
@@ -937,7 +937,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+    ) -> Result<Option<ethrex_common::Signature>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT signature FROM block_signatures WHERE block_hash = ?1",
@@ -948,7 +948,7 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| {
                 read_from_row_blob(&row, 0)
-                    .map(|vec| ethereum_types::Signature::from_slice(vec.as_slice()))
+                    .map(|vec| ethrex_common::Signature::from_slice(vec.as_slice()))
             })
             .transpose()
     }
@@ -956,7 +956,7 @@ impl StoreEngineRollup for SQLStore {
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: ethereum_types::Signature,
+        signature: ethrex_common::Signature,
     ) -> Result<(), RollupStoreError> {
         self.execute_in_tx(
             vec![
@@ -966,7 +966,7 @@ impl StoreEngineRollup for SQLStore {
                 ),
                 (
                     "INSERT INTO batch_signatures VALUES (?1, ?2)",
-                    (batch_number, Vec::from(signature.to_fixed_bytes())).into_params()?,
+                    (batch_number, signature.to_vec()).into_params()?,
                 ),
             ],
             None,
@@ -977,7 +977,7 @@ impl StoreEngineRollup for SQLStore {
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+    ) -> Result<Option<ethrex_common::Signature>, RollupStoreError> {
         let mut rows = self
             .query(
                 "SELECT signature FROM batch_signatures WHERE batch = ?1",
@@ -988,7 +988,7 @@ impl StoreEngineRollup for SQLStore {
             .await?
             .map(|row| {
                 read_from_row_blob(&row, 0)
-                    .map(|vec| ethereum_types::Signature::from_slice(vec.as_slice()))
+                    .map(|vec| ethrex_common::Signature::from_slice(vec.as_slice()))
             })
             .transpose()
     }

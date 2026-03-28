@@ -10,7 +10,7 @@ license.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 
-ethereum-types.workspace = true
+alloy-primitives.workspace = true
 anyhow = "1.0.86"
 bytes.workspace = true
 tracing.workspace = true

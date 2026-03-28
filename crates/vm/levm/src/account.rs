@@ -2,7 +2,7 @@ use ethrex_common::H256;
 use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
-use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
+use ethrex_common::{U256, U256Ext, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 

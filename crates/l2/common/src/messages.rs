@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256};
 use ethrex_common::types::balance_diff::{AssetDiff, BalanceDiff};
 use ethrex_common::utils::keccak;
-use ethrex_common::{H160, U256, types::Receipt};
+use ethrex_common::{Address, AddressExt, H160, H256, H256Ext, U256, U256Ext, types::Receipt};
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;

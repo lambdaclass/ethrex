@@ -17,7 +17,7 @@ use crate::{
     utils::distance,
 };
 use bytes::Bytes;
-use ethrex_common::{H256, U256};
+use ethrex_common::{H256, U256, U256Ext as _};
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
@@ -1074,8 +1074,8 @@ impl PeerTableServer {
     }
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-        let xor = node_id_1 ^ node_id_2;
-        let dist = U256::from_big_endian(xor.as_bytes());
+        let xor = *node_id_1 ^ *node_id_2;
+        let dist = U256::from_big_endian(xor.as_slice());
         dist.bits().saturating_sub(1)
     }
 

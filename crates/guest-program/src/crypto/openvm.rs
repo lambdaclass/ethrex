@@ -1,4 +1,4 @@
-use ethereum_types::Address;
+use ethrex_common::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
 use super::shared::{k256_ecrecover, k256_recover_signer};

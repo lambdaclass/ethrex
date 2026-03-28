@@ -10,7 +10,7 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{U256, U256Ext};
 
 /// Implementation for the `PUSH0` opcode.
 pub struct OpPush0Handler;

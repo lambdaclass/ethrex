@@ -13,7 +13,7 @@ use aes::{
 };
 use bytes::{Buf, BytesMut};
 use ethrex_common::{
-    H128, H256,
+    FixedBytes, H256,
     utils::{keccak, truncate_array},
 };
 use ethrex_crypto::keccak::{Keccak256, keccak_hash};
@@ -124,8 +124,8 @@ impl Decoder for RLPxCodec {
             let mac_digest: [u8; 16] = truncate_array(self.ingress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
-            (H128(seed.into())
-                ^ H128(header_ciphertext.try_into().map_err(|_| {
+            (FixedBytes::<16>::new(seed.into())
+                ^ FixedBytes::<16>::new(header_ciphertext.try_into().map_err(|_| {
                     PeerConnectionError::CryptographyError(
                         "Invalid header ciphertext length".to_owned(),
                     )
@@ -139,7 +139,7 @@ impl Decoder for RLPxCodec {
         temp_ingress_mac.update(header_mac_seed);
 
         // header-mac = keccak256.digest(egress-mac)[:16]
-        let expected_header_mac = H128(truncate_array(temp_ingress_mac.clone().finalize()));
+        let expected_header_mac = FixedBytes::<16>::new(truncate_array(temp_ingress_mac.clone().finalize()));
 
         if header_mac != expected_header_mac.0 {
             return Err(PeerConnectionError::InvalidMessageFrame(
@@ -208,7 +208,7 @@ impl Decoder for RLPxCodec {
             let mac_digest: [u8; 16] = truncate_array(self.ingress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
-            (H128(seed.into()) ^ H128(mac_digest)).0
+            (FixedBytes::<16>::new(seed.into()) ^ FixedBytes::<16>::new(mac_digest)).0
         };
         self.ingress_mac.update(frame_mac_seed);
         let expected_frame_mac: [u8; 16] = truncate_array(self.ingress_mac.clone().finalize());
@@ -292,7 +292,7 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 .map_err(|_| {
                     PeerConnectionError::CryptographyError("Invalid header length".to_owned())
                 })?;
-            H128(seed.into()) ^ H128(header_data)
+            FixedBytes::<16>::new(seed.into()) ^ FixedBytes::<16>::new(header_data)
         };
         self.egress_mac.update(header_mac_seed);
         let header_mac = self.egress_mac.clone().finalize();
@@ -318,7 +318,7 @@ impl Encoder<rlpx::Message> for RLPxCodec {
             let mac_digest: [u8; 16] = truncate_array(self.egress_mac.clone().finalize());
             let mut seed = mac_digest.into();
             mac_aes_cipher.encrypt_block(&mut seed);
-            (H128(seed.into()) ^ H128(mac_digest)).0
+            (FixedBytes::<16>::new(seed.into()) ^ FixedBytes::<16>::new(mac_digest)).0
         };
         self.egress_mac.update(frame_mac_seed);
         let frame_mac = self.egress_mac.clone().finalize();

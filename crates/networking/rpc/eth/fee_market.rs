@@ -103,7 +103,7 @@ impl RpcHandler for FeeHistoryRequest {
         let oldest_block = start_block;
         let block_count = (end_block - start_block + 1) as usize;
         let mut base_fee_per_gas = vec![0_u64; block_count + 1];
-        let mut base_fee_per_blob_gas = vec![U256::zero(); block_count + 1];
+        let mut base_fee_per_blob_gas = vec![U256::ZERO; block_count + 1];
         let mut gas_used_ratio = vec![0_f64; block_count];
         let mut blob_gas_used_ratio = vec![0_f64; block_count];
         let mut reward = Vec::<Vec<u64>>::with_capacity(block_count);

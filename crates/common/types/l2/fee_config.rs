@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::Address;
+use crate::Address;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -96,14 +96,14 @@ impl FeeConfig {
             // base fee vault is set
             let base_fee_vault_type: u8 = FeeConfigType::BaseFeeVault.into();
             fee_config_type += base_fee_vault_type;
-            encoded.extend_from_slice(&base_fee_vault.0);
+            encoded.extend_from_slice(base_fee_vault.as_slice());
         }
 
         if let Some(operator_fee_config) = self.operator_fee_config {
             // operator fee vault is set
             let base_fee_vault_type: u8 = FeeConfigType::OperatorFee.into();
             fee_config_type += base_fee_vault_type;
-            encoded.extend_from_slice(&operator_fee_config.operator_fee_vault.0);
+            encoded.extend_from_slice(operator_fee_config.operator_fee_vault.as_slice());
             encoded.extend(operator_fee_config.operator_fee_per_gas.to_be_bytes());
         }
 
@@ -111,7 +111,7 @@ impl FeeConfig {
             // l1 fee vault is set
             let l1_fee_type: u8 = FeeConfigType::L1Fee.into();
             fee_config_type += l1_fee_type;
-            encoded.extend_from_slice(&l1_fee_config.l1_fee_vault.0);
+            encoded.extend_from_slice(l1_fee_config.l1_fee_vault.as_slice());
             encoded.extend(l1_fee_config.l1_fee_per_blob_gas.to_be_bytes());
         }
 

@@ -10,7 +10,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, AddressExt, H160, H256, U256, U256Ext,
     constants::GAS_PER_BLOB,
     types::{
         Code, EIP1559Transaction, Fork, Transaction, TxKind,
@@ -22,15 +22,15 @@ use ethrex_common::{
 };
 use ethrex_rlp::encode::RLPEncode;
 
-pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
+pub const COMMON_BRIDGE_L2_ADDRESS: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xff,
 ]);
-pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = H160([
+pub const FEE_TOKEN_REGISTRY_ADDRESS: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfc,
 ]);
-pub const FEE_TOKEN_RATIO_ADDRESS: Address = H160([
+pub const FEE_TOKEN_RATIO_ADDRESS: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfb,
 ]);
@@ -269,7 +269,7 @@ fn apply_finalize_mutations(
         pay_base_fee_vault(
             vm,
             execution_gas.saturating_mul(fee_token_ratio),
-            Address::zero(),
+            Address::ZERO,
             use_fee_token,
         )?;
     }
@@ -301,7 +301,7 @@ fn validate_sufficient_max_fee_per_gas_l2(
     let total_fee = vm
         .env
         .base_fee_per_gas
-        .checked_add(fee_config.operator_fee_per_gas.into())
+        .checked_add(U256::from_u64(fee_config.operator_fee_per_gas))
         .ok_or(TxValidationError::InsufficientMaxFeePerGas)?;
 
     if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < total_fee {
@@ -360,7 +360,7 @@ fn pay_coinbase_l2(
 
     let priority_fee_per_gas = compute_priority_fee_per_gas(vm, operator_fee_config)?;
 
-    let coinbase_fee = U256::from(gas_to_pay)
+    let coinbase_fee = U256::from_u64(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
@@ -396,7 +396,7 @@ fn compute_priority_fee_per_gas(
 
     if let Some(fee_config) = operator_fee_config {
         priority_fee
-            .checked_sub(U256::from(fee_config.operator_fee_per_gas))
+            .checked_sub(U256::from_u64(fee_config.operator_fee_per_gas))
             .ok_or(InternalError::Underflow)
     } else {
         Ok(priority_fee)
@@ -412,7 +412,7 @@ fn pay_base_fee_vault(
     base_fee_vault: Address,
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let base_fee = U256::from(gas_to_pay)
+    let base_fee = U256::from_u64(gas_to_pay)
         .checked_mul(vm.env.base_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
@@ -433,8 +433,8 @@ fn pay_operator_fee(
     operator_fee_config: OperatorFeeConfig,
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let operator_fee = U256::from(gas_to_pay)
-        .checked_mul(U256::from(operator_fee_config.operator_fee_per_gas))
+    let operator_fee = U256::from_u64(gas_to_pay)
+        .checked_mul(U256::from_u64(operator_fee_config.operator_fee_per_gas))
         .ok_or(InternalError::Overflow)?;
 
     if use_fee_token {
@@ -518,7 +518,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         // To prevent it from taking effect, we force it to revert
         vm.current_call_frame.msg_value = U256::zero();
         vm.current_call_frame.set_code(Code {
-            hash: H256::zero(),
+            hash: H256::ZERO,
             bytecode: vec![Opcode::INVALID.into()].into(),
             jump_targets: Vec::new(),
         })?;
@@ -607,7 +607,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     let gaslimit_price_product = vm
         .env
         .gas_price
-        .checked_mul(vm.env.gas_limit.into())
+        .checked_mul(U256::from_u64(vm.env.gas_limit))
         .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
     // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
@@ -699,7 +699,7 @@ fn encode_fee_token_call(selector: [u8; 4], address: Address, amount: U256) -> B
     let mut data = Vec::with_capacity(4 + 32 + 32);
     data.extend_from_slice(&selector);
     data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&address.0);
+    data.extend_from_slice(address.as_bytes());
     data.extend_from_slice(&amount.to_big_endian());
     data.into()
 }
@@ -708,7 +708,7 @@ fn encode_is_fee_token_call(token: Address) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32);
     data.extend_from_slice(&IS_FEE_TOKEN_SELECTOR);
     data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&token.0);
+    data.extend_from_slice(token.as_bytes());
     data.into()
 }
 
@@ -716,7 +716,7 @@ fn encode_fee_token_ratio_call(token: Address) -> Bytes {
     let mut data = Vec::with_capacity(4 + 32);
     data.extend_from_slice(&FEE_TOKEN_RATIO_SELECTOR);
     data.extend_from_slice(&[0u8; 12]);
-    data.extend_from_slice(&token.0);
+    data.extend_from_slice(token.as_bytes());
     data.into()
 }
 
@@ -876,14 +876,14 @@ fn refund_sender_fee_token(
     let erc20_return_amount = vm
         .env
         .gas_price
-        .checked_mul(U256::from(gas_to_return))
+        .checked_mul(U256::from_u64(gas_to_return))
         .ok_or(InternalError::Overflow)?;
     let sender_address = vm.env.origin;
 
     pay_fee_token(
         vm,
         sender_address,
-        erc20_return_amount.saturating_mul(fee_token_ratio.into()),
+        erc20_return_amount.saturating_mul(U256::from_u64(fee_token_ratio)),
     )?;
 
     Ok(())
@@ -896,18 +896,19 @@ fn calculate_l1_fee(
     fee_config: &L1FeeConfig,
     transaction_size: usize,
 ) -> Result<U256, crate::errors::VMError> {
-    let l1_fee_per_blob: U256 = fee_config
-        .l1_fee_per_blob_gas
-        .checked_mul(GAS_PER_BLOB.into())
-        .ok_or(InternalError::Overflow)?
-        .into();
+    let l1_fee_per_blob: U256 = U256::from_u64(
+        fee_config
+            .l1_fee_per_blob_gas
+            .checked_mul(GAS_PER_BLOB.into())
+            .ok_or(InternalError::Overflow)?,
+    );
 
     let l1_fee_per_blob_byte = l1_fee_per_blob
-        .checked_div(U256::from(SAFE_BYTES_PER_BLOB))
+        .checked_div(U256::from_u64(SAFE_BYTES_PER_BLOB as u64))
         .ok_or(InternalError::DivisionByZero)?;
 
     let l1_fee = l1_fee_per_blob_byte
-        .checked_mul(U256::from(transaction_size))
+        .checked_mul(U256::from_u64(transaction_size as u64))
         .ok_or(InternalError::Overflow)?;
 
     Ok(l1_fee)
@@ -947,7 +948,7 @@ fn pay_to_l1_fee_vault(
     l1_fee_config: L1FeeConfig,
     use_fee_token: bool,
 ) -> Result<(), crate::errors::VMError> {
-    let l1_fee = U256::from(gas_to_pay)
+    let l1_fee = U256::from_u64(gas_to_pay)
         .checked_mul(vm.env.gas_price)
         .ok_or(InternalError::Overflow)?;
 

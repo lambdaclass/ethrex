@@ -341,7 +341,7 @@ impl EthClient {
         let mut tx_json = json!({
             "to": match tx.to {
                 TxKind::Call(addr) => format!("{addr:#x}"),
-                TxKind::Create => format!("{:#x}", Address::zero()),
+                TxKind::Create => format!("{:#x}", Address::ZERO),
             },
             "input": format!("0x{:#x}", tx.input),
             "value": format!("{:#x}", tx.value),
@@ -378,7 +378,7 @@ impl EthClient {
     ) -> Result<U256, EthClientError> {
         let gas_price = self.get_gas_price().await?;
 
-        Ok((gas_price * (100 + bump_percent)) / 100)
+        Ok((gas_price * U256::from(100 + bump_percent)) / U256::from(100))
     }
 
     pub async fn get_nonce(

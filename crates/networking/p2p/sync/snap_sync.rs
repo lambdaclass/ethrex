@@ -300,7 +300,7 @@ pub async fn snap_sync(
         info!("Starting to download account ranges from peers");
         request_account_range(
             peers,
-            H256::zero(),
+            H256::ZERO,
             H256::repeat_byte(0xff),
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,

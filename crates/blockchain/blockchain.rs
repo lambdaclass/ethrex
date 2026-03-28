@@ -702,7 +702,7 @@ impl Blockchain {
                     has_storage.insert(hashed_address);
                 }
 
-                let bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+                let bucket = hashed_address.as_slice()[0] >> 4;
                 workers_tx[bucket as usize]
                     .send(WorkerRequest::ProcessAccount {
                         prefix: hashed_address,
@@ -725,7 +725,7 @@ impl Blockchain {
         let mut early_batches: [Vec<H256>; 16] = Default::default();
         for hashed_account in hashed_address_cache.values() {
             if !has_storage.contains(hashed_account) {
-                let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
+                let bucket = hashed_account.as_slice()[0] >> 4;
                 early_batches[bucket as usize].push(*hashed_account);
             }
         }
@@ -942,7 +942,7 @@ impl Blockchain {
                                             Trie::new_temp()
                                         } else {
                                             let storage_root =
-                                                match state_trie.get(hashed_address.as_bytes())? {
+                                                match state_trie.get(hashed_address.as_slice())? {
                                                     Some(rlp) => {
                                                         AccountState::decode(&rlp)?.storage_root
                                                     }
@@ -958,10 +958,10 @@ impl Blockchain {
                                         for (key, value) in &update.added_storage {
                                             let hashed_key = keccak(key);
                                             if value.is_zero() {
-                                                trie.remove(hashed_key.as_bytes())?;
+                                                trie.remove(hashed_key.as_slice())?;
                                             } else {
                                                 trie.insert(
-                                                    hashed_key.as_bytes().to_vec(),
+                                                    hashed_key.as_slice().to_vec(),
                                                     value.encode_to_vec(),
                                                 )?;
                                             }
@@ -996,7 +996,7 @@ impl Blockchain {
         // Build per-shard work items
         let mut shards: Vec<Vec<BalStateWorkItem>> = (0..NUM_WORKERS).map(|_| Vec::new()).collect();
         for (idx, (hashed_address, update)) in accounts.iter().enumerate() {
-            let bucket = (hashed_address.as_fixed_bytes()[0] >> 4) as usize;
+            let bucket = (hashed_address.as_slice()[0] >> 4) as usize;
             shards[bucket].push(BalStateWorkItem {
                 hashed_address: *hashed_address,
                 info: update.info.clone(),
@@ -1026,7 +1026,7 @@ impl Blockchain {
                                     self.storage.open_state_trie(parent_state_root)?;
 
                                 for item in &shard_items {
-                                    let path = item.hashed_address.as_bytes();
+                                    let path = item.hashed_address.as_slice();
 
                                     // Load existing account state
                                     let mut account_state = match state_trie.get(path)? {
@@ -2447,7 +2447,7 @@ impl Blockchain {
         // Check that the specified blob gas fee is above the minimum value
         if let Some(fee) = tx.max_fee_per_blob_gas() {
             // Blob tx fee checks
-            if fee < MIN_BASE_FEE_PER_BLOB_GAS.into() {
+            if fee < U256::from(MIN_BASE_FEE_PER_BLOB_GAS) {
                 return Err(MempoolError::TxBlobBaseFeeTooLowError);
             }
         };
@@ -2567,7 +2567,7 @@ fn load_trie(
     Ok(match prefix {
         Some(account_hash) => {
             let state_trie = storage.open_state_trie(parent_state_root)?;
-            let storage_root = match state_trie.get(account_hash.as_bytes())? {
+            let storage_root = match state_trie.get(account_hash.as_slice())? {
                 Some(rlp) => AccountState::decode(&rlp)?.storage_root,
                 None => *EMPTY_TRIE_HASH,
             };
@@ -2707,7 +2707,7 @@ fn handle_subtrie(
                     pre_nodes.extend(nodes);
                     nodes = pre_nodes;
                 }
-                let bucket = prefix.as_fixed_bytes()[0] >> 4;
+                let bucket = prefix.as_slice()[0] >> 4;
                 senders[bucket as usize]
                     .send(WorkerRequest::StorageShard {
                         prefix,
@@ -2800,10 +2800,10 @@ fn handle_subtrie(
                 match accounts.entry(prefix) {
                     Entry::Occupied(_) => {}
                     Entry::Vacant(vacant_entry) => {
-                        let account_state = match state_trie.get(prefix.as_bytes())? {
+                        let account_state = match state_trie.get(prefix.as_slice())? {
                             Some(rlp) => {
                                 let state = AccountState::decode(&rlp)?;
-                                state_trie.insert(prefix.as_bytes().to_vec(), rlp)?;
+                                state_trie.insert(prefix.as_slice().to_vec(), rlp)?;
                                 state
                             }
                             None => AccountState::default(),
@@ -2818,7 +2818,7 @@ fn handle_subtrie(
                     acct.nonce = info.nonce;
                     acct.balance = info.balance;
                     acct.code_hash = info.code_hash;
-                    let path = prefix.as_bytes();
+                    let path = prefix.as_slice();
                     if *acct != AccountState::default() {
                         state_trie.insert(path.to_vec(), acct.encode_to_vec())?;
                     } else {
@@ -2855,7 +2855,7 @@ fn handle_subtrie(
                     let is_new = !expected_shards.contains_key(&prefix);
                     for (key, value) in account_storage {
                         let hashed_key = keccak(key);
-                        let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
+                        let bucket = hashed_key.as_slice()[0] >> 4;
                         *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
                         if bucket == index {
                             // Local storage: insert directly
@@ -2867,9 +2867,9 @@ fn handle_subtrie(
                                 storage_root,
                             )?;
                             if value.is_zero() {
-                                trie.remove(hashed_key.as_bytes())?;
+                                trie.remove(hashed_key.as_slice())?;
                             } else {
-                                trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+                                trie.insert(hashed_key.as_slice().to_vec(), value.encode_to_vec())?;
                             }
                         } else {
                             senders[bucket as usize]
@@ -2902,9 +2902,9 @@ fn handle_subtrie(
                     storage_root,
                 )?;
                 if value.is_zero() {
-                    trie.remove(key.as_bytes())?;
+                    trie.remove(key.as_slice())?;
                 } else {
-                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                    trie.insert(key.as_slice().to_vec(), value.encode_to_vec())?;
                 }
                 dirty = true;
             }
@@ -2983,7 +2983,7 @@ fn handle_subtrie(
                     // Update account's storage root and re-insert into state trie
                     let old_state = accounts.get_mut(&prefix).expect("loaded in ProcessAccount");
                     old_state.storage_root = new_storage_root;
-                    let path = prefix.as_bytes();
+                    let path = prefix.as_slice();
                     if *old_state != AccountState::default() {
                         state_trie.insert(path.to_vec(), old_state.encode_to_vec())?;
                     } else {

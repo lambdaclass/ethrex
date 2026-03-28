@@ -3,8 +3,7 @@
 //! Tests for Block Access List (BAL) recording, hash computation,
 //! checkpoint/restore semantics, net-zero filtering, and RLP encoding.
 
-use ethereum_types::H160;
-use ethrex_common::U256;
+use ethrex_common::{Address, U256};
 use ethrex_common::constants::SYSTEM_ADDRESS;
 use ethrex_common::types::block_access_list::{
     AccountChanges, BalanceChange, BlockAccessList, BlockAccessListRecorder, CodeChange,
@@ -13,24 +12,24 @@ use ethrex_common::types::block_access_list::{
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 // Test addresses (matching those in block_access_list.rs for RLP compatibility)
-const ALICE: H160 = H160([
+const ALICE: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x01,
 ]);
-const BOB: H160 = H160([
+const BOB: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x02,
 ]);
-const CHARLIE: H160 = H160([
+const CHARLIE: Address = Address::new([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x03,
 ]);
 
 // Additional test addresses for RLP encoding tests (matching block_access_list.rs)
-const ALICE_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]); // 0xA
-const BOB_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11]); // 0xB
-const CHARLIE_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); // 0xC
-const CONTRACT_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); // 0xC
+const ALICE_ADDR: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]); // 0xA
+const BOB_ADDR: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11]); // 0xB
+const CHARLIE_ADDR: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); // 0xC
+const CONTRACT_ADDR: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]); // 0xC
 
 // ==================== BAL Hash Computation Tests ====================
 

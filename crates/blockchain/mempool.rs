@@ -14,7 +14,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256,
+    Address, H160, H256, U256,
     types::{
         BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
         kzg_commitment_to_versioned_hash,
@@ -256,7 +256,7 @@ impl Mempool {
                 && let Some(blob_fee) = filter.blob_fee
                 && tx
                     .max_fee_per_blob_gas()
-                    .is_none_or(|fee| fee < blob_fee.into())
+                    .is_none_or(|fee| fee < U256::from(blob_fee))
             {
                 return false;
             }
@@ -316,7 +316,7 @@ impl Mempool {
 
         Ok(possible_hashes
             .iter()
-            .filter(|hash| !tx_pool.contains_key(hash))
+            .filter(|hash| !tx_pool.contains_key(*hash))
             .copied()
             .collect())
     }

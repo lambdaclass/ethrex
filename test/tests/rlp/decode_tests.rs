@@ -1,4 +1,4 @@
-use ethereum_types::U256;
+use ethrex_common::{U256, U256Ext};
 use ethrex_rlp::constants::{RLP_EMPTY_LIST, RLP_NULL};
 use ethrex_rlp::decode::RLPDecode;
 use std::net::{Ipv4Addr, Ipv6Addr};

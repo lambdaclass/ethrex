@@ -26,7 +26,7 @@ use crate::{
     utils::{size_offset_to_usize, u256_to_usize, word_to_address},
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{U256, U256Ext};
 use std::mem;
 
 /// Implementation for the `ADDRESS` opcode.
@@ -38,9 +38,9 @@ impl OpcodeHandler for OpAddressHandler {
             .increase_consumed_gas(gas_cost::ADDRESS)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
-            bytes[12..].copy_from_slice(&vm.current_call_frame.to.0);
+            bytes[12..].copy_from_slice(vm.current_call_frame.to.as_slice());
             bytes.reverse();
             mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
         }))?;
@@ -83,9 +83,9 @@ impl OpcodeHandler for OpOriginHandler {
             .increase_consumed_gas(gas_cost::ORIGIN)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
-            bytes[12..].copy_from_slice(&vm.env.origin.0);
+            bytes[12..].copy_from_slice(vm.env.origin.as_slice());
             bytes.reverse();
             mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
         }))?;
@@ -117,9 +117,9 @@ impl OpcodeHandler for OpCallerHandler {
             .increase_consumed_gas(gas_cost::CALLER)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
-            bytes[12..].copy_from_slice(&vm.current_call_frame.msg_sender.0);
+            bytes[12..].copy_from_slice(vm.current_call_frame.msg_sender.as_slice());
             bytes.reverse();
             mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
         }))?;
@@ -178,9 +178,10 @@ impl OpcodeHandler for OpCallDataSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CALLDATASIZE)?;
 
+        #[expect(clippy::as_conversions, reason = "calldata len fits u64")]
         vm.current_call_frame
             .stack
-            .push(U256::from(vm.current_call_frame.calldata.len()))?;
+            .push(U256::from_u64(vm.current_call_frame.calldata.len() as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -234,9 +235,10 @@ impl OpcodeHandler for OpCodeSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CODESIZE)?;
 
+        #[expect(clippy::as_conversions, reason = "bytecode len fits u64")]
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.bytecode.bytecode.len().into())?;
+            .push(U256::from_u64(vm.current_call_frame.bytecode.bytecode.len() as u64))?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -295,7 +297,8 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
             )?)?;
 
         // State access AFTER gas check passes (using optimized code length lookup)
-        let account_code_length = vm.db.get_code_length(address)?.into();
+        #[expect(clippy::as_conversions, reason = "code length fits u64")]
+        let account_code_length = U256::from_u64(vm.db.get_code_length(address)? as u64);
 
         // Record address touch for BAL (after gas check passes)
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {
@@ -384,7 +387,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
             vm.current_call_frame.stack.push_zero()?;
         } else {
             #[expect(unsafe_code, reason = "safe")]
-            vm.current_call_frame.stack.push(U256(unsafe {
+            vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
                 let mut bytes = account_code_hash;
                 bytes.reverse();
                 mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
@@ -403,9 +406,10 @@ impl OpcodeHandler for OpReturnDataSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
+        #[expect(clippy::as_conversions, reason = "return data len fits u64")]
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.sub_return_data.len().into())?;
+            .push(U256::from_u64(vm.current_call_frame.sub_return_data.len() as u64))?;
 
         Ok(OpcodeResult::Continue)
     }

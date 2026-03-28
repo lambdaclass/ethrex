@@ -8,7 +8,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-use ethereum_types::H32;
+use crate::H32;
 use tracing::debug;
 
 use super::{BlockHash, BlockHeader, BlockNumber, ChainConfig};
@@ -42,7 +42,7 @@ impl ForkId {
         let mut fork_next;
         let mut hasher = Hasher::new();
         // Calculate the starting checksum from the genesis hash
-        hasher.update(genesis_hash.as_bytes());
+        hasher.update(genesis_hash.as_slice());
 
         // Update the checksum with the block number based forks
         fork_next = update_checksum(block_number_based_forks, &mut hasher, head_block_number);
@@ -127,7 +127,7 @@ fn get_all_fork_id_combinations(forks: Vec<u64>, genesis_hash: BlockHash) -> Vec
     let mut last_activation = 0;
 
     let mut hasher = Hasher::new();
-    hasher.update(genesis_hash.as_bytes());
+    hasher.update(genesis_hash.as_slice());
     for activation in forks {
         // If the block number or timestamp is already added, skip it.
         if activation == last_activation {

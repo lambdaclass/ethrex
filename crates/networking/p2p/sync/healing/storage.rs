@@ -18,7 +18,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::{H256, types::AccountState};
+use ethrex_common::{H256, H256Ext as _, types::AccountState};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};

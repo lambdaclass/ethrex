@@ -1,8 +1,8 @@
 use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
-use ethereum_types::Address;
-use ethereum_types::Signature;
+use ethrex_common::Address;
+use ethrex_common::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::Block;

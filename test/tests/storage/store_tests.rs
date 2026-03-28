@@ -1,7 +1,6 @@
 use bytes::Bytes;
-use ethereum_types::{H256, U256};
 use ethrex_common::{
-    Address, Bloom, H160,
+    Address, Bloom, H160, H256, U256, U256Ext,
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{
         AccountState, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt, Transaction,
@@ -11,6 +10,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store, error::StoreError};
+use rand::Rng;
 use std::{fs, str::FromStr};
 
 #[tokio::test]
@@ -30,7 +30,7 @@ where
     F: FnOnce(Store) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let nonce: u64 = H256::random().to_low_u64_be();
+    let nonce: u64 = rand::random();
     let path = format!("store-test-db-{nonce}");
     // Remove preexistent DBs in case of a failed previous test
     if !matches!(engine_type, EngineType::InMemory) {
@@ -79,7 +79,7 @@ async fn test_iter_accounts(store: Store) {
             .unwrap();
     }
     let state_root = trie.hash().unwrap();
-    let pivot = H256::random();
+    let pivot = H256::new(rand::thread_rng().gen());
     let pos = accounts.partition_point(|(key, _)| key < &pivot);
     let account_iter = store.iter_accounts_from(state_root, pivot).unwrap();
     for (expected, actual) in std::iter::zip(accounts.drain(pos..), account_iter) {
@@ -113,7 +113,7 @@ async fn test_iter_storage(store: Store) {
     )
     .unwrap();
     let state_root = trie.hash().unwrap();
-    let pivot = H256::random();
+    let pivot = H256::new(rand::thread_rng().gen());
     let pos = slots.partition_point(|(key, _)| key < &pivot);
     let storage_iter = store
         .iter_storage_from(state_root, address, pivot)
@@ -209,7 +209,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         gas_used: 0xa8de,
         timestamp: 0x03e8,
         extra_data: Bytes::new(),
-        prev_randao: H256::zero(),
+        prev_randao: H256::ZERO,
         nonce: 0x0000000000000000,
         base_fee_per_gas: Some(0x07),
         withdrawals_root: Some(
@@ -218,7 +218,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         ),
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
-        parent_beacon_block_root: Some(H256::zero()),
+        parent_beacon_block_root: Some(H256::ZERO),
         requests_hash: Some(*EMPTY_KECCACK_HASH),
         ..Default::default()
     };
@@ -232,7 +232,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
 }
 
 async fn test_store_block_number(store: Store) {
-    let block_hash = H256::random();
+    let block_hash = H256::new(rand::thread_rng().gen());
     let block_number = 6;
 
     store

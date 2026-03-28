@@ -1,4 +1,4 @@
-use ethereum_types::H256;
+use crate::H256;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::{Nibbles, Node, Trie, error::TrieError};

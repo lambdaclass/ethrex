@@ -5,7 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_common::{Address, H256, H256Ext as _, U256, serde_utils};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -232,7 +232,7 @@ impl RpcHandler for GetProofRequest {
             .storage_proof
             .into_iter()
             .map(|sp| StorageProof {
-                key: sp.key.into_uint(),
+                key: U256::from_be_bytes(sp.key.0),
                 value: sp.value,
                 proof: sp.proof,
             })

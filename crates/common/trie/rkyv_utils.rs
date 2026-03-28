@@ -1,4 +1,4 @@
-use ethereum_types::H256;
+use crate::H256;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 

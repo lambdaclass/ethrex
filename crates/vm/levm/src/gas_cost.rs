@@ -7,7 +7,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{U256, U256Ext, types::Fork};
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
@@ -588,7 +588,7 @@ pub fn selfdestruct(
 
     // If a positive balance is sent to an empty account, the dynamic gas is 25000.
     // For Amsterdam+, this cost is moved to state gas (charged separately).
-    if account_is_empty && balance_to_transfer > U256::zero() && fork < Fork::Amsterdam {
+    if account_is_empty && !balance_to_transfer.is_zero() && fork < Fork::Amsterdam {
         dynamic_cost = dynamic_cost
             .checked_add(SELFDESTRUCT_DYNAMIC)
             .ok_or(OutOfGas)?;
@@ -966,7 +966,7 @@ fn calculate_cost_and_gas_limit_call(
     let max_gas_for_call = gas_left.checked_sub(gas_left / 64).ok_or(OutOfGas)?;
 
     let gas: u64 = gas_from_stack
-        .min(max_gas_for_call.into())
+        .min(U256::from_u64(max_gas_for_call))
         .try_into()
         .map_err(|_err| ExceptionalHalt::OutOfGas)?;
 

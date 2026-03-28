@@ -1,16 +1,16 @@
-use ethrex_common::{H256, U256};
+use ethrex_common::{H256, U256, U256Ext};
 use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
-pub const SUCCESS: U256 = U256::one();
-pub const FAIL: U256 = U256::zero();
+pub const SUCCESS: U256 = U256::from_limbs([1, 0, 0, 0]);
+pub const FAIL: U256 = U256::ZERO;
 pub const WORD_SIZE: usize = 32;
 
 pub const STACK_LIMIT: usize = 1024;
 
-pub const EMPTY_CODE_HASH: H256 = H256([
+pub const EMPTY_CODE_HASH: H256 = H256::new([
     0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
     0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b, 0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
 ]);
@@ -42,9 +42,9 @@ pub const EOF_PREFIX: u8 = 0xef;
 pub mod create_opcode {
     use ethrex_common::U256;
 
-    pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
-    pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);
-    pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
+    pub const INIT_CODE_WORD_COST: U256 = U256::from_limbs([2, 0, 0, 0]);
+    pub const CODE_DEPOSIT_COST: U256 = U256::from_limbs([200, 0, 0, 0]);
+    pub const CREATE_BASE_COST: U256 = U256::from_limbs([32000, 0, 0, 0]);
 }
 
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
@@ -83,7 +83,7 @@ pub static SECP256K1_ORDER: LazyLock<U256> = LazyLock::new(|| {
     ])
 });
 pub static SECP256K1_ORDER_OVER2: std::sync::LazyLock<U256> =
-    LazyLock::new(|| *SECP256K1_ORDER / U256::from(2));
+    LazyLock::new(|| *SECP256K1_ORDER / U256::from_u64(2));
 pub const MAGIC: u8 = 0x05;
 pub const SET_CODE_DELEGATION_BYTES: [u8; 3] = [0xef, 0x01, 0x00];
 // Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -95,13 +95,13 @@ pub const PER_EMPTY_ACCOUNT_COST: u64 = 25000;
 pub const REFUND_AUTH_PER_EXISTING_ACCOUNT: u64 = 12500;
 
 /// EIP-7708: keccak256('Transfer(address,address,uint256)')
-pub const TRANSFER_EVENT_TOPIC: H256 = H256([
+pub const TRANSFER_EVENT_TOPIC: H256 = H256::new([
     0xdd, 0xf2, 0x52, 0xad, 0x1b, 0xe2, 0xc8, 0x9b, 0x69, 0xc2, 0xb0, 0x68, 0xfc, 0x37, 0x8d, 0xaa,
     0x95, 0x2b, 0xa7, 0xf1, 0x63, 0xc4, 0xa1, 0x16, 0x28, 0xf5, 0x5a, 0x4d, 0xf5, 0x23, 0xb3, 0xef,
 ]);
 
 /// EIP-7708: keccak256('Burn(address,uint256)')
-pub const BURN_EVENT_TOPIC: H256 = H256([
+pub const BURN_EVENT_TOPIC: H256 = H256::new([
     0xcc, 0x16, 0xf5, 0xdb, 0xb4, 0x87, 0x32, 0x80, 0x81, 0x5c, 0x1e, 0xe0, 0x9d, 0xbd, 0x06, 0x73,
     0x6c, 0xff, 0xcc, 0x18, 0x44, 0x12, 0xcf, 0x7a, 0x71, 0xa0, 0xfd, 0xb7, 0x5d, 0x39, 0x7c, 0xa5,
 ]);

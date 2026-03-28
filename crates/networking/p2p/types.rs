@@ -192,7 +192,7 @@ impl Node {
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
         ))?;
-        let verifying_key = PublicKey::from_slice(public_key.as_bytes()).map_err(|_| {
+        let verifying_key = PublicKey::from_slice(public_key.as_slice()).map_err(|_| {
             NodeError::ParseError("public key could not be built from msg pub key bytes".into())
         })?;
         let encoded = verifying_key.serialize_uncompressed();
@@ -421,7 +421,7 @@ impl NodeRecord {
             return false;
         };
 
-        let Ok(pubkey) = PublicKey::from_slice(pubkey_bytes.as_bytes()) else {
+        let Ok(pubkey) = PublicKey::from_slice(pubkey_bytes.as_slice()) else {
             return false;
         };
 
@@ -430,7 +430,7 @@ impl NodeRecord {
             return false;
         };
 
-        let Ok(signature) = Signature::from_compact(self.signature.as_bytes()) else {
+        let Ok(signature) = Signature::from_compact(self.signature.as_slice()) else {
             return false;
         };
 

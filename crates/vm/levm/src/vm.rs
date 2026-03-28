@@ -21,7 +21,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, AddressExt, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };

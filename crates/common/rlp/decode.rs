@@ -3,9 +3,7 @@ use super::{
     error::RLPDecodeError,
 };
 use bytes::{Bytes, BytesMut};
-use ethereum_types::{
-    Address, Bloom, H32, H64, H128, H160, H256, H264, H512, H520, Signature, U256,
-};
+use alloy_primitives::{Address, Bloom, FixedBytes, U256};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Max payload size accepted when decoding.
@@ -144,59 +142,17 @@ impl RLPDecode for BytesMut {
     }
 }
 
-impl RLPDecode for H32 {
+impl<const N: usize> RLPDecode for FixedBytes<N> {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H32(value), rest))
-    }
-}
-
-impl RLPDecode for H64 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H64(value), rest))
-    }
-}
-
-impl RLPDecode for H128 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H128(value), rest))
-    }
-}
-
-impl RLPDecode for H256 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H256(value), rest))
-    }
-}
-
-impl RLPDecode for H264 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H264(value), rest))
+        let (value, rest) = <[u8; N]>::decode_unfinished(rlp)?;
+        Ok((FixedBytes(value), rest))
     }
 }
 
 impl RLPDecode for Address {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H160(value), rest))
-    }
-}
-
-impl RLPDecode for H512 {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H512(value), rest))
-    }
-}
-
-impl RLPDecode for Signature {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((H520(value), rest))
+        let (value, rest) = <[u8; 20]>::decode_unfinished(rlp)?;
+        Ok((Address(FixedBytes(value)), rest))
     }
 }
 
@@ -204,14 +160,14 @@ impl RLPDecode for U256 {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (bytes, rest) = decode_bytes(rlp)?;
         let padded_bytes: [u8; 32] = static_left_pad(bytes)?;
-        Ok((U256::from_big_endian(&padded_bytes), rest))
+        Ok((U256::from_be_bytes(padded_bytes), rest))
     }
 }
 
 impl RLPDecode for Bloom {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (value, rest) = RLPDecode::decode_unfinished(rlp)?;
-        Ok((Bloom(value), rest))
+        let (value, rest) = <[u8; 256]>::decode_unfinished(rlp)?;
+        Ok((Bloom(FixedBytes(value)), rest))
     }
 }
 

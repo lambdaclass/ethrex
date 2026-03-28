@@ -1,5 +1,5 @@
 use crate::peer_handler::DumpError;
-use ethrex_common::{H256, H512, U256, types::AccountState, utils::keccak};
+use ethrex_common::{H256, H512, U256, U256Ext as _, types::AccountState, utils::keccak};
 use ethrex_rlp::encode::RLPEncode;
 use secp256k1::{PublicKey, SecretKey};
 use std::{
@@ -223,7 +223,7 @@ pub fn dump_storages_to_file(
 /// <https://github.com/ethereum/devp2p/blob/master/discv4.md#node-identities>
 /// <https://github.com/ethereum/devp2p/blob/master/discv5/discv5-theory.md#nodes-records-and-distances>
 pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-    let xor = node_id_1 ^ node_id_2;
-    let distance = U256::from_big_endian(xor.as_bytes());
+    let xor = *node_id_1 ^ *node_id_2;
+    let distance = U256::from_big_endian(xor.as_slice());
     distance.bits().saturating_sub(1)
 }

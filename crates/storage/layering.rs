@@ -1,4 +1,4 @@
-use ethrex_common::H256;
+use ethrex_common::{H256, H256Ext as _};
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};

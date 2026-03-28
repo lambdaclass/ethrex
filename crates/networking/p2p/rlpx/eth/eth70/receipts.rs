@@ -110,7 +110,7 @@ impl RLPxMessage for Receipts70 {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use ethereum_types::{Address, H256};
+    use ethrex_common::{Address, H256};
     use ethrex_common::types::{Log, TxType};
 
     use super::*;

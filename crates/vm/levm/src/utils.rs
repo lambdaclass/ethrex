@@ -18,7 +18,7 @@ use bytes::Bytes;
 use ethrex_common::constants::SYSTEM_ADDRESS;
 use ethrex_common::types::Log;
 use ethrex_common::{
-    Address, H256, U256,
+    Address, AddressExt, H256, H256Ext, U256, U256Ext,
     evm::calculate_create_address,
     types::{Account, Code, Fork, Transaction, fake_exponential, tx_fields::*},
     utils::{keccak, u256_to_big_endian},
@@ -116,8 +116,8 @@ pub fn get_base_fee_per_blob_gas(
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS.into(),
-        block_excess_blob_gas.unwrap_or_default().into(),
+        U256::from_u64(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from_u64(block_excess_blob_gas.unwrap_or_default()),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -140,7 +140,7 @@ pub fn get_max_blob_gas_price(
 
     let max_blob_gas_cost = tx_max_fee_per_blob_gas
         .unwrap_or_default()
-        .checked_mul(blob_gas_used.into())
+        .checked_mul(U256::from_u64(blob_gas_used))
         .ok_or(InternalError::Overflow)?;
 
     Ok(max_blob_gas_cost)
@@ -162,7 +162,7 @@ pub fn calculate_blob_gas_cost(
 
     let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
 
-    let blob_gas_used: U256 = blob_gas_used.into();
+    let blob_gas_used: U256 = U256::from_u64(blob_gas_used);
     let blob_fee: U256 = blob_gas_used
         .checked_mul(base_fee_per_blob_gas)
         .ok_or(InternalError::Overflow)?;
@@ -371,7 +371,7 @@ impl<'a> VM<'a> {
 
             // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
             // Clear the account’s code and reset the account’s code hash to the empty hash.
-            let code = if auth_tuple.address != Address::zero() {
+            let code = if auth_tuple.address != Address::ZERO {
                 delegation_bytes.into()
             } else {
                 Bytes::new()
@@ -606,10 +606,14 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
 /// This is generally used for memory offsets and sizes, 32 bits is more than enough for this purpose.
 #[expect(clippy::as_conversions)]
 pub fn u256_to_usize(val: U256) -> Result<usize, VMError> {
-    if val.0[0] > u32::MAX as u64 || val.0[1] != 0 || val.0[2] != 0 || val.0[3] != 0 {
+    if val.as_limbs()[0] > u32::MAX as u64
+        || val.as_limbs()[1] != 0
+        || val.as_limbs()[2] != 0
+        || val.as_limbs()[3] != 0
+    {
         return Err(VMError::ExceptionalHalt(ExceptionalHalt::VeryLargeNumber));
     }
-    Ok(val.0[0] as usize)
+    Ok(val.as_limbs()[0] as usize)
 }
 
 /// Converts U256 size and offset to usize.

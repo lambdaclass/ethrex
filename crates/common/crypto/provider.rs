@@ -1,5 +1,7 @@
-use ethereum_types::Address;
+use alloy_primitives::{Address, U256};
 use sha2::Digest as _;
+
+type U512 = ruint::Uint<512, 8>;
 
 /// Errors from crypto operations. Opaque — does not leak library-specific types.
 #[derive(Debug, thiserror::Error)]
@@ -325,25 +327,22 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Used by the MULMOD opcode. Default impl uses standard bigint arithmetic.
     /// ZisK overrides with a native circuit instruction.
     fn mulmod256(&self, a: &[u8; 32], b: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
-        let a = ethereum_types::U256::from_big_endian(a);
-        let b = ethereum_types::U256::from_big_endian(b);
-        let m = ethereum_types::U256::from_big_endian(m);
+        let a = U256::from_be_bytes(*a);
+        let b = U256::from_be_bytes(*b);
+        let m = U256::from_be_bytes(*m);
 
         let result = if m.is_zero() {
-            ethereum_types::U256::zero()
+            U256::ZERO
         } else {
-            let product = a.full_mul(b);
-            let m512 = ethereum_types::U512::from(m);
-            if product < m512 {
-                // Product fits below modulus — no division needed.
-                product.try_into().unwrap_or(ethereum_types::U256::zero())
-            } else {
-                let (_, rem) = product.div_mod(m512);
-                rem.try_into().unwrap_or(ethereum_types::U256::zero())
-            }
+            let product = U512::from(a) * U512::from(b);
+            let m512 = U512::from(m);
+            let rem = product % m512;
+            // rem < m < 2^256, so the upper 32 bytes of the 64-byte BE repr are zero
+            let rem_bytes = rem.to_be_bytes::<64>();
+            U256::from_be_slice(&rem_bytes[32..])
         };
 
-        result.to_big_endian()
+        result.to_be_bytes::<32>()
     }
 
     // ── Blake2 ─────────────────────────────────────────────────────────

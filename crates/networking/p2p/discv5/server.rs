@@ -352,7 +352,7 @@ impl DiscoveryServer {
             let pairs = record.decode_pairs();
             let pubkey = pairs
                 .secp256k1
-                .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
+                .and_then(|pk| PublicKey::from_slice(pk.as_slice()).ok());
 
             // Verify that the ENR's public key matches the claimed src_id
             if let Some(pk) = &pubkey {
@@ -461,7 +461,7 @@ impl DiscoveryServer {
 
     fn get_random_find_node_message(&self, node: &Node) -> Message {
         let mut rng = OsRng;
-        let target = rng.r#gen();
+        let target = H256::new(rng.r#gen());
         let distance = distance(&target, &node.node_id()) as u8;
         let mut distances = Vec::new();
         distances.push(distance as u32);

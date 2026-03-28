@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Address, Signature};
+use ethrex_common::{Address, Signature, U256Ext};
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::utils::keccak;
 use ethrex_common::{

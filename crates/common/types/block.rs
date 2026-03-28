@@ -4,7 +4,7 @@ use super::{
 };
 use crate::utils::keccak;
 use crate::{
-    Address, H256, U256,
+    Address, H256, U256, U256Ext,
     constants::{
         BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
         MIN_BASE_FEE_PER_BLOB_GAS,
@@ -12,7 +12,7 @@ use crate::{
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
-use ethereum_types::Bloom;
+use crate::Bloom;
 use ethrex_crypto::{Crypto, CryptoError};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -458,11 +458,11 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 /// it's parent excess blob gas and the update fraction, which depends on the fork.
 pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> U256 {
     if update_fraction == 0 {
-        return U256::zero();
+        return U256::ZERO;
     }
     fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
-        U256::from(parent_excess_blob_gas),
+        U256::from_u64(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from_u64(parent_excess_blob_gas),
         update_fraction,
     )
     .unwrap_or_default()
@@ -485,8 +485,19 @@ pub fn fake_exponential(
         return Ok(factor);
     }
 
-    let mut output: U256 = U256::zero();
-    let denominator_u256: U256 = denominator.into();
+    // Fast path: when both factor and numerator fit in u64, use u128 arithmetic
+    // to avoid expensive U256 multiply/divide operations (significant in zkVM).
+    // Falls back to U256 if intermediates overflow u128.
+    if factor <= U256::from_u64(u64::MAX) && numerator <= U256::from_u64(u64::MAX) {
+        if let Some(result) =
+            fake_exponential_u128(factor.low_u64(), numerator.low_u64(), denominator)
+        {
+            return Ok(result);
+        }
+    }
+
+    let mut output: U256 = U256::ZERO;
+    let denominator_u256: U256 = U256::from_u64(denominator);
 
     // Initial multiplication: factor * denominator
     let mut numerator_accum = factor
@@ -517,9 +528,29 @@ pub fn fake_exponential(
         }
 
         output
-            .checked_div(denominator.into())
+            .checked_div(U256::from_u64(denominator))
             .ok_or(FakeExponentialError::CheckedDiv)
     }
+}
+
+/// Same Taylor expansion as [`fake_exponential`] but using u128 arithmetic.
+/// Returns `None` if any intermediate overflows u128, so the caller can
+/// fall back to the U256 path.
+fn fake_exponential_u128(factor: u64, numerator: u64, denominator: u64) -> Option<U256> {
+    let d = denominator as u128;
+    let n = numerator as u128;
+
+    let mut output: u128 = 0;
+    let mut numerator_accum: u128 = (factor as u128).checked_mul(d)?;
+    let mut denominator_by_i: u128 = d;
+
+    while numerator_accum > 0 {
+        output = output.checked_add(numerator_accum)?;
+        numerator_accum = numerator_accum.checked_mul(n)? / denominator_by_i;
+        denominator_by_i += d;
+    }
+
+    Some(U256::from(output / d))
 }
 
 #[derive(Debug, thiserror::Error, Serialize, Clone, PartialEq, Deserialize, Eq)]
@@ -850,7 +881,7 @@ mod test {
     use super::*;
     use crate::constants::EMPTY_KECCACK_HASH;
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
-    use ethereum_types::H160;
+    use crate::H160;
     use hex_literal::hex;
     use std::str::FromStr;
 
@@ -1088,5 +1119,44 @@ mod test {
         );
         // With u64 this overflows
         assert!(thing.is_ok());
+    }
+
+    #[test]
+    fn test_fake_exponential_u128_matches_u256() {
+        // Verify the u128 fast-path produces identical results to the U256 path
+        // for inputs that fit in u64 (typical blob gas fee calculations).
+        let test_cases: Vec<(u64, u64, u64)> = vec![
+            (1, 0, 3338477),           // numerator=0, early return
+            (1, 1, 3338477),           // minimal
+            (1, 3145728, 3338477),     // ~1 blob excess (Cancun)
+            (57532635, 3145728, 3338477), // non-trivial factor
+            (1, 10_000_000, 3338477),  // moderate excess
+            (1, 50_000_000, 3338477),  // large excess
+            (1, 100_000_000, 5007716), // Prague update fraction
+            (1, 3145728, 5007716),     // Prague, small excess
+        ];
+
+        for (factor, numerator, denominator) in test_cases {
+            let result = fake_exponential(factor.into(), numerator.into(), denominator).unwrap();
+            // Also verify the u128 helper directly matches
+            let u128_result = fake_exponential_u128(factor, numerator, denominator);
+            assert_eq!(
+                u128_result,
+                Some(result),
+                "u128 path mismatch for factor={factor}, numerator={numerator}, denominator={denominator}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fake_exponential_u128_fallback_on_large_inputs() {
+        // For very large numerator values, u128 overflows and returns None,
+        // but the U256 path still works.
+        let result = fake_exponential(1.into(), 400_000_000.into(), BLOB_BASE_FEE_UPDATE_FRACTION);
+        assert!(result.is_ok());
+        // The u128 path should return None for this large input
+        let u128_result =
+            fake_exponential_u128(1, 400_000_000, BLOB_BASE_FEE_UPDATE_FRACTION);
+        assert!(u128_result.is_none());
     }
 }

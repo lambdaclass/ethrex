@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Address, H256};
+use ethrex_common::{Address, H256};
 use ethrex_rpc::clients::{EngineClient, EngineClientError};
 use ethrex_rpc::types::fork_choice::{ForkChoiceState, PayloadAttributesV3};
 use sha2::{Digest, Sha256};
@@ -20,7 +20,7 @@ pub async fn start_block_producer(
     sleep(Duration::from_millis(block_production_interval_ms)).await;
 
     let mut head_block_hash: H256 = head_block_hash;
-    let parent_beacon_block_root = H256::zero();
+    let parent_beacon_block_root = H256::ZERO;
     let mut tries = 0;
     while tries < max_tries {
         tracing::info!("Producing block");
@@ -33,7 +33,7 @@ pub async fn start_block_producer(
 
         let payload_attributes = PayloadAttributesV3 {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            prev_randao: H256::zero(),
+            prev_randao: H256::ZERO,
             suggested_fee_recipient: coinbase_address,
             parent_beacon_block_root: Some(parent_beacon_block_root),
             withdrawals: Some(Vec::new()),

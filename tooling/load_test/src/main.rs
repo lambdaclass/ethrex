@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use ethereum_types::{Address, H160, H256, U256};
+use ethrex_common::{Address, H160, H256, U256, U256Ext};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_common::types::TxType;
 use ethrex_l2_common::calldata::Value;
@@ -186,21 +186,21 @@ enum TxBuilder {
 impl TxBuilder {
     // Returns value, the calldata and the destination (contract or eoa).
     fn build_tx(&self) -> (Option<U256>, Vec<u8>, H160) {
-        let dst = H160::random();
+        let dst = Address::from(rand::random::<[u8; 20]>());
         match self {
             TxBuilder::Erc20(contract_address) => {
                 let send_calldata = calldata::encode_calldata(
                     "transfer(address,uint256)",
-                    &[Value::Address(dst), Value::Uint(U256::one())],
+                    &[Value::Address(dst), Value::Uint(U256::from_u64(1))],
                 )
                 .unwrap();
                 (None, send_calldata, *contract_address)
             }
-            TxBuilder::EthTransfer => (Some(U256::from(ETH_TRANSFER_VALUE)), [].into(), dst),
+            TxBuilder::EthTransfer => (Some(U256::from_u64(ETH_TRANSFER_VALUE)), [].into(), dst),
             TxBuilder::Fibonacci(contract_address) => {
                 let fibo_calldata = calldata::encode_calldata(
                     "fibonacci(uint256)",
-                    &[Value::Uint(100000000000000_u64.into())],
+                    &[Value::Uint(U256::from_u64(100000000000000))],
                 )
                 .unwrap();
                 (None, fibo_calldata, *contract_address)
@@ -342,7 +342,7 @@ fn parse_private_key_into_local_signer(pkey: &str) -> Signer {
     let key = pkey
         .parse::<H256>()
         .unwrap_or_else(|_| panic!("Private key is not a valid hex representation {pkey}"));
-    let secret_key = SecretKey::from_slice(key.as_bytes())
+    let secret_key = SecretKey::from_slice(key.as_slice())
         .unwrap_or_else(|_| panic!("Invalid private key {}", pkey));
     LocalSigner::new(secret_key).into()
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ethrex_common::Address;
 use ethrex_common::H256;
-use ethrex_common::U256;
+use ethrex_common::{U256, U256Ext};
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;

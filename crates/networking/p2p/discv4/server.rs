@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_common::{H256, H256Ext as _, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;

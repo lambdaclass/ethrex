@@ -64,7 +64,7 @@ impl RpcHandler for Syncing {
                 highest_block: syncer
                     .get_last_fcu_head()
                     .map_err(|error| RpcErr::Internal(error.to_string()))?
-                    .to_low_u64_be(),
+                    .as_slice()[24..32].try_into().map(u64::from_be_bytes).unwrap_or_default(),
             };
             serde_json::to_value(syncing_status)
                 .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -156,7 +156,7 @@ async fn get_config_for_fork(
     let fork_id = if let Some(timestamp) = activation_time {
         ForkId::new(chain_config, genesis_header, timestamp, block_number).fork_hash
     } else {
-        H32::zero()
+        H32::ZERO
     };
     let mut system_contracts = BTreeMap::new();
     for contract in system_contracts_for_fork(fork) {

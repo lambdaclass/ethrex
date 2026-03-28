@@ -1,4 +1,4 @@
-use ethrex_common::H256;
+use ethrex_common::{H256, H256Ext as _};
 use hkdf::Hkdf;
 use secp256k1::{
     Message as SecpMessage, PublicKey, SECP256K1, SecretKey, ecdh::shared_secret_point,

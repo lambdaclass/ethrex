@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Bloom, H160, H256, U256};
+use crate::{Address, Bloom, H160, H256, U256};
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
     rancor::{Fallible, Source},
@@ -34,28 +34,42 @@ impl From<VecVecWrapper> for Vec<Vec<u8>> {
 
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = U256)]
-pub struct U256Wrapper([u64; 4]);
+pub struct U256Wrapper {
+    #[rkyv(getter = u256_to_limbs)]
+    limbs: [u64; 4],
+}
+
+fn u256_to_limbs(value: &U256) -> [u64; 4] {
+    *value.as_limbs()
+}
 
 impl From<U256Wrapper> for U256 {
     fn from(value: U256Wrapper) -> Self {
-        Self(value.0)
+        U256::from_limbs(value.limbs)
     }
 }
 
 #[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[rkyv(remote = H160)]
 #[rkyv(derive(Ord, PartialOrd))]
-pub struct H160Wrapper([u8; 20]);
+pub struct H160Wrapper {
+    #[rkyv(getter = h160_to_bytes)]
+    bytes: [u8; 20],
+}
+
+fn h160_to_bytes(addr: &H160) -> [u8; 20] {
+    addr.0 .0
+}
 
 impl From<H160Wrapper> for H160 {
     fn from(value: H160Wrapper) -> Self {
-        Self(value.0)
+        Address::new(value.bytes)
     }
 }
 
 impl PartialEq for ArchivedH160Wrapper {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.bytes == other.bytes
     }
 }
 
@@ -63,7 +77,7 @@ impl Eq for ArchivedH160Wrapper {}
 
 impl Hash for ArchivedH160Wrapper {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        self.bytes.hash(state);
     }
 }
 
@@ -109,7 +123,7 @@ pub struct BloomWrapper {
 }
 
 fn bloom_to_bytes(bloom: &Bloom) -> [u8; 256] {
-    bloom.0
+    bloom.0 .0
 }
 
 impl From<BloomWrapper> for Bloom {
@@ -182,13 +196,13 @@ where
         serializer: &mut S,
     ) -> Result<Self::Resolver, S::Error> {
         let mut encoded: Vec<u8> = Vec::new();
-        // Encode Address
-        encoded.extend_from_slice(&field.0.0);
+        // Encode Address (20 bytes)
+        encoded.extend_from_slice(field.0.as_slice());
         // Encode length of access list keys
         encoded.extend_from_slice(&(field.1.len() as u64).to_le_bytes());
         for slot in field.1.iter() {
-            // Encode access list key
-            encoded.extend_from_slice(&slot.0);
+            // Encode access list key (32 bytes)
+            encoded.extend_from_slice(slot.as_slice());
         }
 
         Ok(AccessListItemWrapperResolver {

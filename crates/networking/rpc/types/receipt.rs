@@ -1,5 +1,5 @@
 use ethrex_common::{
-    Address, Bloom, Bytes, H256,
+    Address, Bloom, Bytes, H256, U256Ext as _,
     constants::GAS_PER_BLOB,
     evm::calculate_create_address,
     serde_utils,
@@ -227,15 +227,15 @@ mod tests {
                 succeeded: true,
                 cumulative_gas_used: 147,
                 logs: vec![Log {
-                    address: Address::zero(),
+                    address: Address::ZERO,
                     topics: vec![],
                     data: Bytes::from_static(b"strawberry"),
                 }],
             },
             RpcReceiptTxInfo {
-                transaction_hash: H256::zero(),
+                transaction_hash: H256::ZERO,
                 transaction_index: 1,
-                from: Address::zero(),
+                from: Address::ZERO,
                 to: Some(Address::from(hex!(
                     "7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"
                 ))),

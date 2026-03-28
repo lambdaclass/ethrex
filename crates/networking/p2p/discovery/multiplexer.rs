@@ -3,7 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use bytes::BytesMut;
-use ethrex_common::{H256, utils::keccak};
+use ethrex_common::{H256, H256Ext as _, utils::keccak};
 use futures::StreamExt;
 use spawned_concurrency::{
     error::GenServerError,

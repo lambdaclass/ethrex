@@ -20,7 +20,7 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::{U256, U256Ext, U512};
 
 /// Implementation for the `ADD` opcode.
 pub struct OpAddHandler;
@@ -185,10 +185,11 @@ impl OpcodeHandler for OpAddModHandler {
                 clippy::arithmetic_side_effects,
                 reason = "mod is checked non-zero above"
             )]
-            let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
+            let res = (U512::from(lhs) + U512::from(rhs)) % U512::from(r#mod);
+            let limbs = res.as_limbs();
             vm.current_call_frame
                 .stack
-                .push(U256([res.0[0], res.0[1], res.0[2], res.0[3]]))?;
+                .push(U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]]))?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -255,7 +256,7 @@ impl OpcodeHandler for OpSignExtendHandler {
                     if value.bit(8 * x + 7) {
                         value |= U256::MAX << (8 * (x + 1));
                     } else if x != 31 {
-                        value &= (U256::one() << (8 * (x + 1))) - 1;
+                        value &= (U256::one() << (8 * (x + 1))) - U256::one();
                     }
 
                     value
@@ -275,9 +276,10 @@ impl OpcodeHandler for OpClzHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::CLZ)?;
 
         let value = vm.current_call_frame.stack.pop1()?;
+        #[expect(clippy::as_conversions, reason = "leading_zeros fits u64")]
         vm.current_call_frame
             .stack
-            .push(value.leading_zeros().into())?;
+            .push(U256::from_u64(value.leading_zeros() as u64))?;
 
         Ok(OpcodeResult::Continue)
     }

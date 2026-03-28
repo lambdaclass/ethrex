@@ -30,7 +30,7 @@ pub const SNAP_LIMIT: usize = 128;
 /// Maximum hash value (all bits set to 1).
 ///
 /// Used as the upper bound when requesting the full range of accounts/storage.
-pub const HASH_MAX: H256 = H256([0xFF; 32]);
+pub const HASH_MAX: H256 = H256::new([0xFF; 32]);
 
 // =============================================================================
 // BATCH SIZES

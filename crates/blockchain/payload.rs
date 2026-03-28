@@ -146,7 +146,7 @@ pub fn create_payload(
         transactions_root: compute_transactions_root(&[]),
         receipts_root: compute_receipts_root(&[]),
         logs_bloom: Bloom::default(),
-        difficulty: U256::zero(),
+        difficulty: U256::ZERO,
         number: parent_block.number.saturating_add(1),
         gas_limit,
         gas_used: 0,
@@ -276,7 +276,7 @@ impl PayloadBuildContext {
             requests: config
                 .is_prague_activated(payload.header.timestamp)
                 .then_some(Vec::new()),
-            block_value: U256::zero(),
+            block_value: U256::ZERO,
             base_fee_per_blob_gas,
             payload,
             blobs_bundle: BlobsBundle::default(),
@@ -853,7 +853,7 @@ pub fn apply_plain_transaction(
     }
 
     // Block value uses gas_spent (what the user actually pays) for tip calculation
-    context.block_value += U256::from(report.gas_spent) * head.tip;
+    context.block_value += U256::from(report.gas_spent) * U256::from(head.tip);
     Ok(receipt)
 }
 

@@ -252,7 +252,7 @@ mod tests {
             matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
             "{request:?}"
         );
-        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::ZERO))]);
     }
 
     #[test]
@@ -278,6 +278,6 @@ mod tests {
             matches!(request.to_block, BlockIdentifier::Tag(BlockTag::Latest)),
             "{request:?}"
         );
-        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+        assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::ZERO))]);
     }
 }

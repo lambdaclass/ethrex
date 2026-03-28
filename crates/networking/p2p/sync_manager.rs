@@ -86,7 +86,7 @@ impl SyncManager {
         let sync_manager = Self {
             snap_enabled,
             syncer,
-            last_fcu_head: Arc::new(Mutex::new(H256::zero())),
+            last_fcu_head: Arc::new(Mutex::new(H256::ZERO)),
             store: store.clone(),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing

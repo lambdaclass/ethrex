@@ -147,7 +147,7 @@ impl RLPxMessage for GetStorageRanges {
         let limit_hash = if !limit_hash.is_empty() {
             H256::from_slice(&limit_hash)
         } else {
-            H256([0xFF; 32])
+            H256::new([0xFF; 32])
         };
         let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
         decoder.finish()?;

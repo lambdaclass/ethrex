@@ -13,7 +13,6 @@ ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true
 ethrex-sdk-contract-utils = { path = "contract_utils" }
 
-ethereum-types.workspace = true
 tokio.workspace = true
 hex.workspace = true
 secp256k1.workspace = true

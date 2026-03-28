@@ -14,7 +14,8 @@ path = "./lib.rs"
 c-kzg = { version = "2.1.1", default-features = false, optional = true }
 kzg-rs = { workspace = true, optional = true }
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
-ethereum-types.workspace = true
+alloy-primitives.workspace = true
+ruint.workspace = true
 thiserror.workspace = true
 
 # Native crypto dependencies (always required — trait defaults call these)

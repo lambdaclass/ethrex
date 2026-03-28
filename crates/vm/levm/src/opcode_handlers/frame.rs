@@ -15,7 +15,7 @@ use crate::{
     vm::VM,
 };
 use ethrex_common::{
-    Address, H160, U256,
+    Address, H160, U256, U256Ext,
     types::FrameMode,
 };
 
@@ -133,9 +133,9 @@ impl OpcodeHandler for OpTxParamLoadHandler {
         let selector = u256_to_usize(in1)?;
         let value = match selector {
             // 0x00: tx_type (always 0x06 for frame transactions)
-            0x00 => U256::from(0x06u64),
+            0x00 => U256::from_u64(0x06),
             // 0x01: nonce
-            0x01 => U256::from(vm.env.tx_nonce),
+            0x01 => U256::from_u64(vm.env.tx_nonce),
             // 0x02: sender
             0x02 => address_to_u256(ctx.sender),
             // 0x03: max_priority_fee_per_gas
@@ -147,21 +147,24 @@ impl OpcodeHandler for OpTxParamLoadHandler {
             // 0x06: max_cost (sum of all frame gas_limits * max_fee_per_gas)
             0x06 => {
                 let total_gas: u64 = ctx.frames.iter().map(|f| f.gas_limit).sum();
-                U256::from(total_gas)
+                U256::from_u64(total_gas)
                     .checked_mul(vm.env.tx_max_fee_per_gas.unwrap_or_default())
-                    .unwrap_or(U256::max_value())
+                    .unwrap_or(U256::MAX)
             }
             // 0x07: len(blob_versioned_hashes)
-            0x07 => U256::from(vm.env.tx_blob_hashes.len()),
+            #[expect(clippy::as_conversions, reason = "blob hashes len fits u64")]
+            0x07 => U256::from_u64(vm.env.tx_blob_hashes.len() as u64),
             // 0x08: sig_hash
             0x08 => {
                 let bytes = ctx.sig_hash.0;
                 U256::from_big_endian(&bytes)
             }
             // 0x09: len(frames)
-            0x09 => U256::from(ctx.frames.len()),
+            #[expect(clippy::as_conversions, reason = "frames len fits u64")]
+            0x09 => U256::from_u64(ctx.frames.len() as u64),
             // 0x10: current_frame_index
-            0x10 => U256::from(ctx.current_frame_index),
+            #[expect(clippy::as_conversions, reason = "frame index fits u64")]
+            0x10 => U256::from_u64(ctx.current_frame_index as u64),
             // 0x11: frame_target(in2)
             0x11 => {
                 let frame_idx = u256_to_usize(in2)?;
@@ -202,7 +205,7 @@ impl OpcodeHandler for OpTxParamLoadHandler {
                     .frames
                     .get(frame_idx)
                     .ok_or(ExceptionalHalt::InvalidOpcode)?;
-                U256::from(frame.gas_limit)
+                U256::from_u64(frame.gas_limit)
             }
             // 0x14: frame_mode(in2)
             0x14 => {
@@ -211,7 +214,7 @@ impl OpcodeHandler for OpTxParamLoadHandler {
                     .frames
                     .get(frame_idx)
                     .ok_or(ExceptionalHalt::InvalidOpcode)?;
-                U256::from(frame.mode as u8)
+                U256::from_u64(frame.mode as u8 as u64)
             }
             // 0x15: frame_status(in2) -- 0=not-yet-executed, 1=success, 2=failure
             0x15 => {
@@ -222,9 +225,9 @@ impl OpcodeHandler for OpTxParamLoadHandler {
                 match ctx.frame_results.get(frame_idx) {
                     Some(Some(result)) => {
                         if result.success {
-                            U256::from(1u64)
+                            U256::from_u64(1)
                         } else {
-                            U256::from(2u64)
+                            U256::from_u64(2)
                         }
                     }
                     _ => U256::zero(),
@@ -281,7 +284,8 @@ impl OpcodeHandler for OpTxParamSizeHandler {
             }
         };
 
-        vm.current_call_frame.stack.push(U256::from(size))?;
+        #[expect(clippy::as_conversions, reason = "param size fits u64")]
+        vm.current_call_frame.stack.push(U256::from_u64(size as u64))?;
         Ok(OpcodeResult::Continue)
     }
 }
@@ -355,9 +359,10 @@ fn get_param_data(
     selector: usize,
     in2: U256,
 ) -> Result<Vec<u8>, VMError> {
+    #[expect(clippy::as_conversions, reason = "small values fit u64")]
     match selector {
-        0x00 => Ok(u256_to_bytes32(U256::from(0x06u64))),
-        0x01 => Ok(u256_to_bytes32(U256::from(env.tx_nonce))),
+        0x00 => Ok(u256_to_bytes32(U256::from_u64(0x06))),
+        0x01 => Ok(u256_to_bytes32(U256::from_u64(env.tx_nonce))),
         0x02 => Ok(u256_to_bytes32(address_to_u256(ctx.sender))),
         0x03 => Ok(u256_to_bytes32(
             env.tx_max_priority_fee_per_gas.unwrap_or_default(),
@@ -371,15 +376,15 @@ fn get_param_data(
         0x06 => {
             let total_gas: u64 = ctx.frames.iter().map(|f| f.gas_limit).sum();
             Ok(u256_to_bytes32(
-                U256::from(total_gas)
+                U256::from_u64(total_gas)
                     .checked_mul(env.tx_max_fee_per_gas.unwrap_or_default())
-                    .unwrap_or(U256::max_value()),
+                    .unwrap_or(U256::MAX),
             ))
         }
-        0x07 => Ok(u256_to_bytes32(U256::from(env.tx_blob_hashes.len()))),
+        0x07 => Ok(u256_to_bytes32(U256::from_u64(env.tx_blob_hashes.len() as u64))),
         0x08 => Ok(ctx.sig_hash.0.to_vec()),
-        0x09 => Ok(u256_to_bytes32(U256::from(ctx.frames.len()))),
-        0x10 => Ok(u256_to_bytes32(U256::from(ctx.current_frame_index))),
+        0x09 => Ok(u256_to_bytes32(U256::from_u64(ctx.frames.len() as u64))),
+        0x10 => Ok(u256_to_bytes32(U256::from_u64(ctx.current_frame_index as u64))),
         0x11 => {
             let frame_idx = u256_to_usize(in2)?;
             let frame = ctx
@@ -407,7 +412,7 @@ fn get_param_data(
                 .frames
                 .get(frame_idx)
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(u256_to_bytes32(U256::from(frame.gas_limit)))
+            Ok(u256_to_bytes32(U256::from_u64(frame.gas_limit)))
         }
         0x14 => {
             let frame_idx = u256_to_usize(in2)?;
@@ -415,7 +420,7 @@ fn get_param_data(
                 .frames
                 .get(frame_idx)
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(u256_to_bytes32(U256::from(frame.mode as u8)))
+            Ok(u256_to_bytes32(U256::from_u64(frame.mode as u8 as u64)))
         }
         0x15 => {
             let frame_idx = u256_to_usize(in2)?;
@@ -432,7 +437,7 @@ fn get_param_data(
                 }
                 _ => 0u64,
             };
-            Ok(u256_to_bytes32(U256::from(status)))
+            Ok(u256_to_bytes32(U256::from_u64(status)))
         }
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }

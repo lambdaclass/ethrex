@@ -44,9 +44,9 @@ struct StoreInner {
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
-    signatures_by_block: HashMap<H256, ethereum_types::Signature>,
+    signatures_by_block: HashMap<H256, ethrex_common::Signature>,
     /// Map of signatures from the sequencer by batch numbers
-    signatures_by_batch: HashMap<u64, ethereum_types::Signature>,
+    signatures_by_batch: HashMap<u64, ethrex_common::Signature>,
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
@@ -211,7 +211,7 @@ impl StoreEngineRollup for Store {
     async fn store_signature_by_block(
         &self,
         block_hash: H256,
-        signature: ethereum_types::Signature,
+        signature: ethrex_common::Signature,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
             .signatures_by_block
@@ -222,14 +222,14 @@ impl StoreEngineRollup for Store {
     async fn get_signature_by_block(
         &self,
         block_hash: H256,
-    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+    ) -> Result<Option<ethrex_common::Signature>, RollupStoreError> {
         Ok(self.inner()?.signatures_by_block.get(&block_hash).cloned())
     }
 
     async fn store_signature_by_batch(
         &self,
         batch_number: u64,
-        signature: ethereum_types::Signature,
+        signature: ethrex_common::Signature,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
             .signatures_by_batch
@@ -240,7 +240,7 @@ impl StoreEngineRollup for Store {
     async fn get_signature_by_batch(
         &self,
         batch_number: u64,
-    ) -> Result<Option<ethereum_types::Signature>, RollupStoreError> {
+    ) -> Result<Option<ethrex_common::Signature>, RollupStoreError> {
         Ok(self
             .inner()?
             .signatures_by_batch
