@@ -185,6 +185,11 @@ pub enum ProofVerifierError {
         existing_hex: String,
         latest_hex: String,
     },
+    #[error("Missing public values for batch {batch_number} and prover type {prover_type}")]
+    MissingPublicValues {
+        batch_number: u64,
+        prover_type: ProverType,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

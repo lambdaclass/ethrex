@@ -5,12 +5,17 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
+#[cfg(feature = "stateless-validation")]
+pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
 pub mod l2;
 pub mod payload;
+pub mod prover;
 mod receipt;
 pub mod requests;
+#[cfg(feature = "stateless-validation")]
+pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;
 
@@ -22,6 +27,7 @@ pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;
 pub use l2::*;
+pub use prover::*;
 pub use receipt::*;
 pub use transaction::*;
 pub use tx_fields::*;

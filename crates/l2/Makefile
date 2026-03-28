@@ -27,6 +27,8 @@ restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts
 
 L2_GENESIS_FILE_PATH=../../fixtures/genesis/l2.json
 L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1.json
+NATIVE_L2_GENESIS_FILE_PATH=../../fixtures/genesis/native_l2.json
+NATIVE_RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
@@ -74,8 +76,14 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
-init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- \
+ifdef NATIVE_ROLLUPS
+  NATIVE_ROLLUPS? := stateless-validation
+else
+  NATIVE_ROLLUPS? :=
+endif
+
+init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable stateless-validation)
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "$(NATIVE_ROLLUPS?)" -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
@@ -86,6 +94,16 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
 
+ifdef NATIVE_ROLLUPS
+deploy-l1: ## 📜 Deploys NativeRollup.sol to L1 (native rollups mode)
+	COMPILE_CONTRACTS=true \
+	cargo run --release --features l2,l2-sql,stateless-validation --manifest-path ../../Cargo.toml -- l2 deploy \
+	--eth-rpc-url ${L1_RPC_URL} \
+	--private-key ${L1_PRIVATE_KEY} \
+	--stateless-validation \
+	--stateless-validation.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--genesis-l2-path ${NATIVE_L2_GENESIS_FILE_PATH}
+else
 deploy-l1: ## 📜 Deploys the L1 contracts
 	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
@@ -98,6 +116,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
 	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
+endif
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts with SP1 verifier
@@ -130,6 +149,24 @@ else
   RISC0? :=
 endif
 
+ifdef NATIVE_ROLLUPS
+init-l2: ## 🚀 Initializes a native rollup L2 client
+	export $(shell cat ../../cmd/.env | xargs); \
+	ETHREX_NO_MONITOR=true \
+	cargo run --release --features l2,l2-sql,stateless-validation --manifest-path ../../Cargo.toml -- \
+	l2 \
+	--stateless-validation \
+	--stateless-validation.block-time 10000 \
+	--stateless-validation.contract-address $${ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS} \
+	--stateless-validation.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--stateless-validation.l1-pk ${L1_PRIVATE_KEY} \
+	--network ${NATIVE_L2_GENESIS_FILE_PATH} \
+	--http.port ${L2_PORT} \
+	--http.addr ${L2_RPC_ADDRESS} \
+	--datadir ${ethrex_L2_DEV_DB} \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--no-monitor
+else
 init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	export $(shell cat ../../cmd/.env | xargs); \
 	cargo run --release --features l2,l2-sql,$(SP1?),$(RISC0?) --manifest-path ../../Cargo.toml -- \
@@ -152,6 +189,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
+endif
 
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
@@ -238,7 +276,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
 	docker compose up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
+	RUST_LOG=info,ethrex_l2_prover=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
@@ -253,7 +291,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
 	docker compose up --detach --build
 
-	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
+	RUST_LOG=info,ethrex_l2_prover=debug GPU=true make init-prover-sp1 & \
 	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 

@@ -32,6 +32,7 @@ impl Evm {
             with_log,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )
     }
 
@@ -50,6 +51,7 @@ impl Evm {
             stop_index,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )
     }
 }

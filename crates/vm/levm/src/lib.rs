@@ -82,5 +82,20 @@ pub mod utils;
 pub mod vm;
 pub use environment::*;
 pub mod account;
+#[cfg(feature = "stateless-validation")]
+pub mod execute_precompile;
 #[cfg(feature = "perf_opcode_timings")]
 pub mod timings;
+
+/// Trait for stateless block validation, used by the EXECUTE precompile.
+///
+/// Implemented in `crates/blockchain/` to break the dependency cycle:
+/// LEVM defines the trait, the blockchain crate implements it with
+/// `verify_stateless_new_payload`.
+pub trait StatelessValidator: Send + Sync {
+    /// Validate a stateless block execution.
+    ///
+    /// Input: SSZ-encoded `StatelessInput` bytes.
+    /// Output: SSZ-encoded `StatelessValidationResult` bytes.
+    fn verify(&self, input: &[u8]) -> Result<Vec<u8>, errors::VMError>;
+}

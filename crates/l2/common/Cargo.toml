@@ -17,7 +17,6 @@ ethrex-vm.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-lambdaworks-crypto.workspace = true
 sha3.workspace = true
 hex.workspace = true
 serde_with.workspace = true

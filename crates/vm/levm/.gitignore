@@ -4,3 +4,4 @@
 tests/ef/tests
 tmp/
 target/
+contracts/solc_out/

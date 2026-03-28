@@ -1,5 +1,6 @@
 mod admin;
 mod debug;
+mod engine;
 mod eth;
 mod net;
 mod txpool;
@@ -218,6 +219,7 @@ impl CommandRegistry {
     pub fn new() -> Self {
         let mut commands = Vec::new();
         commands.extend(eth::commands());
+        commands.extend(engine::commands());
         commands.extend(debug::commands());
         commands.extend(admin::commands());
         commands.extend(net::commands());
@@ -246,6 +248,7 @@ impl CommandRegistry {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn all_commands(&self) -> &[CommandDef] {
         &self.commands
     }

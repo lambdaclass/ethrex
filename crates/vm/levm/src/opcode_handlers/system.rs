@@ -946,6 +946,7 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
                 self.crypto,
+                self.stateless_validator,
             )?;
 
             let call_frame = &mut self.current_call_frame;

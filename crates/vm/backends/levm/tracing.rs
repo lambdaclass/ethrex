@@ -1,6 +1,7 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_crypto::Crypto;
+use ethrex_levm::StatelessValidator;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
 
@@ -15,6 +16,7 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type, crypto)?;
 
@@ -30,7 +32,15 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, crypto)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                crypto,
+                stateless_validator,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -44,6 +54,7 @@ impl LEVM {
     }
 
     /// Run transaction with callTracer activated.
+    #[allow(clippy::too_many_arguments)]
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
@@ -52,6 +63,7 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
             tx,
@@ -69,6 +81,7 @@ impl LEVM {
             LevmCallTracer::new(only_top_call, with_log),
             vm_type,
             crypto,
+            stateless_validator,
         )?;
 
         vm.execute()?;

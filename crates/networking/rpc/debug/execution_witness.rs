@@ -4,14 +4,14 @@ use bytes::Bytes;
 use ethrex_common::{
     H256,
     types::{
-        AccountState, BlockHeader, ChainConfig,
+        BlockHeader, ChainConfig,
         block_execution_witness::{ExecutionWitness, GuestProgramStateError, RpcExecutionWitness},
     },
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie};
 use serde_json::Value;
 use tracing::debug;
 
@@ -68,12 +68,10 @@ pub fn execution_witness_from_rpc_chain_config(
     // instead of relying on the keys field which is being removed from the RPC spec.
     let mut storage_trie_roots = BTreeMap::new();
     if let Some(state_trie_root) = &state_trie_root {
-        let mut accounts = Vec::new();
-        collect_accounts_from_node(
+        let accounts = ethrex_common::types::block_execution_witness::collect_accounts_from_trie(
             state_trie_root,
-            Nibbles::from_raw(&[], false),
-            &mut accounts,
             &nodes,
+            &NativeCrypto,
         );
 
         for (hashed_address, storage_root_hash) in accounts {
@@ -107,71 +105,6 @@ pub fn execution_witness_from_rpc_chain_config(
     };
 
     Ok(witness)
-}
-
-/// Recursively walks an embedded state trie node and collects
-/// `(hashed_address, storage_root)` pairs from leaf nodes.
-/// Also resolves `NodeRef::Hash` references using the flat `nodes` map,
-/// in case some children weren't fully embedded by `get_embedded_root`.
-fn collect_accounts_from_node(
-    node: &Node,
-    path: Nibbles,
-    accounts: &mut Vec<(H256, H256)>,
-    nodes: &BTreeMap<H256, Node>,
-) {
-    match node {
-        Node::Branch(branch) => {
-            for (i, child) in branch.choices.iter().enumerate() {
-                let child_node: Option<&Node> = match child {
-                    NodeRef::Node(n, _) => Some(n),
-                    NodeRef::Hash(hash) if hash.is_valid() => {
-                        nodes.get(&hash.finalize(&NativeCrypto))
-                    }
-                    _ => None,
-                };
-                if let Some(child_node) = child_node {
-                    collect_accounts_from_node(
-                        child_node,
-                        path.append_new(i as u8),
-                        accounts,
-                        nodes,
-                    );
-                }
-            }
-        }
-        Node::Extension(ext) => {
-            let child_node: Option<&Node> = match &ext.child {
-                NodeRef::Node(n, _) => Some(n),
-                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
-                _ => None,
-            };
-            if let Some(child_node) = child_node {
-                collect_accounts_from_node(child_node, path.concat(&ext.prefix), accounts, nodes);
-            }
-        }
-        Node::Leaf(leaf) => {
-            let full_path = path.concat(&leaf.partial);
-            let path_bytes = full_path.to_bytes();
-            if path_bytes.len() == 32 {
-                let hashed_address = H256::from_slice(&path_bytes);
-                match AccountState::decode(&leaf.value) {
-                    Ok(account_state) => {
-                        accounts.push((hashed_address, account_state.storage_root));
-                    }
-                    Err(e) => {
-                        debug!(
-                            "Failed to decode AccountState from state trie leaf at {hashed_address:?}: {e}"
-                        );
-                    }
-                }
-            } else {
-                debug!(
-                    "Unexpected state trie leaf path length: {} (expected 32)",
-                    path_bytes.len()
-                );
-            }
-        }
-    }
 }
 
 pub struct ExecutionWitnessRequest {

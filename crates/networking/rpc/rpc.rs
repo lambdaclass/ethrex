@@ -4,6 +4,10 @@ use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
+#[cfg(feature = "stateless-validation")]
+use crate::engine::proof::{
+    RequestProofsV1, VerifyExecutionProofV1, VerifyNewPayloadRequestHeaderV1,
+};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -185,7 +189,7 @@ type BlockWorkerMessage = (
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
 /// The context is cloned for each request, with most fields being cheap `Arc` references.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RpcApiContext {
     /// Database storage for blocks, transactions, and state.
     pub storage: Store,
@@ -207,6 +211,27 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
+    /// EIP-8025 proof coordinator handle for sending proof requests.
+    #[cfg(feature = "stateless-validation")]
+    pub proof_coordinator:
+        Option<ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle>,
+}
+
+impl std::fmt::Debug for RpcApiContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("RpcApiContext");
+        s.field("storage", &self.storage)
+            .field("blockchain", &self.blockchain)
+            .field("syncer", &self.syncer.as_ref().map(|_| ".."))
+            .field("peer_handler", &self.peer_handler.as_ref().map(|_| ".."))
+            .field("gas_ceil", &self.gas_ceil);
+        #[cfg(feature = "stateless-validation")]
+        s.field(
+            "proof_coordinator",
+            &self.proof_coordinator.as_ref().map(|_| "CoordinatorHandle"),
+        );
+        s.finish()
+    }
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -371,6 +396,10 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
+        RpcErr::InvalidProofFormat(_) => "InvalidProofFormat",
+        RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
+        RpcErr::InvalidPayload(_) => "InvalidPayload",
+        RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
     }
 }
 
@@ -470,6 +499,9 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
+    #[cfg(feature = "stateless-validation")] proof_coordinator: Option<
+        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
+    >,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -492,6 +524,8 @@ pub async fn start_api(
         log_filter_handler,
         gas_ceil,
         block_worker_channel,
+        #[cfg(feature = "stateless-validation")]
+        proof_coordinator,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -836,6 +870,15 @@ pub async fn map_engine_requests(
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
         "engine_getClientVersionV1" => GetClientVersionV1Request::call(req, context).await,
+        // EIP-8025 proof endpoints
+        #[cfg(feature = "stateless-validation")]
+        "engine_requestProofsV1" => RequestProofsV1::call(req, context).await,
+        #[cfg(feature = "stateless-validation")]
+        "engine_verifyExecutionProofV1" => VerifyExecutionProofV1::call(req, context).await,
+        #[cfg(feature = "stateless-validation")]
+        "engine_verifyNewPayloadRequestHeaderV1" => {
+            VerifyNewPayloadRequestHeaderV1::call(req, context).await
+        }
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
