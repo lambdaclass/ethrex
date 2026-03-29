@@ -9,8 +9,8 @@
 ///   pubKeyY (uint256) — P256 public key Y coordinate
 ///
 /// Functions:
-///   verify(sig, metadata)        0x182ffd20 — Verify WebAuthn sig, APPROVE scope=0
-///   verifyAndPay(sig, metadata)  0x5a27d2e0 — Verify WebAuthn sig, APPROVE scope=2
+///   verify(sig, metadata)        0x182ffd20 — Verify WebAuthn sig, APPROVE scope=1
+///   verifyAndPay(sig, metadata)  0x5a27d2e0 — Verify WebAuthn sig, APPROVE scope=3
 ///   transfer(address,uint256)    0xa9059cbb — Transfer ETH
 ///   execute(address,uint256,bytes) 0xb61d27f6 — Arbitrary call
 ///   publicKeyX()                 0xfa6df55d — Read pubkey X
@@ -50,16 +50,16 @@ object "WebAuthnP256Account" {
             switch selector
 
             // ── verify((uint256,uint256),(bytes,string,uint16,uint16,bool)) ──
-            // Verify WebAuthn signature, APPROVE as sender (scope=0)
+            // Verify WebAuthn signature, APPROVE as sender (scope=1)
             case 0x182ffd20 {
-                verifyAndApprove(0)
+                verifyAndApprove(1)
                 stop() // unreachable — APPROVE halts
             }
 
             // ── verifyAndPay((uint256,uint256),(bytes,string,uint16,uint16,bool)) ──
-            // Verify WebAuthn signature, APPROVE as sender+payer (scope=2)
+            // Verify WebAuthn signature, APPROVE as sender+payer (scope=3)
             case 0x5a27d2e0 {
-                verifyAndApprove(2)
+                verifyAndApprove(3)
                 stop() // unreachable — APPROVE halts
             }
 
