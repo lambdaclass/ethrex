@@ -64,12 +64,12 @@ pub const BLOBHASH: u64 = 3;
 pub const BLOBBASEFEE: u64 = 2;
 pub const SLOTNUM: u64 = 2;
 // EIP-8141 Frame Transaction opcodes
-pub const TXPARAMLOAD: u64 = 3;
-pub const TXPARAMSIZE: u64 = 3;
-pub const TXPARAMCOPY_STATIC: u64 = 3;
-pub const TXPARAMCOPY_DYNAMIC_BASE: u64 = 3;
+pub const TXPARAM: u64 = 2;
+pub const FRAMEDATALOAD: u64 = 3;
+pub const FRAMEDATACOPY_STATIC: u64 = 3;
+pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 
-pub fn txparamcopy(
+pub fn framedatacopy(
     new_memory_size: usize,
     current_memory_size: usize,
     size: usize,
@@ -78,8 +78,8 @@ pub fn txparamcopy(
         new_memory_size,
         current_memory_size,
         size,
-        TXPARAMCOPY_DYNAMIC_BASE,
-        TXPARAMCOPY_STATIC,
+        FRAMEDATACOPY_DYNAMIC_BASE,
+        FRAMEDATACOPY_STATIC,
     )
 }
 pub const POP: u64 = 2;

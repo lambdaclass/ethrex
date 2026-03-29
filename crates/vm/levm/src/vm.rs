@@ -420,7 +420,7 @@ impl Substate {
 /// ```
 /// Context for frame transaction (EIP-8141) execution.
 /// This is set when executing a frame transaction and is used by
-/// APPROVE, TXPARAMLOAD, TXPARAMSIZE, and TXPARAMCOPY opcodes.
+/// APPROVE, TXPARAM, FRAMEDATALOAD, and FRAMEDATACOPY opcodes.
 #[derive(Debug, Clone)]
 pub struct FrameTxContext {
     /// Whether the sender has approved (APPROVE scope 0 or 2)
@@ -437,7 +437,7 @@ pub struct FrameTxContext {
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
     pub sig_hash: H256,
-    /// The full frame transaction (for TXPARAMLOAD access)
+    /// The full frame transaction (for TXPARAM access)
     pub tx: ethrex_common::types::FrameTransaction,
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
@@ -606,8 +606,8 @@ impl<'a> VM<'a> {
         // Keep: gas limit checks, fee validation, nonce mismatch check
         let sender = frame_tx.sender;
 
-        // Validate frame count: must have at least 1 and at most 1000 frames
-        if frame_tx.frames.is_empty() || frame_tx.frames.len() > 1000 {
+        // Validate static constraints (frame count, reserved modes, atomic batch flags)
+        if let Err(_e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,
             ));
@@ -664,8 +664,44 @@ impl<'a> VM<'a> {
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
+        // Atomic batching state: track whether we're inside a batch and
+        // which frames belong to it so we can revert them all on failure.
+        let mut in_atomic_batch = false;
+        let mut batch_start_idx: usize = 0;
+        let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
+
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
+            // If we're skipping frames due to an atomic batch revert, record
+            // the frame as failed and charge its full gas_limit.
+            if let Some(end_idx) = skip_until_batch_end {
+                if frame_idx <= end_idx {
+                    let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                        InternalError::Custom("missing frame tx context".to_string()),
+                    ))?;
+                    ctx.current_frame_index = frame_idx;
+                    ctx.frame_results.push((false, frame.gas_limit, Vec::new()));
+                    total_gas_used = total_gas_used
+                        .checked_add(frame.gas_limit)
+                        .ok_or(VMError::Internal(InternalError::Overflow))?;
+                    if frame_idx == end_idx {
+                        skip_until_batch_end = None;
+                        in_atomic_batch = false;
+                    }
+                    continue;
+                }
+                skip_until_batch_end = None;
+                in_atomic_batch = false;
+            }
+
+            // Start a new atomic batch if this SENDER frame has the batch flag
+            // and we're not already in one.
+            if !in_atomic_batch && frame.is_atomic_batch() {
+                self.substate.push_backup(); // batch-level snapshot
+                in_atomic_batch = true;
+                batch_start_idx = frame_idx;
+            }
+
             let ctx =
                 self.frame_tx_context
                     .as_mut()
@@ -678,7 +714,7 @@ impl<'a> VM<'a> {
             let target = frame.target.unwrap_or(sender);
 
             // Determine caller and static mode per frame mode
-            let (caller, is_static) = match frame.mode {
+            let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
                 FrameMode::Sender => {
@@ -700,66 +736,86 @@ impl<'a> VM<'a> {
             // Get target's bytecode
             let bytecode = self.db.get_account_code(target)?.clone();
 
-            // Create a new CallFrame for this frame
-            let call_frame = CallFrame::new(
-                caller,                                    // msg_sender
-                target,                                    // to
-                target,                                    // code_address
-                bytecode,                                  // bytecode
-                U256::zero(),       // msg_value (frames don't transfer value)
-                frame.data.clone(), // calldata
-                is_static,          // is_static
-                frame.gas_limit,    // gas_limit
-                0,                  // depth
-                false,              // should_transfer_value
-                false,              // is_create
-                0,                  // ret_offset
-                0,                  // ret_size
-                self.stack_pool.pop().unwrap_or_default(), // stack
-                Memory::default(),  // memory
-            );
-
-            // Save current call frame and set up the frame's call frame
-            let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
-            let saved_call_frames = mem::take(&mut self.call_frames);
-
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // Execute the frame
-            let frame_result = self.run_execution();
-
-            let (frame_success, frame_gas_used, frame_logs) = match frame_result {
-                Ok(ctx_result) => {
-                    let gas_used = ctx_result.gas_used;
-                    let success = ctx_result.is_success();
-
-                    if success {
-                        self.substate.commit_backup();
-                        let logs = self.substate.extract_logs();
-                        // Re-add logs to substate so they persist
-                        for log in &logs {
-                            self.substate.add_log(log.clone());
+            let (frame_success, frame_gas_used, frame_logs) = if bytecode.bytecode.is_empty() {
+                // Default code for EOA (no deployed code)
+                use crate::opcode_handlers::frame_tx::execute_default_code;
+                match execute_default_code(self, frame, sender, target) {
+                    Ok((success, gas_used, logs)) => {
+                        if success {
+                            self.substate.commit_backup();
+                            (true, gas_used, logs)
+                        } else {
+                            self.substate.revert_backup();
+                            self.restore_cache_state()?;
+                            (false, gas_used, Vec::new())
                         }
-                        (true, gas_used, logs)
-                    } else {
+                    }
+                    Err(_) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, gas_used, Vec::new())
+                        (false, frame.gas_limit, Vec::new())
                     }
                 }
-                Err(_e) => {
-                    self.substate.revert_backup();
-                    self.restore_cache_state()?;
-                    (false, frame.gas_limit, Vec::new())
-                }
-            };
+            } else {
+                // Normal code execution via CallFrame
+                let call_frame = CallFrame::new(
+                    caller,                                    // msg_sender
+                    target,                                    // to
+                    target,                                    // code_address
+                    bytecode,                                  // bytecode
+                    U256::zero(),       // msg_value (frames don't transfer value)
+                    frame.data.clone(), // calldata
+                    is_static,          // is_static
+                    frame.gas_limit,    // gas_limit
+                    0,                  // depth
+                    false,              // should_transfer_value
+                    false,              // is_create
+                    0,                  // ret_offset
+                    0,                  // ret_size
+                    self.stack_pool.pop().unwrap_or_default(), // stack
+                    Memory::default(),  // memory
+                );
 
-            // Restore call frame state
-            let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
-            self.call_frames = saved_call_frames;
-            // Return the stack to the pool
-            self.stack_pool.push(finished_frame.stack);
+                let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
+                let saved_call_frames = mem::take(&mut self.call_frames);
+
+                let frame_result = self.run_execution();
+
+                let result = match frame_result {
+                    Ok(ctx_result) => {
+                        let gas_used = ctx_result.gas_used;
+                        let success = ctx_result.is_success();
+
+                        if success {
+                            self.substate.commit_backup();
+                            let logs = self.substate.extract_logs();
+                            for log in &logs {
+                                self.substate.add_log(log.clone());
+                            }
+                            (true, gas_used, logs)
+                        } else {
+                            self.substate.revert_backup();
+                            self.restore_cache_state()?;
+                            (false, gas_used, Vec::new())
+                        }
+                    }
+                    Err(_e) => {
+                        self.substate.revert_backup();
+                        self.restore_cache_state()?;
+                        (false, frame.gas_limit, Vec::new())
+                    }
+                };
+
+                // Restore call frame state
+                let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
+                self.call_frames = saved_call_frames;
+                self.stack_pool.push(finished_frame.stack);
+
+                result
+            };
 
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
@@ -776,8 +832,52 @@ impl<'a> VM<'a> {
             ctx.frame_results
                 .push((frame_success, frame_gas_used, frame_logs));
 
+            // Atomic batch: if a frame in the batch reverted, revert the
+            // batch-level snapshot and skip remaining frames in the batch.
+            if in_atomic_batch && !frame_success {
+                self.substate.revert_backup(); // revert batch-level snapshot
+                self.restore_cache_state()?;
+
+                // Rewrite results for all prior frames in this batch as failed
+                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                    InternalError::Custom("missing frame tx context".to_string()),
+                ))?;
+                for i in batch_start_idx..frame_idx {
+                    if let Some(result) = ctx.frame_results.get_mut(i) {
+                        let charged_gas = frame_tx.frames[i].gas_limit;
+                        // Adjust total_gas_used: remove what was counted, add full gas_limit
+                        total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
+                        *result = (false, charged_gas, Vec::new());
+                    }
+                }
+                // Remove logs from reverted batch frames
+                all_logs.retain(|_| false); // TODO: track per-batch logs more precisely
+
+                // Find the end of this batch (the next SENDER frame without the flag)
+                let batch_end = frame_tx.frames[frame_idx..]
+                    .iter()
+                    .enumerate()
+                    .find(|(_, f)| f.execution_mode() == FrameMode::Sender && !f.is_atomic_batch())
+                    .map(|(offset, _)| frame_idx + offset)
+                    .unwrap_or(frame_idx);
+
+                if batch_end > frame_idx {
+                    skip_until_batch_end = Some(batch_end);
+                } else {
+                    in_atomic_batch = false;
+                }
+                self.substate.clear_transient_storage();
+                continue;
+            }
+
+            // If this is the last frame of a batch (SENDER without flag), commit the batch
+            if in_atomic_batch && !frame.is_atomic_batch() {
+                self.substate.commit_backup(); // commit batch-level snapshot
+                in_atomic_batch = false;
+            }
+
             // VERIFY frame enforcement: if VERIFY frame didn't call APPROVE, TX is invalid
-            if frame.mode == FrameMode::Verify && !ctx.approve_called_in_current_frame {
+            if frame.execution_mode() == FrameMode::Verify && !ctx.approve_called_in_current_frame {
                 tx_invalid = true;
                 break;
             }
@@ -839,7 +939,7 @@ impl<'a> VM<'a> {
             .frames
             .iter()
             .zip(ctx.frame_results.iter())
-            .any(|(frame, (success, _, _))| frame.mode == FrameMode::Sender && !success);
+            .any(|(frame, (success, _, _))| frame.execution_mode() == FrameMode::Sender && !success);
 
         let result = if any_sender_reverted {
             TxResult::Revert(VMError::RevertOpcode.into())
