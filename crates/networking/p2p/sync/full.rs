@@ -247,8 +247,12 @@ async fn add_blocks_in_batch(
         )
         .await?;
 
-    let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
-    let blocks_per_second = blocks_len as f64 / execution_time;
+    let execution_time = execution_start.elapsed().as_secs_f64();
+    let blocks_per_second = if execution_time > 0.0 {
+        blocks_len as f64 / execution_time
+    } else {
+        0.0
+    };
 
     info!(
         "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
