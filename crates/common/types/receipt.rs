@@ -80,22 +80,28 @@ impl Receipt {
     pub fn encode_inner(&self) -> Vec<u8> {
         let mut encoded_data = vec![];
         let tx_type: u8 = self.tx_type as u8;
-        let mut encoder = Encoder::new(&mut encoded_data)
-            .encode_field(&tx_type)
-            .encode_field(&self.succeeded)
-            .encode_field(&self.cumulative_gas_used)
-            .encode_field(&self.logs);
         if self.tx_type == TxType::Frame {
+            // EIP-8141 receipt: [tx_type, cumulative_gas_used, payer, [frame_receipt, ...]]
+            // No top-level succeeded or logs fields.
             let empty_frame_receipts = Vec::new();
-            encoder = encoder
+            Encoder::new(&mut encoded_data)
+                .encode_field(&tx_type)
+                .encode_field(&self.cumulative_gas_used)
                 .encode_field(&self.payer.unwrap_or_default())
                 .encode_field(
                     self.frame_receipts
                         .as_ref()
                         .unwrap_or(&empty_frame_receipts),
-                );
+                )
+                .finish();
+        } else {
+            Encoder::new(&mut encoded_data)
+                .encode_field(&tx_type)
+                .encode_field(&self.succeeded)
+                .encode_field(&self.cumulative_gas_used)
+                .encode_field(&self.logs)
+                .finish();
         }
-        encoder.finish();
         encoded_data
     }
 
@@ -141,9 +147,6 @@ impl RLPDecode for Receipt {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (tx_type, decoder): (u8, _) = decoder.decode_field("tx-type")?;
-        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
-        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
-        let (logs, decoder) = decoder.decode_field("logs")?;
 
         let Some(tx_type) = TxType::from_u8(tx_type) else {
             return Err(RLPDecodeError::Custom(
@@ -151,7 +154,10 @@ impl RLPDecode for Receipt {
             ));
         };
 
-        let (payer, frame_receipts, decoder) = if tx_type == TxType::Frame {
+        if tx_type == TxType::Frame {
+            // EIP-8141 receipt: [tx_type, cumulative_gas_used, payer, [frame_receipt, ...]]
+            let (cumulative_gas_used, decoder) =
+                decoder.decode_field("cumulative_gas_used")?;
             let (payer, decoder): (Address, _) = decoder.decode_field("payer")?;
             let (frame_receipts, decoder): (Vec<FrameReceipt>, _) =
                 decoder.decode_field("frame_receipts")?;
@@ -160,22 +166,36 @@ impl RLPDecode for Receipt {
             } else {
                 Some(payer)
             };
-            (payer, Some(frame_receipts), decoder)
+            // Derive succeeded from frame receipts: true if all SENDER frames succeeded
+            let succeeded = frame_receipts.iter().all(|fr| fr.status);
+            Ok((
+                Receipt {
+                    tx_type,
+                    succeeded,
+                    cumulative_gas_used,
+                    logs: Vec::new(),
+                    payer,
+                    frame_receipts: Some(frame_receipts),
+                },
+                decoder.finish()?,
+            ))
         } else {
-            (None, None, decoder)
-        };
-
-        Ok((
-            Receipt {
-                tx_type,
-                succeeded,
-                cumulative_gas_used,
-                logs,
-                payer,
-                frame_receipts,
-            },
-            decoder.finish()?,
-        ))
+            let (succeeded, decoder) = decoder.decode_field("succeeded")?;
+            let (cumulative_gas_used, decoder) =
+                decoder.decode_field("cumulative_gas_used")?;
+            let (logs, decoder) = decoder.decode_field("logs")?;
+            Ok((
+                Receipt {
+                    tx_type,
+                    succeeded,
+                    cumulative_gas_used,
+                    logs,
+                    payer: None,
+                    frame_receipts: None,
+                },
+                decoder.finish()?,
+            ))
+        }
     }
 }
 
@@ -554,6 +574,9 @@ mod test {
 
     #[test]
     fn test_receipt_with_frame_fields_rlp_roundtrip() {
+        // Frame receipts encode as [cumulative_gas_used, payer, [frame_receipts]]
+        // without top-level succeeded or logs. On decode, succeeded is derived
+        // from frame receipts and logs is empty.
         let receipt = Receipt {
             tx_type: TxType::Frame,
             succeeded: true,
@@ -570,7 +593,7 @@ mod test {
                     status: true,
                     gas_used: 200000,
                     logs: vec![Log {
-                        address: Address::random(),
+                        address: Address::from_low_u64_be(0xbeef),
                         topics: vec![],
                         data: Bytes::from_static(b"frame2"),
                     }],
@@ -579,6 +602,29 @@ mod test {
         };
         let encoded = receipt.encode_to_vec();
         let decoded = Receipt::decode(&encoded).unwrap();
-        assert_eq!(receipt, decoded);
+        assert_eq!(decoded.tx_type, TxType::Frame);
+        assert_eq!(decoded.cumulative_gas_used, 315000);
+        assert_eq!(decoded.payer, Some(Address::from_low_u64_be(0x1234)));
+        assert!(decoded.succeeded); // derived: all frame receipts succeeded
+        assert!(decoded.logs.is_empty()); // top-level logs not encoded for frame txs
+        assert_eq!(decoded.frame_receipts, receipt.frame_receipts);
+    }
+
+    #[test]
+    fn test_frame_receipt_succeeded_derived_from_frames() {
+        let receipt = Receipt {
+            tx_type: TxType::Frame,
+            succeeded: true, // will be overridden on decode
+            cumulative_gas_used: 100000,
+            logs: vec![],
+            payer: Some(Address::from_low_u64_be(0x1)),
+            frame_receipts: Some(vec![
+                FrameReceipt { status: true, gas_used: 50000, logs: vec![] },
+                FrameReceipt { status: false, gas_used: 50000, logs: vec![] },
+            ]),
+        };
+        let encoded = receipt.encode_to_vec();
+        let decoded = Receipt::decode(&encoded).unwrap();
+        assert!(!decoded.succeeded); // one frame failed
     }
 }
