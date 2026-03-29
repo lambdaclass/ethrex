@@ -486,6 +486,42 @@ pub fn fake_exponential(
         return Ok(factor);
     }
 
+    // Fast path: use u128 arithmetic when inputs fit in u64.
+    // This avoids expensive U256 division (which decomposes into many 128-bit divisions).
+    if let (Some(factor_u64), Some(numerator_u64)) = (factor.try_into().ok(), numerator.try_into().ok()) {
+        if let Some(result) = fake_exponential_u128(factor_u64, numerator_u64, denominator) {
+            return Ok(result);
+        }
+    }
+
+    fake_exponential_u256(factor, numerator, denominator)
+}
+
+/// u128 fast path for fake_exponential. Returns None on overflow.
+fn fake_exponential_u128(factor: u64, numerator: u64, denominator: u64) -> Option<U256> {
+    let factor = factor as u128;
+    let numerator = numerator as u128;
+    let denominator = denominator as u128;
+
+    let mut output: u128 = 0;
+    let mut numerator_accum: u128 = factor.checked_mul(denominator)?;
+    let mut denominator_by_i: u128 = denominator;
+
+    while numerator_accum > 0 {
+        output = output.checked_add(numerator_accum)?;
+        numerator_accum = numerator_accum.checked_mul(numerator)? / denominator_by_i;
+        denominator_by_i += denominator;
+    }
+
+    Some(U256::from(output / denominator))
+}
+
+/// U256 slow path for fake_exponential.
+fn fake_exponential_u256(
+    factor: U256,
+    numerator: U256,
+    denominator: u64,
+) -> Result<U256, FakeExponentialError> {
     let mut output: U256 = U256::zero();
     let denominator_u256: U256 = denominator.into();
 
