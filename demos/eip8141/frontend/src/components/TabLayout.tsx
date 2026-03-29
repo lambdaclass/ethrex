@@ -4,12 +4,14 @@ import SimpleSend from './SimpleSend';
 import SponsoredSend from './SponsoredSend';
 import BatchOps from './BatchOps';
 import DeployExecute from './DeployExecute';
+import EphemeralKeys from './EphemeralKeys';
 
 const TABS = [
   { id: 'simple', label: 'Simple Send' },
   { id: 'sponsored', label: 'Sponsored' },
   { id: 'batch', label: 'Batch' },
   { id: 'deploy', label: 'Deploy + Execute' },
+  { id: 'ephemeral', label: 'Ephemeral Keys' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -43,6 +45,7 @@ export default function TabLayout({ credential }: Props) {
       {active === 'sponsored' && <SponsoredSend credential={credential} />}
       {active === 'batch' && <BatchOps credential={credential} />}
       {active === 'deploy' && <DeployExecute credential={credential} />}
+      {active === 'ephemeral' && <EphemeralKeys />}
     </div>
   );
 }

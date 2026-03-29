@@ -118,3 +118,35 @@ export async function getTokenBalance(address: string): Promise<{ balance: strin
   const res = await fetch(`${API_BASE}/token-balance/${address}`);
   return res.json();
 }
+
+// ── Ephemeral Keys ──
+
+export async function ephemeralRegisterStream(): Promise<Response> {
+  const res = await fetch(`${API_BASE}/ephemeral-register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: '{}',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `Request failed: ${res.status}`);
+  }
+  return res;
+}
+
+export interface EphemeralSendResult extends TxResult {
+  oldSigner?: string;
+  newSigner?: string;
+  keyIndex?: number;
+}
+
+export async function ephemeralSend(body: {
+  address: string;
+  to: string;
+  amount: string;
+}): Promise<EphemeralSendResult> {
+  return post('/ephemeral-send', body);
+}

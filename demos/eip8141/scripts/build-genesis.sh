@@ -39,11 +39,24 @@ FACTORY_RUNTIME="0x$(solc --via-ir --bin-runtime --optimize --optimize-runs 200 
   --base-path . @solady/=contracts/deps/solady/ \
   contracts/src/WebAuthnP256AccountFactory.sol 2>/dev/null | tail -1)"
 
+# SignerRegistry (ephemeral key rotation)
+SR_RUNTIME="0x$(solc --via-ir --bin-runtime --optimize --optimize-runs 200 \
+  --base-path . @solady/=contracts/deps/solady/ \
+  contracts/src/SignerRegistry.sol 2>/dev/null | tail -1)"
+
+# EphemeralKeyAccount: Yul contract for ECDSA ephemeral key accounts
+EKA_FULL=$(solc --strict-assembly contracts/yul/EphemeralKeyAccount.yul 2>/dev/null | grep -A1 "Binary representation" | tail -1)
+EKA_INITCODE="0x${EKA_FULL}"
+echo -n "$EKA_INITCODE" > contracts/out/EphemeralKeyAccount.initcode.hex
+echo "  EphemeralKeyAccount initcode written to contracts/out/EphemeralKeyAccount.initcode.hex"
+
 echo "  GasSponsor:                    $(( (${#GS_RUNTIME} - 2) / 2 )) bytes"
 echo "  WebAuthnP256Account initcode:  $(( (${#WA_INITCODE} - 2) / 2 )) bytes"
 echo "  MockERC20:                     $(( (${#ME_RUNTIME} - 2) / 2 )) bytes"
 echo "  WebAuthnVerifier:              $(( (${#WV_RUNTIME} - 2) / 2 )) bytes"
 echo "  Factory:                       $(( (${#FACTORY_RUNTIME} - 2) / 2 )) bytes"
+echo "  SignerRegistry:                $(( (${#SR_RUNTIME} - 2) / 2 )) bytes"
+echo "  EphemeralKeyAccount initcode:  $(( (${#EKA_INITCODE} - 2) / 2 )) bytes"
 
 # Storage slot for MockERC20 balances (mapping slot 0):
 # Dev account: Hardhat #0 (0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
@@ -96,6 +109,13 @@ genesis.alloc['0x1000000000000000000000000000000000000004'] = {
 genesis.alloc['0x1000000000000000000000000000000000000005'] = {
   balance: '0x0',
   code: $(printf '%s' "$FACTORY_RUNTIME" | node -e "process.stdout.write(JSON.stringify(require('fs').readFileSync('/dev/stdin','utf8')))"),
+  storage: {}
+};
+
+// SignerRegistry (ephemeral key rotation)
+genesis.alloc['0x1000000000000000000000000000000000000006'] = {
+  balance: '0x0',
+  code: $(printf '%s' "$SR_RUNTIME" | node -e "process.stdout.write(JSON.stringify(require('fs').readFileSync('/dev/stdin','utf8')))"),
   storage: {}
 };
 
