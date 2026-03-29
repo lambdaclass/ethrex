@@ -50,10 +50,10 @@ let accountInitcode: `0x${string}` | null = null;
 function loadAccountInitcode(): `0x${string}` {
   if (accountInitcode) return accountInitcode;
 
-  // Try loading from the compiled output
+  // Try loading from the compiled output (UnifiedAccount = dual auth: P256 + ECDSA)
   const candidates = [
-    path.resolve(__dirname, "../../contracts/out/WebAuthnP256Account.initcode.hex"),
-    path.resolve(__dirname, "../../../contracts/out/WebAuthnP256Account.initcode.hex"),
+    path.resolve(__dirname, "../../contracts/out/UnifiedAccount.initcode.hex"),
+    path.resolve(__dirname, "../../../contracts/out/UnifiedAccount.initcode.hex"),
   ];
 
   for (const p of candidates) {
@@ -68,7 +68,7 @@ function loadAccountInitcode(): `0x${string}` {
   }
 
   throw new Error(
-    "WebAuthnP256Account initcode not found. Run 'make genesis' in the demo directory first."
+    "UnifiedAccount initcode not found. Run 'make genesis' in the demo directory first."
   );
 }
 

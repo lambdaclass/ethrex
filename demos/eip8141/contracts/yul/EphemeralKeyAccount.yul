@@ -1,3 +1,6 @@
+/// Reference implementation. The production demo uses UnifiedAccount.yul
+/// which combines P256 and ECDSA auth in a single contract.
+///
 /// @title EphemeralKeyAccount
 /// @notice Smart account for EIP-8141 frame transactions with ephemeral ECDSA key auth.
 /// @dev Storage layout:

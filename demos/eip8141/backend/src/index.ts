@@ -7,8 +7,6 @@ import simpleSendRoute from "./routes/simple-send.js";
 import sponsoredSendRoute from "./routes/sponsored-send.js";
 import batchOpsRoute from "./routes/batch-ops.js";
 import deployExecuteRoute from "./routes/deploy-execute.js";
-import ephemeralRegisterRoute from "./routes/ephemeral-register.js";
-import ephemeralSendRoute from "./routes/ephemeral-send.js";
 import { ensureFactoryInitialized } from "./dev-account.js";
 
 const app = new Hono();
@@ -23,8 +21,6 @@ app.route("/api", simpleSendRoute);
 app.route("/api", sponsoredSendRoute);
 app.route("/api", batchOpsRoute);
 app.route("/api", deployExecuteRoute);
-app.route("/api", ephemeralRegisterRoute);
-app.route("/api", ephemeralSendRoute);
 
 // Health check
 app.get("/health", (c) => c.json({ status: "ok" }));

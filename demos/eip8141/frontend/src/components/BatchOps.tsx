@@ -2,8 +2,10 @@ import { useState, useMemo } from 'react';
 import type { StoredCredential } from '../lib/passkey';
 import { signChallenge } from '../lib/passkey';
 import * as api from '../lib/api';
-import type { TxResult as TxResultType } from '../lib/api';
+import type { TxResult as TxResultType, AuthMethod } from '../lib/api';
 import TxResult from './TxResult';
+import KeyRotationInfo from './KeyRotationInfo';
+import AuthMethodToggle from './AuthMethodToggle';
 import FramePipeline from './FramePipeline';
 import type { FrameConfig, ExecutionState } from './FramePipeline';
 
@@ -21,6 +23,7 @@ const emptyOp = (): Operation => ({ to: '', value: '', data: '' });
 
 export default function BatchOps({ credential }: Props) {
   const [ops, setOps] = useState<Operation[]>([emptyOp()]);
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('passkey');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -50,20 +53,30 @@ export default function BatchOps({ credential }: Props) {
       const { sigHash } = await api.getSigHash('batch-ops', {
         from: credential.address,
         operations: ops,
-      });
+      }, authMethod);
 
-      setStatus('Sign with your passkey...');
-      const signed = await signChallenge(credential.id, sigHash);
+      if (authMethod === 'ephemeral') {
+        setStatus('Signing with ephemeral key...');
+        const txResult = await api.batchOps({
+          address: credential.address,
+          operations: ops,
+          authMethod: 'ephemeral',
+        });
+        setHistory(prev => [txResult, ...prev]);
+      } else {
+        setStatus('Sign with your passkey...');
+        const signed = await signChallenge(credential.id, sigHash);
 
-      setStatus('Submitting transaction...');
-      const txResult = await api.batchOps({
-        address: credential.address,
-        operations: ops,
-        signature: signed.signature,
-        webauthn: signed.webauthn,
-      });
-
-      setHistory(prev => [txResult, ...prev]);
+        setStatus('Submitting transaction...');
+        const txResult = await api.batchOps({
+          address: credential.address,
+          operations: ops,
+          authMethod: 'passkey',
+          signature: signed.signature,
+          webauthn: signed.webauthn,
+        });
+        setHistory(prev => [txResult, ...prev]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Batch execution failed');
     } finally {
@@ -75,11 +88,21 @@ export default function BatchOps({ credential }: Props) {
   const frames: FrameConfig[] = useMemo(() => {
     const verifyFrame: FrameConfig = {
       mode: 'VERIFY',
-      label: 'scope = 2',
+      label: 'scope = 3',
       target: 'account',
-      tooltip:
-        'Calls verifyAndPay() on the account contract. Uses TXPARAMLOAD(0x08) to read the sig_hash, verifies the WebAuthn P256 signature, then calls APPROVE(scope=2) to authorize as both sender and gas payer.',
+      tooltip: authMethod === 'ephemeral'
+        ? 'Calls verifyEcdsaAndPay() on the account. Verifies the ECDSA signature against the current ephemeral signer, calls APPROVE(scope=3).'
+        : 'Calls verifyAndPay() on the account contract. Uses TXPARAMLOAD(0x08) to read the sig_hash, verifies the WebAuthn P256 signature, then calls APPROVE(scope=3) to authorize as both sender and gas payer.',
     };
+    const extraFrames: FrameConfig[] = [];
+    if (authMethod === 'ephemeral') {
+      extraFrames.push({
+        mode: 'SENDER',
+        label: 'rotate()',
+        target: 'account',
+        tooltip: 'Rotates the ephemeral signer to the next derived key.',
+      });
+    }
     const senderFrames: FrameConfig[] = ops.map((_, i) => ({
       mode: 'SENDER' as const,
       label: `op #${i + 1}`,
@@ -87,14 +110,15 @@ export default function BatchOps({ credential }: Props) {
       tooltip:
         'Calls execute(target, value, data) on the account. Routes the inner call through the account\'s execution logic.',
     }));
-    return [verifyFrame, ...senderFrames];
-  }, [ops.length]);
+    return [verifyFrame, ...extraFrames, ...senderFrames];
+  }, [ops.length, authMethod]);
 
   const executionState: ExecutionState = (() => {
     if (error && !loading) return { phase: 'error' as const, errorFrameIndex: frames.length - 1 };
     if (!loading && history.length > 0 && history[0].success) return { phase: 'done' as const };
     if (status === 'Building transaction...') return { phase: 'executing' as const, activeFrameIndex: 0 };
     if (status === 'Sign with your passkey...') return { phase: 'executing' as const, activeFrameIndex: 0 };
+    if (status === 'Signing with ephemeral key...') return { phase: 'executing' as const, activeFrameIndex: 0 };
     if (status === 'Submitting transaction...') return { phase: 'executing' as const, activeFrameIndex: Math.floor(frames.length / 2) };
     return { phase: 'idle' as const };
   })();
@@ -102,9 +126,13 @@ export default function BatchOps({ credential }: Props) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       <div>
-        <h3 className="text-lg font-semibold text-zinc-100 mb-1">Batch Operations</h3>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-lg font-semibold text-zinc-100">Batch Operations</h3>
+          <AuthMethodToggle value={authMethod} onChange={setAuthMethod} />
+        </div>
         <p className="text-sm text-zinc-500 mb-5">
           Execute multiple operations in a single frame transaction.
+          {authMethod === 'ephemeral' && ' No biometric prompt — signed with an ephemeral key.'}
         </p>
 
         <div className="space-y-3 mb-4">
@@ -140,7 +168,7 @@ export default function BatchOps({ credential }: Props) {
                   className="rounded border border-zinc-700 bg-zinc-900/50 px-2 text-xs text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors cursor-pointer"
                   title="Random address"
                 >
-                  🎲
+                  Random
                 </button>
               </div>
               <div className="flex gap-2">
@@ -189,7 +217,12 @@ export default function BatchOps({ credential }: Props) {
         {history.length > 0 && (
           <div className="mt-6 space-y-2">
             <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Transaction History</h4>
-            {history.map((r, i) => <TxResult key={i} result={r} />)}
+            {history.map((r, i) => (
+              <div key={i}>
+                <KeyRotationInfo result={r} />
+                <TxResult result={r} />
+              </div>
+            ))}
           </div>
         )}
       </div>

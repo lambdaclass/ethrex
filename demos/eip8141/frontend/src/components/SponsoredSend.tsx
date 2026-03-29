@@ -2,25 +2,58 @@ import { useState, useEffect } from 'react';
 import type { StoredCredential } from '../lib/passkey';
 import { signChallenge } from '../lib/passkey';
 import * as api from '../lib/api';
-import type { TxResult as TxResultType } from '../lib/api';
+import type { TxResult as TxResultType, AuthMethod } from '../lib/api';
 import TxResult from './TxResult';
+import KeyRotationInfo from './KeyRotationInfo';
+import AuthMethodToggle from './AuthMethodToggle';
 import FramePipeline from './FramePipeline';
 import type { FrameConfig, ExecutionState } from './FramePipeline';
 
-const FRAMES: FrameConfig[] = [
-  {
-    mode: 'VERIFY',
-    label: 'scope = 0',
-    target: 'account',
-    tooltip:
-      'Calls verify() on the account. Uses TXPARAMLOAD(0x08) for sig_hash, verifies signature, calls APPROVE(scope=0) — authorizes as sender only.',
-  },
+const PASSKEY_FRAMES: FrameConfig[] = [
   {
     mode: 'VERIFY',
     label: 'scope = 1',
+    target: 'account',
+    tooltip:
+      'Calls verify() on the account. Uses TXPARAMLOAD(0x08) for sig_hash, verifies signature, calls APPROVE(scope=1) — authorizes as sender only.',
+  },
+  {
+    mode: 'VERIFY',
+    label: 'scope = 2',
     target: 'sponsor',
     tooltip:
-      'Calls payForTransaction() on the sponsor. Calls APPROVE(scope=1) — authorizes gas payment from sponsor\'s balance.',
+      'Calls payForTransaction() on the sponsor. Calls APPROVE(scope=2) — authorizes gas payment from sponsor\'s balance.',
+  },
+  {
+    mode: 'SENDER',
+    label: 'execute()',
+    target: 'account',
+    tooltip:
+      'Calls execute(target, value, data) on the account. Routes the ERC20 transfer through the account\'s execution logic.',
+  },
+];
+
+const EPHEMERAL_FRAMES: FrameConfig[] = [
+  {
+    mode: 'VERIFY',
+    label: 'scope = 1',
+    target: 'account',
+    tooltip:
+      'Calls verifyEcdsa() on the account. Verifies the ECDSA signature against the current ephemeral signer, calls APPROVE(scope=1) — authorizes as sender only.',
+  },
+  {
+    mode: 'VERIFY',
+    label: 'scope = 2',
+    target: 'sponsor',
+    tooltip:
+      'Calls payForTransaction() on the sponsor. Calls APPROVE(scope=2) — authorizes gas payment from sponsor\'s balance.',
+  },
+  {
+    mode: 'SENDER',
+    label: 'rotate()',
+    target: 'account',
+    tooltip:
+      'Rotates the ephemeral signer to the next derived key.',
   },
   {
     mode: 'SENDER',
@@ -38,11 +71,14 @@ interface Props {
 export default function SponsoredSend({ credential }: Props) {
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('passkey');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [history, setHistory] = useState<TxResultType[]>([]);
   const [tokenBalance, setTokenBalance] = useState<string | null>(null);
+
+  const frames = authMethod === 'ephemeral' ? EPHEMERAL_FRAMES : PASSKEY_FRAMES;
 
   const fetchBalance = async () => {
     try {
@@ -70,22 +106,34 @@ export default function SponsoredSend({ credential }: Props) {
         from: credential.address,
         to,
         amount,
-      });
+      }, authMethod);
 
-      setStatus('Sign with your passkey...');
-      const signed = await signChallenge(credential.id, sigHash);
+      if (authMethod === 'ephemeral') {
+        setStatus('Signing with ephemeral key...');
+        const txResult = await api.sponsoredSend({
+          address: credential.address,
+          to,
+          amount,
+          authMethod: 'ephemeral',
+        });
+        setHistory(prev => [txResult, ...prev]);
+        fetchBalance();
+      } else {
+        setStatus('Sign with your passkey...');
+        const signed = await signChallenge(credential.id, sigHash);
 
-      setStatus('Submitting transaction...');
-      const txResult = await api.sponsoredSend({
-        address: credential.address,
-        to,
-        amount,
-        signature: signed.signature,
-        webauthn: signed.webauthn,
-      });
-
-      setHistory(prev => [txResult, ...prev]);
-      fetchBalance();
+        setStatus('Submitting transaction...');
+        const txResult = await api.sponsoredSend({
+          address: credential.address,
+          to,
+          amount,
+          authMethod: 'passkey',
+          signature: signed.signature,
+          webauthn: signed.webauthn,
+        });
+        setHistory(prev => [txResult, ...prev]);
+        fetchBalance();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Transaction failed');
     } finally {
@@ -95,20 +143,25 @@ export default function SponsoredSend({ credential }: Props) {
   };
 
   const executionState: ExecutionState = (() => {
-    if (error && !loading) return { phase: 'error' as const, errorFrameIndex: 2 };
+    if (error && !loading) return { phase: 'error' as const, errorFrameIndex: frames.length - 1 };
     if (!loading && history.length > 0 && history[0].success) return { phase: 'done' as const };
     if (status === 'Building transaction...') return { phase: 'executing' as const, activeFrameIndex: 0 };
     if (status === 'Sign with your passkey...') return { phase: 'executing' as const, activeFrameIndex: 1 };
-    if (status === 'Submitting transaction...') return { phase: 'executing' as const, activeFrameIndex: 2 };
+    if (status === 'Signing with ephemeral key...') return { phase: 'executing' as const, activeFrameIndex: 1 };
+    if (status === 'Submitting transaction...') return { phase: 'executing' as const, activeFrameIndex: frames.length - 1 };
     return { phase: 'idle' as const };
   })();
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       <div>
-        <h3 className="text-lg font-semibold text-zinc-100 mb-1">Sponsored ERC20 Send</h3>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-lg font-semibold text-zinc-100">Sponsored ERC20 Send</h3>
+          <AuthMethodToggle value={authMethod} onChange={setAuthMethod} />
+        </div>
         <p className="text-sm text-zinc-500 mb-5">
-          Send ERC20 tokens without paying gas. A sponsor account covers the transaction fee via a frame transaction.
+          Send ERC20 tokens without paying gas. A sponsor account covers the transaction fee.
+          {authMethod === 'ephemeral' && ' No biometric prompt — signed with an ephemeral key.'}
         </p>
 
         <div className="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-3 py-2">
@@ -140,7 +193,7 @@ export default function SponsoredSend({ credential }: Props) {
                 className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-2.5 text-xs text-zinc-400 hover:text-zinc-200 hover:border-zinc-500 transition-colors cursor-pointer"
                 title="Random address"
               >
-                🎲
+                Random
               </button>
             </div>
           </div>
@@ -175,13 +228,18 @@ export default function SponsoredSend({ credential }: Props) {
         {history.length > 0 && (
           <div className="mt-6 space-y-2">
             <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Transaction History</h4>
-            {history.map((r, i) => <TxResult key={i} result={r} />)}
+            {history.map((r, i) => (
+              <div key={i}>
+                <KeyRotationInfo result={r} />
+                <TxResult result={r} />
+              </div>
+            ))}
           </div>
         )}
       </div>
 
       <div className="lg:pt-10">
-        <FramePipeline frames={FRAMES} executionState={executionState} />
+        <FramePipeline frames={frames} executionState={executionState} />
       </div>
     </div>
   );

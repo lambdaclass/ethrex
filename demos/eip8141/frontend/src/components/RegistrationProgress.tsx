@@ -16,7 +16,7 @@ function getBlockscoutAddressUrl(address: string): string {
   return `https://${hostname}:8083/address/${address}`;
 }
 
-type StepId = 'passkey' | 'deploy' | 'fund' | 'mint';
+type StepId = 'passkey' | 'deploy' | 'fund' | 'mint' | 'register-signer';
 type StepStatus = 'waiting' | 'pending' | 'done' | 'error';
 
 interface Step {
@@ -33,6 +33,7 @@ const INITIAL_STEPS: Step[] = [
   { id: 'deploy', label: 'Deploying smart account', status: 'waiting' },
   { id: 'fund', label: 'Funding with 10 ETH', status: 'waiting' },
   { id: 'mint', label: 'Minting 1,000,000 DEMO tokens', status: 'waiting' },
+  { id: 'register-signer', label: 'Registering ephemeral signer', status: 'waiting' },
 ];
 
 function StepIcon({ status }: { status: StepStatus }) {
@@ -205,5 +206,6 @@ function doneLabel(step: StepId): string {
     case 'deploy': return 'Smart account deployed';
     case 'fund': return 'Funded with 10 ETH';
     case 'mint': return 'Minted 1,000,000 DEMO tokens';
+    case 'register-signer': return 'Ephemeral signer registered';
   }
 }

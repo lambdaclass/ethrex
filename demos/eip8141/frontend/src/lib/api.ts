@@ -2,6 +2,8 @@ import type { StoredCredential, SignResult } from './passkey';
 
 const API_BASE = '/api';
 
+export type AuthMethod = 'passkey' | 'ephemeral';
+
 export interface FrameReceipt {
   mode: string;
   status: boolean;
@@ -15,37 +17,44 @@ export interface TxResult {
   frameReceipts?: FrameReceipt[];
   deployedAddress?: string;
   error?: string;
+  oldSigner?: string;
+  newSigner?: string;
+  keyIndex?: number;
 }
 
 export interface SimpleSendRequest {
   address: string;
   to: string;
   amount: string;
-  signature: SignResult['signature'];
-  webauthn: SignResult['webauthn'];
+  authMethod?: AuthMethod;
+  signature?: SignResult['signature'];
+  webauthn?: SignResult['webauthn'];
 }
 
 export interface SponsoredSendRequest {
   address: string;
   to: string;
   amount: string;
-  signature: SignResult['signature'];
-  webauthn: SignResult['webauthn'];
+  authMethod?: AuthMethod;
+  signature?: SignResult['signature'];
+  webauthn?: SignResult['webauthn'];
 }
 
 export interface BatchOpsRequest {
   address: string;
   operations: { to: string; value: string; data: string }[];
-  signature: SignResult['signature'];
-  webauthn: SignResult['webauthn'];
+  authMethod?: AuthMethod;
+  signature?: SignResult['signature'];
+  webauthn?: SignResult['webauthn'];
 }
 
 export interface DeployExecuteRequest {
   address: string;
   bytecode: string;
   calldata: string;
-  signature: SignResult['signature'];
-  webauthn: SignResult['webauthn'];
+  authMethod?: AuthMethod;
+  signature?: SignResult['signature'];
+  webauthn?: SignResult['webauthn'];
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -93,9 +102,10 @@ export async function registerAccountStream(
 
 export async function getSigHash(
   demoType: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  authMethod?: AuthMethod
 ): Promise<{ sigHash: string }> {
-  return post('/sig-hash', { demoType, params });
+  return post('/sig-hash', { demoType, params, authMethod });
 }
 
 export async function simpleSend(body: SimpleSendRequest): Promise<TxResult> {
@@ -117,36 +127,4 @@ export async function deployExecute(body: DeployExecuteRequest): Promise<TxResul
 export async function getTokenBalance(address: string): Promise<{ balance: string; formatted: string }> {
   const res = await fetch(`${API_BASE}/token-balance/${address}`);
   return res.json();
-}
-
-// ── Ephemeral Keys ──
-
-export async function ephemeralRegisterStream(): Promise<Response> {
-  const res = await fetch(`${API_BASE}/ephemeral-register`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-    },
-    body: '{}',
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `Request failed: ${res.status}`);
-  }
-  return res;
-}
-
-export interface EphemeralSendResult extends TxResult {
-  oldSigner?: string;
-  newSigner?: string;
-  keyIndex?: number;
-}
-
-export async function ephemeralSend(body: {
-  address: string;
-  to: string;
-  amount: string;
-}): Promise<EphemeralSendResult> {
-  return post('/ephemeral-send', body);
 }

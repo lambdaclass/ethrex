@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+/// Reference implementation of a shared signer registry. The production demo
+/// uses per-account signer storage instead (UnifiedAccount.yul slot 2).
+///
 /// @title SignerRegistry
 /// @notice Singleton registry mapping account addresses to their current ECDSA signer.
 /// @dev Used by EphemeralKeyAccount contracts to look up the authorized signer.

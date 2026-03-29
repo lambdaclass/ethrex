@@ -16,16 +16,19 @@ import type {
   BatchOpsParams,
   DeployExecuteParams,
   Frame,
+  AuthMethod,
 } from "../types.js";
 import {
   encodeAbiParameters,
   parseAbiParameters,
   parseEther,
+  encodeFunctionData,
   getCreate2Address,
   numberToHex,
   keccak256,
   encodePacked,
 } from "viem";
+import { ephemeralAccounts, deriveKey } from "../ephemeral-state.js";
 
 // Default gas limit per frame
 const DEFAULT_FRAME_GAS = 200_000n;
@@ -33,11 +36,39 @@ const DEFAULT_FRAME_GAS = 200_000n;
 const app = new Hono();
 
 /**
+ * Build rotation SENDER frame: account.execute(address(this), 0, rotate(nextKey))
+ */
+function buildRotationFrame(sender: Uint8Array, nextSignerAddress: string): Frame {
+  const rotateCalldata = encodeFunctionData({
+    abi: [{
+      type: "function",
+      name: "rotate",
+      inputs: [{ name: "newSigner", type: "address" }],
+      outputs: [],
+      stateMutability: "nonpayable",
+    }],
+    functionName: "rotate",
+    args: [nextSignerAddress as `0x${string}`],
+  });
+  const senderHex = bytesToHex(sender);
+  const execCalldata = encodeExecuteCalldata(senderHex, "0", rotateCalldata);
+  return {
+    mode: FRAME_MODE_SENDER,
+    target: sender,
+    gasLimit: DEFAULT_FRAME_GAS,
+    data: execCalldata,
+  };
+}
+
+/**
  * Build a Frame TX skeleton (VERIFY data empty) based on demo type.
+ * When authMethod is "ephemeral", a rotation SENDER frame is inserted
+ * after VERIFY and before the operation frames.
  */
 async function buildSkeleton(
   demoType: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  authMethod: AuthMethod = "passkey",
 ): Promise<FrameTransaction> {
   const from = (params.from as string).toLowerCase();
   const sender = hexToBytes(from);
@@ -51,13 +82,20 @@ async function buildSkeleton(
   const maxPriorityFeePerGas = 1_000_000_000n; // 1 gwei
   const maxFeePerGas = baseFee * 2n + maxPriorityFeePerGas;
 
+  // For ephemeral auth, pre-compute the rotation frame
+  let rotationFrame: Frame | null = null;
+  if (authMethod === "ephemeral") {
+    const state = ephemeralAccounts.get(from);
+    if (!state) throw new Error(`No ephemeral state for ${from}`);
+    const nextKey = deriveKey(state.seed, state.keyIndex + 1);
+    rotationFrame = buildRotationFrame(sender, nextKey.address);
+  }
+
   let frames: Frame[];
 
   switch (demoType) {
     case "simple-send": {
       const p = params as unknown as SimpleSendParams;
-      // Frame 0: VERIFY (empty data, filled after signing)
-      // Frame 1: SENDER - transfer call on the account
       const transferCalldata = encodeTransferCalldata(p.to, p.amount);
       frames = [
         {
@@ -66,13 +104,14 @@ async function buildSkeleton(
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
         },
-        {
-          mode: FRAME_MODE_SENDER,
-          target: sender,
-          gasLimit: DEFAULT_FRAME_GAS,
-          data: transferCalldata,
-        },
       ];
+      if (rotationFrame) frames.push(rotationFrame);
+      frames.push({
+        mode: FRAME_MODE_SENDER,
+        target: sender,
+        gasLimit: DEFAULT_FRAME_GAS,
+        data: transferCalldata,
+      });
       break;
     }
 
@@ -87,9 +126,6 @@ async function buildSkeleton(
         "0",
         erc20Hex
       );
-      // Frame 0: VERIFY sender (scope=0, account proves identity)
-      // Frame 1: VERIFY payer (scope=1, sponsor approves gas payment)
-      // Frame 2: SENDER execute (ERC20 transfer)
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
@@ -103,20 +139,19 @@ async function buildSkeleton(
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
         },
-        {
-          mode: FRAME_MODE_SENDER,
-          target: sender,
-          gasLimit: DEFAULT_FRAME_GAS,
-          data: executeCalldata,
-        },
       ];
+      if (rotationFrame) frames.push(rotationFrame);
+      frames.push({
+        mode: FRAME_MODE_SENDER,
+        target: sender,
+        gasLimit: DEFAULT_FRAME_GAS,
+        data: executeCalldata,
+      });
       break;
     }
 
     case "batch-ops": {
       const p = params as unknown as BatchOpsParams;
-      // Frame 0: VERIFY
-      // Frame 1..N: SENDER for each operation
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
@@ -125,6 +160,7 @@ async function buildSkeleton(
           data: new Uint8Array(0),
         },
       ];
+      if (rotationFrame) frames.push(rotationFrame);
       for (const op of p.operations) {
         const executeCalldata = encodeExecuteCalldata(
           op.to,
@@ -167,9 +203,6 @@ async function buildSkeleton(
         bytecode: initCodeHex,
       });
 
-      // Frame 0: VERIFY
-      // Frame 1: DEFAULT — calls deployer proxy with salt + init code
-      // Frame 2: SENDER — account.execute(deployedAddress, 0, calldata)
       const executeCalldata = encodeExecuteCalldata(
         deployedAddress,
         "0",
@@ -183,6 +216,9 @@ async function buildSkeleton(
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
         },
+      ];
+      if (rotationFrame) frames.push(rotationFrame);
+      frames.push(
         {
           mode: FRAME_MODE_DEFAULT,
           target: hexToBytes(DEPLOYER_PROXY_ADDRESS),
@@ -195,7 +231,7 @@ async function buildSkeleton(
           gasLimit: DEFAULT_FRAME_GAS,
           data: executeCalldata,
         },
-      ];
+      );
 
       // Store deployed address for the response
       pendingDeployedAddresses.set(from, deployedAddress);
@@ -274,7 +310,8 @@ app.post("/sig-hash", async (c) => {
     const body = (await c.req.json()) as SigHashRequest;
     const tx = await buildSkeleton(
       body.demoType,
-      body.params as unknown as Record<string, unknown>
+      body.params as unknown as Record<string, unknown>,
+      body.authMethod ?? "passkey",
     );
 
     const sigHash = tx.computeSigHash();

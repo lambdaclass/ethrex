@@ -1,7 +1,34 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import {
+  createWalletClient,
+  createPublicClient,
+  http,
+  encodeFunctionData,
+  defineChain,
+} from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import type { Credential } from "../types.js";
-import { deployAccount, fundAccount, mintTokens, getTokenBalance } from "../dev-account.js";
+import { deployAccount, fundAccount, mintTokens, getTokenBalance, DEV_PRIVATE_KEY } from "../dev-account.js";
+import { deriveKey, ephemeralAccounts, type EphemeralState } from "../ephemeral-state.js";
+
+const RPC_URL = process.env.RPC_URL ?? "http://localhost:8545";
+const devAccount = privateKeyToAccount(DEV_PRIVATE_KEY);
+const demoChain = defineChain({
+  id: 1729,
+  name: "ethrex-demo",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: [RPC_URL] } },
+});
+const walletClient = createWalletClient({
+  account: devAccount,
+  chain: demoChain,
+  transport: http(RPC_URL),
+});
+const publicClient = createPublicClient({
+  chain: demoChain,
+  transport: http(RPC_URL),
+});
 
 // In-memory credential store keyed by account address
 export const credentials = new Map<string, Credential>();
@@ -55,6 +82,62 @@ app.post("/register", async (c) => {
       await stream.writeSSE(sseStep("mint", "done", { skipped: "true" }));
     }
 
+    // Step 4: Generate ephemeral seed and register initial signer
+    await stream.writeSSE(sseStep("register-signer", "pending"));
+
+    const seedBytes = new Uint8Array(32);
+    crypto.getRandomValues(seedBytes);
+    const seed = ("0x" + Array.from(seedBytes).map(b => b.toString(16).padStart(2, "0")).join("")) as `0x${string}`;
+    const key0 = deriveKey(seed, 0);
+    console.log(`[register] Derived ephemeral key0: ${key0.address}`);
+
+    // Call account.execute(address(this), 0, rotate(key0.address)) to register signer
+    const rotateCalldata = encodeFunctionData({
+      abi: [{
+        type: "function",
+        name: "rotate",
+        inputs: [{ name: "newSigner", type: "address" }],
+        outputs: [],
+        stateMutability: "nonpayable",
+      }],
+      functionName: "rotate",
+      args: [key0.address as `0x${string}`],
+    });
+    const executeCalldata = encodeFunctionData({
+      abi: [{
+        type: "function",
+        name: "execute",
+        inputs: [
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+        outputs: [],
+        stateMutability: "nonpayable",
+      }],
+      functionName: "execute",
+      args: [address as `0x${string}`, 0n, rotateCalldata],
+    });
+
+    const registerTxHash = await walletClient.sendTransaction({
+      to: address as `0x${string}`,
+      data: executeCalldata,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
+    console.log(`[register] Ephemeral signer registered: ${key0.address}, tx: ${registerTxHash}`);
+    await stream.writeSSE(sseStep("register-signer", "done", {
+      signer: key0.address,
+      txHash: registerTxHash,
+    }));
+
+    // Store ephemeral state
+    const ephState: EphemeralState = {
+      seed,
+      keyIndex: 0,
+      address: address.toLowerCase() as `0x${string}`,
+    };
+    ephemeralAccounts.set(address.toLowerCase(), ephState);
+
     // Store credential in-memory
     const credential: Credential = {
       credentialId: body.credentialId,
@@ -65,7 +148,10 @@ app.post("/register", async (c) => {
     console.log(`[register] Credential stored for ${address}`);
 
     // Complete
-    await stream.writeSSE({ event: "complete", data: JSON.stringify({ address: address.toLowerCase() }) });
+    await stream.writeSSE({ event: "complete", data: JSON.stringify({
+      address: address.toLowerCase(),
+      currentSigner: key0.address,
+    }) });
   }, async (err, stream) => {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[register] Error: ${msg}`);

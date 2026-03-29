@@ -12,8 +12,6 @@ export const VERIFIER_ADDRESS =
   "0x1000000000000000000000000000000000000004";
 export const FACTORY_ADDRESS =
   "0x1000000000000000000000000000000000000005";
-export const SIGNER_REGISTRY_ADDRESS =
-  "0x1000000000000000000000000000000000000006";
 export const DEPLOYER_PROXY_ADDRESS =
   "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
@@ -55,6 +53,7 @@ export interface SigHashRequest {
     | "sponsored-send"
     | "batch-ops"
     | "deploy-execute";
+  authMethod?: AuthMethod;
   params: SimpleSendParams | SponsoredSendParams | BatchOpsParams | DeployExecuteParams;
 }
 
@@ -82,12 +81,15 @@ export interface DeployExecuteParams {
   calldata: string;
 }
 
+export type AuthMethod = "passkey" | "ephemeral";
+
 export interface SimpleSendRequest {
   address: string;
   to: string;
   amount: string;
-  signature: { r: string; s: string };
-  webauthn: WebAuthnMetadata;
+  authMethod?: AuthMethod;
+  signature?: { r: string; s: string };
+  webauthn?: WebAuthnMetadata;
 }
 
 export interface SponsoredSendRequest {
@@ -95,21 +97,24 @@ export interface SponsoredSendRequest {
   to: string;
   amount: string;
   sponsorAddress: string;
-  signature: { r: string; s: string };
-  webauthn: WebAuthnMetadata;
+  authMethod?: AuthMethod;
+  signature?: { r: string; s: string };
+  webauthn?: WebAuthnMetadata;
 }
 
 export interface BatchOpsRequest {
   address: string;
   operations: Array<{ to: string; value: string; data: string }>;
-  signature: { r: string; s: string };
-  webauthn: WebAuthnMetadata;
+  authMethod?: AuthMethod;
+  signature?: { r: string; s: string };
+  webauthn?: WebAuthnMetadata;
 }
 
 export interface DeployExecuteRequest {
   address: string;
   bytecode: string;
   calldata: string;
-  signature: { r: string; s: string };
-  webauthn: WebAuthnMetadata;
+  authMethod?: AuthMethod;
+  signature?: { r: string; s: string };
+  webauthn?: WebAuthnMetadata;
 }
