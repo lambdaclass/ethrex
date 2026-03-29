@@ -664,8 +664,44 @@ impl<'a> VM<'a> {
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
+        // Atomic batching state: track whether we're inside a batch and
+        // which frames belong to it so we can revert them all on failure.
+        let mut in_atomic_batch = false;
+        let mut batch_start_idx: usize = 0;
+        let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
+
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
+            // If we're skipping frames due to an atomic batch revert, record
+            // the frame as failed and charge its full gas_limit.
+            if let Some(end_idx) = skip_until_batch_end {
+                if frame_idx <= end_idx {
+                    let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                        InternalError::Custom("missing frame tx context".to_string()),
+                    ))?;
+                    ctx.current_frame_index = frame_idx;
+                    ctx.frame_results.push((false, frame.gas_limit, Vec::new()));
+                    total_gas_used = total_gas_used
+                        .checked_add(frame.gas_limit)
+                        .ok_or(VMError::Internal(InternalError::Overflow))?;
+                    if frame_idx == end_idx {
+                        skip_until_batch_end = None;
+                        in_atomic_batch = false;
+                    }
+                    continue;
+                }
+                skip_until_batch_end = None;
+                in_atomic_batch = false;
+            }
+
+            // Start a new atomic batch if this SENDER frame has the batch flag
+            // and we're not already in one.
+            if !in_atomic_batch && frame.is_atomic_batch() {
+                self.substate.push_backup(); // batch-level snapshot
+                in_atomic_batch = true;
+                batch_start_idx = frame_idx;
+            }
+
             let ctx =
                 self.frame_tx_context
                     .as_mut()
@@ -795,6 +831,50 @@ impl<'a> VM<'a> {
                     )))?;
             ctx.frame_results
                 .push((frame_success, frame_gas_used, frame_logs));
+
+            // Atomic batch: if a frame in the batch reverted, revert the
+            // batch-level snapshot and skip remaining frames in the batch.
+            if in_atomic_batch && !frame_success {
+                self.substate.revert_backup(); // revert batch-level snapshot
+                self.restore_cache_state()?;
+
+                // Rewrite results for all prior frames in this batch as failed
+                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                    InternalError::Custom("missing frame tx context".to_string()),
+                ))?;
+                for i in batch_start_idx..frame_idx {
+                    if let Some(result) = ctx.frame_results.get_mut(i) {
+                        let charged_gas = frame_tx.frames[i].gas_limit;
+                        // Adjust total_gas_used: remove what was counted, add full gas_limit
+                        total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
+                        *result = (false, charged_gas, Vec::new());
+                    }
+                }
+                // Remove logs from reverted batch frames
+                all_logs.retain(|_| false); // TODO: track per-batch logs more precisely
+
+                // Find the end of this batch (the next SENDER frame without the flag)
+                let batch_end = frame_tx.frames[frame_idx..]
+                    .iter()
+                    .enumerate()
+                    .find(|(_, f)| f.execution_mode() == FrameMode::Sender && !f.is_atomic_batch())
+                    .map(|(offset, _)| frame_idx + offset)
+                    .unwrap_or(frame_idx);
+
+                if batch_end > frame_idx {
+                    skip_until_batch_end = Some(batch_end);
+                } else {
+                    in_atomic_batch = false;
+                }
+                self.substate.clear_transient_storage();
+                continue;
+            }
+
+            // If this is the last frame of a batch (SENDER without flag), commit the batch
+            if in_atomic_batch && !frame.is_atomic_batch() {
+                self.substate.commit_backup(); // commit batch-level snapshot
+                in_atomic_batch = false;
+            }
 
             // VERIFY frame enforcement: if VERIFY frame didn't call APPROVE, TX is invalid
             if frame.execution_mode() == FrameMode::Verify && !ctx.approve_called_in_current_frame {
