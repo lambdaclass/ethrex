@@ -20,7 +20,7 @@
 ///   publicKeyX()                           0xfa6df55d — Read pubkey X
 ///   publicKeyY()                           0xd7a6f6e8 — Read pubkey Y
 ///   currentSigner()                        0x3a5c8c89 — Read ephemeral signer
-///   rotate(address)                        0x7c281a19 — Set new ephemeral signer (self-call only)
+///   rotate(address)                        0x3f0d861a — Set new ephemeral signer (self-call only)
 ///   receive()                              (no selector) — Accept ETH
 ///
 /// External dependency:
@@ -138,7 +138,7 @@ object "UnifiedAccount" {
             // ── rotate(address newSigner) ─────────────────────────────
             // Callable by the account itself (SENDER frame) or by anyone
             // if no signer is set yet (initial setup during registration).
-            case 0x7c281a19 {
+            case 0x3f0d861a {
                 let current := sload(2)
                 // Allow external calls only when currentSigner is unset (0)
                 if and(iszero(iszero(current)), iszero(eq(caller(), address()))) {
