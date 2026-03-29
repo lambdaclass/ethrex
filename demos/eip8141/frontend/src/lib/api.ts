@@ -80,7 +80,8 @@ export async function registerAccount(
 }
 
 export async function registerAccountStream(
-  credential: StoredCredential
+  credential: StoredCredential,
+  signal?: AbortSignal
 ): Promise<Response> {
   const res = await fetch(`${API_BASE}/register`, {
     method: 'POST',
@@ -92,6 +93,7 @@ export async function registerAccountStream(
       credentialId: credential.id,
       publicKey: credential.publicKey,
     }),
+    signal,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));

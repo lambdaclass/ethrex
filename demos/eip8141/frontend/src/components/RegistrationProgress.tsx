@@ -63,10 +63,11 @@ export default function RegistrationProgress({ credential, onComplete, onError }
 
   useEffect(() => {
     let cancelled = false;
+    const abortController = new AbortController();
 
     async function run() {
       try {
-        const response = await registerAccountStream(credential);
+        const response = await registerAccountStream(credential, abortController.signal);
         const reader = response.body?.getReader();
         if (!reader) throw new Error('No response body');
 
@@ -135,7 +136,7 @@ export default function RegistrationProgress({ credential, onComplete, onError }
     }
 
     run();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; abortController.abort(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
