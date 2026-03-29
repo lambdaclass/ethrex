@@ -199,7 +199,9 @@ impl NodeRef {
             && hash.get().is_none()
         {
             node.memoize_hashes(buf, crypto);
-            let _ = hash.set(node.compute_hash_no_alloc(buf, crypto));
+            // Use inner variant: children are already memoized by the line above,
+            // so skip the redundant memoize_hashes traversal.
+            let _ = hash.set(node.compute_hash_no_alloc_inner(buf, crypto));
         }
     }
 
@@ -395,6 +397,13 @@ impl Node {
     /// Computes the node's hash
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         self.memoize_hashes(buf, crypto);
+        self.compute_hash_no_alloc_inner(buf, crypto)
+    }
+
+    /// Computes the node's hash without memoizing children first.
+    /// Only safe when children are guaranteed to already have their hashes cached
+    /// (e.g., after a post-order memoize_hashes traversal).
+    fn compute_hash_no_alloc_inner(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         match self {
             Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
             Node::Extension(n) => n.compute_hash_no_alloc(buf, crypto),

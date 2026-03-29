@@ -1,7 +1,7 @@
 use std::mem;
 
 use ethrex_crypto::{Crypto, NativeCrypto};
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{constants::RLP_NULL, encode::RLPEncode};
 
 use crate::{
     InconsistentTreeError, TrieDB, ValueRLP, error::TrieError, nibbles::Nibbles,
@@ -276,10 +276,57 @@ impl BranchNode {
         self.compute_hash_no_alloc(&mut vec![], crypto)
     }
 
-    /// Computes the node's hash, using the provided buffer
+    /// Computes the node's hash, using the provided buffer.
+    /// Encodes directly to Vec<u8> in a single pass, avoiding double iteration
+    /// over children and dynamic dispatch through `&mut dyn BufMut`.
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+
+        // Reserve 3 bytes for the RLP list length prefix (branch payloads are always >= 56 bytes)
+        let prefix_reserve = 3;
+        buf.resize(prefix_reserve, 0);
+
+        // Single pass: encode all children directly to buf
+        for child in &self.choices {
+            match child.compute_hash_ref(&NativeCrypto) {
+                NodeHash::Hashed(hash) => {
+                    buf.push(0xa0); // RLP prefix for 32-byte string
+                    buf.extend_from_slice(hash.as_bytes());
+                }
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize]);
+                }
+            }
+        }
+
+        // Encode value
+        if self.value.is_empty() {
+            buf.push(RLP_NULL);
+        } else {
+            ethrex_rlp::encode::RLPEncode::encode(&self.value[..], &mut &mut *buf);
+        }
+
+        // Now compute payload length and write the prefix
+        let payload_len = buf.len() - prefix_reserve;
+        if payload_len < 56 {
+            // 1-byte prefix: shift payload left by 2 bytes, write prefix at [0]
+            buf.copy_within(prefix_reserve.., 1);
+            buf.truncate(1 + payload_len);
+            buf[0] = 0xc0 + payload_len as u8;
+        } else if payload_len < 256 {
+            // 2-byte prefix: shift payload left by 1 byte
+            buf.copy_within(prefix_reserve.., 2);
+            buf.truncate(2 + payload_len);
+            buf[0] = 0xf8;
+            buf[1] = payload_len as u8;
+        } else {
+            // 3-byte prefix (most common for branch nodes): payload fits in reserved space
+            buf[0] = 0xf9;
+            buf[1] = (payload_len >> 8) as u8;
+            buf[2] = payload_len as u8;
+        }
+
         let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash
