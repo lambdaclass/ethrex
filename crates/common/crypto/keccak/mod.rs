@@ -131,7 +131,49 @@ mod imp {
     }
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+// ZisK guest (riscv64): use hardware-accelerated keccak via FFI
+#[cfg(target_arch = "riscv64")]
+mod imp {
+    unsafe extern "C" {
+        fn keccak256_c(input: *const u8, input_len: usize, output: *mut u8);
+    }
+
+    pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
+        let data = data.as_ref();
+        let mut output = [0u8; 32];
+        unsafe {
+            keccak256_c(data.as_ptr(), data.len(), output.as_mut_ptr());
+        }
+        output
+    }
+
+    // Keccak256 struct provided for API compatibility but not used in guest.
+    // It accumulates data and hashes on finalize via the hardware accelerator.
+    #[derive(Clone, Default)]
+    pub struct Keccak256 {
+        buf: Vec<u8>,
+    }
+
+    impl Keccak256 {
+        #[inline]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        #[inline]
+        pub fn update(&mut self, data: impl AsRef<[u8]>) -> Self {
+            self.buf.extend_from_slice(data.as_ref());
+            self.clone()
+        }
+
+        #[inline]
+        pub fn finalize(self) -> [u8; 32] {
+            keccak_hash(&self.buf)
+        }
+    }
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
 mod imp {
     use tiny_keccak::{Hasher, Keccak};
 
