@@ -700,66 +700,86 @@ impl<'a> VM<'a> {
             // Get target's bytecode
             let bytecode = self.db.get_account_code(target)?.clone();
 
-            // Create a new CallFrame for this frame
-            let call_frame = CallFrame::new(
-                caller,                                    // msg_sender
-                target,                                    // to
-                target,                                    // code_address
-                bytecode,                                  // bytecode
-                U256::zero(),       // msg_value (frames don't transfer value)
-                frame.data.clone(), // calldata
-                is_static,          // is_static
-                frame.gas_limit,    // gas_limit
-                0,                  // depth
-                false,              // should_transfer_value
-                false,              // is_create
-                0,                  // ret_offset
-                0,                  // ret_size
-                self.stack_pool.pop().unwrap_or_default(), // stack
-                Memory::default(),  // memory
-            );
-
-            // Save current call frame and set up the frame's call frame
-            let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
-            let saved_call_frames = mem::take(&mut self.call_frames);
-
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // Execute the frame
-            let frame_result = self.run_execution();
-
-            let (frame_success, frame_gas_used, frame_logs) = match frame_result {
-                Ok(ctx_result) => {
-                    let gas_used = ctx_result.gas_used;
-                    let success = ctx_result.is_success();
-
-                    if success {
-                        self.substate.commit_backup();
-                        let logs = self.substate.extract_logs();
-                        // Re-add logs to substate so they persist
-                        for log in &logs {
-                            self.substate.add_log(log.clone());
+            let (frame_success, frame_gas_used, frame_logs) = if bytecode.bytecode.is_empty() {
+                // Default code for EOA (no deployed code)
+                use crate::opcode_handlers::frame_tx::execute_default_code;
+                match execute_default_code(self, frame, sender, target) {
+                    Ok((success, gas_used, logs)) => {
+                        if success {
+                            self.substate.commit_backup();
+                            (true, gas_used, logs)
+                        } else {
+                            self.substate.revert_backup();
+                            self.restore_cache_state()?;
+                            (false, gas_used, Vec::new())
                         }
-                        (true, gas_used, logs)
-                    } else {
+                    }
+                    Err(_) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, gas_used, Vec::new())
+                        (false, frame.gas_limit, Vec::new())
                     }
                 }
-                Err(_e) => {
-                    self.substate.revert_backup();
-                    self.restore_cache_state()?;
-                    (false, frame.gas_limit, Vec::new())
-                }
-            };
+            } else {
+                // Normal code execution via CallFrame
+                let call_frame = CallFrame::new(
+                    caller,                                    // msg_sender
+                    target,                                    // to
+                    target,                                    // code_address
+                    bytecode,                                  // bytecode
+                    U256::zero(),       // msg_value (frames don't transfer value)
+                    frame.data.clone(), // calldata
+                    is_static,          // is_static
+                    frame.gas_limit,    // gas_limit
+                    0,                  // depth
+                    false,              // should_transfer_value
+                    false,              // is_create
+                    0,                  // ret_offset
+                    0,                  // ret_size
+                    self.stack_pool.pop().unwrap_or_default(), // stack
+                    Memory::default(),  // memory
+                );
 
-            // Restore call frame state
-            let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
-            self.call_frames = saved_call_frames;
-            // Return the stack to the pool
-            self.stack_pool.push(finished_frame.stack);
+                let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
+                let saved_call_frames = mem::take(&mut self.call_frames);
+
+                let frame_result = self.run_execution();
+
+                let result = match frame_result {
+                    Ok(ctx_result) => {
+                        let gas_used = ctx_result.gas_used;
+                        let success = ctx_result.is_success();
+
+                        if success {
+                            self.substate.commit_backup();
+                            let logs = self.substate.extract_logs();
+                            for log in &logs {
+                                self.substate.add_log(log.clone());
+                            }
+                            (true, gas_used, logs)
+                        } else {
+                            self.substate.revert_backup();
+                            self.restore_cache_state()?;
+                            (false, gas_used, Vec::new())
+                        }
+                    }
+                    Err(_e) => {
+                        self.substate.revert_backup();
+                        self.restore_cache_state()?;
+                        (false, frame.gas_limit, Vec::new())
+                    }
+                };
+
+                // Restore call frame state
+                let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
+                self.call_frames = saved_call_frames;
+                self.stack_pool.push(finished_frame.stack);
+
+                result
+            };
 
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
