@@ -174,9 +174,9 @@ pub enum Opcode {
     LOG4 = 0xA4,
     // EIP-8141 Frame Transaction opcodes
     APPROVE = 0xAA,
-    TXPARAMLOAD = 0xB0,
-    TXPARAMSIZE = 0xB1,
-    TXPARAMCOPY = 0xB2,
+    TXPARAM = 0xB0,
+    FRAMEDATALOAD = 0xB1,
+    FRAMEDATACOPY = 0xB2,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -333,9 +333,9 @@ impl From<u8> for Opcode {
             table[0xA3] = Opcode::LOG3;
             table[0xA4] = Opcode::LOG4;
             table[0xAA] = Opcode::APPROVE;
-            table[0xB0] = Opcode::TXPARAMLOAD;
-            table[0xB1] = Opcode::TXPARAMSIZE;
-            table[0xB2] = Opcode::TXPARAMCOPY;
+            table[0xB0] = Opcode::TXPARAM;
+            table[0xB1] = Opcode::FRAMEDATALOAD;
+            table[0xB2] = Opcode::FRAMEDATACOPY;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -621,9 +621,9 @@ impl<'a> VM<'a> {
 
         // EIP-8141 Frame Transaction opcodes (dev-mode, always-on from Osaka)
         opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
-        opcode_table[Opcode::TXPARAMLOAD as usize] = OpCodeFn::new::<OpTxParamLoadHandler>();
-        opcode_table[Opcode::TXPARAMSIZE as usize] = OpCodeFn::new::<OpTxParamSizeHandler>();
-        opcode_table[Opcode::TXPARAMCOPY as usize] = OpCodeFn::new::<OpTxParamCopyHandler>();
+        opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
+        opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
+        opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
 
         opcode_table
     }

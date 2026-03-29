@@ -420,7 +420,7 @@ impl Substate {
 /// ```
 /// Context for frame transaction (EIP-8141) execution.
 /// This is set when executing a frame transaction and is used by
-/// APPROVE, TXPARAMLOAD, TXPARAMSIZE, and TXPARAMCOPY opcodes.
+/// APPROVE, TXPARAM, FRAMEDATALOAD, and FRAMEDATACOPY opcodes.
 #[derive(Debug, Clone)]
 pub struct FrameTxContext {
     /// Whether the sender has approved (APPROVE scope 0 or 2)
@@ -437,7 +437,7 @@ pub struct FrameTxContext {
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
     pub sig_hash: H256,
-    /// The full frame transaction (for TXPARAMLOAD access)
+    /// The full frame transaction (for TXPARAM access)
     pub tx: ethrex_common::types::FrameTransaction,
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
@@ -606,8 +606,8 @@ impl<'a> VM<'a> {
         // Keep: gas limit checks, fee validation, nonce mismatch check
         let sender = frame_tx.sender;
 
-        // Validate frame count: must have at least 1 and at most 1000 frames
-        if frame_tx.frames.is_empty() || frame_tx.frames.len() > 1000 {
+        // Validate static constraints (frame count, reserved modes, atomic batch flags)
+        if let Err(_e) = frame_tx.validate_static_constraints() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,
             ));
@@ -678,7 +678,7 @@ impl<'a> VM<'a> {
             let target = frame.target.unwrap_or(sender);
 
             // Determine caller and static mode per frame mode
-            let (caller, is_static) = match frame.mode {
+            let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
                 FrameMode::Sender => {
@@ -777,7 +777,7 @@ impl<'a> VM<'a> {
                 .push((frame_success, frame_gas_used, frame_logs));
 
             // VERIFY frame enforcement: if VERIFY frame didn't call APPROVE, TX is invalid
-            if frame.mode == FrameMode::Verify && !ctx.approve_called_in_current_frame {
+            if frame.execution_mode() == FrameMode::Verify && !ctx.approve_called_in_current_frame {
                 tx_invalid = true;
                 break;
             }
@@ -839,7 +839,7 @@ impl<'a> VM<'a> {
             .frames
             .iter()
             .zip(ctx.frame_results.iter())
-            .any(|(frame, (success, _, _))| frame.mode == FrameMode::Sender && !success);
+            .any(|(frame, (success, _, _))| frame.execution_mode() == FrameMode::Sender && !success);
 
         let result = if any_sender_reverted {
             TxResult::Revert(VMError::RevertOpcode.into())

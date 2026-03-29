@@ -1689,6 +1689,19 @@ pub enum FrameMode {
     Sender = 2,
 }
 
+impl FrameMode {
+    /// Convert from the lower 8 bits of the mode field.
+    /// Returns None for reserved values (3-255).
+    pub fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0 => Some(FrameMode::Default),
+            1 => Some(FrameMode::Verify),
+            2 => Some(FrameMode::Sender),
+            _ => None,
+        }
+    }
+}
+
 impl From<FrameMode> for u8 {
     fn from(mode: FrameMode) -> u8 {
         match mode {
@@ -1699,34 +1712,37 @@ impl From<FrameMode> for u8 {
     }
 }
 
-impl RLPEncode for FrameMode {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        u8::from(*self).encode(buf);
-    }
-}
-
-impl RLPDecode for FrameMode {
-    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (val, rest) = u8::decode_unfinished(rlp)?;
-        let mode = match val {
-            0 => FrameMode::Default,
-            1 => FrameMode::Verify,
-            2 => FrameMode::Sender,
-            v => return Err(RLPDecodeError::Custom(format!("Invalid frame mode: {v}"))),
-        };
-        Ok((mode, rest))
-    }
-}
-
-/// EIP-8141 Frame: a single execution step within a frame transaction
+/// EIP-8141 Frame: a single execution step within a frame transaction.
+///
+/// The `mode` field is a u32 where:
+/// - Bits 0-7: execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved)
+/// - Bits 8-9: APPROVE scope restriction
+/// - Bit 10: atomic batch flag (only valid with SENDER mode)
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct Frame {
-    pub mode: FrameMode,
+    pub mode: u32,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
     pub gas_limit: u64,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
+}
+
+impl Frame {
+    /// Extract the execution mode from the lower 8 bits of `mode`.
+    pub fn execution_mode(&self) -> FrameMode {
+        FrameMode::from_u8((self.mode & 0xFF) as u8).unwrap_or_default()
+    }
+
+    /// Extract the APPROVE scope restriction from bits 8-9 of `mode`.
+    pub fn scope_restriction(&self) -> u8 {
+        ((self.mode >> 8) & 3) as u8
+    }
+
+    /// Check if the atomic batch flag (bit 10) is set.
+    pub fn is_atomic_batch(&self) -> bool {
+        (self.mode >> 10) & 1 == 1
+    }
 }
 
 impl RLPEncode for Frame {
@@ -1737,7 +1753,7 @@ impl RLPEncode for Frame {
             None => TxKind::Create, // RLP_NULL encodes "no target" → sender
         };
         Encoder::new(buf)
-            .encode_field(&self.mode)
+            .encode_field(&(self.mode as u64))
             .encode_field(&target_kind)
             .encode_field(&self.gas_limit)
             .encode_field(&self.data)
@@ -1748,7 +1764,9 @@ impl RLPEncode for Frame {
 impl RLPDecode for Frame {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
-        let (mode, decoder) = decoder.decode_field("mode")?;
+        let (mode_u64, decoder): (u64, _) = decoder.decode_field("mode")?;
+        let mode = u32::try_from(mode_u64)
+            .map_err(|_| RLPDecodeError::Custom(format!("Frame mode too large: {mode_u64}")))?;
         let (target_kind, decoder): (TxKind, _) = decoder.decode_field("target")?;
         let target = match target_kind {
             TxKind::Call(addr) => Some(addr),
@@ -1794,6 +1812,7 @@ pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
 impl FrameTransaction {
     /// Compute the signature hash per EIP-8141:
     /// VERIFY frame data is elided before hashing.
+    /// The full mode value (including bit flags) is preserved.
     pub fn compute_sig_hash(&self) -> H256 {
         let mut buf = vec![TxType::Frame as u8];
         // Build a copy with VERIFY frame data elided
@@ -1801,7 +1820,7 @@ impl FrameTransaction {
             .frames
             .iter()
             .map(|f| {
-                if f.mode == FrameMode::Verify {
+                if f.execution_mode() == FrameMode::Verify {
                     Frame {
                         mode: f.mode,
                         target: f.target,
@@ -1838,6 +1857,42 @@ impl FrameTransaction {
         FRAME_TX_INTRINSIC_COST
             .saturating_add(calldata_gas)
             .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
+    }
+
+    /// Validate static constraints per EIP-8141 spec.
+    /// Returns an error string if the transaction is invalid.
+    pub fn validate_static_constraints(&self) -> Result<(), String> {
+        if self.frames.is_empty() || self.frames.len() > 1000 {
+            return Err("Frame count must be between 1 and 1000".to_string());
+        }
+        for (i, frame) in self.frames.iter().enumerate() {
+            let exec_mode = frame.mode & 0xFF;
+            // Reject reserved execution modes (3-255)
+            if exec_mode >= 3 {
+                return Err(format!("Frame {i}: reserved execution mode {exec_mode}"));
+            }
+            // Atomic batch flag (bit 10) is only valid with SENDER mode
+            if frame.is_atomic_batch() {
+                if exec_mode != 2 {
+                    return Err(format!(
+                        "Frame {i}: atomic batch flag only valid with SENDER mode"
+                    ));
+                }
+                // Must not be last frame
+                if i + 1 >= self.frames.len() {
+                    return Err(format!(
+                        "Frame {i}: atomic batch flag on last frame"
+                    ));
+                }
+                // Next frame must also be SENDER
+                if self.frames[i + 1].mode & 0xFF != 2 {
+                    return Err(format!(
+                        "Frame {i}: atomic batch requires next frame to be SENDER"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2194,6 +2249,17 @@ mod serde_impl {
                 to: value.target,
                 gas_limit: value.gas_limit,
                 data: value.data.clone(),
+            }
+        }
+    }
+
+    impl From<FrameEntry> for Frame {
+        fn from(entry: FrameEntry) -> Frame {
+            Frame {
+                mode: entry.mode as u32,
+                target: entry.to,
+                gas_limit: entry.gas_limit,
+                data: entry.data,
             }
         }
     }
@@ -4079,13 +4145,13 @@ mod tests {
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![
                 Frame {
-                    mode: FrameMode::Verify,
+                    mode: FrameMode::Verify as u32,
                     target: Some(Address::from_low_u64_be(0xABCD)),
                     gas_limit: 100_000,
                     data: Bytes::from_static(b"verify_data"),
                 },
                 Frame {
-                    mode: FrameMode::Sender,
+                    mode: FrameMode::Sender as u32,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 200_000,
                     data: Bytes::from_static(b"call_data"),
@@ -4103,7 +4169,7 @@ mod tests {
     #[test]
     fn test_frame_rlp_roundtrip() {
         let frame = Frame {
-            mode: FrameMode::Verify,
+            mode: FrameMode::Verify as u32,
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
             data: Bytes::from_static(b"hello"),
@@ -4116,7 +4182,7 @@ mod tests {
     #[test]
     fn test_frame_null_target_rlp_roundtrip() {
         let frame = Frame {
-            mode: FrameMode::Default,
+            mode: FrameMode::Default as u32,
             target: None,
             gas_limit: 10_000,
             data: Bytes::from_static(b"deploy"),
@@ -4127,12 +4193,32 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_mode_rlp_roundtrip() {
-        for mode in [FrameMode::Default, FrameMode::Verify, FrameMode::Sender] {
-            let encoded = mode.encode_to_vec();
-            let decoded = FrameMode::decode(&encoded).unwrap();
-            assert_eq!(mode, decoded);
+    fn test_frame_mode_with_flags_rlp_roundtrip() {
+        // Test basic modes
+        for mode_val in [0u32, 1, 2] {
+            let frame = Frame {
+                mode: mode_val,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 50_000,
+                data: Bytes::new(),
+            };
+            let encoded = frame.encode_to_vec();
+            let decoded = Frame::decode(&encoded).unwrap();
+            assert_eq!(frame, decoded);
         }
+        // Test mode with scope restriction (bits 8-9) and atomic batch (bit 10)
+        let frame = Frame {
+            mode: 2 | (1 << 8) | (1 << 10), // SENDER + scope=1 + atomic_batch
+            target: Some(Address::from_low_u64_be(0x1234)),
+            gas_limit: 50_000,
+            data: Bytes::new(),
+        };
+        assert_eq!(frame.execution_mode(), FrameMode::Sender);
+        assert_eq!(frame.scope_restriction(), 1);
+        assert!(frame.is_atomic_batch());
+        let encoded = frame.encode_to_vec();
+        let decoded = Frame::decode(&encoded).unwrap();
+        assert_eq!(frame, decoded);
     }
 
     #[test]
