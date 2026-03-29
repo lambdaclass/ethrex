@@ -136,10 +136,12 @@ object "UnifiedAccount" {
             }
 
             // ── rotate(address newSigner) ─────────────────────────────
-            // Only callable by the account itself (via execute in SENDER frame)
+            // Callable by the account itself (SENDER frame) or by anyone
+            // if no signer is set yet (initial setup during registration).
             case 0x7c281a19 {
-                // Check caller == address(this)
-                if iszero(eq(caller(), address())) {
+                let current := sload(2)
+                // Allow external calls only when currentSigner is unset (0)
+                if and(iszero(iszero(current)), iszero(eq(caller(), address()))) {
                     mstore(0x00, shl(224, 0x08c379a0))
                     mstore(0x04, 0x20)
                     mstore(0x24, 15)

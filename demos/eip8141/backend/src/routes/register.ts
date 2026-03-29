@@ -91,7 +91,8 @@ app.post("/register", async (c) => {
     const key0 = deriveKey(seed, 0);
     console.log(`[register] Derived ephemeral key0: ${key0.address}`);
 
-    // Call account.execute(address(this), 0, rotate(key0.address)) to register signer
+    // Call rotate(key0.address) directly on the account.
+    // This works because rotate() allows external calls when currentSigner is unset (initial setup).
     const rotateCalldata = encodeFunctionData({
       abi: [{
         type: "function",
@@ -103,25 +104,10 @@ app.post("/register", async (c) => {
       functionName: "rotate",
       args: [key0.address as `0x${string}`],
     });
-    const executeCalldata = encodeFunctionData({
-      abi: [{
-        type: "function",
-        name: "execute",
-        inputs: [
-          { name: "to", type: "address" },
-          { name: "value", type: "uint256" },
-          { name: "data", type: "bytes" },
-        ],
-        outputs: [],
-        stateMutability: "nonpayable",
-      }],
-      functionName: "execute",
-      args: [address as `0x${string}`, 0n, rotateCalldata],
-    });
 
     const registerTxHash = await walletClient.sendTransaction({
       to: address as `0x${string}`,
-      data: executeCalldata,
+      data: rotateCalldata,
     });
     await publicClient.waitForTransactionReceipt({ hash: registerTxHash });
     console.log(`[register] Ephemeral signer registered: ${key0.address}, tx: ${registerTxHash}`);
