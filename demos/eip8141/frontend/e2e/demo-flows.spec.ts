@@ -126,7 +126,7 @@ test.describe.serial('EIP-8141 Frame Transaction Demo', () => {
 
     // Navigate to Simple Send tab (should be default)
     await switchToTab(page, 'Simple Send');
-    await expect(page.getByText('Send ETH from your passkey account')).toBeVisible();
+    await expect(page.getByText('Send ETH from your account')).toBeVisible();
 
     // Fill form
     await page.getByPlaceholder('0x...').fill(DEAD);
