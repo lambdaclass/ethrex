@@ -961,9 +961,9 @@ impl<'a> VM<'a> {
                 self.transfer(msg_sender, to, value)?;
 
                 if !value.is_zero() {
-                    // Polygon: Bor's Transfer() emits LogTransfer for CALL value transfers.
-                    // Only for CALL (msg_sender != to), not CALLCODE (msg_sender == to).
-                    if matches!(self.vm_type, VMType::Polygon(_)) && msg_sender != to {
+                    // Polygon: Bor's Transfer() emits LogTransfer for ALL value transfers,
+                    // including self-transfers (CALL to self) and CALLCODE.
+                    if matches!(self.vm_type, VMType::Polygon(_)) {
                         let sender_bal = self.db.get_account(msg_sender)?.info.balance;
                         let recipient_bal = self.db.get_account(to)?.info.balance;
                         let log = build_value_transfer_log(
@@ -1025,9 +1025,9 @@ impl<'a> VM<'a> {
             self.substate.push_backup();
 
             if should_transfer_value && !value.is_zero() {
-                // Polygon: Bor's Transfer() emits LogTransfer for CALL value transfers.
-                // Only for CALL (msg_sender != to), not CALLCODE (msg_sender == to).
-                if matches!(self.vm_type, VMType::Polygon(_)) && msg_sender != to {
+                // Polygon: Bor's Transfer() emits LogTransfer for ALL value transfers,
+                // including self-transfers (CALL to self) and CALLCODE.
+                if matches!(self.vm_type, VMType::Polygon(_)) {
                     let sender_bal = self.db.get_account(msg_sender)?.info.balance;
                     let recipient_bal = self.db.get_account(to)?.info.balance;
                     let log =
