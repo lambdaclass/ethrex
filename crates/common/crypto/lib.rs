@@ -6,6 +6,7 @@ extern crate alloc;
 pub mod blake2f;
 pub mod keccak;
 pub mod kzg;
+#[cfg(feature = "std")]
 pub mod native;
 pub mod provider;
 #[cfg(feature = "std")]
