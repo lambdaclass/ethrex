@@ -363,43 +363,64 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    // Determine bind and external addresses.
+    // Determine RLPx bind and external addresses.
     //
     // --nat.extip sets the address announced to peers (for nodes behind NAT).
-    // --p2p.addr sets the bind address (defaults to the auto-detected local IP
-    //   when --nat.extip is not given, or to the unspecified address when it is:
-    //   0.0.0.0 for IPv4, :: for IPv6).
-    let (bind_addr, external_addr): (IpAddr, IpAddr) = match (&opts.p2p_addr, &opts.nat_extip) {
-        (_, Some(extip)) => {
-            let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
-            let bind: IpAddr = opts
-                .p2p_addr
-                .as_deref()
-                .map(|a| a.parse().expect("Failed to parse p2p address"))
-                .unwrap_or_else(|| {
-                    if external.is_ipv6() {
-                        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
-                    } else {
-                        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-                    }
+    // --p2p.addr sets the RLPx TCP bind address (defaults to the auto-detected
+    //   local IP when --nat.extip is not given, or to the unspecified address
+    //   when it is: 0.0.0.0 for IPv4, :: for IPv6).
+    let (rlpx_bind_addr, rlpx_external_addr): (IpAddr, IpAddr) =
+        match (&opts.p2p_addr, &opts.nat_extip) {
+            (_, Some(extip)) => {
+                let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
+                let bind: IpAddr = opts
+                    .p2p_addr
+                    .as_deref()
+                    .map(|a| a.parse().expect("Failed to parse p2p address"))
+                    .unwrap_or_else(|| {
+                        if external.is_ipv6() {
+                            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+                        } else {
+                            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                        }
+                    });
+                (bind, external)
+            }
+            (Some(addr), None) => {
+                let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
+                (ip, ip)
+            }
+            (None, None) => {
+                let ip = local_ip().unwrap_or_else(|_| {
+                    local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
                 });
-            (bind, external)
-        }
-        (Some(addr), None) => {
-            let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
-            (ip, ip)
-        }
-        (None, None) => {
-            let ip = local_ip().unwrap_or_else(|_| {
-                local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
-            });
-            (ip, ip)
-        }
+                (ip, ip)
+            }
+        };
+
+    // Determine discovery bind address.
+    // --discovery.addr sets the UDP bind addr independently of RLPx.
+    // Defaults to rlpx_bind_addr so the two channels co-locate by default.
+    let discovery_bind_addr: IpAddr = opts
+        .discovery_addr
+        .as_deref()
+        .map(|a| a.parse().expect("Failed to parse --discovery.addr address"))
+        .unwrap_or(rlpx_bind_addr);
+
+    // Discovery external address: use the explicit discovery bind addr when it
+    // is a specific (non-wildcard) IP; otherwise fall back to rlpx_external_addr.
+    let discovery_external_addr = if !discovery_bind_addr.is_unspecified() {
+        discovery_bind_addr
+    } else {
+        rlpx_external_addr
     };
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    let node = Node::new(rlpx_external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
-        bind_addr,
+        discovery_bind_addr,
+        discovery_external_addr,
+        rlpx_bind_addr,
+        rlpx_external_addr,
         tcp_port,
         udp_port,
     };
