@@ -75,7 +75,7 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
-/// Time window for incoming request rate limiting (fixed window, resets each period).
+/// Fixed (tumbling) time window for incoming request rate limiting.
 const SERVE_REQUEST_WINDOW: Duration = Duration::from_secs(60);
 /// Maximum number of data-serving requests allowed per peer within the rate-limit window.
 const MAX_SERVE_REQUESTS_PER_WINDOW: u64 = 500;
@@ -1304,6 +1304,7 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
+            state.txs_sent_to_peer += response.pooled_transactions.len() as u64;
             send(state, Message::PooledTransactions(response)).await?;
             state.txs_sent_to_peer += batch_size;
         }
