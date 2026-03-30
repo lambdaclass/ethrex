@@ -60,7 +60,6 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "blake2",
- "blake2s_u32",
  "cfg-if",
  "common_constants",
  "const_for",
@@ -115,7 +114,6 @@ version = "0.1.0"
 source = "git+https://github.com/matter-labs/airbender-platform.git#f7feb5c523152a9cba424e298e5633bfea17b29d"
 dependencies = [
  "airbender-codec",
- "airbender-crypto",
  "airbender-guest",
  "airbender-macros",
  "airbender-rt",
@@ -492,15 +490,6 @@ dependencies = [
  "arrayref",
  "arrayvec",
  "constant_time_eq",
-]
-
-[[package]]
-name = "blake2s_u32"
-version = "0.1.0"
-source = "git+https://github.com/matter-labs/zksync-airbender?branch=dev#d5c2058acb68209ba84ab1bdcd207df3881b00f9"
-dependencies = [
- "common_constants",
- "unroll",
 ]
 
 [[package]]
@@ -3381,16 +3370,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "unroll"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad948c1cb799b1a70f836077721a92a35ac177d4daddf4c20a633786d4cf618"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "unty"
