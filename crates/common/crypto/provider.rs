@@ -1,4 +1,11 @@
+#[cfg(not(feature = "std"))]
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+
 use ethereum_types::Address;
+#[cfg(feature = "std")]
 use sha2::Digest as _;
 
 /// Errors from crypto operations. Opaque — does not leak library-specific types.
@@ -47,6 +54,12 @@ pub enum CryptoError {
 ///   [`bls12_381_pairing_check`](Crypto::bls12_381_pairing_check) — use `bls12_381` crate
 ///   [`bls12_381_map_fp_to_g1`](Crypto::bls12_381_map_fp_to_g1),
 ///   [`bls12_381_map_fp2_to_g2`](Crypto::bls12_381_map_fp2_to_g2) — use `bls12_381` crate
+///
+/// Additionally, the following methods have **no_std stubs that return incorrect
+/// results** (zero arrays or no-ops) and must be overridden in no_std contexts:
+///
+/// - [`sha256`](Crypto::sha256) — returns `[0u8; 32]` without `std`
+/// - [`ripemd160`](Crypto::ripemd160) — returns `[0u8; 32]` without `std`
 ///
 /// Non-overridden methods will silently use the native default, which will
 /// fail to compile or panic at runtime inside a zkVM guest.
@@ -133,18 +146,34 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
     /// SHA-256 hash. Used by SHA2-256 precompile (0x02) and KZG point evaluation.
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
-        sha2::Sha256::digest(input).into()
+        #[cfg(feature = "std")]
+        {
+            sha2::Sha256::digest(input).into()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = input;
+            [0u8; 32]
+        }
     }
 
     /// RIPEMD-160 hash (zero-padded to 32 bytes). Used by RIPEMD-160 precompile (0x03).
     fn ripemd160(&self, input: &[u8]) -> [u8; 32] {
-        let mut hasher = ripemd::Ripemd160::new();
-        hasher.update(input);
-        let result = hasher.finalize();
+        #[cfg(feature = "std")]
+        {
+            let mut hasher = ripemd::Ripemd160::new();
+            hasher.update(input);
+            let result = hasher.finalize();
 
-        let mut output = [0u8; 32];
-        output[12..].copy_from_slice(&result);
-        output
+            let mut output = [0u8; 32];
+            output[12..].copy_from_slice(&result);
+            output
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = input;
+            [0u8; 32]
+        }
     }
 
     // ── BN254 (alt_bn128) ──────────────────────────────────────────────
@@ -153,118 +182,138 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Input: two uncompressed G1 points (64 bytes each as big-endian x||y).
     /// Output: uncompressed G1 point (64 bytes).
     fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
-        use ark_bn254::Fq;
-        use ark_ec::CurveGroup;
-        use ark_ff::{BigInteger, PrimeField as _, Zero};
+        #[cfg(feature = "std")]
+        {
+            use ark_bn254::Fq;
+            use ark_ec::CurveGroup;
+            use ark_ff::{BigInteger, PrimeField as _, Zero};
 
-        let parse_point = |bytes: &[u8]| -> Result<ark_bn254::G1Affine, CryptoError> {
-            if bytes.len() < 64 {
-                return Err(CryptoError::InvalidInput("G1 point must be 64 bytes"));
-            }
-            let x = Fq::from_be_bytes_mod_order(&bytes[..32]);
-            let y = Fq::from_be_bytes_mod_order(&bytes[32..64]);
+            let parse_point = |bytes: &[u8]| -> Result<ark_bn254::G1Affine, CryptoError> {
+                if bytes.len() < 64 {
+                    return Err(CryptoError::InvalidInput("G1 point must be 64 bytes"));
+                }
+                let x = Fq::from_be_bytes_mod_order(&bytes[..32]);
+                let y = Fq::from_be_bytes_mod_order(&bytes[32..64]);
 
-            if x.is_zero() && y.is_zero() {
-                return Ok(ark_bn254::G1Affine::identity());
-            }
+                if x.is_zero() && y.is_zero() {
+                    return Ok(ark_bn254::G1Affine::identity());
+                }
 
-            let point = ark_bn254::G1Affine::new_unchecked(x, y);
-            if !point.is_on_curve() {
-                return Err(CryptoError::InvalidPoint("G1 point not on curve"));
-            }
-            Ok(point)
-        };
+                let point = ark_bn254::G1Affine::new_unchecked(x, y);
+                if !point.is_on_curve() {
+                    return Err(CryptoError::InvalidPoint("G1 point not on curve"));
+                }
+                Ok(point)
+            };
 
-        let pt1 = parse_point(p1)?;
-        let pt2 = parse_point(p2)?;
+            let pt1 = parse_point(p1)?;
+            let pt2 = parse_point(p2)?;
 
-        #[allow(clippy::arithmetic_side_effects)]
-        let sum = (pt1 + pt2).into_affine();
+            #[allow(clippy::arithmetic_side_effects)]
+            let sum = (pt1 + pt2).into_affine();
 
-        let mut out = [0u8; 64];
-        out[..32].copy_from_slice(&sum.x.into_bigint().to_bytes_be());
-        out[32..].copy_from_slice(&sum.y.into_bigint().to_bytes_be());
-        Ok(out)
+            let mut out = [0u8; 64];
+            out[..32].copy_from_slice(&sum.x.into_bigint().to_bytes_be());
+            out[32..].copy_from_slice(&sum.y.into_bigint().to_bytes_be());
+            Ok(out)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (p1, p2);
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// G1 scalar multiplication. Used by ECMUL precompile (0x07).
     /// Input: uncompressed G1 point (64 bytes) + scalar (32 bytes big-endian).
     /// Output: uncompressed G1 point (64 bytes).
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
-        use ark_bn254::{Fq, Fr as FrArk};
-        use ark_ec::CurveGroup;
-        use ark_ff::{BigInteger, PrimeField as _, Zero};
-        use std::ops::Mul as _;
+        #[cfg(feature = "std")]
+        {
+            use ark_bn254::{Fq, Fr as FrArk};
+            use ark_ec::CurveGroup;
+            use ark_ff::{BigInteger, PrimeField as _, Zero};
+            use core::ops::Mul as _;
 
-        if point.len() < 64 || scalar.len() < 32 {
-            return Err(CryptoError::InvalidInput("invalid input length"));
+            if point.len() < 64 || scalar.len() < 32 {
+                return Err(CryptoError::InvalidInput("invalid input length"));
+            }
+
+            let x = Fq::from_be_bytes_mod_order(&point[..32]);
+            let y = Fq::from_be_bytes_mod_order(&point[32..64]);
+
+            if x.is_zero() && y.is_zero() {
+                return Ok([0u8; 64]);
+            }
+
+            let pt = ark_bn254::G1Affine::new_unchecked(x, y);
+            if !pt.is_on_curve() {
+                return Err(CryptoError::InvalidPoint("G1 point not on curve"));
+            }
+
+            let s = FrArk::from_be_bytes_mod_order(scalar);
+            if s.is_zero() {
+                return Ok([0u8; 64]);
+            }
+
+            let result = pt.mul(s).into_affine();
+
+            let mut out = [0u8; 64];
+            out[..32].copy_from_slice(&result.x.into_bigint().to_bytes_be());
+            out[32..].copy_from_slice(&result.y.into_bigint().to_bytes_be());
+            Ok(out)
         }
-
-        let x = Fq::from_be_bytes_mod_order(&point[..32]);
-        let y = Fq::from_be_bytes_mod_order(&point[32..64]);
-
-        if x.is_zero() && y.is_zero() {
-            return Ok([0u8; 64]);
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (point, scalar);
+            Err(CryptoError::Other("not available without std".into()))
         }
-
-        let pt = ark_bn254::G1Affine::new_unchecked(x, y);
-        if !pt.is_on_curve() {
-            return Err(CryptoError::InvalidPoint("G1 point not on curve"));
-        }
-
-        let s = FrArk::from_be_bytes_mod_order(scalar);
-        if s.is_zero() {
-            return Ok([0u8; 64]);
-        }
-
-        let result = pt.mul(s).into_affine();
-
-        let mut out = [0u8; 64];
-        out[..32].copy_from_slice(&result.x.into_bigint().to_bytes_be());
-        out[32..].copy_from_slice(&result.y.into_bigint().to_bytes_be());
-        Ok(out)
     }
 
     /// Pairing check. Used by ECPAIRING precompile (0x08).
     /// Input: pairs of (G1 64 bytes, G2 128 bytes) as raw byte slices.
     /// Returns true if the pairing equation holds.
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
-        use ark_bn254::{Bn254, Fq, G1Affine, G2Affine};
-        use ark_ec::pairing::Pairing;
-        use ark_ff::{One, PrimeField as _, QuadExtField, Zero};
+        #[cfg(feature = "std")]
+        {
+            use ark_bn254::{Bn254, Fq, G1Affine, G2Affine};
+            use ark_ec::pairing::Pairing;
+            use ark_ff::{One, PrimeField as _, QuadExtField, Zero};
 
-        let mut g1_points = Vec::with_capacity(pairs.len());
-        let mut g2_points = Vec::with_capacity(pairs.len());
+            let mut g1_points = Vec::with_capacity(pairs.len());
+            let mut g2_points = Vec::with_capacity(pairs.len());
 
-        for (g1_bytes, g2_bytes) in pairs {
-            if g1_bytes.len() < 64 {
-                return Err(CryptoError::InvalidInput("G1 must be 64 bytes"));
-            }
-            let g1x = Fq::from_be_bytes_mod_order(&g1_bytes[..32]);
-            let g1y = Fq::from_be_bytes_mod_order(&g1_bytes[32..64]);
-
-            let g1 = if g1x.is_zero() && g1y.is_zero() {
-                G1Affine::identity()
-            } else {
-                let p = G1Affine::new_unchecked(g1x, g1y);
-                if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(CryptoError::InvalidPoint("G1 not on BN254 curve"));
+            for (g1_bytes, g2_bytes) in pairs {
+                if g1_bytes.len() < 64 {
+                    return Err(CryptoError::InvalidInput("G1 must be 64 bytes"));
                 }
-                p
-            };
-            g1_points.push(g1);
+                let g1x = Fq::from_be_bytes_mod_order(&g1_bytes[..32]);
+                let g1y = Fq::from_be_bytes_mod_order(&g1_bytes[32..64]);
 
-            if g2_bytes.len() < 128 {
-                return Err(CryptoError::InvalidInput("G2 must be 128 bytes"));
-            }
+                let g1 = if g1x.is_zero() && g1y.is_zero() {
+                    G1Affine::identity()
+                } else {
+                    let p = G1Affine::new_unchecked(g1x, g1y);
+                    if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                        return Err(CryptoError::InvalidPoint("G1 not on BN254 curve"));
+                    }
+                    p
+                };
+                g1_points.push(g1);
 
-            let g2_x_im = Fq::from_be_bytes_mod_order(&g2_bytes[..32]);
-            let g2_x_re = Fq::from_be_bytes_mod_order(&g2_bytes[32..64]);
-            let g2_y_im = Fq::from_be_bytes_mod_order(&g2_bytes[64..96]);
-            let g2_y_re = Fq::from_be_bytes_mod_order(&g2_bytes[96..128]);
+                if g2_bytes.len() < 128 {
+                    return Err(CryptoError::InvalidInput("G2 must be 128 bytes"));
+                }
 
-            let g2 =
-                if g2_x_im.is_zero() && g2_x_re.is_zero() && g2_y_im.is_zero() && g2_y_re.is_zero()
+                let g2_x_im = Fq::from_be_bytes_mod_order(&g2_bytes[..32]);
+                let g2_x_re = Fq::from_be_bytes_mod_order(&g2_bytes[32..64]);
+                let g2_y_im = Fq::from_be_bytes_mod_order(&g2_bytes[64..96]);
+                let g2_y_re = Fq::from_be_bytes_mod_order(&g2_bytes[96..128]);
+
+                let g2 = if g2_x_im.is_zero()
+                    && g2_x_re.is_zero()
+                    && g2_y_im.is_zero()
+                    && g2_y_re.is_zero()
                 {
                     G2Affine::identity()
                 } else {
@@ -277,10 +326,16 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                     }
                     p
                 };
-            g2_points.push(g2);
-        }
+                g2_points.push(g2);
+            }
 
-        Ok(Bn254::multi_pairing(g1_points, g2_points).0 == QuadExtField::one())
+            Ok(Bn254::multi_pairing(g1_points, g2_points).0 == QuadExtField::one())
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = pairs;
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     // ── Modular arithmetic ─────────────────────────────────────────────
@@ -288,37 +343,45 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Modular exponentiation (arbitrary precision).
     /// Used by MODEXP precompile (0x05).
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        use malachite::base::num::arithmetic::traits::ModPow as _;
-        use malachite::base::num::basic::traits::Zero as _;
-        use malachite::{Natural, base::num::conversion::traits::*};
+        #[cfg(feature = "std")]
+        {
+            use malachite::base::num::arithmetic::traits::ModPow as _;
+            use malachite::base::num::basic::traits::Zero as _;
+            use malachite::{Natural, base::num::conversion::traits::*};
 
-        let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("base"))?;
-        let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("exponent"))?;
-        let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("modulus"))?;
+            let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
+                .ok_or(CryptoError::InvalidInput("base"))?;
+            let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
+                .ok_or(CryptoError::InvalidInput("exponent"))?;
+            let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
+                .ok_or(CryptoError::InvalidInput("modulus"))?;
 
-        let result = if mod_nat == Natural::ZERO {
-            Natural::ZERO
-        } else if exp_nat == Natural::ZERO {
-            Natural::from(1_u8) % &mod_nat
-        } else {
-            let base_mod = base_nat % &mod_nat;
-            base_mod.mod_pow(&exp_nat, &mod_nat)
-        };
+            let result = if mod_nat == Natural::ZERO {
+                Natural::ZERO
+            } else if exp_nat == Natural::ZERO {
+                Natural::from(1_u8) % &mod_nat
+            } else {
+                let base_mod = base_nat % &mod_nat;
+                base_mod.mod_pow(&exp_nat, &mod_nat)
+            };
 
-        let modulus_len = modulus.len();
-        let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
+            let modulus_len = modulus.len();
+            let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
 
-        let mut out = vec![0u8; modulus_len];
-        if res_bytes.len() <= modulus_len {
-            let offset = modulus_len - res_bytes.len();
-            out[offset..].copy_from_slice(&res_bytes);
-        } else {
-            out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
+            let mut out = vec![0u8; modulus_len];
+            if res_bytes.len() <= modulus_len {
+                let offset = modulus_len - res_bytes.len();
+                out[offset..].copy_from_slice(&res_bytes);
+            } else {
+                out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
+            }
+            Ok(out)
         }
-        Ok(out)
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (base, exp, modulus);
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// 256-bit modular multiplication.
@@ -350,54 +413,70 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
     /// Blake2b compression function F. Used by BLAKE2F precompile (0x09).
     fn blake2_compress(&self, rounds: u32, h: &mut [u64; 8], m: [u64; 16], t: [u64; 2], f: bool) {
-        #[allow(clippy::as_conversions)]
-        crate::blake2f::blake2b_f(rounds as usize, h, &m, &t, f);
+        #[cfg(feature = "std")]
+        {
+            #[allow(clippy::as_conversions)]
+            crate::blake2f::blake2b_f(rounds as usize, h, &m, &t, f);
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            #[allow(clippy::as_conversions)]
+            crate::blake2f::blake2b_f(rounds as usize, h, &m, &t, f);
+        }
     }
 
     // ── secp256r1 (P-256) ──────────────────────────────────────────────
 
     /// P-256 signature verification. Used by P256VERIFY precompile (0x0100, Osaka).
     fn secp256r1_verify(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
-        use p256::{
-            EncodedPoint,
-            ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
-            elliptic_curve::bigint::U256 as P256Uint,
-        };
+        #[cfg(feature = "std")]
+        {
+            use p256::{
+                EncodedPoint,
+                ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
+                elliptic_curve::bigint::U256 as P256Uint,
+            };
 
-        let r = P256Uint::from_be_slice(&sig[..32]);
-        let s = P256Uint::from_be_slice(&sig[32..]);
+            let r = P256Uint::from_be_slice(&sig[..32]);
+            let s = P256Uint::from_be_slice(&sig[32..]);
 
-        const P256_N: P256Uint = P256Uint::from_be_hex(
-            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
-        );
+            const P256_N: P256Uint = P256Uint::from_be_hex(
+                "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+            );
 
-        if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
-            return false;
+            if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
+                return false;
+            }
+
+            let x_bytes: &[u8; 32] = match pk[..32].try_into() {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
+            let y_bytes: &[u8; 32] = match pk[32..].try_into() {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
+
+            let Ok(verifier) = p256::ecdsa::VerifyingKey::from_encoded_point(
+                &EncodedPoint::from_affine_coordinates(x_bytes.into(), y_bytes.into(), false),
+            ) else {
+                return false;
+            };
+
+            let r_arr: [u8; 32] = sig[..32].try_into().unwrap_or([0u8; 32]);
+            let s_arr: [u8; 32] = sig[32..].try_into().unwrap_or([0u8; 32]);
+
+            let Ok(signature) = P256Signature::from_scalars(r_arr, s_arr) else {
+                return false;
+            };
+
+            verifier.verify_prehash(msg, &signature).is_ok()
         }
-
-        let x_bytes: &[u8; 32] = match pk[..32].try_into() {
-            Ok(b) => b,
-            Err(_) => return false,
-        };
-        let y_bytes: &[u8; 32] = match pk[32..].try_into() {
-            Ok(b) => b,
-            Err(_) => return false,
-        };
-
-        let Ok(verifier) = p256::ecdsa::VerifyingKey::from_encoded_point(
-            &EncodedPoint::from_affine_coordinates(x_bytes.into(), y_bytes.into(), false),
-        ) else {
-            return false;
-        };
-
-        let r_arr: [u8; 32] = sig[..32].try_into().unwrap_or([0u8; 32]);
-        let s_arr: [u8; 32] = sig[32..].try_into().unwrap_or([0u8; 32]);
-
-        let Ok(signature) = P256Signature::from_scalars(r_arr, s_arr) else {
-            return false;
-        };
-
-        verifier.verify_prehash(msg, &signature).is_ok()
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (msg, sig, pk);
+            false
+        }
     }
 
     // ── KZG ────────────────────────────────────────────────────────────
@@ -478,14 +557,22 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         a: ([u8; 48], [u8; 48]),
         b: ([u8; 48], [u8; 48]),
     ) -> Result<[u8; 96], CryptoError> {
-        use bls12_381::{G1Affine, G1Projective};
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{G1Affine, G1Projective};
 
-        let pa = parse_bls12_g1(a)?;
-        let pb = parse_bls12_g1(b)?;
+            let pa = parse_bls12_g1(a)?;
+            let pb = parse_bls12_g1(b)?;
 
-        #[allow(clippy::arithmetic_side_effects)]
-        let result = G1Affine::from(G1Projective::from(pa) + G1Projective::from(pb));
-        serialize_bls12_g1(&result)
+            #[allow(clippy::arithmetic_side_effects)]
+            let result = G1Affine::from(G1Projective::from(pa) + G1Projective::from(pb));
+            serialize_bls12_g1(&result)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (a, b);
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// G1 multi-scalar multiplication. Returns 96-byte unpadded G1 point.
@@ -494,29 +581,37 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         &self,
         pairs: &[(([u8; 48], [u8; 48]), [u8; 32])],
     ) -> Result<[u8; 96], CryptoError> {
-        use bls12_381::{G1Affine, G1Projective};
-        use ff::Field as _;
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{G1Affine, G1Projective};
+            use ff::Field as _;
 
-        let mut result = G1Projective::identity();
+            let mut result = G1Projective::identity();
 
-        for (point_bytes, scalar_bytes) in pairs {
-            let point = parse_bls12_g1(*point_bytes)?;
-            if !bool::from(point.is_torsion_free()) {
-                return Err(CryptoError::InvalidPoint("G1 point not in subgroup"));
-            }
-            let scalar = parse_bls12_scalar(scalar_bytes);
+            for (point_bytes, scalar_bytes) in pairs {
+                let point = parse_bls12_g1(*point_bytes)?;
+                if !bool::from(point.is_torsion_free()) {
+                    return Err(CryptoError::InvalidPoint("G1 point not in subgroup"));
+                }
+                let scalar = parse_bls12_scalar(scalar_bytes);
 
-            if !bool::from(scalar.is_zero()) {
-                #[allow(clippy::arithmetic_side_effects)]
-                let scaled: G1Projective = G1Projective::from(point) * scalar;
-                #[allow(clippy::arithmetic_side_effects)]
-                {
-                    result += scaled;
+                if !bool::from(scalar.is_zero()) {
+                    #[allow(clippy::arithmetic_side_effects)]
+                    let scaled: G1Projective = G1Projective::from(point) * scalar;
+                    #[allow(clippy::arithmetic_side_effects)]
+                    {
+                        result += scaled;
+                    }
                 }
             }
-        }
 
-        serialize_bls12_g1(&G1Affine::from(result))
+            serialize_bls12_g1(&G1Affine::from(result))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = pairs;
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// G2 addition. Returns 192-byte unpadded G2 point.
@@ -525,14 +620,22 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         a: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
         b: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
     ) -> Result<[u8; 192], CryptoError> {
-        use bls12_381::{G2Affine, G2Projective};
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{G2Affine, G2Projective};
 
-        let pa = parse_bls12_g2(a)?;
-        let pb = parse_bls12_g2(b)?;
+            let pa = parse_bls12_g2(a)?;
+            let pb = parse_bls12_g2(b)?;
 
-        #[allow(clippy::arithmetic_side_effects)]
-        let result = G2Affine::from(G2Projective::from(pa) + G2Projective::from(pb));
-        serialize_bls12_g2(&result)
+            #[allow(clippy::arithmetic_side_effects)]
+            let result = G2Affine::from(G2Projective::from(pa) + G2Projective::from(pb));
+            serialize_bls12_g2(&result)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (a, b);
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// G2 multi-scalar multiplication. Returns 192-byte unpadded G2 point.
@@ -541,29 +644,37 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         &self,
         pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
     ) -> Result<[u8; 192], CryptoError> {
-        use bls12_381::{G2Affine, G2Projective};
-        use ff::Field as _;
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{G2Affine, G2Projective};
+            use ff::Field as _;
 
-        let mut result = G2Projective::identity();
+            let mut result = G2Projective::identity();
 
-        for (point_bytes, scalar_bytes) in pairs {
-            let point = parse_bls12_g2(*point_bytes)?;
-            if !bool::from(point.is_torsion_free()) {
-                return Err(CryptoError::InvalidPoint("G2 point not in subgroup"));
-            }
-            let scalar = parse_bls12_scalar(scalar_bytes);
+            for (point_bytes, scalar_bytes) in pairs {
+                let point = parse_bls12_g2(*point_bytes)?;
+                if !bool::from(point.is_torsion_free()) {
+                    return Err(CryptoError::InvalidPoint("G2 point not in subgroup"));
+                }
+                let scalar = parse_bls12_scalar(scalar_bytes);
 
-            if !bool::from(scalar.is_zero()) {
-                #[allow(clippy::arithmetic_side_effects)]
-                let scaled: G2Projective = G2Projective::from(point) * scalar;
-                #[allow(clippy::arithmetic_side_effects)]
-                {
-                    result += scaled;
+                if !bool::from(scalar.is_zero()) {
+                    #[allow(clippy::arithmetic_side_effects)]
+                    let scaled: G2Projective = G2Projective::from(point) * scalar;
+                    #[allow(clippy::arithmetic_side_effects)]
+                    {
+                        result += scaled;
+                    }
                 }
             }
-        }
 
-        serialize_bls12_g2(&G2Affine::from(result))
+            serialize_bls12_g2(&G2Affine::from(result))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = pairs;
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// BLS12-381 pairing check.
@@ -575,55 +686,80 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
         )],
     ) -> Result<bool, CryptoError> {
-        use bls12_381::{G1Affine, G2Prepared, Gt, multi_miller_loop};
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{G1Affine, G2Prepared, Gt, multi_miller_loop};
 
-        let mut points: Vec<(G1Affine, G2Prepared)> = Vec::with_capacity(pairs.len());
+            let mut points: Vec<(G1Affine, G2Prepared)> = Vec::with_capacity(pairs.len());
 
-        for (g1_bytes, g2_bytes) in pairs {
-            let g1 = parse_bls12_g1(*g1_bytes)?;
-            let g2 = parse_bls12_g2(*g2_bytes)?;
-            // EIP-2537: pairing requires subgroup membership
-            if !bool::from(g1.is_torsion_free()) {
-                return Err(CryptoError::InvalidPoint("G1 not in subgroup"));
+            for (g1_bytes, g2_bytes) in pairs {
+                let g1 = parse_bls12_g1(*g1_bytes)?;
+                let g2 = parse_bls12_g2(*g2_bytes)?;
+                // EIP-2537: pairing requires subgroup membership
+                if !bool::from(g1.is_torsion_free()) {
+                    return Err(CryptoError::InvalidPoint("G1 not in subgroup"));
+                }
+                if !bool::from(g2.is_torsion_free()) {
+                    return Err(CryptoError::InvalidPoint("G2 not in subgroup"));
+                }
+                points.push((g1, G2Prepared::from(g2)));
             }
-            if !bool::from(g2.is_torsion_free()) {
-                return Err(CryptoError::InvalidPoint("G2 not in subgroup"));
-            }
-            points.push((g1, G2Prepared::from(g2)));
+
+            let refs: Vec<(&G1Affine, &G2Prepared)> =
+                points.iter().map(|(g1, g2)| (g1, g2)).collect();
+
+            let result: Gt = multi_miller_loop(&refs).final_exponentiation();
+            Ok(result == Gt::identity())
         }
-
-        let refs: Vec<(&G1Affine, &G2Prepared)> = points.iter().map(|(g1, g2)| (g1, g2)).collect();
-
-        let result: Gt = multi_miller_loop(&refs).final_exponentiation();
-        Ok(result == Gt::identity())
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = pairs;
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// Map field element to G1 point.
     fn bls12_381_fp_to_g1(&self, fp: &[u8; 48]) -> Result<[u8; 96], CryptoError> {
-        use bls12_381::{Fp, G1Affine, G1Projective, hash_to_curve::MapToCurve};
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{Fp, G1Affine, G1Projective, hash_to_curve::MapToCurve};
 
-        let fp_elem = Fp::from_bytes(fp)
-            .into_option()
-            .ok_or(CryptoError::InvalidInput("invalid Fp element"))?;
+            let fp_elem = Fp::from_bytes(fp)
+                .into_option()
+                .ok_or(CryptoError::InvalidInput("invalid Fp element"))?;
 
-        let point = G1Projective::map_to_curve(&fp_elem).clear_h();
-        serialize_bls12_g1(&G1Affine::from(point))
+            let point = G1Projective::map_to_curve(&fp_elem).clear_h();
+            serialize_bls12_g1(&G1Affine::from(point))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = fp;
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 
     /// Map field element pair to G2 point.
     fn bls12_381_fp2_to_g2(&self, fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
-        use bls12_381::{Fp, Fp2, G2Affine, G2Projective, hash_to_curve::MapToCurve};
+        #[cfg(feature = "std")]
+        {
+            use bls12_381::{Fp, Fp2, G2Affine, G2Projective, hash_to_curve::MapToCurve};
 
-        let c0 = Fp::from_bytes(&fp2.0)
-            .into_option()
-            .ok_or(CryptoError::InvalidInput("invalid Fp2.c0 element"))?;
-        let c1 = Fp::from_bytes(&fp2.1)
-            .into_option()
-            .ok_or(CryptoError::InvalidInput("invalid Fp2.c1 element"))?;
+            let c0 = Fp::from_bytes(&fp2.0)
+                .into_option()
+                .ok_or(CryptoError::InvalidInput("invalid Fp2.c0 element"))?;
+            let c1 = Fp::from_bytes(&fp2.1)
+                .into_option()
+                .ok_or(CryptoError::InvalidInput("invalid Fp2.c1 element"))?;
 
-        let fp2_elem = Fp2 { c0, c1 };
-        let point = G2Projective::map_to_curve(&fp2_elem).clear_h();
-        serialize_bls12_g2(&G2Affine::from(point))
+            let fp2_elem = Fp2 { c0, c1 };
+            let point = G2Projective::map_to_curve(&fp2_elem).clear_h();
+            serialize_bls12_g2(&G2Affine::from(point))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = fp2;
+            Err(CryptoError::Other("not available without std".into()))
+        }
     }
 }
 
@@ -634,6 +770,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 /// `Fp::from_bytes` validates that each coordinate is strictly less than the
 /// field modulus, which also prevents the top bits from being misinterpreted
 /// as BLS serialization flags.
+#[cfg(feature = "std")]
 fn parse_bls12_g1(
     (x_bytes, y_bytes): ([u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G1Affine, CryptoError> {
@@ -665,6 +802,7 @@ fn parse_bls12_g1(
 
 /// Parse an unpadded BLS12-381 G2 point from four 48-byte field elements.
 /// EIP-2537 encodes G2 as (x_0, x_1, y_0, y_1) where x = x_0 + x_1*u in Fp2.
+#[cfg(feature = "std")]
 fn parse_bls12_g2(
     (x0, x1, y0, y1): ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G2Affine, CryptoError> {
@@ -697,6 +835,7 @@ fn parse_bls12_g2(
 }
 
 /// Parse a 32-byte big-endian scalar as a BLS12-381 Scalar.
+#[cfg(feature = "std")]
 fn parse_bls12_scalar(scalar_bytes: &[u8; 32]) -> bls12_381::Scalar {
     let scalar_le = [
         u64::from_be_bytes(scalar_bytes[24..32].try_into().unwrap_or([0u8; 8])),
@@ -708,6 +847,7 @@ fn parse_bls12_scalar(scalar_bytes: &[u8; 32]) -> bls12_381::Scalar {
 }
 
 /// Serialize a BLS12-381 G1Affine point to 96 unpadded bytes (x || y, each 48 bytes).
+#[cfg(feature = "std")]
 fn serialize_bls12_g1(point: &bls12_381::G1Affine) -> Result<[u8; 96], CryptoError> {
     if bool::from(point.is_identity()) {
         return Ok([0u8; 96]);
@@ -720,6 +860,7 @@ fn serialize_bls12_g1(point: &bls12_381::G1Affine) -> Result<[u8; 96], CryptoErr
 /// Serialize a BLS12-381 G2Affine point to 192 unpadded bytes.
 /// bls12_381 serializes as x_1 || x_0 || y_1 || y_0 (192 bytes).
 /// We output as x_0 || x_1 || y_0 || y_1 to match EIP-2537 convention.
+#[cfg(feature = "std")]
 fn serialize_bls12_g2(point: &bls12_381::G2Affine) -> Result<[u8; 192], CryptoError> {
     if bool::from(point.is_identity()) {
         return Ok([0u8; 192]);
