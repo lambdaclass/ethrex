@@ -100,7 +100,7 @@ cp ethrex-blockscout/frontend/ui/tx/frames/*.tsx blockscout-frontend/ui/tx/frame
 cp ethrex-blockscout/frontend/types/api/transaction.ts blockscout-frontend/types/api/transaction.ts
 ```
 
-**Required ethrex compatibility settings** — add these to `ethrex-blockscout/docker-compose/envs/common-blockscout.env`:
+**Step 1: Required ethrex compatibility settings.** Add these to `ethrex-blockscout/docker-compose/envs/common-blockscout.env`:
 ```
 INDEXER_DISABLE_EMPTY_BLOCKS_SANITIZER=true
 INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER=true
@@ -110,7 +110,39 @@ Without these, the Blockscout backend will crash-loop:
 - `EmptyBlocksSanitizer` crashes because ethrex returns `nil` instead of `[]` for the transactions field on empty blocks.
 - `InternalTransactionsFetcher` spams `debug_traceTransaction` errors because ethrex can't trace old blocks.
 
-**For remote/HTTPS deployments**, edit `ethrex-blockscout/docker-compose/envs/common-frontend.env` and update the host/protocol settings:
+**Step 2: Set the RPC URL for Docker networking.** In `ethrex-blockscout/docker-compose/envs/common-blockscout.env`, the `ETHEREUM_JSONRPC_HTTP_URL` and related URLs must point to the ethrex node as reachable from inside the Docker container. On Linux, use the Docker Compose network gateway (typically `172.18.0.1`), NOT `host.docker.internal` (macOS only) or `localhost` (resolves to the container itself). Find the correct gateway with:
+```bash
+docker network inspect $(docker compose -f docker-compose/docker-compose.yml ps -q backend | head -1 | xargs docker inspect --format '{{range .NetworkSettings.Networks}}{{.NetworkID}}{{end}}') --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+```
+Or after starting containers: `docker inspect backend --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}'`
+
+Set all RPC URLs to this gateway:
+```
+ETHEREUM_JSONRPC_HTTP_URL=http://172.18.0.1:8545/
+ETHEREUM_JSONRPC_FALLBACK_HTTP_URL=http://172.18.0.1:8545/
+ETHEREUM_JSONRPC_TRACE_URL=http://172.18.0.1:8545/
+ETHEREUM_JSONRPC_FALLBACK_TRACE_URL=http://172.18.0.1:8545/
+```
+
+**Step 3: Set the frontend host/protocol.** Edit `ethrex-blockscout/docker-compose/envs/common-frontend.env`. The `NEXT_PUBLIC_*` vars are baked into the frontend at Docker build time. They must match the URL users will access Blockscout from in their browser. If you set these to `localhost`, the page will only work from the server itself — browsers on other machines will fail with "Something went wrong" because client-side API calls go to `localhost` (their own machine).
+
+For local development:
+```
+NEXT_PUBLIC_API_HOST=localhost:8082
+NEXT_PUBLIC_API_PROTOCOL=http
+NEXT_PUBLIC_APP_HOST=localhost:8082
+NEXT_PUBLIC_APP_PROTOCOL=http
+```
+
+For remote/Tailscale access (replace with your hostname):
+```
+NEXT_PUBLIC_API_HOST=your-server.tail12345.ts.net:8082
+NEXT_PUBLIC_API_PROTOCOL=http
+NEXT_PUBLIC_APP_HOST=your-server.tail12345.ts.net:8082
+NEXT_PUBLIC_APP_PROTOCOL=http
+```
+
+For HTTPS deployments behind a reverse proxy:
 ```
 NEXT_PUBLIC_API_HOST=demo.eip-8141.ethrex.xyz:8082
 NEXT_PUBLIC_API_PROTOCOL=https
@@ -119,15 +151,44 @@ NEXT_PUBLIC_APP_PROTOCOL=https
 NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL=wss
 ```
 
+**Changing `NEXT_PUBLIC_*` vars requires rebuilding the frontend image** (`docker compose build --no-cache frontend`). Restarting the container is not enough.
+
+**Step 4: Use the patched frontend, not the upstream image.** Edit `ethrex-blockscout/docker-compose/services/frontend.yml`. Replace the upstream image with a local build pointing to the patched frontend source:
+```yaml
+services:
+  frontend:
+    build:
+      context: /path/to/blockscout-frontend
+      dockerfile: Dockerfile
+    restart: always
+    container_name: 'frontend'
+    env_file:
+      -  ../envs/common-frontend.env
+```
+
+If `frontend.yml` uses `image: ghcr.io/blockscout/frontend:latest`, the upstream frontend will be pulled instead of the patched one. The upstream frontend does not handle type 6 transactions and will show "Something went wrong" on frame transaction pages.
+
 If using a reverse proxy (e.g. Caddy) in front of Blockscout, remap the nginx port to avoid conflicts. In `docker-compose/services/nginx.yml`, change `published: 8082` to a non-conflicting port (e.g. `18082`) and configure the proxy to forward to it. Set `VITE_BLOCKSCOUT_URL` in `frontend/.env` to the public Blockscout URL (e.g. `https://demo.eip-8141.ethrex.xyz:8082`).
 
-Start all services:
+**Step 5: Build and start.**
 ```bash
 cd ethrex-blockscout
 docker compose -f docker-compose/docker-compose.yml up -d --build
 ```
 
-First run pulls images and builds backend + frontend (~10 min). The Docker build requires **8 GB+ RAM** (or swap) for the Next.js frontend compilation. Subsequent starts are fast. Open **https://localhost:8083** once the containers are up. Frame transactions show a **Frames** tab on the transaction detail page.
+First run builds backend (Elixir, ~5 min) and frontend (Next.js, ~10 min, requires **8 GB+ RAM** or swap). After starting, verify the backend can reach ethrex:
+```bash
+docker logs backend 2>&1 | grep -i 'eaddrnotavail\|connection refused'
+```
+If you see connection errors, the RPC URL is wrong (see Step 2). After the proxy starts, verify the frontend loads:
+```bash
+# From the server
+curl -s -o /dev/null -w '%{http_code}' http://localhost:8082
+# Should return 200. If 502, restart the proxy:
+docker compose -f docker-compose/docker-compose.yml restart proxy
+```
+
+Frame transactions show a **Frames** tab on the transaction detail page with per-frame mode, target, gas, status, and decoded calldata.
 
 The nginx proxy serves HTTPS on port 8083 using a self-signed certificate. To avoid browser warnings, trust the cert in your OS keychain:
 ```bash
@@ -319,6 +380,14 @@ The VERIFY frame likely failed — check that the passkey account was registered
 
 **Blockscout backend crash-looping**
 Check `docker logs backend` for `Protocol.UndefinedError: protocol Enumerable not implemented for nil`. This means the ethrex compatibility settings are missing. Add `INDEXER_DISABLE_EMPTY_BLOCKS_SANITIZER=true` and `INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER=true` to `common-blockscout.env`, then recreate the container with `docker compose up -d backend` (NOT `docker compose restart` — `restart` does not re-read env files).
+
+**Blockscout transaction page shows "Something went wrong"**
+Two possible causes:
+1. The frontend is using the upstream Blockscout image (`ghcr.io/blockscout/frontend:latest`) instead of the patched one. Check `docker-compose/services/frontend.yml`: it must use `build:` pointing to the patched frontend directory, not `image:`. See Step 4 in the Blockscout setup above.
+2. The `NEXT_PUBLIC_API_HOST` in `common-frontend.env` is set to `localhost`. When a browser on a different machine loads the page, client-side JavaScript sends API requests to `localhost` (the user's machine), which fails. Set `NEXT_PUBLIC_API_HOST` to the server's hostname or IP, then rebuild the frontend image. See Step 3 in the Blockscout setup above.
+
+**Blockscout backend can't connect to ethrex (`eaddrnotavail` or `connection refused` in logs)**
+The `ETHEREUM_JSONRPC_HTTP_URL` in `common-blockscout.env` points to the wrong address. On Linux, `host.docker.internal` does not work (macOS only). Use the Docker Compose network gateway instead. Find it with `docker inspect backend --format '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}'` (typically `172.18.0.1` for docker-compose networks). Update all `JSONRPC` URLs, then recreate the backend with `docker compose up -d backend`.
 
 **Blockscout shows empty blocks / no transactions**
 Blockscout needs a few seconds to catch up. Wait 10-15 seconds after submitting a transaction, then refresh.
