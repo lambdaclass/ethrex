@@ -1419,7 +1419,6 @@ version = "9.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
- "snap",
  "thiserror 2.0.18",
 ]
 
