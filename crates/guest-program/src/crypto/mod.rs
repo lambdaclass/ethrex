@@ -1,3 +1,5 @@
+#[cfg(feature = "airbender")]
+pub mod airbender;
 #[cfg(feature = "openvm")]
 pub mod openvm;
 #[cfg(feature = "risc0")]
@@ -6,7 +8,8 @@ pub mod risc0;
     feature = "sp1",
     feature = "risc0",
     feature = "zisk",
-    feature = "openvm"
+    feature = "openvm",
+    feature = "airbender"
 ))]
 mod shared;
 #[cfg(feature = "sp1")]
