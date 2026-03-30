@@ -21,15 +21,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
-hex.workspace = true
 rustc-hash.workspace = true
 crossbeam.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
-hex = "0.4.3"
 tokio = { workspace = true, features = ["full"] }
 
 [lib]

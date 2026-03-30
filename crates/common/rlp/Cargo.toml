@@ -7,11 +7,8 @@ documentation.workspace = true
 license.workspace = true
 
 [dependencies]
-tinyvec = "1.6.0"
 thiserror.workspace = true
 bytes.workspace = true
-hex.workspace = true
-lazy_static.workspace = true
 ethereum-types.workspace = true
 snap.workspace = true
 
