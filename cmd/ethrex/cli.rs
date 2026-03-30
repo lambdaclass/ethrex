@@ -254,7 +254,7 @@ pub struct Options {
         long = "p2p.addr",
         value_name = "ADDRESS",
         help = "Bind address for the P2P protocol (UDP discovery and TCP RLPx).",
-        long_help = "The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 to listen on all interfaces. See also --nat.extip to announce a different external address.",
+        long_help = "The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_ADDR"
     )]

@@ -367,7 +367,8 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     //
     // --nat.extip sets the address announced to peers (for nodes behind NAT).
     // --p2p.addr sets the bind address (defaults to the auto-detected local IP
-    //   when --nat.extip is not given, or to 0.0.0.0 when it is).
+    //   when --nat.extip is not given, or to the unspecified address when it is:
+    //   0.0.0.0 for IPv4, :: for IPv6).
     let (bind_addr, external_addr): (IpAddr, IpAddr) = match (&opts.p2p_addr, &opts.nat_extip) {
         (_, Some(extip)) => {
             let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
