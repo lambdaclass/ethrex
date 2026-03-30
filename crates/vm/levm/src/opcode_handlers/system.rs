@@ -85,7 +85,7 @@ impl OpcodeHandler for OpCallHandler {
 
         // Compute gas_left after eip7702 consumption (without modifying gas_remaining yet).
         #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
@@ -211,7 +211,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         );
 
         #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::callcode(
@@ -301,7 +301,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
         );
 
         #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::delegatecall(
@@ -392,7 +392,7 @@ impl OpcodeHandler for OpStaticCallHandler {
         );
 
         #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining as u64)
+        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::staticcall(
@@ -953,7 +953,7 @@ impl<'a> VM<'a> {
             // Return gas left from subcontext
             #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
             if ctx_result.is_success() {
-                call_frame.gas_remaining = (call_frame.gas_remaining as u64)
+                call_frame.gas_remaining = (call_frame.gas_remaining.max(0) as u64)
                     .checked_add(
                         gas_limit
                             .checked_sub(ctx_result.gas_used)
