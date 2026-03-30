@@ -19,7 +19,6 @@ ethrex-storage-rollup.workspace = true
 bytes.workspace = true
 chrono = "0.4.41"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
-color-eyre = "0.6.5"
 futures.workspace = true
 hex.workspace = true
 ratatui = "0.29.0"
@@ -31,9 +30,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-tui-big-text = "0.7.1"
 tui-logger.workspace = true
-tui-scrollview = "0.5.1"
 
 [lib]
 name = "ethrex_monitor"
