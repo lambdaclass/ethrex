@@ -114,7 +114,7 @@ P2P options:
       --nat.extip <IP>
           The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
 
-          [env: ETHREX_NAT_EXTIP=]
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -336,7 +336,7 @@ P2P options:
       --nat.extip <IP>
           The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
 
-          [env: ETHREX_NAT_EXTIP=]
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.

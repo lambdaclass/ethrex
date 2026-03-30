@@ -265,7 +265,7 @@ pub struct Options {
         help = "External IP address to announce to peers.",
         long_help = "The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).",
         help_heading = "P2P options",
-        env = "ETHREX_NAT_EXTIP"
+        env = "ETHREX_P2P_NAT_EXTIP"
     )]
     pub nat_extip: Option<String>,
     #[arg(
