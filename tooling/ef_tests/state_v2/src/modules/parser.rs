@@ -6,6 +6,7 @@ use crate::modules::{
 };
 
 use clap::Parser;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// Command line flags for runner execution.
 #[derive(Parser, Debug)]
@@ -70,40 +71,51 @@ pub fn parse_dir(
     if log_parse_dir {
         println!("Parsing test directory: {:?}", path);
     }
-    let mut tests = Vec::new();
-    let dir_entries = std::fs::read_dir(path.clone()).unwrap().flatten();
+    let dir_entries: Vec<_> = std::fs::read_dir(path.clone()).unwrap().flatten().collect();
 
-    // For each entry in the directory check if it is a .json file or a directory as well.
-    for entry in dir_entries {
-        // Check entry type
-        let entry_type = entry.file_type().unwrap();
-        if entry_type.is_dir() {
-            let dir_tests = parse_dir(
-                &entry.path(),
-                skipped_files,
-                only_files,
-                log_parse_dir,
-                log_parse_file,
-            )?;
-            tests.push(dir_tests);
-        } else {
-            let file_name = PathBuf::from(entry.file_name().as_os_str());
-            let is_json_file = entry.path().extension().is_some_and(|ext| ext == "json");
-            let is_not_skipped = !skipped_files.contains(&file_name);
-            // If only certain files were supposed to be parsed make sure this file is among them.
-            if !only_files.is_empty() && !only_files.contains(&file_name) {
-                continue;
-            }
+    // Process directory entries in parallel
+    let directory_tests_results: Vec<_> = dir_entries
+        .into_par_iter()
+        .map(|entry| -> Result<Option<Vec<Test>>, RunnerError> {
+            // Check entry type
+            let entry_type = entry.file_type().unwrap();
+            if entry_type.is_dir() {
+                let dir_tests = parse_dir(
+                    &entry.path(),
+                    skipped_files,
+                    only_files,
+                    log_parse_dir,
+                    log_parse_file,
+                )?;
+                return Ok(Some(dir_tests));
+            } else {
+                let file_name = PathBuf::from(entry.file_name().as_os_str());
+                let is_json_file = entry.path().extension().is_some_and(|ext| ext == "json");
+                let is_not_skipped = !skipped_files.contains(&file_name);
+                // If only certain files were supposed to be parsed make sure this file is among them.
+                if !only_files.is_empty() && !only_files.contains(&file_name) {
+                    return Ok(None);
+                }
 
-            if is_json_file && is_not_skipped {
-                let file_tests = parse_file(&entry.path(), log_parse_file)?;
-                tests.push(file_tests);
+                if is_json_file && is_not_skipped {
+                    let file_tests = parse_file(&entry.path(), log_parse_file)?;
+                    return Ok(Some(file_tests));
+                }
             }
-        }
-    }
-    // Up to this point the parsing of every .json file has given a Vec<Test> as a result, so we have to concat
-    // to obtain a single Vec<Test> from the Vec<Vec<Test>>.
-    Ok(tests.concat())
+            Ok(None)
+        })
+        .collect();
+
+    // Collect all results and flatten
+    let tests: Vec<Test> = directory_tests_results
+        .into_iter()
+        .filter_map(|x| x.transpose())
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+
+    Ok(tests)
 }
 
 /// Initiates the parser with the corresponding option flags.

@@ -21,6 +21,7 @@ use ethrex_common::{
     },
 };
 
+use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
 use ethrex_vm::{Evm, EvmError};
 
@@ -143,8 +144,8 @@ pub fn create_payload(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: args.fee_recipient,
         state_root: parent_block.state_root,
-        transactions_root: compute_transactions_root(&[]),
-        receipts_root: compute_receipts_root(&[]),
+        transactions_root: compute_transactions_root(&[], &NativeCrypto),
+        receipts_root: compute_receipts_root(&[], &NativeCrypto),
         logs_bloom: Bloom::default(),
         difficulty: U256::zero(),
         number: parent_block.number.saturating_add(1),
@@ -165,6 +166,7 @@ pub fn create_payload(
             .is_shanghai_activated(args.timestamp)
             .then_some(compute_withdrawals_root(
                 args.withdrawals.as_ref().unwrap_or(&Vec::new()),
+                &NativeCrypto,
             )),
         blob_gas_used: chain_config
             .is_cancun_activated(args.timestamp)
@@ -216,6 +218,12 @@ pub struct PayloadBuildContext {
     /// Cumulative gas spent (post-refund) for receipt tracking.
     /// Per EIP-7778 this differs from `remaining_gas` which tracks pre-refund gas.
     pub cumulative_gas_spent: u64,
+    /// EIP-8037 (Amsterdam+): cumulative regular (non-state) gas used.
+    pub block_regular_gas_used: u64,
+    /// EIP-8037 (Amsterdam+): cumulative state gas used.
+    pub block_state_gas_used: u64,
+    /// Whether Amsterdam fork is active for this block.
+    pub is_amsterdam: bool,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -258,10 +266,14 @@ impl PayloadBuildContext {
             vm.set_bal_index(0);
         }
 
+        let is_amsterdam = config.is_amsterdam_activated(payload.header.timestamp);
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
+            is_amsterdam,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -279,7 +291,12 @@ impl PayloadBuildContext {
     }
 
     pub fn gas_used(&self) -> u64 {
-        self.payload.header.gas_limit - self.remaining_gas
+        if self.is_amsterdam {
+            // EIP-8037: block gas = max(sum_regular, sum_state)
+            self.block_regular_gas_used.max(self.block_state_gas_used)
+        } else {
+            self.payload.header.gas_limit - self.remaining_gas
+        }
     }
 }
 
@@ -426,7 +443,6 @@ impl Blockchain {
     /// Completes the payload building process, return the block value
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
-        let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
@@ -464,7 +480,8 @@ impl Blockchain {
         );
         metrics!(METRICS_BLOCKS.set_block_building_ms(interval as i64));
         metrics!(METRICS_BLOCKS.set_block_building_base_fee(base_fee as i64));
-        if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
+        let gas_used = context.gas_used();
+        if gas_used > 0 {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
@@ -623,18 +640,24 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-7928: Snapshot BAL recorder before trying the tx.
-            // If the tx is rejected, restore so only included txs affect the BAL.
-            // TODO: This clones the entire recorder every tx. Add a tx-level
-            // checkpoint/restore that also undoes touched_addresses and storage_reads
-            // (the existing checkpoint only handles inner call reverts).
-            let bal_snapshot = context.vm.db.bal_recorder.clone();
-
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
+            // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
+            // filters for the previous (committed) tx, which may insert reads.
             #[allow(clippy::cast_possible_truncation)]
             let tx_index = (context.payload.body.transactions.len() + 1) as u16;
             context.vm.set_bal_index(tx_index);
+
+            // EIP-7928: Lightweight tx-level checkpoint before trying the tx.
+            // If the tx is rejected, restore so only included txs affect the BAL.
+            // Taken after set_bal_index (which flushes previous tx) but before
+            // this tx's touches, so rejected txs leave no trace.
+            let bal_checkpoint = context
+                .vm
+                .db
+                .bal_recorder
+                .as_ref()
+                .map(|r| r.tx_checkpoint());
 
             // Record tx sender and recipient for BAL
             if let Some(recorder) = context.vm.db.bal_recorder_mut() {
@@ -657,7 +680,11 @@ impl Blockchain {
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     // Restore BAL recorder to pre-tx state so rejected txs
                     // don't pollute the block access list.
-                    context.vm.db.bal_recorder = bal_snapshot;
+                    if let (Some(recorder), Some(checkpoint)) =
+                        (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                    {
+                        recorder.tx_restore(checkpoint);
+                    }
                     txs.pop();
                     continue;
                 }
@@ -745,13 +772,23 @@ impl Blockchain {
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
-            compute_transactions_root(&context.payload.body.transactions);
-        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+            compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
+        context.payload.header.receipts_root =
+            compute_receipts_root(&context.receipts, &NativeCrypto);
         context.payload.header.requests_hash = context
             .requests
             .as_ref()
             .map(|requests| compute_requests_hash(requests));
-        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        let gas_used = context.gas_used();
+        if context.is_amsterdam {
+            debug!(
+                "EIP-8037 block finalize: gas_used={gas_used} regular={} state={} txs={}",
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                context.payload.body.transactions.len(),
+            );
+        }
+        context.payload.header.gas_used = gas_used;
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
@@ -766,7 +803,7 @@ impl Blockchain {
             }
         }
 
-        context.payload.header.logs_bloom = bloom_from_logs(&logs);
+        context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
 }
@@ -776,15 +813,50 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (receipt, gas_spent) = context.vm.execute_tx(
+    let (receipt, report) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
-        &mut context.remaining_gas,
         &mut context.cumulative_gas_spent,
         head.tx.sender(),
     )?;
+
+    // EIP-8037 (Amsterdam+): track regular and state gas separately
+    let tx_state_gas = report.state_gas_used;
+    let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
+    context.block_regular_gas_used = context
+        .block_regular_gas_used
+        .saturating_add(tx_regular_gas);
+    context.block_state_gas_used = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    if context.is_amsterdam {
+        debug!(
+            "EIP-8037 tx gas: regular={tx_regular_gas} state={tx_state_gas} gas_used={} gas_spent={} block_regular={} block_state={} block_max={}",
+            report.gas_used,
+            report.gas_spent,
+            context.block_regular_gas_used,
+            context.block_state_gas_used,
+            context
+                .block_regular_gas_used
+                .max(context.block_state_gas_used),
+        );
+    }
+
+    // Update remaining_gas for block gas limit checks.
+    // EIP-8037 (Amsterdam+): block capacity is max(sum_regular, sum_state), so
+    // remaining_gas = gas_limit - max(block_regular, block_state). Using the sum
+    // would be overly conservative and skip transactions that actually fit.
+    if context.is_amsterdam {
+        context.remaining_gas = context.payload.header.gas_limit.saturating_sub(
+            context
+                .block_regular_gas_used
+                .max(context.block_state_gas_used),
+        );
+    } else {
+        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
+    }
+
     // Block value uses gas_spent (what the user actually pays) for tip calculation
-    context.block_value += U256::from(gas_spent) * head.tip;
+    context.block_value += U256::from(report.gas_spent) * head.tip;
     Ok(receipt)
 }
 

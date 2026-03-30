@@ -80,8 +80,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
             } else if chain_config.is_shanghai_activated(attributes.timestamp) {
                 validate_attributes_v2(attributes, &head_block)?;
             } else {
-                // Behave as a v1
-                validate_attributes_v1(attributes, &head_block)?;
+                validate_attributes_v2_pre_shanghai(attributes, &head_block)?;
             }
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2).await?;
             response.set_id(payload_id);
@@ -374,7 +373,17 @@ fn validate_attributes_v2(
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
     if attributes.withdrawals.is_none() {
-        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+        return Err(RpcErr::InvalidPayloadAttributes("withdrawals".to_string()));
+    }
+    validate_timestamp(attributes, head_block)
+}
+
+fn validate_attributes_v2_pre_shanghai(
+    attributes: &PayloadAttributesV3,
+    head_block: &BlockHeader,
+) -> Result<(), RpcErr> {
+    if attributes.withdrawals.is_some() {
+        return Err(RpcErr::InvalidPayloadAttributes("withdrawals".to_string()));
     }
     validate_timestamp(attributes, head_block)
 }
@@ -554,4 +563,51 @@ async fn build_payload_v4(
         .initiate_payload_build(payload, payload_id)
         .await;
     Ok(payload_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
+    use crate::types::fork_choice::PayloadAttributesV3;
+    use ethrex_common::types::{BlockHeader, Withdrawal};
+
+    #[test]
+    fn forkchoice_updated_v2_returns_invalid_payload_attributes_when_withdrawals_missing() {
+        let attributes = PayloadAttributesV3 {
+            timestamp: 2,
+            withdrawals: None,
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1,
+            ..Default::default()
+        };
+
+        let err = validate_attributes_v2(&attributes, &head_block).unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
+    }
+
+    #[test]
+    fn forkchoice_updated_v2_returns_invalid_payload_attributes_pre_shanghai_with_withdrawals() {
+        let attributes = PayloadAttributesV3 {
+            timestamp: 2,
+            withdrawals: Some(Vec::<Withdrawal>::new()),
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1,
+            ..Default::default()
+        };
+
+        let err = validate_attributes_v2_pre_shanghai(&attributes, &head_block).unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
+    }
 }

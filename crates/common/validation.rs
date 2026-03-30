@@ -11,6 +11,7 @@ use crate::types::{
     validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
+use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
@@ -44,7 +45,9 @@ pub fn validate_block_pre_execution(
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)?;
         verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp) {
+        if chain_config.is_osaka_activated(block.header.timestamp)
+            && !chain_config.is_amsterdam_activated(block.header.timestamp)
+        {
             verify_transaction_max_gas_limit(block)?;
         }
     } else if chain_config.is_cancun_activated(block.header.timestamp) {
@@ -77,8 +80,9 @@ pub fn validate_gas_used(
 pub fn validate_receipts_root(
     block_header: &BlockHeader,
     receipts: &[Receipt],
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
-    let receipts_root = compute_receipts_root(receipts);
+    let receipts_root = compute_receipts_root(receipts, crypto);
 
     if receipts_root == block_header.receipts_root {
         Ok(())
@@ -127,14 +131,52 @@ fn validate_bal_indices(
     Ok(())
 }
 
+/// Validates that all indices in the header BAL are within valid bounds (Amsterdam+).
+/// This is a subset of the full hash check — used in the parallel execution path
+/// where we have the header BAL but do not build a new BAL during execution.
+/// Per EIP-7928: valid indices are 0 (pre-exec) through len(transactions)+1 (post-exec).
+pub fn validate_header_bal_indices(
+    bal: &crate::types::block_access_list::BlockAccessList,
+    transaction_count: usize,
+) -> Result<(), InvalidBlockError> {
+    #[allow(clippy::cast_possible_truncation)]
+    let max_valid_index = transaction_count as u16 + 1;
+
+    for account in bal.accounts() {
+        validate_bal_indices(
+            account
+                .storage_changes
+                .iter()
+                .flat_map(|slot| slot.slot_changes.iter().map(|c| c.block_access_index)),
+            max_valid_index,
+        )?;
+        validate_bal_indices(
+            account.balance_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+        validate_bal_indices(
+            account.nonce_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+        validate_bal_indices(
+            account.code_changes.iter().map(|c| c.block_access_index),
+            max_valid_index,
+        )?;
+    }
+    Ok(())
+}
+
 /// Validates that the block access list hash matches the block header (Amsterdam+).
-/// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928.
+/// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928,
+/// and that the BAL size does not exceed the gas-derived limit.
 pub fn validate_block_access_list_hash(
     header: &BlockHeader,
     chain_config: &ChainConfig,
     computed_bal: &crate::types::block_access_list::BlockAccessList,
     transaction_count: usize,
 ) -> Result<(), InvalidBlockError> {
+    use crate::constants::BAL_ITEM_COST;
+
     // BAL validation only applies to Amsterdam+ forks
     if !chain_config.is_amsterdam_activated(header.timestamp) {
         return Ok(());
@@ -145,8 +187,13 @@ pub fn validate_block_access_list_hash(
     #[allow(clippy::cast_possible_truncation)]
     let max_valid_index = transaction_count as u16 + 1;
 
-    // Validate all indices in the BAL
+    // Validate all indices and compute item count in a single pass over the BAL.
+    let mut bal_items: u64 = 0;
     for account in computed_bal.accounts() {
+        bal_items += 1; // address
+        bal_items += account.storage_reads.len() as u64;
+        bal_items += account.storage_changes.len() as u64;
+
         // Check storage_changes indices
         validate_bal_indices(
             account
@@ -175,6 +222,15 @@ pub fn validate_block_access_list_hash(
         )?;
     }
 
+    // EIP-7928 size cap: bal_items <= gas_limit / GAS_BLOCK_ACCESS_LIST_ITEM
+    let max_items = header.gas_limit / BAL_ITEM_COST;
+    if bal_items > max_items {
+        return Err(InvalidBlockError::BlockAccessListSizeExceeded {
+            items: bal_items,
+            max_items,
+        });
+    }
+
     let computed_hash = computed_bal.compute_hash();
     let valid = header
         .block_access_list_hash
@@ -183,6 +239,35 @@ pub fn validate_block_access_list_hash(
 
     if !valid {
         return Err(InvalidBlockError::BlockAccessListHashMismatch);
+    }
+
+    Ok(())
+}
+
+/// Validates that the block access list does not exceed the maximum allowed size (Amsterdam+).
+/// Per EIP-7928: bal_items <= block_gas_limit // GAS_BLOCK_ACCESS_LIST_ITEM
+///
+/// Prefer using [`validate_block_access_list_hash`] when both hash and size validation are needed,
+/// as it performs both checks in a single pass over the BAL.
+pub fn validate_block_access_list_size(
+    header: &BlockHeader,
+    chain_config: &ChainConfig,
+    computed_bal: &crate::types::block_access_list::BlockAccessList,
+) -> Result<(), InvalidBlockError> {
+    use crate::constants::BAL_ITEM_COST;
+
+    if !chain_config.is_amsterdam_activated(header.timestamp) {
+        return Ok(());
+    }
+
+    let bal_items = computed_bal.item_count();
+    let max_items = header.gas_limit / BAL_ITEM_COST;
+
+    if bal_items > max_items {
+        return Err(InvalidBlockError::BlockAccessListSizeExceeded {
+            items: bal_items,
+            max_items,
+        });
     }
 
     Ok(())
