@@ -1040,7 +1040,7 @@ async fn handle_incoming_message(
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
             let block_headers = msg_data.fetch_headers(&state.storage).await;
-            info!(
+            trace!(
                 peer=%state.node,
                 id=msg_data.id,
                 response_count=block_headers.len(),
@@ -1054,7 +1054,7 @@ async fn handle_incoming_message(
         }
         Message::GetBlockBodies(msg_data) if peer_supports_eth => {
             let block_bodies = msg_data.fetch_blocks(&state.storage).await;
-            info!(
+            trace!(
                 peer=%state.node,
                 id=msg_data.id,
                 response_count=block_bodies.len(),
