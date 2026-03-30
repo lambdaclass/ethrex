@@ -27,8 +27,10 @@ ark-ff = { version = "0.5.0", default-features = false }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic", "expose-field"] }
 bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-affine-constructors", default-features = false, features = ["groups", "bits", "pairings", "alloc", "experimental"] }
 ff = { version = "0.13", default-features = false }
+k256 = { version = "0.13.4", default-features = false, features = ["ecdsa"] }
+num-bigint = { version = "0.4.6", default-features = false }
 
-# std-only deps
+# std-only deps (faster alternatives used when available)
 secp256k1 = { workspace = true, optional = true }
 malachite = { version = "0.6.1", optional = true }
 

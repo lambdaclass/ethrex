@@ -1,6 +1,7 @@
 #[cfg(not(feature = "std"))]
 use alloc::{
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
 
@@ -88,8 +89,18 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         }
         #[cfg(not(feature = "secp256k1"))]
         {
-            let _ = (sig, recid, msg);
-            Err(CryptoError::Other("secp256k1 feature not enabled".into()))
+            use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+
+            let recovery_id =
+                RecoveryId::try_from(recid).map_err(|_| CryptoError::InvalidRecoveryId)?;
+            let signature =
+                Signature::from_slice(sig).map_err(|_| CryptoError::InvalidSignature)?;
+            let public_key = VerifyingKey::recover_from_prehash(msg, &signature, recovery_id)
+                .map_err(|_| CryptoError::RecoveryFailed)?;
+
+            let uncompressed = public_key.to_encoded_point(false);
+            let hash = crate::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+            Ok(hash)
         }
     }
 
@@ -125,8 +136,22 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         }
         #[cfg(not(feature = "secp256k1"))]
         {
-            let _ = (sig, msg);
-            Err(CryptoError::Other("secp256k1 feature not enabled".into()))
+            // EIP-2: reject high-s signatures (s > secp256k1n/2)
+            const SECP256K1_N_HALF: [u8; 32] = hex_literal::hex!(
+                "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
+            );
+            if sig[32..64] > SECP256K1_N_HALF[..] {
+                return Err(CryptoError::InvalidSignature);
+            }
+
+            let hash = self.secp256k1_ecrecover(
+                sig[..64]
+                    .try_into()
+                    .map_err(|_| CryptoError::InvalidSignature)?,
+                sig[64],
+                msg,
+            )?;
+            Ok(Address::from_slice(&hash[12..]))
         }
     }
 
@@ -330,8 +355,31 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         }
         #[cfg(not(feature = "std"))]
         {
-            let _ = (base, exp, modulus);
-            Err(CryptoError::Other("not available without std".into()))
+            use num_bigint::BigUint;
+
+            let base_nat = BigUint::from_bytes_be(base);
+            let exp_nat = BigUint::from_bytes_be(exp);
+            let mod_nat = BigUint::from_bytes_be(modulus);
+
+            let modulus_len = modulus.len();
+
+            let result = if mod_nat == BigUint::ZERO {
+                BigUint::ZERO
+            } else if exp_nat == BigUint::ZERO {
+                BigUint::from(1_u8) % &mod_nat
+            } else {
+                base_nat.modpow(&exp_nat, &mod_nat)
+            };
+
+            let res_bytes = result.to_bytes_be();
+            let mut out = vec![0u8; modulus_len];
+            if res_bytes.len() <= modulus_len {
+                let offset = modulus_len - res_bytes.len();
+                out[offset..].copy_from_slice(&res_bytes);
+            } else {
+                out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
+            }
+            Ok(out)
         }
     }
 
