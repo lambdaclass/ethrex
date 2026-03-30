@@ -74,7 +74,7 @@ use tracing::{debug, error, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
-/// Time window for incoming request rate limiting.
+/// Fixed (tumbling) time window for incoming request rate limiting.
 const SERVE_REQUEST_WINDOW: Duration = Duration::from_secs(60);
 /// Maximum number of data-serving requests allowed per peer within the rate-limit window.
 const MAX_SERVE_REQUESTS_PER_WINDOW: u64 = 500;
@@ -1170,9 +1170,11 @@ async fn handle_incoming_message(
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
-            state.txs_sent_to_peer += response.pooled_transactions.len() as u64;
             // Leech detection: disconnect peers that drain transactions but never contribute any.
-            if state.txs_sent_to_peer > LEECH_TX_SENT_THRESHOLD && !state.received_txs_from_peer {
+            if state.txs_sent_to_peer + response.pooled_transactions.len() as u64
+                > LEECH_TX_SENT_THRESHOLD
+                && !state.received_txs_from_peer
+            {
                 warn!(
                     peer = %state.node,
                     txs_sent = state.txs_sent_to_peer,
@@ -1183,6 +1185,7 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
+            state.txs_sent_to_peer += response.pooled_transactions.len() as u64;
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
