@@ -55,7 +55,6 @@ pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
 #[cfg(any(clippy, not(feature = "zisk-build-elf")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
-// TODO: Verify the output path once `cargo airbender build` is tested.
 #[cfg(all(not(clippy), feature = "airbender-build-elf"))]
 pub static ZKVM_AIRBENDER_PROGRAM_ELF: &[u8] =
     include_bytes!("../bin/airbender/dist/app/app.bin");

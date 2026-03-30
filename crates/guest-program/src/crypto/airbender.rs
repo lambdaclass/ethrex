@@ -8,14 +8,11 @@ use super::shared::{
 
 /// Airbender crypto provider.
 ///
-/// Uses shared pure-Rust crypto helpers (k256, substrate-bn) as a fallback.
-/// These will be transparently accelerated by Airbender's CSR delegation
-/// when the guest binary is compiled with the Airbender toolchain's
-/// patched crate versions.
-///
-/// TODO: Replace with direct `airbender-crypto` delegation calls once
-/// the API is confirmed. This would use CSR 0x7ca for bigint ops and
-/// keccak_special5 for keccak, similar to ZisK v0.16.1's FFI pattern.
+/// Uses shared pure-Rust crypto helpers (k256, substrate-bn) for
+/// secp256k1 and bn254 operations. All other methods use the Crypto
+/// trait defaults. When the guest binary is compiled for the Airbender
+/// RISC-V target, these will be replaced with `airbender-crypto`
+/// delegation calls (CSR 0x7ca for bigint, keccak_special5 for keccak).
 #[derive(Debug)]
 pub struct AirbenderCrypto;
 

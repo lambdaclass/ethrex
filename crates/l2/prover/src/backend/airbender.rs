@@ -11,8 +11,7 @@ use crate::backend::{BackendError, ProverBackend};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/airbender_input.bin");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-airbender-program.elf");
-// TODO: Confirm the output directory convention for cargo-airbender prove
-const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/airbender_output");
+const PROOF_OUTPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/airbender_proof.bin");
 
 /// Airbender-specific proof output containing the proof bytes.
 pub struct AirbenderProveOutput(pub Vec<u8>);
@@ -51,8 +50,8 @@ impl AirbenderBackend {
 
     /// Execute assuming input is already serialized to INPUT_PATH.
     fn execute_core(&self) -> Result<(), BackendError> {
-        // TODO: Confirm exact cargo-airbender run CLI arguments
-        let args = vec!["run", "--elf", ELF_PATH, "--input", INPUT_PATH];
+        // cargo airbender run <APP_BIN> --input <INPUT>
+        let args = vec!["run", ELF_PATH, "--input", INPUT_PATH];
         let output = Command::new("cargo-airbender")
             .args(args)
             .stdin(Stdio::inherit())
@@ -71,16 +70,17 @@ impl AirbenderBackend {
     }
 
     /// Prove assuming input is already serialized to INPUT_PATH.
-    fn prove_core(&self) -> Result<AirbenderProveOutput, BackendError> {
-        // TODO: Confirm exact cargo-airbender prove CLI arguments and output path
+    fn prove_core(&self, backend: &str) -> Result<AirbenderProveOutput, BackendError> {
+        // cargo airbender prove <APP_BIN> --input <INPUT> --output <OUTPUT> --backend <BACKEND>
         let args = vec![
             "prove",
-            "--elf",
             ELF_PATH,
             "--input",
             INPUT_PATH,
-            "--output-dir",
-            OUTPUT_DIR_PATH,
+            "--output",
+            PROOF_OUTPUT_PATH,
+            "--backend",
+            backend,
         ];
 
         let output = Command::new("cargo-airbender")
@@ -97,9 +97,8 @@ impl AirbenderBackend {
             )));
         }
 
-        // TODO: Confirm the proof output file name produced by cargo-airbender prove
-        let proof_bytes = std::fs::read(format!("{OUTPUT_DIR_PATH}/proof.bin"))
-            .map_err(BackendError::proving)?;
+        let proof_bytes =
+            std::fs::read(PROOF_OUTPUT_PATH).map_err(BackendError::proving)?;
 
         Ok(AirbenderProveOutput(proof_bytes))
     }
@@ -133,8 +132,7 @@ impl ProverBackend for AirbenderBackend {
     ) -> Result<Self::ProofOutput, BackendError> {
         Self::write_elf_file()?;
         self.serialize_input(&input)?;
-        // TODO: Pass format to prove_core when cargo-airbender supports proof format selection
-        self.prove_core()
+        self.prove_core("gpu")
     }
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
@@ -153,9 +151,7 @@ impl ProverBackend for AirbenderBackend {
         Self::write_elf_file()?;
         self.serialize_input(&input)?;
         let start = Instant::now();
-        // TODO: Pass format to prove_core when cargo-airbender supports proof format selection
-        let _ = format;
-        let proof = self.prove_core()?;
+        let proof = self.prove_core("gpu")?;
         Ok((proof, start.elapsed()))
     }
 
