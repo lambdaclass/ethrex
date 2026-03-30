@@ -122,8 +122,8 @@ P2P options:
           [env: ETHREX_P2P_PORT=]
           [default: 30303]
 
-      --discovery.addr <ADDRESS>
-          The address to bind the discv4/discv5 UDP socket to. Defaults to --p2p.addr (or 0.0.0.0 if unset). Allows running discovery on a different interface than RLPx.
+      --discovery.addr [<ADDRESS>...]
+          One or two comma-separated addresses to bind discv4/discv5 UDP sockets to. Defaults to the same set as --p2p.addr, giving automatic dual-stack discovery when RLPx is dual-stack. Supply a single address to run discovery single-stack regardless of the RLPx configuration.
 
           [env: ETHREX_P2P_DISCOVERY_ADDR=]
 
@@ -349,8 +349,8 @@ P2P options:
           [env: ETHREX_P2P_PORT=]
           [default: 30303]
 
-      --discovery.addr <ADDRESS>
-          The address to bind the discv4/discv5 UDP socket to. Defaults to --p2p.addr (or 0.0.0.0 if unset). Allows running discovery on a different interface than RLPx.
+      --discovery.addr [<ADDRESS>...]
+          One or two comma-separated addresses to bind discv4/discv5 UDP sockets to. Defaults to the same set as --p2p.addr, giving automatic dual-stack discovery when RLPx is dual-stack. Supply a single address to run discovery single-stack regardless of the RLPx configuration.
 
           [env: ETHREX_P2P_DISCOVERY_ADDR=]
 

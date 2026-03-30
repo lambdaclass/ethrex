@@ -21,10 +21,11 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use socket2::{Domain, Protocol, Socket, Type};
 use spawned_concurrency::tasks::GenServerHandle;
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
@@ -119,72 +120,85 @@ pub async fn start_network(
     bootnodes: Vec<Node>,
     config: DiscoveryConfig,
 ) -> Result<(), NetworkError> {
-    let udp_socket = Arc::new(
-        UdpSocket::bind(context.network_config.bind_udp_addr())
-            .await
-            .map_err(NetworkError::UdpSocketError)?,
-    );
-
-    // Build a discovery-specific local node using the discovery external address.
-    // This ensures discv4/discv5 Ping `from` endpoints advertise the correct
-    // address when discovery runs on a different interface than RLPx.
-    let discovery_local_node = Node::new(
-        context.network_config.discovery_external_addr,
-        context.network_config.udp_port,
-        context.network_config.tcp_port,
-        context.local_node.public_key,
-    );
-
-    // Start protocol servers first to get their handles
-    let discv4_handle = if config.discv4_enabled {
-        Some(
-            Discv4Server::spawn(
-                context.storage.clone(),
-                discovery_local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv4 server: {e}");
-            })?,
+    // Pair each UDP bind address with its corresponding discovery external
+    // address. For a dual-stack node this produces two entries — one for IPv4
+    // (e.g. 0.0.0.0 / 1.2.3.4) and one for IPv6 (e.g. :: / 2001:db8::1).
+    // Each pair gets its own socket, discv4/discv5 server instances, and
+    // multiplexer so that responses always go back on the same-family socket.
+    let udp_pairs: Vec<(SocketAddr, IpAddr)> = context
+        .network_config
+        .bind_udp_addrs()
+        .into_iter()
+        .zip(
+            context
+                .network_config
+                .discovery_external_addrs
+                .iter()
+                .copied(),
         )
-    } else {
-        None
-    };
+        .collect();
 
-    let discv5_handle = if config.discv5_enabled {
-        Some(
-            Discv5Server::spawn(
-                context.storage.clone(),
-                discovery_local_node,
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
+    for (bind_addr, external_addr) in udp_pairs {
+        let udp_socket = Arc::new(udp_socket(bind_addr).map_err(NetworkError::UdpSocketError)?);
+
+        // Build a discovery-specific local node using the external address for
+        // this socket's family so Ping `from` endpoints advertise correctly.
+        let discovery_local_node = Node::new(
+            external_addr,
+            context.network_config.udp_port,
+            context.network_config.tcp_port,
+            context.local_node.public_key,
+        );
+
+        let discv4_handle = if config.discv4_enabled {
+            Some(
+                Discv4Server::spawn(
+                    context.storage.clone(),
+                    discovery_local_node.clone(),
+                    context.signer,
+                    udp_socket.clone(),
+                    context.table.clone(),
+                    bootnodes.clone(),
+                    context.initial_lookup_interval,
+                )
+                .await
+                .inspect_err(|e| {
+                    error!("Failed to start discv4 server: {e}");
+                })?,
             )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv5 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
-    // Start multiplexer GenServer with handles to protocol servers
-    DiscoveryMultiplexer::new(
-        udp_socket,
-        context.local_node.node_id(),
-        config,
-        discv4_handle,
-        discv5_handle,
-    )
-    .start();
+        let discv5_handle = if config.discv5_enabled {
+            Some(
+                Discv5Server::spawn(
+                    context.storage.clone(),
+                    discovery_local_node,
+                    context.signer,
+                    udp_socket.clone(),
+                    context.table.clone(),
+                    bootnodes.clone(),
+                    context.initial_lookup_interval,
+                )
+                .await
+                .inspect_err(|e| {
+                    error!("Failed to start discv5 server: {e}");
+                })?,
+            )
+        } else {
+            None
+        };
+
+        DiscoveryMultiplexer::new(
+            udp_socket,
+            context.local_node.node_id(),
+            config.clone(),
+            discv4_handle,
+            discv5_handle,
+        )
+        .start();
+    }
 
     // Spawn one TCP listener per RLPx bind address. A dual-stack node will
     // have two entries here (e.g. 0.0.0.0:30303 and [::]:30303).
@@ -224,15 +238,49 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext, tcp_addr: SocketAddr
     }
 }
 
+/// Creates a UDP socket with `SO_REUSEADDR` + `SO_REUSEPORT` set before
+/// binding, matching what `listener()` does for TCP.
+///
+/// IPv6 sockets are created with `IPV6_V6ONLY=true` so that binding
+/// `[::]:port` does not also claim `0.0.0.0:port` on systems where the
+/// `net.ipv6.bindv6only` sysctl defaults to 0 (most Linux distros).
+fn udp_socket(bind_addr: SocketAddr) -> Result<UdpSocket, io::Error> {
+    let domain = if bind_addr.is_ipv6() {
+        Domain::IPV6
+    } else {
+        Domain::IPV4
+    };
+    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true).ok();
+    #[cfg(unix)]
+    socket.set_reuse_port(true).ok();
+    if bind_addr.is_ipv6() {
+        socket.set_only_v6(true)?;
+    }
+    socket.bind(&bind_addr.into())?;
+    socket.set_nonblocking(true)?;
+    UdpSocket::from_std(socket.into())
+}
+
 fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
-    let tcp_socket = match tcp_addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4(),
-        SocketAddr::V6(_) => TcpSocket::new_v6(),
-    }?;
+    // IPv6 TCP listeners need IPV6_V6ONLY=true so that binding [::]:port does
+    // not also claim 0.0.0.0:port on systems where net.ipv6.bindv6only=0.
+    // TcpSocket (Tokio) has no set_only_v6, so we use socket2 for IPv6.
+    if tcp_addr.is_ipv6() {
+        let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+        socket.set_reuse_address(true).ok();
+        #[cfg(unix)]
+        socket.set_reuse_port(true).ok();
+        socket.set_only_v6(true)?;
+        socket.bind(&tcp_addr.into())?;
+        socket.listen(50)?;
+        socket.set_nonblocking(true)?;
+        return TcpListener::from_std(socket.into());
+    }
+    let tcp_socket = TcpSocket::new_v4()?;
     tcp_socket.set_reuseport(true).ok();
     tcp_socket.set_reuseaddr(true).ok();
     tcp_socket.bind(tcp_addr)?;
-
     tcp_socket.listen(50)
 }
 
