@@ -49,6 +49,7 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
+    pub sponsored_gas_limit: u64,
 }
 
 pub trait RpcHandler: Sized {
@@ -87,6 +88,7 @@ pub async fn start_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    sponsored_gas_limit: u64,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -114,6 +116,7 @@ pub async fn start_api(
         valid_delegation_addresses,
         sponsor_pk,
         rollup_store,
+        sponsored_gas_limit,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
