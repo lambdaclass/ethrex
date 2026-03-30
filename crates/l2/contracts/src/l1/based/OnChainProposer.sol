@@ -239,8 +239,8 @@ contract OnChainProposer is
         if (lastBlockHash == bytes32(0)) revert LastBlockHashIsZero();
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
-            uint16 privTxCount = uint16(
-                bytes2(processedPrivilegedTransactionsRollingHash)
+            uint16 privTxCount = _rollingHashCount(
+                processedPrivilegedTransactionsRollingHash
             );
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
                 .getPendingTransactionsVersionedHashWithOffset(
@@ -307,12 +307,9 @@ contract OnChainProposer is
         if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
             revert BatchNotCommitted();
 
-        // The first 2 bytes are the number of privileged transactions.
-        uint16 privileged_transaction_count = uint16(
-            bytes2(
-                batchCommitments[batchNumber]
-                    .processedPrivilegedTransactionsRollingHash
-            )
+        uint16 privileged_transaction_count = _rollingHashCount(
+            batchCommitments[batchNumber]
+                .processedPrivilegedTransactionsRollingHash
         );
         if (privileged_transaction_count > 0) {
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
@@ -436,12 +433,9 @@ contract OnChainProposer is
             if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
                 revert BatchNotCommitted();
 
-            // The first 2 bytes are the number of privileged transactions.
-            uint16 privileged_transaction_count = uint16(
-                bytes2(
-                    batchCommitments[batchNumber]
-                        .processedPrivilegedTransactionsRollingHash
-                )
+            uint16 privileged_transaction_count = _rollingHashCount(
+                batchCommitments[batchNumber]
+                    .processedPrivilegedTransactionsRollingHash
             );
             if (privileged_transaction_count > 0) {
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
@@ -532,6 +526,13 @@ contract OnChainProposer is
         if (!callResult) revert AlignedAggregatorCallFailed();
         bool proofVerified = abi.decode(response, (bool));
         if (!proofVerified) revert AlignedProofVerificationFailed();
+    }
+
+    /// @dev Extract the entry count encoded in the first 2 bytes of a rolling hash.
+    function _rollingHashCount(
+        bytes32 rollingHash
+    ) internal pure returns (uint16) {
+        return uint16(bytes2(rollingHash));
     }
 
     /// @notice Allow owner to upgrade the contract.
