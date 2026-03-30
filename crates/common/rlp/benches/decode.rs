@@ -300,9 +300,8 @@ fn bench_decode_nibbles(c: &mut Criterion) {
                 for _ in 0..N {
                     data.push(
                         Nibbles::from_raw(
-                            &rand::distr::Uniform::<u8>::new(0, 16)
-                                .unwrap()
-                                .sample_iter(rand::rng())
+                            &rand::rng()
+                                .random_iter::<u8>()
                                 .take(L)
                                 .collect::<Vec<_>>(),
                             IS_LEAF,
