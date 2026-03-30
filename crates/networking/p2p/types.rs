@@ -30,8 +30,6 @@ use crate::utils::node_id;
 pub struct NetworkConfig {
     /// Address to bind UDP/TCP sockets to (e.g. `0.0.0.0` or `::`)
     pub bind_addr: IpAddr,
-    /// Address announced to peers (e.g. the public/NAT-mapped IP)
-    pub external_addr: IpAddr,
     pub tcp_port: u16,
     pub udp_port: u16,
 }
@@ -52,7 +50,6 @@ impl NetworkConfig {
     pub fn from_node(node: &Node) -> Self {
         Self {
             bind_addr: node.ip,
-            external_addr: node.ip,
             tcp_port: node.tcp_port,
             udp_port: node.udp_port,
         }

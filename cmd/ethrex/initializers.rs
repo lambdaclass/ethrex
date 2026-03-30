@@ -399,7 +399,6 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
         bind_addr,
-        external_addr,
         tcp_port,
         udp_port,
     };
