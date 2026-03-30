@@ -466,7 +466,7 @@ pub async fn compare_levm_revm_account_updates(
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,
-                Code::from_bytecode(pre_state_value.code.clone()),
+                Code::from_bytecode(pre_state_value.code.clone(), &ethrex_crypto::NativeCrypto),
                 pre_state_value.nonce,
                 account_storage,
             );

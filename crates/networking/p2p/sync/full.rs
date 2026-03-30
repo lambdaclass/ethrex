@@ -61,11 +61,16 @@ pub async fn sync_cycle_full(
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Sync failed to find target block header, aborting");
+                warn!(
+                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                );
                 return Ok(());
             }
             attempts += 1;
-            tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;
+            warn!(
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+            );
+            tokio::time::sleep(Duration::from_secs(5)).await;
             continue;
         };
         debug!("Sync Log 9: Received {} block headers", block_headers.len());

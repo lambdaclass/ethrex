@@ -29,6 +29,7 @@ bytes.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 lazy_static.workspace = true
+lru.workspace = true
 rayon.workspace = true
 url.workspace = true
 rkyv.workspace = true

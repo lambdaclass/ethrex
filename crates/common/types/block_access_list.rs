@@ -1159,13 +1159,16 @@ impl BlockAccessListRecorder {
                 }
             }
 
-            // Add storage reads (excluding slots that were promoted to writes)
+            // Add storage reads (excluding slots that were promoted to writes
+            // or that already exist in storage_writes from any transaction).
             // Sort for canonical BAL ordering (IndexSet preserves insertion order).
             if let Some(reads) = self.storage_reads.get(address) {
                 let promoted = self.reads_promoted_to_writes.get(address);
+                let writes = self.storage_writes.get(address);
                 let mut sorted_reads: Vec<_> = reads
                     .iter()
                     .filter(|slot| !promoted.is_some_and(|p| p.contains(slot)))
+                    .filter(|slot| !writes.is_some_and(|w| w.contains_key(slot)))
                     .copied()
                     .collect();
                 sorted_reads.sort();
@@ -1328,9 +1331,13 @@ impl BlockAccessListRecorder {
                     .and_then(|m| m.get(slot))
                     .copied()
                     .unwrap_or(0);
-                if changes.len() > checkpoint_len {
-                    // This slot had writes after checkpoint - ensure it's recorded as a read
-                    // (Reads that became writes are already in storage_reads since we don't remove them)
+                if changes.len() > checkpoint_len && checkpoint_len == 0 {
+                    // This slot was freshly written after checkpoint (no prior writes).
+                    // Convert to a read since the write is being reverted.
+                    // If checkpoint_len > 0, the slot already has writes from a prior
+                    // transaction and is already represented in storage_changes — adding
+                    // it to storage_reads would violate the invariant that a slot appears
+                    // in at most one of the two lists.
                     self.storage_reads.entry(*addr).or_default().insert(*slot);
                 }
             }

@@ -28,7 +28,7 @@ rustc-hash.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 fastbloom = "0.14"
 rayon.workspace = true
-lru = "0.16.2"
+lru.workspace = true
 
 [features]
 default = []

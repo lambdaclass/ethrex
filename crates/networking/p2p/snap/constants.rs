@@ -89,7 +89,11 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
 /// Maximum attempts before giving up on header downloads during syncing.
-pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
+/// Each attempt queries multiple peers with a 15s timeout, so this
+/// should be low to avoid stalling for tens of minutes when the sync
+/// head is unknown to peers. The caller can re-enter with a newer
+/// sync head from the CL.
+pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 5;
 
 // =============================================================================
 // SNAP SYNC THRESHOLDS

@@ -12,7 +12,7 @@ use crate::{
     metrics::METRICS,
     peer_table::{DiscoveryProtocol, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
     rlpx::utils::compress_pubkey,
-    types::{Node, NodeRecord},
+    types::{INITIAL_ENR_SEQ, Node, NodeRecord},
     utils::{distance, node_id},
 };
 use bytes::{Bytes, BytesMut};
@@ -143,7 +143,7 @@ impl DiscoveryServer {
     ) -> Result<GenServerHandle<Self>, DiscoveryServerError> {
         info!(protocol = "discv5", "Starting discovery server");
 
-        let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
         if let Ok(fork_id) = storage.get_fork_id().await {
             local_node_record
@@ -349,7 +349,7 @@ impl DiscoveryServer {
                 trace!(from = %src_id, "Handshake ENR signature verification failed");
                 return Ok(());
             }
-            let pairs = record.decode_pairs();
+            let pairs = record.pairs();
             let pubkey = pairs
                 .secp256k1
                 .and_then(|pk| PublicKey::from_slice(pk.as_bytes()).ok());
@@ -927,7 +927,7 @@ impl DiscoveryServer {
             return;
         };
         // Preserve fork_id if present
-        if let Some(fork_id) = self.local_node_record.decode_pairs().eth
+        if let Some(fork_id) = self.local_node_record.get_fork_id().cloned()
             && new_record.set_fork_id(fork_id, &self.signer).is_err()
         {
             error!(%new_ip, "Failed to set fork_id in new ENR, aborting IP update");

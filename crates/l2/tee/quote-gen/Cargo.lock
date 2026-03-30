@@ -1419,6 +1419,7 @@ dependencies = [
  "kzg-rs",
  "lazy_static",
  "libc",
+ "lru",
  "once_cell",
  "rayon",
  "rkyv",
