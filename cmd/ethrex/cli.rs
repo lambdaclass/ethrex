@@ -15,8 +15,11 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
-    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
+    discv4::server::INITIAL_LOOKUP_INTERVAL_MS,
+    peer_table::{ScoringStrategy, TARGET_PEERS},
+    sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS,
+    types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, has_valid_db};
@@ -330,6 +333,28 @@ pub struct Options {
     )]
     pub lookup_interval: f64,
     #[arg(
+        long = "p2p.snap-scoring",
+        default_value = "bandwidth",
+        value_name = "STRATEGY",
+        value_parser = utils::parse_scoring_strategy,
+        help = "Peer scoring strategy during snap sync.",
+        long_help = "Peer scoring strategy during snap sync. One of: success, latency, bandwidth.",
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_SNAP_SCORING"
+    )]
+    pub snap_scoring: ScoringStrategy,
+    #[arg(
+        long = "p2p.live-scoring",
+        default_value = "latency",
+        value_name = "STRATEGY",
+        value_parser = utils::parse_scoring_strategy,
+        help = "Peer scoring strategy during live/full sync.",
+        long_help = "Peer scoring strategy during live/full sync. One of: success, latency, bandwidth.",
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_LIVE_SCORING"
+    )]
+    pub live_scoring: ScoringStrategy,
+    #[arg(
         long = "builder.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
@@ -474,6 +499,8 @@ impl Default for Options {
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
+            snap_scoring: Default::default(),
+            live_scoring: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
