@@ -6,17 +6,20 @@ use ethrex_common::{
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
     },
 };
+use ethrex_crypto::Crypto;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct GuestProgramStateWrapper {
     inner: Arc<Mutex<GuestProgramState>>,
+    crypto: Arc<dyn Crypto + Send + Sync>,
 }
 
 impl GuestProgramStateWrapper {
-    pub fn new(db: GuestProgramState) -> Self {
+    pub fn new(db: GuestProgramState, crypto: Arc<dyn Crypto + Send + Sync>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(db)),
+            crypto,
         }
     }
 
@@ -30,15 +33,17 @@ impl GuestProgramStateWrapper {
         &mut self,
         account_updates: &[AccountUpdate],
     ) -> Result<(), GuestProgramStateError> {
-        self.lock_mutex()?.apply_account_updates(account_updates)
+        self.lock_mutex()?
+            .apply_account_updates(account_updates, self.crypto.as_ref())
     }
 
     pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
-        self.lock_mutex()?.state_trie_root()
+        self.lock_mutex()?.state_trie_root(self.crypto.as_ref())
     }
 
     pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
-        self.lock_mutex()?.get_first_invalid_block_hash()
+        self.lock_mutex()?
+            .get_first_invalid_block_hash(self.crypto.as_ref())
     }
 
     pub fn get_block_parent_header(
@@ -54,7 +59,8 @@ impl GuestProgramStateWrapper {
         &self,
         blocks: &[Block],
     ) -> Result<(), GuestProgramStateError> {
-        self.lock_mutex()?.initialize_block_header_hashes(blocks)
+        self.lock_mutex()?
+            .initialize_block_header_hashes(blocks, self.crypto.as_ref())
     }
 }
 
@@ -69,14 +75,14 @@ impl VmDatabase for GuestProgramStateWrapper {
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_account_state(address)
+            .get_account_state(address, self.crypto.as_ref())
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_block_hash(block_number)
+            .get_block_hash(block_number, self.crypto.as_ref())
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
@@ -90,7 +96,7 @@ impl VmDatabase for GuestProgramStateWrapper {
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_storage_slot(address, key)
+            .get_storage_slot(address, key, self.crypto.as_ref())
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

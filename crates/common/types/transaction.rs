@@ -1,10 +1,34 @@
-use std::{cmp::min, fmt::Display};
+use std::{
+    cmp::min,
+    fmt::Display,
+    num::NonZeroUsize,
+    sync::{LazyLock, Mutex},
+};
 
 use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, CryptoError};
+use lru::LruCache;
 pub use mempool::MempoolTransaction;
+
+const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
+
+/// Global cache mapping transaction hash → recovered sender address.
+/// Keyed by tx hash (unique per transaction), so each entry is safe to reuse.
+/// Not suitable for EIP-7702 authorization tuples where the same message hash
+/// can correspond to different signers (the message excludes the signature).
+/// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
+///
+/// Lock with `.unwrap_or_else(|e| e.into_inner())` — a poisoned mutex just means
+/// a thread panicked mid-update; the LruCache invariants are maintained by the
+/// std Mutex (data is still accessible), and a missing entry only costs one
+/// redundant recovery, so it's safe to keep using.
+pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
+    Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
+    ))
+});
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
@@ -1094,7 +1118,25 @@ impl Transaction {
             Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
         };
         sender_cache
-            .get_or_try_init(|| self.compute_sender(crypto))
+            .get_or_try_init(|| {
+                let tx_hash = self.hash();
+                // Fast path: check process-level signer cache
+                let mut cache = GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Some(&addr) = cache.get(&tx_hash) {
+                    return Ok(addr);
+                }
+                drop(cache);
+                // Slow path: actual secp256k1 recovery
+                let sender = self.compute_sender(crypto)?;
+                // Store in global cache for future lookups (LRU evicts oldest on overflow)
+                GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .put(tx_hash, sender);
+                Ok(sender)
+            })
             .copied()
     }
 
@@ -3057,7 +3099,7 @@ mod tests {
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
             hex!("8151d548273f6683169524b66ca9fe338b9ce42bc3540046c828fd939ae23bcb");
-        let result = compute_transactions_root(&body.transactions);
+        let result = compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto);
 
         assert_eq!(result, expected_root.into());
     }
@@ -3108,7 +3150,7 @@ mod tests {
         let logs = vec![];
         let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
 
-        let result = compute_receipts_root(&[receipt]);
+        let result = compute_receipts_root(&[receipt], &ethrex_crypto::NativeCrypto);
         let expected_root =
             hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
         assert_eq!(result, expected_root.into());

@@ -36,4 +36,22 @@ impl Crypto for Sp1Crypto {
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
         substrate_bn_pairing_check(pairs)
     }
+
+    fn verify_kzg_proof(
+        &self,
+        z: &[u8; 32],
+        y: &[u8; 32],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
+    ) -> Result<(), CryptoError> {
+        ethrex_crypto::kzg::verify_kzg_proof(*commitment, *z, *y, *proof)
+            .map_err(|e| CryptoError::Other(format!("{e}")))
+            .and_then(|valid| {
+                if valid {
+                    Ok(())
+                } else {
+                    Err(CryptoError::VerificationFailed)
+                }
+            })
+    }
 }
