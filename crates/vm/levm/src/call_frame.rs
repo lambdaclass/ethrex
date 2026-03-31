@@ -408,11 +408,14 @@ impl CallFrame {
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     #[expect(clippy::arithmetic_side_effects, reason = "arithmethic checked")]
     pub fn increase_consumed_gas(&mut self, gas: u64) -> Result<(), ExceptionalHalt> {
-        self.gas_remaining -= gas as i64;
-
-        if self.gas_remaining < 0 {
+        // Compare as unsigned first to avoid signed×unsigned multiply (MULHSU)
+        // which is not supported by all RISC-V proving backends.
+        let remaining = self.gas_remaining.max(0) as u64;
+        if gas > remaining {
+            self.gas_remaining -= gas as i64;
             return Err(ExceptionalHalt::OutOfGas);
         }
+        self.gas_remaining -= gas as i64;
 
         Ok(())
     }

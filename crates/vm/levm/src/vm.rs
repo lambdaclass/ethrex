@@ -625,7 +625,7 @@ impl<'a> VM<'a> {
         ) {
             let call_frame = &mut self.current_call_frame;
 
-            let mut gas_remaining = call_frame.gas_remaining as u64;
+            let mut gas_remaining = call_frame.gas_remaining.max(0) as u64;
             let result = Self::execute_precompile(
                 call_frame.code_address,
                 &call_frame.calldata,

@@ -160,7 +160,7 @@ impl Hook for DefaultHook {
                 clippy::as_conversions,
                 reason = "gas_remaining is positive at collision"
             )]
-            let gas_remaining = vm.current_call_frame.gas_remaining as u64;
+            let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
             let total_intrinsic = gas_limit
                 .saturating_sub(vm.state_gas_reservoir)
                 .saturating_sub(gas_remaining);

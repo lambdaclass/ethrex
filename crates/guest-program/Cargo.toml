@@ -47,6 +47,7 @@ zisk = [
     "ethrex-crypto/kzg-rs",
 ]
 openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]
+airbender = ["dep:airbender-crypto", "ethrex-crypto/kzg-rs"]
 
 # Build-ELF features: base + build tooling for compiling guest ELFs.
 # Used by the prover host. Enabling these triggers the build script which
@@ -55,6 +56,7 @@ sp1-build-elf = ["sp1", "dep:sp1-build", "dep:sp1-sdk"]
 risc0-build-elf = ["risc0", "dep:risc0-build"]
 zisk-build-elf = ["zisk"]
 openvm-build-elf = ["openvm"]
+airbender-build-elf = ["airbender"]
 
 l2 = []
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
@@ -69,6 +71,9 @@ ci = []
 # When this feature is enabled, the cycles used in the code inside the
 # report_cycles function will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+airbender-crypto = { git = "https://github.com/matter-labs/airbender-platform.git", features = ["secp256k1-static-context"], optional = true }
 
 [lib]
 path = "./src/lib.rs"
