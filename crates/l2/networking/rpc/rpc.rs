@@ -92,6 +92,12 @@ pub async fn start_api(
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
+    if sponsored_gas_limit == 0 {
+        tracing::warn!(
+            "sponsored_gas_limit is set to 0; all sponsored transactions will be rejected"
+        );
+    }
+
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {

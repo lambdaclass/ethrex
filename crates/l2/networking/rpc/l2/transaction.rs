@@ -223,9 +223,10 @@ impl RpcHandler for SponsoredTx {
             ))
         })?;
         if gas_limit == 0 || gas_limit > context.sponsored_gas_limit {
-            return Err(RpcErr::InvalidEthrexL2Message(
-                "tx too expensive".to_string(),
-            ));
+            return Err(RpcErr::InvalidEthrexL2Message(format!(
+                "estimated gas {gas_limit} exceeds sponsored gas limit {}",
+                context.sponsored_gas_limit,
+            )));
         }
 
         let signer = LocalSigner::new(context.sponsor_pk).into();

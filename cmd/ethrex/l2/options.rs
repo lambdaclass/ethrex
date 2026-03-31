@@ -24,6 +24,7 @@ use std::{
 use tracing::Level;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+pub const DEFAULT_SPONSORED_GAS_LIMIT: u64 = 500_000;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -45,7 +46,7 @@ pub struct Options {
     pub sponsor_private_key: SecretKey,
     #[arg(
         long = "sponsored-gas-limit",
-        default_value = "500000",
+        default_value_t = DEFAULT_SPONSORED_GAS_LIMIT,
         value_name = "GAS_LIMIT",
         env = "ETHREX_SPONSORED_GAS_LIMIT",
         help = "Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.",
@@ -64,7 +65,7 @@ impl Default for Options {
                 "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
             )
             .unwrap(),
-            sponsored_gas_limit: 500000,
+            sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
         }
     }
 }
