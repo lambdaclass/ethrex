@@ -1,0 +1,4 @@
+{
+  "body": "## Review Summary\n\nThis PR is **obsolete**. All its changes have been superseded on `main`:\n\n1. **CI workflows** — All three workflow files (`pr-main_l1.yaml`, `pr-main_l2_prover.yaml`, `pr-main_l2_tdx_build.yaml`) now use a `detect-changes` job with `dorny/paths-filter` that skips runs when only `docs/**` files change. This is a more robust approach than the `paths-ignore` additions in this PR, and it's already in production.\n\n2. **docs/LECTURES.md** — The lectures file already exists on `main` as `docs/lectures.md` (lowercase), linked from `docs/SUMMARY.md` line 142, with the same content. This PR would create a conflicting uppercase version.\n\nRecommend closing.",
+  "comments": []
+}

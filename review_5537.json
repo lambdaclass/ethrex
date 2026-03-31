@@ -1,0 +1,17 @@
+{
+  "body": "## Review Summary\n\nGood idea to split the release process into structured sub-pages. Two bugs: the README.md index has a `=` instead of `-` on line 7 (broken markdown list), and the post-release checklist title says \"Etherx\" instead of \"Ethrex\" (line 1). See inline comments.",
+  "comments": [
+    {
+      "path": "docs/developers/release-process/README.md",
+      "line": 7,
+      "side": "RIGHT",
+      "body": "Bug: `=` instead of `-` — this line renders as literal text, not a list item.\n\n```suggestion\n- [Ethrex Post-Release Checklist](./post-release-checklist.md)\n```"
+    },
+    {
+      "path": "docs/developers/release-process/post-release-checklist.md",
+      "line": 1,
+      "side": "RIGHT",
+      "body": "nit: Typo — \"Etherx\" → \"Ethrex\".\n\n```suggestion\n# Ethrex Post-Release Checklist\n```"
+    }
+  ]
+}

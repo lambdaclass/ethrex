@@ -1,0 +1,23 @@
+{
+  "body": "## Review Summary\n\nGood restructuring — overlapping header download with state sync is the right architecture and the wrapper/inner pattern for `download_headers_background` ensures the `headers_downloading` flag is always cleared. Three issues: a duplicate pivot hash in `block_hashes` that corrupts the `forkchoice_update` number mapping (line 151), a `current_head` / `current_head_number` mismatch risk in the background task (line 263), and a duplicate log message (line 672).",
+  "comments": [
+    {
+      "path": "crates/networking/p2p/sync/snap_sync.rs",
+      "line": 151,
+      "side": "RIGHT",
+      "body": "The pivot hash is pushed here before spawning the background download. But `download_headers_background_inner` will also push it when it reaches `sync_head` — the `process_incoming_headers` call at line 333 extends `block_hashes` with all received headers including the sync_head.\n\nThis means the pivot hash appears twice in `block_hashes`. The `forkchoice_update` at line 684 computes `pivot_header.number - i` for each entry, so the duplicate shifts all preceding block numbers by one — every header before the pivot gets mapped to the wrong block number.\n\nFix: either skip pushing here and let the background task handle it, or add a guard in `process_incoming_headers` / the background loop to skip the sync_head hash if it's already present."
+    },
+    {
+      "path": "crates/networking/p2p/sync/snap_sync.rs",
+      "line": 263,
+      "side": "RIGHT",
+      "body": "`current_head` (hash) is re-derived here from `get_latest_canonical_block_hash()` + checkpoint, but `current_head_number` was computed by the caller from a *different* `current_head` value (the one from `block_sync_state.get_current_head()`). Between those two reads, `sync_cycle_snap` stored the pivot header via `add_block_headers`, which could change what `get_latest_canonical_block_hash()` returns.\n\nIf the re-derived `current_head` hash doesn't match `current_head_number`, the first `request_block_headers(current_head_number, sync_head)` call starts from the wrong position.\n\nConsider passing both `current_head` and `current_head_number` from the caller instead of re-deriving the hash."
+    },
+    {
+      "path": "crates/networking/p2p/sync/snap_sync.rs",
+      "line": 672,
+      "side": "RIGHT",
+      "body": "nit: This duplicates the log at line 338 inside `download_headers_background_inner`. Since `header_download_handle.await??` only succeeds when the background task completed successfully (which already logged \"complete\"), this second message is redundant. Consider removing one of them or changing this to a debug-level log like `debug!(\"Header download handle joined successfully\")`."
+    }
+  ]
+}

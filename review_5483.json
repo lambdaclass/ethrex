@@ -1,0 +1,35 @@
+{
+  "body": "## Review Summary\n\nThe refactoring goal is good — consolidating the repetitive `is_<fork>_activated` methods into `is_fork_activated(fork, timestamp)` and using a `FORKS` array to drive `get_fork()` / `next_fork()` / `get_last_scheduled_fork()` is a clear DRY improvement. However, **this PR needs a full rebase**: `main` has since added `Fork::Amsterdam` (discriminant 25), `amsterdam_time`, `is_amsterdam_activated()`, and corresponding blob schedule handling. None of those exist in this diff.\n\nTwo semantic issues worth discussing:\n\n1. **`get_blob_schedule_for_time` has different fallback behavior** — On `main`, if BPO5 is activated but `blob_schedule.bpo5` is `None`, it returns `Some(ForkBlobSchedule::default())`. The PR's version falls back to the highest activated fork that *has* a schedule configured, which is arguably better (inherits the last real config rather than a zero-valued default), but it's a behavior change that should be documented/tested.\n\n2. **`fork_activation_time` is narrower than the method it replaces** — `get_activation_timestamp_for_fork` also returned block numbers for pre-merge forks (Homestead through Paris). The new `fork_activation_time` returns `None` for those. The one call site (`client.rs:148`) is safe because pre-Paris forks are already rejected, but if anyone adds a new caller expecting the old behavior they'll get `None` silently. The companion `fork_activation_block` covers pre-merge, so the pair is complete — just worth a doc note.",
+  "comments": [
+    {
+      "path": "crates/common/types/genesis.rs",
+      "line": 290,
+      "side": "RIGHT",
+      "body": "The `EIP155` variant maps to `eip155_block` and `EIP158` maps to `eip158_block`, which are separate fields in `ChainConfig`. On Mainnet they always activate at the same block (2675000), but as separate enum variants with `PartialOrd` derived, `EIP155 = 4 < EIP158 = 5`. This means `fork >= EIP158` won't include `EIP155`, which is semantically wrong — EIP-155 (replay protection) was part of Spurious Dragon, same as EIP-158.\n\nIn the revm runner (`fork_to_spec_id`), both map to `SpecId::SPURIOUS_DRAGON`, confirming they're the same fork. Consider keeping a single `SpuriousDragon` variant (or at least documenting why they're split and ensuring no comparison relies on their relative ordering)."
+    },
+    {
+      "path": "crates/blockchain/mempool.rs",
+      "line": 443,
+      "side": "RIGHT",
+      "body": "Good simplification — since this is a post-merge-only client, Istanbul is always active and `TX_DATA_NON_ZERO_GAS` (now 16) is the only valid gas cost. The removed pre-Istanbul branch was dead code."
+    },
+    {
+      "path": "crates/common/types/genesis.rs",
+      "line": 480,
+      "side": "RIGHT",
+      "body": "This `rfind` over `FORKS` is clean but has a subtle behavior difference from the old `get_fork_blob_schedule`: if a fork is activated but has no explicit blob schedule (e.g., BPO5 activated with `blob_schedule.bpo5 = None`), the old code returned `Some(Default::default())` (a zero-valued schedule), while this falls back to the next lower fork's schedule. The new behavior is arguably more correct (inherits the last configured schedule), but it silently changes semantics — worth a test and/or comment explaining the fallback intent."
+    },
+    {
+      "path": "crates/common/types/genesis.rs",
+      "line": 472,
+      "side": "RIGHT",
+      "body": "nit: The `FORKS` array includes pre-merge forks (Frontier through GrayGlacier) which will never satisfy `is_fork_activated` (returns `false` since `fork_activation_time` returns `None` for them). The iteration still works correctly due to `unwrap_or(Paris)`, but scanning 15 extra variants that can never match is unnecessary. Consider either starting the iteration from `Shanghai`, or using a separate `POST_MERGE_FORKS` slice."
+    },
+    {
+      "path": "crates/blockchain/payload.rs",
+      "line": 555,
+      "side": "LEFT",
+      "body": "Removing the EIP-155 replay protection check is correct for a post-merge client (EIP-155 is always active), but this is a semantic change that goes beyond pure refactoring. The commit message doesn't mention it — worth calling out in the PR description since it affects both L1 (`payload.rs`) and L2 (`payload_builder.rs`) payload building paths."
+    }
+  ]
+}

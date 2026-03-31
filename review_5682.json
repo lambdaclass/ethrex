@@ -1,0 +1,11 @@
+{
+  "body": "## Review Summary\n\nSmall cosmetic addition, no correctness concerns. One observation: the banner uses `println!` while the rest of the function uses `info!` (tracing). This means the ASCII art bypasses the logging framework — it won't appear in log files, won't respect log-level filters, and mixes raw stdout with structured log output. Whether that's intentional (always show the art regardless of log level) or not is worth clarifying.",
+  "comments": [
+    {
+      "path": "cmd/ethrex/utils.rs",
+      "line": 226,
+      "side": "RIGHT",
+      "body": "`println!` bypasses the tracing/logging framework, so this banner won't appear in log files and won't respect `--log-level` settings. The rest of this function uses `info!`. Was this intentional (always show the art even at `warn`/`error` level)? If so, a brief comment explaining the choice would help. If not, you could use `info!` for each line, or write to `stderr` via `eprintln!` to avoid interleaving with any stdout-based structured output."
+    }
+  ]
+}

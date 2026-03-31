@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nThis PR is **obsolete**. The file it modifies (`crates/l2/monitor/app.rs`) has been substantially reworked on `main` since this PR was opened:\n\n1. The monitor module was moved to `tooling/` workspace (commit f37651454)\n2. `based::sequencer_state::SequencerState` was renamed/moved to `sequencer::sequencer_state::SequencerState`\n3. The imports were already partially reorganized differently on `main` (e.g., `RichAccountsTable` is already in its own `use` statement, `SelectableScroller` was consolidated differently)\n\nThe PR will have merge conflicts and there's nothing to salvage — the consolidation intent is already addressed by the current `main` import layout. Recommend closing."
+}

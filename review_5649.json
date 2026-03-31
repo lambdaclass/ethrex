@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nClean and correct. All methods called on `Transaction` (`nonce()`, `sender()`, `hash()`, `effective_gas_price()`, `to()`) take `&self`, so the signature change to `&Transaction` is safe. The owned `Receipt` from `get_receipt()` flows directly into `RpcReceipt::new` (which already takes `Receipt` by value), and `cumulative_gas_used` is read before the move — no issue since `u64` is `Copy`.\n\nMinor note (not in scope for this PR): `RpcReceipt::new` still does `receipt.logs.clone()` at line 36 of `receipt.rs` even though it takes `receipt` by value — that clone could also be eliminated with `into_iter()`."
+}

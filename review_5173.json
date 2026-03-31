@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nBoth changes are correct. The `str::trim` reorder avoids the intermediate `String` allocation before `parse::<Address>()`, and the `.clone()` removal on `blockchain_opts` is valid since the value is moved into `init_blockchain` and never used again.\n\nNote: this PR has **merge conflicts** — the second hunk's context has changed on `main` (new fields `max_blobs_per_block` and `precompute_witnesses` were added to `BlockchainOptions`, and `regenerate_head_state` was renamed to `regenerate_state`). The fix itself is still applicable after a rebase."
+}

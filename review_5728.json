@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nClean fix. The old code called `get_pending_l1_messages` (an `eth_call` to the CommonBridge) once per item in both `refresh_items` and `process_logs`, meaning N+M RPC calls per tick where N is current items and M is new logs. The new code fetches once at the top of `on_tick` and threads the slice through — matching the pattern already used in `l1_watcher.rs:258`. Semantics are preserved since pending status is a point-in-time snapshot anyway."
+}

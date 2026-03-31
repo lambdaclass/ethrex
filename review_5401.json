@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nClean and correct. The `HashSet` → sorted `Vec` conversion is the minimal change needed, and `Address` (`H160`) is `Copy + Ord` so both `.copied()` and `.sort()` work. This is test tooling so the extra allocation is a non-issue.\n\nLooks good."
+}

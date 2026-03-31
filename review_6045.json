@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nCorrect fix. The `transfer_fee_token` path writes to `vm.db.get_account_mut` directly (bypassing the backup mechanism), so moving `deduct_caller_fee_token` after all failable validations is the right approach — it ensures fee token storage is never mutated for transactions that will be rejected. The ordering change has no consensus impact since all checks are pre-execution validation.\n\nThe comment block at lines 465-469 clearly documents the invariant for future maintainers. Looks good."
+}

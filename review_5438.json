@@ -1,0 +1,17 @@
+{
+  "body": "## Review Summary\n\nThe core idea — bulk-fetching headers and bodies instead of one-by-one in the gas tip estimator — is a valid and useful improvement. However, **this PR targets the old storage layer** (`StoreEngine` trait, `store_db/in_memory.rs`, `store_db/rocksdb.rs`, `read_bulk_async`) that has been completely replaced on `main` with the new `StorageBackend` API (`api/mod.rs`, `backend/in_memory.rs`, `backend/rocksdb.rs`). The `read_bulk_async` method used in the RocksDB implementation no longer exists.\n\nThis needs a full rebase and re-implementation of the storage methods against the new backend. The good news: `get_block_bodies(from, to)` already exists on `main` (store.rs:393) using the new pattern, so `get_block_headers` just needs to follow the same structure (loop over `begin_read().get()` inside a `spawn_blocking`).\n\nAlso, the first commit message says `fix(l1): use correct block number for base_fee in gas_tip_estimator` — was there a bug fix included? The diff doesn't show any block number correction, just the bulk fetch refactor. If the fix was folded into the refactor, it would be clearer as a separate commit.",
+  "comments": [
+    {
+      "path": "crates/networking/rpc/eth/gas_tip_estimator.rs",
+      "line": 89,
+      "side": "RIGHT",
+      "body": "The existing code on `main` does `.ok().flatten()` on `get_block_header`, silently swallowing any storage error. This bulk approach preserves that silent-error behavior (missing header → no base_fee → all tips counted as-is). Fine for now, but worth noting: if a header is genuinely missing while the body exists at the same block number, that's a storage inconsistency that arguably deserves a warning."
+    },
+    {
+      "path": "crates/storage/store_db/rocksdb.rs",
+      "line": 1140,
+      "side": "RIGHT",
+      "body": "This two-phase bulk read (numbers → hashes via `flat_map`, then hashes → headers, then zip-back with a mutable index `i`) is fragile — it relies on `read_bulk_async` returning results in the same order as `hash_keys`. More importantly, **`read_bulk_async` no longer exists on `main`**. The storage layer was refactored to use `StorageBackend` / `StorageReadView`. See `get_block_bodies` at `store.rs:393` on `main` for the current pattern: simple loop over `begin_read().get()` inside `spawn_blocking`."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "body": "## Review Summary\n\nThe test scenario is well-designed — building a chain past the pruning window, creating a fork, clearing state, and verifying `StateNotReachable` is the correct approach. However, **this PR needs a rebase**: `smoke_test.rs` has been moved to `test/tests/blockchain/smoke_tests.rs` on `main`, and the old `mod blockchain_integration_test` module wrapper no longer exists.\n\nTwo design concerns: (1) `clear_trie_cache_for_testing` is a `pub` method on the production `Store` type — consider using `#[cfg(test)]` gating or a separate test helper trait to avoid exposing it in the public API; and (2) `TrieLayerCache::default()` resets `commit_threshold` to 128, which differs from the value the store was initialized with (see inline comment).",
+  "comments": [
+    {
+      "path": "crates/storage/store.rs",
+      "line": 2366,
+      "side": "RIGHT",
+      "body": "`pub` visibility on a test-only method exposes it in the public API of `ethrex-storage`. Since this crate is `#[cfg(test)]`-incompatible (the test is in a different crate), consider either:\n\n1. `#[doc(hidden)] pub fn clear_trie_cache_for_testing(...)` — hides from docs but still accessible\n2. A `pub fn clear_trie_cache_for_testing(...)` behind a `#[cfg(feature = \"test-utils\")]` feature flag\n3. Or simply accept the `pub` with a doc comment warning (which you already have) — this is test tooling and the method name makes intent clear\n\nOption 3 is fine for now, but worth considering for the rebase."
+    },
+    {
+      "path": "crates/storage/store.rs",
+      "line": 2370,
+      "side": "RIGHT",
+      "body": "`TrieLayerCache::default()` sets `commit_threshold: 128`, but the store may have been initialized with a different value (e.g., `TrieLayerCache::new(10000)` for InMemory). This doesn't break the test since clearing the cache is the goal, but if the threshold matters for subsequent operations, the replacement cache will behave differently.\n\nConsider `TrieLayerCache::new(cache.commit_threshold)` to preserve the original threshold (you'd need to add a getter or read it before replacing), or simply `*cache = Arc::new(TrieLayerCache::default());` is fine if the test doesn't execute more blocks after clearing."
+    },
+    {
+      "path": "crates/blockchain/smoke_test.rs",
+      "line": 308,
+      "side": "RIGHT",
+      "body": "This loop builds 129 blocks, each calling `new_block` (which creates a `Blockchain`, builds a payload) + `add_block` + `apply_fork_choice`. This is likely slow — consider reducing `CHAIN_LENGTH` and using a smaller threshold, or documenting that this test is intentionally slow.\n\nAlternatively, since `clear_trie_cache_for_testing` nukes all cached state regardless of how many blocks were built, the 128-block threshold is only conceptually relevant (it motivates *why* state would be pruned). You could use a much smaller chain (e.g., 5 blocks) and the test would still verify the same code path."
+    },
+    {
+      "path": "crates/storage/store.rs",
+      "line": 2369,
+      "side": "RIGHT",
+      "body": "Silently ignoring lock poisoning: if another thread panicked while holding `trie_cache`, `lock()` returns `Err` and this does nothing. In a test helper this is probably fine, but an `expect(\"trie_cache lock poisoned\")` would surface the issue rather than silently passing through."
+    }
+  ]
+}

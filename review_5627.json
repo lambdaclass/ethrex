@@ -1,0 +1,17 @@
+{
+  "body": "## Review Summary\n\nThe detection logic rewrite (OR-based instead of AND-based) is a clear improvement — the old logic was wrong (see inline at line 84). However, **the PR title says \"exit client on pre-merge fork instead of warning\" and the linked issue #5504 explicitly asks to error and exit**, yet the code still just `warn!`s (line 89). The commit message explains this was intentional due to Hive devp2p tests, but that means the issue isn't actually resolved and the title is misleading.\n\nSuggestion: either rename the PR to something like `refactor(l1): improve pre-merge fork detection logic` (which accurately describes what it does), or actually return `Err(GenesisError::InvalidFork())` and handle the Hive case separately (e.g., via a CLI flag or by fixing the Hive genesis configs).",
+  "comments": [
+    {
+      "path": "crates/common/types/genesis.rs",
+      "line": 89,
+      "side": "RIGHT",
+      "body": "The issue (#5504) asks to exit with an error here, but this still just warns. The commit message says \"Kept as warning instead of error because Hive devp2p tests use minimal pre-merge genesis configs\" — if that's the case, a possible approach is to return `Err(GenesisError::InvalidFork())` here and adapt the Hive test setup to use post-merge genesis configs (or gate this behind a `--allow-pre-merge` flag). As-is, the behavior is unchanged from before — the client continues on a pre-merge fork."
+    },
+    {
+      "path": "crates/common/types/genesis.rs",
+      "line": 84,
+      "side": "RIGHT",
+      "body": "Good rewrite. The old AND-based check was semantically wrong: it triggered the warning when ALL of `terminal_total_difficulty`, `merge_netsplit_block`, `shanghai_time`, `cancun_time`, and `prague_time` were either unset or non-zero. That means a genesis with e.g. `terminal_total_difficulty == Some(0)` (clearly post-merge) AND `prague_time == None` would still warn — false positive."
+    }
+  ]
+}

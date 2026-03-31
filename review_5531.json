@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nClean and correct. All three changes eliminate redundant allocations: the dead `buf.len() < msg_size + 2` guard (always false after the `resize` on the line above), the no-op `&buf[..msg_size + 2]` slice (already the full buffer), and the `.to_owned()` calls on already-owned `Vec<u8>` values. Behavior is unchanged.\n\nLooks good."
+}

@@ -1,0 +1,3 @@
+{
+  "body": "## Review Summary\n\nClean fix. The auto-switch logic correctly detects synced state by checking `latest_block > merge_netsplit_block` and the absence of a snap sync checkpoint, and the checkpoint DB read is properly deduplicated. The `if let` chain for `merge_netsplit_block` safely skips custom genesis configs where the field is `None`. Verified that `Store.latest_block_header` is fully initialized (via `add_initial_state`) before `SyncManager::new()` is called, so `get_latest_block_number()` returns the real value.\n\nLooks good."
+}

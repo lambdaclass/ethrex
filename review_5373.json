@@ -1,0 +1,11 @@
+{
+  "body": "## Review Summary\n\nCorrect fix. The `(0, false)` case (zero children, no value) was falling through to the wildcard `_ => NodeRemoveResult::Mutated` arm at line 258, which violates the `remove()` contract — `None` signals an empty subtrie, and `Mutated` means the node is still alive. This misaligned `BranchNode` with `LeafNode::remove` and `ExtensionNode::remove`, which both return `None` when their subtrie becomes empty. Without this fix, `Trie::remove` (trie.rs:171) would never reset the root to `NodeRef::default()`, persisting a structurally empty branch node as the trie root.\n\nNote: this case requires removing the last remaining child from a valueless branch — unlikely in typical state tries but reachable and should be handled correctly.",
+  "comments": [
+    {
+      "path": "crates/common/trie/node/branch.rs",
+      "line": 217,
+      "side": "RIGHT",
+      "body": "Good placement — the early return sits between the children collection (line 210-215) and the restructuring match (line 219). One minor thought: you could alternatively add a `(0, false) => return Ok((None, value))` arm to the `match` below — the behavior is identical but it would keep all the restructuring cases in one place. Not a big deal either way."
+    }
+  ]
+}

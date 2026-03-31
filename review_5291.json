@@ -1,0 +1,17 @@
+{
+  "body": "## Review Summary\n\nClean approach — parameterizing the assembly via `global_asm!` template operands eliminates 855 lines of duplicated assembly and is more maintainable than the previous two-file solution. The macro, curly-brace escaping, and `sym` operand usage are all correct.\n\nMain concern: the `elf` detection flag is too narrow now that the outer `#[cfg]` gate has been broadened (see inline at mod.rs line 2).",
+  "comments": [
+    {
+      "path": "crates/common/crypto/keccak/mod.rs",
+      "line": 2,
+      "side": "RIGHT",
+      "body": "The outer `#[cfg]` was broadened from `all(target_arch = \"aarch64\", target_os = \"linux\"/\"macos\")` to just `target_arch = \"aarch64\"`, which means this now compiles on any aarch64 platform (FreeBSD, Android, Windows, etc.). But `cfg!(target_os=\"linux\")` only matches Linux, so on e.g. FreeBSD or Android (both ELF platforms) the `elf` flag would be `0`, triggering the Mach-O address resolution path — which will fail to assemble.\n\nTwo options:\n1. Keep the broad gate but fix the flag: `elf = const cfg!(not(target_vendor = \"apple\")) as u32` (Mach-O is the exception, ELF is the default)\n2. Restore the narrow gate: `#[cfg(all(target_arch = \"aarch64\", any(target_os = \"linux\", target_os = \"macos\")))]`\n\nOption 1 is more forward-compatible."
+    },
+    {
+      "path": "crates/common/crypto/keccak/keccak1600-armv8.s",
+      "line": 10,
+      "side": "RIGHT",
+      "body": "nit: shadowing the ARM built-in `adr` instruction with this macro is intentional and works here since all uses in the file need the long-range `adrp+add` pair. Worth a brief comment that this macro intentionally overrides the built-in `adr` pseudo-instruction — future readers (or contributors adding new code to this file) might be surprised that `adr` doesn't emit the actual `adr` instruction."
+    }
+  ]
+}

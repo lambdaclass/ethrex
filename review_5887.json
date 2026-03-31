@@ -1,0 +1,17 @@
+{
+  "body": "## Review Summary\n\nThe move itself is clean — all import path updates are correct, the re-export from `crates/l2/l2.rs` preserves backward compatibility, and the new `MonitorConfig` struct properly decouples the monitor from `SequencerConfig`.\n\nHowever, **moving `SequencerState` into `ethrex-l2-common` pulls `tokio` into the guest program builds** (see inline at `crates/l2/common/Cargo.toml`). The four guest-program `Cargo.lock` files in this diff confirm tokio is being added as a transitive dependency. `SequencerState` is a runtime-only concept (async mutex for sequencer status) that has no business in a crate shared with zkVM guests. Consider keeping `SequencerState` in `crates/l2/sequencer/` and having the monitor depend on `ethrex-l2` (or accept `SequencerState` via a generic/trait) instead of pulling it into `ethrex-l2-common`.",
+  "comments": [
+    {
+      "path": "crates/l2/common/Cargo.toml",
+      "line": 30,
+      "side": "RIGHT",
+      "body": "Adding `tokio` here makes it a dependency of every crate that depends on `ethrex-l2-common`, including the guest programs (SP1, RISC Zero, OpenVM, Zisk) — the four guest `Cargo.lock` updates in this PR confirm it. `SequencerState` uses `tokio::sync::Mutex`, which is why tokio is needed, but this type is a runtime-only concept that doesn't belong in a crate shared with zkVM guests.\n\nOptions:\n1. Keep `SequencerState` in `crates/l2/sequencer/` and have `ethrex-monitor` depend on `ethrex-l2` directly (or accept `SequencerState` as a type parameter/trait)\n2. Gate the `sequencer_state` module behind a feature flag (e.g., `tokio`) that guest programs don't enable\n3. Use `std::sync::Mutex` instead of `tokio::sync::Mutex` — `SequencerStatus` is `Copy` so lock hold times are trivially short"
+    },
+    {
+      "path": "crates/l2/sequencer/mod.rs",
+      "line": 209,
+      "side": "RIGHT",
+      "body": "nit: This config construction block duplicates field extraction that could live in a `From<&SequencerConfig>` impl on `MonitorConfig`. Not blocking, but if `SequencerConfig` changes, this manual mapping is easy to get out of sync."
+    }
+  ]
+}

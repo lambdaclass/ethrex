@@ -3,7 +3,7 @@ use crate::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
             NodesMessage, Ordinary, Packet, PacketCodecError, PacketTrait as _, PingMessage,
-            PongMessage, WhoAreYou, decrypt_message,
+            PongMessage, TalkResMessage, WhoAreYou, decrypt_message,
         },
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
@@ -126,14 +126,23 @@ pub struct DiscoveryServer {
     /// Pending outgoing messages awaiting WhoAreYou response, keyed by nonce.
     pub pending_by_nonce: FxHashMap<[u8; 12], (Node, Message, Instant)>,
     /// Pending WhoAreYou challenges awaiting Handshake response, keyed by src_id.
-    pub pending_challenges: FxHashMap<H256, (Vec<u8>, Instant)>,
-    /// Tracks last WHOAREYOU send time per source IP to prevent amplification attacks.
+    /// Tuple: (challenge_data, timestamp, encoded_packet_bytes).
+    /// The encoded bytes are kept so that the original WHOAREYOU can be re-sent verbatim if the
+    /// peer retransmits its ordinary packet before completing the handshake (HandshakeResend).
+    pub pending_challenges: FxHashMap<H256, (Vec<u8>, Instant, Vec<u8>)>,
+    /// Tracks last WHOAREYOU send time per (source IP, node ID) to prevent amplification attacks.
+    /// Keyed by (IP, node_id) so that distinct nodes behind the same IP (e.g. Docker) are not
+    /// blocked by each other's handshakes.
     /// Bounded via LRU cache to prevent memory exhaustion from spoofed IPs.
-    pub whoareyou_rate_limit: LruCache<IpAddr, Instant>,
+    pub whoareyou_rate_limit: LruCache<(IpAddr, H256), Instant>,
     /// Global WHOAREYOU rate limit: count of packets sent in the current second.
     pub whoareyou_global_count: u32,
     /// Start of the current global rate limit window.
     pub whoareyou_global_window_start: Instant,
+    /// Tracks the source IP that each session was established from.
+    /// Used to detect IP changes: if a packet arrives from a different IP than the session was
+    /// established with, we invalidate the session by sending WHOAREYOU (PingMultiIP behaviour).
+    pub session_ips: FxHashMap<H256, IpAddr>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
     /// Key: reported IP, Value: set of voter node_ids (each peer votes once per round).
     pub ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
@@ -183,6 +192,7 @@ impl DiscoveryServer {
             ),
             whoareyou_global_count: 0,
             whoareyou_global_window_start: Instant::now(),
+            session_ips: Default::default(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -223,6 +233,7 @@ impl DiscoveryServer {
             ),
             whoareyou_global_count: 0,
             whoareyou_global_window_start: Instant::now(),
+            session_ips: Default::default(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -260,7 +271,30 @@ impl DiscoveryServer {
 
         let ordinary = match decrypt_key {
             Some(key) => match Ordinary::decode(&packet, &key) {
-                Ok(ordinary) => ordinary,
+                Ok(ordinary) => {
+                    // Decryption succeeded, but verify the sender's IP matches the session IP.
+                    // If the IP has changed, the session is being reused from a different address
+                    // (e.g. PingMultiIP test scenario) — treat it as a new session.
+                    if let Some(session_ip) = self.session_ips.get(&src_id)
+                        && addr.ip() != *session_ip
+                    {
+                        trace!(
+                            protocol = "discv5",
+                            from = %src_id,
+                            %addr,
+                            expected_ip = %session_ip,
+                            "IP mismatch for existing session, sending WhoAreYou"
+                        );
+                        // Clear the rate limit for the new address so the WHOAREYOU
+                        // is not suppressed. The sender proved identity by successfully
+                        // decrypting, so this is not an amplification attack.
+                        self.whoareyou_rate_limit.pop(&(addr.ip(), src_id));
+                        return self
+                            .send_who_are_you(packet.header.nonce, src_id, addr)
+                            .await;
+                    }
+                    ordinary
+                }
                 Err(_) => {
                     // Decryption failed - session might be stale, send WhoAreYou
                     trace!(protocol = "discv5", from = %src_id, %addr, "Decryption failed, sending WhoAreYou");
@@ -280,7 +314,7 @@ impl DiscoveryServer {
 
         tracing::trace!(protocol = "discv5", received = %ordinary.message, from = %src_id, %addr);
 
-        self.handle_message(ordinary, addr).await
+        self.handle_message(ordinary, addr, None).await
     }
 
     async fn handle_who_are_you(
@@ -356,7 +390,7 @@ impl DiscoveryServer {
         let src_id = authdata.src_id;
 
         // Look up the WhoAreYou challenge we sent, keyed by src_id
-        let Some((challenge_data, _)) = self.pending_challenges.remove(&src_id) else {
+        let Some((challenge_data, _, _)) = self.pending_challenges.remove(&src_id) else {
             trace!(protocol = "discv5", from = %src_id, %addr, "Received unexpected Handshake packet");
             return Ok(());
         };
@@ -433,10 +467,12 @@ impl DiscoveryServer {
             false, // we are the recipient
         );
 
-        // Store the session
+        // Store the session and record the source IP it was established from.
+        // This is used in handle_ordinary to detect IP changes (PingMultiIP behaviour).
         self.peer_table
             .set_session_info(src_id, session.clone())
             .await?;
+        self.session_ips.insert(src_id, addr.ip());
 
         // Decrypt and handle the contained message
         let mut encrypted = packet.encrypted_message.clone();
@@ -444,9 +480,12 @@ impl DiscoveryServer {
         let message = Message::decode(&encrypted)?;
         trace!(protocol = "discv5", received = %message, from = %src_id, %addr, "Handshake completed");
 
-        // Handle the contained message
+        // Handle the contained message, passing the outbound key directly since
+        // the session may not be retrievable from the peer table yet (the contact
+        // might not exist if new_contact_records failed or hasn't been processed).
         let ordinary = Ordinary { src_id, message };
-        self.handle_message(ordinary, addr).await
+        self.handle_message(ordinary, addr, Some(session.outbound_key))
+            .await
     }
 
     async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
@@ -528,6 +567,7 @@ impl DiscoveryServer {
         ping_message: PingMessage,
         sender_id: H256,
         sender_addr: SocketAddr,
+        outbound_key: Option<[u8; 16]>,
     ) -> Result<(), DiscoveryServerError> {
         trace!(protocol = "discv5", from = %sender_id, enr_seq = ping_message.enr_seq, "Received PING");
 
@@ -538,12 +578,16 @@ impl DiscoveryServer {
             recipient_addr: sender_addr,
         });
 
-        // Get sender node for sending response (need public key for encryption)
-        if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
-            self.send_ordinary(pong, &contact.node).await?;
-        } else {
-            trace!(protocol = "discv5", from = %sender_id, "Received PING from unknown node, cannot respond");
+        // Send PONG. Use the contact's node if available (for pending_by_nonce tracking),
+        // otherwise send directly using the outbound key.
+        if outbound_key.is_none()
+            && let Some(contact) = self.peer_table.get_contact(sender_id).await?
+        {
+            return self.send_ordinary(pong, &contact.node).await;
         }
+        let key = self.resolve_outbound_key(&sender_id, outbound_key).await?;
+        self.send_ordinary_to(pong, &sender_id, sender_addr, &key)
+            .await?;
 
         Ok(())
     }
@@ -590,27 +634,40 @@ impl DiscoveryServer {
         find_node_message: FindNodeMessage,
         sender_id: H256,
         sender_addr: SocketAddr,
+        outbound_key: Option<[u8; 16]>,
     ) -> Result<(), DiscoveryServerError> {
-        // Validate sender before doing any work. A peer with a session could
-        // update its ENR to point to a victim IP; the IP check ensures the
-        // response only goes to the address the packet actually came from.
-        let contact = match self
+        // Validate sender before doing any work. If the contact is known,
+        // check that the packet came from the expected IP (anti-amplification).
+        // If the contact is unknown (e.g. just finished handshake), we still
+        // respond since the sender proved identity via the handshake.
+        let send_to_contact = match self
             .peer_table
             .validate_contact(&sender_id, sender_addr.ip())
             .await?
         {
-            PeerTableOutMessage::Contact(contact) => *contact,
+            PeerTableOutMessage::Contact(contact) => Some(*contact),
+            PeerTableOutMessage::UnknownContact => None,
             reason => {
                 trace!(from = %sender_id, ?reason, "Rejected FINDNODE");
                 return Ok(());
             }
         };
 
-        // Get nodes at the requested distances from our local node
-        let nodes = self
+        // Get nodes at the requested distances from our local node.
+        // Per spec, distance 0 means the node itself — include the local ENR explicitly.
+        let mut nodes = self
             .peer_table
-            .get_nodes_at_distances(self.local_node.node_id(), find_node_message.distances)
+            .get_nodes_at_distances(
+                self.local_node.node_id(),
+                find_node_message.distances.clone(),
+            )
             .await?;
+        if find_node_message.distances.contains(&0) {
+            nodes.push(self.local_node_record.clone());
+        }
+
+        // Resolve the key once for all chunks
+        let key = self.resolve_outbound_key(&sender_id, outbound_key).await?;
 
         // Chunk nodes into multiple NODES messages if needed
         let chunks: Vec<_> = nodes.chunks(MAX_ENRS_PER_MESSAGE).collect();
@@ -621,7 +678,12 @@ impl DiscoveryServer {
                 total: 1,
                 nodes: vec![],
             });
-            self.send_ordinary(nodes_message, &contact.node).await?;
+            if let Some(contact) = &send_to_contact {
+                self.send_ordinary(nodes_message, &contact.node).await?;
+            } else {
+                self.send_ordinary_to(nodes_message, &sender_id, sender_addr, &key)
+                    .await?;
+            }
         } else {
             for chunk in &chunks {
                 let nodes_message = Message::Nodes(NodesMessage {
@@ -629,7 +691,12 @@ impl DiscoveryServer {
                     total: chunks.len() as u64,
                     nodes: chunk.to_vec(),
                 });
-                self.send_ordinary(nodes_message, &contact.node).await?;
+                if let Some(contact) = &send_to_contact {
+                    self.send_ordinary(nodes_message, &contact.node).await?;
+                } else {
+                    self.send_ordinary_to(nodes_message, &sender_id, sender_addr, &key)
+                        .await?;
+                }
             }
         }
 
@@ -674,11 +741,16 @@ impl DiscoveryServer {
             src_id: self.local_node.node_id(),
             message: message.clone(),
         };
-        let encrypt_key = self
-            .peer_table
-            .get_session_info(node.node_id())
-            .await?
-            .map_or([0; 16], |s| s.outbound_key);
+        let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
+            Some(s) => s.outbound_key,
+            None => {
+                warn!(
+                    "No session found for {:?} in send_ordinary, falling back to zeroed key",
+                    node.node_id()
+                );
+                [0; 16]
+            }
+        };
 
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
@@ -690,6 +762,50 @@ impl DiscoveryServer {
             .await?;
         self.pending_by_nonce
             .insert(nonce, (node.clone(), message, Instant::now()));
+        Ok(())
+    }
+
+    /// Resolve the outbound encryption key: use the provided key if available,
+    /// otherwise look it up from the peer table session.
+    async fn resolve_outbound_key(
+        &mut self,
+        node_id: &H256,
+        key: Option<[u8; 16]>,
+    ) -> Result<[u8; 16], DiscoveryServerError> {
+        if let Some(key) = key {
+            return Ok(key);
+        }
+        match self.peer_table.get_session_info(*node_id).await? {
+            Some(s) => Ok(s.outbound_key),
+            None => {
+                warn!("No session found for {node_id:?}, falling back to zeroed key");
+                Ok([0; 16])
+            }
+        }
+    }
+
+    /// Send an ordinary message directly to a node_id at the given address,
+    /// using the provided encryption key.
+    /// Unlike `send_ordinary`, this does not require the node to be in the peer table.
+    async fn send_ordinary_to(
+        &mut self,
+        message: Message,
+        dest_id: &H256,
+        addr: SocketAddr,
+        encrypt_key: &[u8; 16],
+    ) -> Result<(), DiscoveryServerError> {
+        let ordinary = Ordinary {
+            src_id: self.local_node.node_id(),
+            message,
+        };
+
+        let mut rng = OsRng;
+        let masking_iv: u128 = rng.r#gen();
+        let nonce = self.next_nonce(&mut rng);
+
+        let packet = ordinary.encode(&nonce, masking_iv.to_be_bytes(), encrypt_key)?;
+
+        self.send_packet(&packet, dest_id, addr).await?;
         Ok(())
     }
 
@@ -708,11 +824,16 @@ impl DiscoveryServer {
             record,
             message: message.clone(),
         };
-        let encrypt_key = self
-            .peer_table
-            .get_session_info(node.node_id())
-            .await?
-            .map_or([0; 16], |s| s.outbound_key);
+        let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
+            Some(s) => s.outbound_key,
+            None => {
+                warn!(
+                    "No session found for {:?} in send_handshake, falling back to zeroed key",
+                    node.node_id()
+                );
+                [0; 16]
+            }
+        };
 
         let mut rng = OsRng;
         let masking_iv: u128 = rng.r#gen();
@@ -735,6 +856,7 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        let rate_key = (addr.ip(), src_id);
         let now = Instant::now();
 
         // Global rate limit: cap total outgoing WHOAREYOU bandwidth
@@ -756,21 +878,40 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        // Per-IP rate limit: prevent amplification attacks to a single victim
-        let ip = addr.ip();
-        if let Some(last_sent) = self.whoareyou_rate_limit.get(&ip)
+        // If we already have a pending challenge for this node (e.g. the peer retransmitted its
+        // ordinary packet before completing the handshake), re-send the original WHOAREYOU bytes
+        // verbatim. The nonce inside that WHOAREYOU echoes the *first* request's nonce, which is
+        // what the peer expects (HandshakeResend behaviour).
+        if let Some((_, _, raw_bytes)) = self.pending_challenges.get(&src_id) {
+            trace!(
+                protocol = "discv5",
+                to = %src_id,
+                %addr,
+                "Resending existing WhoAreYou challenge"
+            );
+            self.udp_socket.send_to(raw_bytes, addr).await?;
+            return Ok(());
+        }
+
+        // Per-(IP, node) rate limit: prevent amplification attacks.
+        // Keyed by (IP, src_id) so distinct nodes behind the same IP are not blocked.
+        // Skip rate limiting for private/local IPs -- amplification attacks
+        // are not a concern on local networks, and Docker/Hive tests use the
+        // same private IP for many nodes.
+        if !Self::is_private_ip(addr.ip())
+            && let Some(last_sent) = self.whoareyou_rate_limit.get(&rate_key)
             && now.duration_since(*last_sent) < WHOAREYOU_RATE_LIMIT
         {
             trace!(
                 protocol = "discv5",
-                to_ip = %ip,
+                to_ip = %addr.ip(),
                 "Rate limiting WHOAREYOU packet (amplification attack prevention)"
             );
             return Ok(());
         }
 
         // Update rate limit trackers
-        self.whoareyou_rate_limit.push(ip, now);
+        self.whoareyou_rate_limit.push(rate_key, now);
         self.whoareyou_global_count += 1;
 
         let mut rng = OsRng;
@@ -790,6 +931,11 @@ impl DiscoveryServer {
         let masking_iv: u128 = rng.r#gen();
         let packet = who_are_you.encode(&nonce, masking_iv.to_be_bytes(), &[0; 16])?;
 
+        // Encode the packet to bytes so we can store and re-send them if the peer retransmits.
+        let mut raw_buf = BytesMut::new();
+        packet.encode(&mut raw_buf, &src_id)?;
+        let raw_bytes = raw_buf.to_vec();
+
         // Store challenge data BEFORE sending to avoid race condition with fast responders
         let challenge_data = build_challenge_data(
             &masking_iv.to_be_bytes(),
@@ -797,9 +943,10 @@ impl DiscoveryServer {
             &packet.header.authdata,
         );
         self.pending_challenges
-            .insert(src_id, (challenge_data, Instant::now()));
+            .insert(src_id, (challenge_data, Instant::now(), raw_bytes.clone()));
 
-        self.send_packet(&packet, &src_id, addr).await?;
+        self.udp_socket.send_to(&raw_bytes, addr).await?;
+        trace!(protocol = "discv5", to = %src_id, %addr, flag = packet.header.flag, "Sent packet");
 
         Ok(())
     }
@@ -850,10 +997,12 @@ impl DiscoveryServer {
         // Clean pending WhoAreYou challenges
         let before_challenges = self.pending_challenges.len();
         self.pending_challenges
-            .retain(|_src_id, (_challenge_data, timestamp)| {
+            .retain(|_src_id, (_challenge_data, timestamp, _raw)| {
                 now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
+
+
 
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
@@ -978,10 +1127,14 @@ impl DiscoveryServer {
         self.local_node_record = new_record;
     }
 
+    /// Handle a decoded discv5 message.
+    /// `outbound_key` is provided when called from a just-completed handshake, since
+    /// the session may not yet be retrievable from the peer table.
     async fn handle_message(
         &mut self,
         ordinary: Ordinary,
         sender_addr: SocketAddr,
+        outbound_key: Option<[u8; 16]>,
     ) -> Result<(), DiscoveryServerError> {
         // Ignore packets sent by ourselves
         let sender_id = ordinary.src_id;
@@ -990,21 +1143,43 @@ impl DiscoveryServer {
         }
         match ordinary.message {
             Message::Ping(ping_message) => {
-                self.handle_ping(ping_message, sender_id, sender_addr)
+                // Spec: request-id MUST be ≤ 8 bytes; drop oversized requests silently.
+                if ping_message.req_id.len() > 8 {
+                    trace!(protocol = "discv5", from = %sender_id, "Dropping PING with oversized req_id");
+                    return Ok(());
+                }
+                self.handle_ping(ping_message, sender_id, sender_addr, outbound_key)
                     .await?
             }
             Message::Pong(pong_message) => {
                 self.handle_pong(pong_message, sender_id).await?;
             }
             Message::FindNode(find_node_message) => {
-                self.handle_find_node(find_node_message, sender_id, sender_addr)
+                if find_node_message.req_id.len() > 8 {
+                    trace!(protocol = "discv5", from = %sender_id, "Dropping FINDNODE with oversized req_id");
+                    return Ok(());
+                }
+                self.handle_find_node(find_node_message, sender_id, sender_addr, outbound_key)
                     .await?;
             }
             Message::Nodes(nodes_message) => {
                 self.handle_nodes_message(nodes_message).await?;
             }
-            // We are ignoring these messages currently
-            Message::TalkReq(_talk_req_message) => (),
+            Message::TalkReq(talk_req_message) => {
+                if talk_req_message.req_id.len() > 8 {
+                    trace!(protocol = "discv5", from = %sender_id, "Dropping TALKREQ with oversized req_id");
+                    return Ok(());
+                }
+                // Respond with an empty TALKRESP as required by the spec.
+                // We don't support any TALKREQ protocols, so the response is always empty.
+                let talk_res = Message::TalkRes(TalkResMessage {
+                    req_id: talk_req_message.req_id,
+                    response: vec![],
+                });
+                let key = self.resolve_outbound_key(&sender_id, outbound_key).await?;
+                self.send_ordinary_to(talk_res, &sender_id, sender_addr, &key)
+                    .await?;
+            }
             Message::TalkRes(_talk_res_message) => (),
             Message::Ticket(_ticket_message) => (),
         }

@@ -1,0 +1,4 @@
+{
+  "body": "## Review Summary\n\nClean fix. The old code called `init_datadir` first, which always created the directory if missing — making the \"does not exist\" branch unreachable and silently \"succeeding\" even with no database. The new early-return guards correctly replicate the safety checks from `init_datadir` (exists + is_dir) while downgrading the is-not-a-directory case from a panic to a warning, which is more appropriate for a removal command. All other `remove_db` callers (`import`, `import-bench`, L2 `init-dev`) are unaffected since their corresponding `init_datadir` calls happen separately.",
+  "comments": []
+}

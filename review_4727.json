@@ -1,0 +1,17 @@
+{
+  "body": "## Review Summary\n\nThis PR **needs a full rebase** — the target file `crates/storage/store_db/rocksdb.rs` was moved to `crates/storage/backend/rocksdb.rs` and significantly reworked (it now includes per-column-family `BlockBasedOptions` with bloom filters, block sizes, and blob file support that didn't exist when this PR was opened).\n\nBeyond the staleness, the approach of removing all tuned options and falling back to RocksDB defaults has significant production impact: the 4GB shared LRU cache is gone (each CF gets a tiny 8MB default cache), all compaction/write-buffer tuning is removed, and WAL safety settings (recovery mode, size limits, sync intervals) revert to defaults. The PR description mentions this is \"step 1\" toward file-based config (pending [rust-rocksdb#1040](https://github.com/rust-rocksdb/rust-rocksdb/pull/1040)), but removing all tuning *before* the config file mechanism exists means any deployment between this merge and the config file PR would run with untuned defaults — risky for a syncing Ethereum node. See inline comments for specifics.",
+  "comments": [
+    {
+      "path": "crates/storage/store_db/rocksdb.rs",
+      "line": 124,
+      "side": "RIGHT",
+      "body": "Uncommenting `enable_statistics()` and `set_stats_dump_period_sec(600)` is useful for debugging but adds measurable overhead in production — RocksDB statistics use atomic counters on every operation. This should be behind a feature flag or CLI option (e.g., `--rocksdb-stats`), not unconditionally enabled.\n\nAlso, these were commented out in the original code for a reason — was there a deliberate decision to enable them now?"
+    },
+    {
+      "path": "crates/storage/store_db/rocksdb.rs",
+      "line": 173,
+      "side": "RIGHT",
+      "body": "Replacing all per-CF options with `Options::default()` removes:\n- **Compression** — defaults to `Snappy` instead of the tuned `Lz4`/`Zstd` per CF\n- **Block cache** — the shared 4GB LRU cache is gone; each CF gets RocksDB's default 8MB unshared cache\n- **Bloom filters** — removed from hash/number/trie CFs, increasing point-lookup I/O\n- **Write buffer sizing** — trie CFs had 512MB write buffers (6 per CF) for write-heavy sync; defaults are 64MB × 2\n\nFor a syncing Ethereum node, this is a significant performance regression — especially the cache and bloom filter removal. Consider keeping at minimum: (1) a shared block cache, (2) bloom filters on trie and hash CFs, and (3) compression settings."
+    }
+  ]
+}
