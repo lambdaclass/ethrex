@@ -210,7 +210,7 @@ pub struct Blockchain {
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
-    merkle_pool: Arc<rayon::ThreadPool>,
+    merkle_pool: rayon::ThreadPool,
 }
 
 /// Configuration options for the blockchain.
@@ -320,14 +320,12 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    fn build_merkle_pool() -> Arc<rayon::ThreadPool> {
-        Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(17)
-                .thread_name(|i| format!("merkle-worker-{i}"))
-                .build()
-                .expect("Failed to create merkle thread pool"),
-        )
+    fn build_merkle_pool() -> rayon::ThreadPool {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(17)
+            .thread_name(|i| format!("merkle-worker-{i}"))
+            .build()
+            .expect("Failed to create merkle thread pool")
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {

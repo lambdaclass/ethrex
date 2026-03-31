@@ -25,13 +25,20 @@ use spawned_concurrency::{
         send_message_on,
     },
 };
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, trace};
 
 const EXPIRATION_SECONDS: u64 = 20;
-/// Interval between revalidation checks.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
+/// Interval between revalidation checks (how often we run the revalidation loop).
+/// Must be short so that new contacts from handle_neighbors (which no longer
+/// sends immediate pings) get validated quickly and become usable for lookups.
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// The initial interval between peer lookups, until the number of peers reaches
@@ -88,6 +95,9 @@ pub struct DiscoveryServer {
     /// signatures being expensive.
     find_node_message: BytesMut,
     initial_lookup_interval: f64,
+    /// Tracks pending FindNode requests by node_id -> sent_at.
+    /// Used to reject unsolicited Neighbors responses.
+    pending_find_node: HashMap<H256, Instant>,
 }
 
 impl DiscoveryServer {
@@ -123,6 +133,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            pending_find_node: HashMap::new(),
         };
 
         info!(
@@ -205,7 +216,8 @@ impl DiscoveryServer {
                     return Ok(());
                 }
 
-                self.handle_neighbors(neighbors_message).await?;
+                self.handle_neighbors(neighbors_message, sender_public_key)
+                    .await?;
             }
             Message::ENRRequest(enrrequest_message) => {
                 trace!(protocol = "discv4", received = "ENRRequest", msg = ?enrrequest_message, from = %format!("{sender_public_key:#x}"));
@@ -275,6 +287,9 @@ impl DiscoveryServer {
                     .set_disposable(&contact.node.node_id())
                     .await?;
                 METRICS.record_new_discarded_node();
+            } else {
+                self.pending_find_node
+                    .insert(contact.node.node_id(), Instant::now());
             }
 
             self.peer_table
@@ -286,6 +301,10 @@ impl DiscoveryServer {
 
     async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
         self.peer_table.prune().await?;
+        // Clean up expired pending FindNode entries
+        let expiration = Duration::from_secs(EXPIRATION_SECONDS);
+        self.pending_find_node
+            .retain(|_, sent_at| sent_at.elapsed() < expiration);
         Ok(())
     }
 
@@ -495,15 +514,32 @@ impl DiscoveryServer {
     async fn handle_neighbors(
         &mut self,
         neighbors_message: NeighborsMessage,
+        sender_public_key: H512,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO(#3746): check that we requested neighbors from the node
-        let nodes = neighbors_message.nodes.clone();
+        let sender_id = node_id(&sender_public_key);
+        let expiration = Duration::from_secs(EXPIRATION_SECONDS);
+
+        // Only accept Neighbors from peers we sent a FindNode to.
+        // This prevents unsolicited Neighbors from injecting contacts
+        // into our peer table. We don't remove the entry on first
+        // response because Neighbors can be split across multiple
+        // UDP packets (up to 8 nodes each).
+        match self.pending_find_node.get(&sender_id) {
+            Some(sent_at) if sent_at.elapsed() < expiration => {}
+            _ => {
+                trace!(
+                    protocol = "discv4",
+                    from = %format!("{sender_public_key:#x}"),
+                    "Dropping unsolicited Neighbors (no pending FindNode)"
+                );
+                return Ok(());
+            }
+        }
+
+        let nodes = neighbors_message.nodes;
         self.peer_table
             .new_contacts(nodes, self.local_node.node_id(), DiscoveryProtocol::Discv4)
             .await?;
-        for node in neighbors_message.nodes {
-            self.send_ping(&node).await?;
-        }
         Ok(())
     }
 

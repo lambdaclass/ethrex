@@ -6,6 +6,11 @@
 
 - Replace per-block thread spawning with persistent thread pool for merkleization [#6344](https://github.com/lambdaclass/ethrex/pull/6344)
 
+### 2026-03-26
+
+- Eliminate stack-frame spill in Stack::push for zero-upper-limb values [#6390](https://github.com/lambdaclass/ethrex/pull/6390)
+- Use const-generic big-endian conversion in PUSH opcodes [#6390](https://github.com/lambdaclass/ethrex/pull/6390)
+
 ### 2026-03-05
 
 - Doubly pipelined merkleization with self-coordinating shard workers [#6278](https://github.com/lambdaclass/ethrex/pull/6278)
