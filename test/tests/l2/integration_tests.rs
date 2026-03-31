@@ -226,6 +226,11 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
+    set.spawn(test_ecmul_precompile(
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
     while let Some(res) = set.join_next().await {
         let fees_details = res??;
         acc_priority_fees += fees_details.priority_fees;
@@ -517,6 +522,116 @@ async fn test_privileged_tx_with_contract_call_revert(
         "ptx_with_contract_call_revert",
     )
     .await?;
+
+    Ok(fees_details)
+}
+
+/// Test that the ECMUL precompile result is stored on-chain correctly.
+/// Deploys a contract that calls the ECMUL precompile (0x07) and writes
+/// the result to storage. This makes the precompile output affect the
+/// state root, so if the prover guest computes a different result than
+/// the sequencer (e.g. Jacobian vs affine coordinates), the proof will
+/// fail with a state root mismatch.
+async fn test_ecmul_precompile(
+    l2_client: EthClient,
+    deployer_pk: SecretKey,
+) -> Result<FeesDetails> {
+    let contracts_path = workspace_root().join("crates/l2/contracts/src/example");
+
+    println!("test_ecmul_precompile: Compiling EcmulStore contract");
+
+    compile_contract(
+        &contracts_path,
+        &contracts_path.join("EcmulStore.sol"),
+        false,
+        false,
+        None,
+        &[],
+        None,
+    )?;
+
+    let init_code = hex::decode(std::fs::read(
+        contracts_path.join("solc_out/EcmulStore.bin"),
+    )?)?;
+
+    println!("test_ecmul_precompile: Deploying EcmulStore contract on L2");
+
+    let (contract_address, mut fees_details) = test_deploy(
+        &l2_client,
+        &init_code,
+        &deployer_pk,
+        "test_ecmul_precompile",
+    )
+    .await?;
+
+    // Call ecmulAndStore(1, 2, 7) — BN254 G1 generator (1, 2) * scalar 7
+    let calldata: Bytes = encode_calldata(
+        "ecmulAndStore(uint256,uint256,uint256)",
+        &[
+            Value::Uint(U256::one()),
+            Value::Uint(U256::from(2)),
+            Value::Uint(U256::from(7)),
+        ],
+    )?
+    .into();
+
+    println!("test_ecmul_precompile: Calling ecmulAndStore(1, 2, 7)");
+
+    let signer: Signer = LocalSigner::new(deployer_pk).into();
+
+    let tx = build_generic_tx(
+        &l2_client,
+        TxType::EIP1559,
+        contract_address,
+        signer.address(),
+        calldata.clone(),
+        Overrides::default(),
+    )
+    .await?;
+
+    let tx_hash = send_generic_transaction(&l2_client, tx, &signer).await?;
+    let tx_receipt = wait_for_transaction_receipt(tx_hash, &l2_client, 50).await?;
+
+    assert!(
+        tx_receipt.receipt.status,
+        "test_ecmul_precompile: ecmulAndStore transaction failed"
+    );
+
+    let call_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        data: calldata,
+        ..Default::default()
+    });
+    let transaction_size: u64 = call_tx.encode_to_vec().len().try_into().unwrap();
+    fees_details += get_fees_details_l2(&tx_receipt, &l2_client, transaction_size).await?;
+
+    // Read stored results from contract storage
+    let stored_x = l2_client
+        .get_storage_at(
+            contract_address,
+            U256::zero(), // slot 0: storedX
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    let stored_y = l2_client
+        .get_storage_at(
+            contract_address,
+            U256::one(), // slot 1: storedY
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    assert!(
+        !stored_x.is_zero(),
+        "test_ecmul_precompile: storedX is zero — ECMUL returned the point at infinity"
+    );
+    assert!(
+        !stored_y.is_zero(),
+        "test_ecmul_precompile: storedY is zero — ECMUL returned the point at infinity"
+    );
+
+    println!("test_ecmul_precompile: ECMUL result stored — x={stored_x:#x}, y={stored_y:#x}");
 
     Ok(fees_details)
 }
