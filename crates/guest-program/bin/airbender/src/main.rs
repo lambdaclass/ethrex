@@ -2,9 +2,6 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "l2")]
-use ethrex_guest_program::l2::{execution_program, ProgramInput};
-#[cfg(not(feature = "l2"))]
 use ethrex_guest_program::l1::{execution_program, ProgramInput};
 
 use ethrex_guest_program::crypto::airbender::AirbenderCrypto;

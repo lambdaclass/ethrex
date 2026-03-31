@@ -21,5 +21,3 @@ ethrex-guest-program = { path = "../../", default-features = false, features = [
 ethrex-vm = { path = "../../../vm", default-features = false }
 ethrex-common = { path = "../../../common", default-features = false }
 
-[features]
-l2 = ["ethrex-guest-program/l2"]
