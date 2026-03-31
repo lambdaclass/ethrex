@@ -488,10 +488,9 @@ pub fn fake_exponential(
 
     // Fast path: use u128 arithmetic when inputs fit in u64.
     // This avoids expensive U256 division (which decomposes into many 128-bit divisions).
-    if let (Some(factor_u64), Some(numerator_u64)) = (factor.try_into().ok(), numerator.try_into().ok()) {
-        if let Some(result) = fake_exponential_u128(factor_u64, numerator_u64, denominator) {
+    if let (Some(factor_u64), Some(numerator_u64)) = (factor.try_into().ok(), numerator.try_into().ok())
+        && let Some(result) = fake_exponential_u128(factor_u64, numerator_u64, denominator) {
             return Ok(result);
-        }
     }
 
     fake_exponential_u256(factor, numerator, denominator)
