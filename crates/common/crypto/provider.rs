@@ -114,7 +114,10 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                 return Err(CryptoError::InvalidSignature);
             }
 
-            // Decompress R from r and recovery id parity
+            // Decompress R from r and recovery id parity.
+            // Note: recid >= 2 means R.x = r + n (curve order), which has ~2^-128
+            // probability on secp256k1 and never occurs in practice. We don't handle
+            // it here — decompression will simply fail and return RecoveryFailed.
             let y_is_odd = (recid & 1) != 0;
             let r_point: Option<AffinePoint> =
                 AffinePoint::decompress(r_bytes, u8::from(y_is_odd).into()).into();
@@ -366,7 +369,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Used by MODEXP precompile (0x05).
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
         #[cfg(feature = "std")]
-        {
+        let res_bytes: Vec<u8> = {
             use malachite::base::num::arithmetic::traits::ModPow as _;
             use malachite::base::num::basic::traits::Zero as _;
             use malachite::{Natural, base::num::conversion::traits::*};
@@ -387,27 +390,15 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                 base_mod.mod_pow(&exp_nat, &mod_nat)
             };
 
-            let modulus_len = modulus.len();
-            let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
-
-            let mut out = vec![0u8; modulus_len];
-            if res_bytes.len() <= modulus_len {
-                let offset = modulus_len - res_bytes.len();
-                out[offset..].copy_from_slice(&res_bytes);
-            } else {
-                out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
-            }
-            Ok(out)
-        }
+            result.to_power_of_2_digits_desc(8)
+        };
         #[cfg(not(feature = "std"))]
-        {
+        let res_bytes: Vec<u8> = {
             use num_bigint::BigUint;
 
             let base_nat = BigUint::from_bytes_be(base);
             let exp_nat = BigUint::from_bytes_be(exp);
             let mod_nat = BigUint::from_bytes_be(modulus);
-
-            let modulus_len = modulus.len();
 
             let result = if mod_nat == BigUint::ZERO {
                 BigUint::ZERO
@@ -417,16 +408,18 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
                 base_nat.modpow(&exp_nat, &mod_nat)
             };
 
-            let res_bytes = result.to_bytes_be();
-            let mut out = vec![0u8; modulus_len];
-            if res_bytes.len() <= modulus_len {
-                let offset = modulus_len - res_bytes.len();
-                out[offset..].copy_from_slice(&res_bytes);
-            } else {
-                out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
-            }
-            Ok(out)
+            result.to_bytes_be()
+        };
+
+        let modulus_len = modulus.len();
+        let mut out = vec![0u8; modulus_len];
+        if res_bytes.len() <= modulus_len {
+            let offset = modulus_len - res_bytes.len();
+            out[offset..].copy_from_slice(&res_bytes);
+        } else {
+            out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
         }
+        Ok(out)
     }
 
     /// 256-bit modular multiplication.
