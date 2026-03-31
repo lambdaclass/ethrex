@@ -354,7 +354,7 @@ pub trait RpcHandler: Sized {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
-fn get_error_kind(err: &RpcErr) -> &'static str {
+pub fn get_error_kind(err: &RpcErr) -> &'static str {
     match err {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
         RpcErr::WrongParam(_) => "WrongParam",
