@@ -1272,15 +1272,19 @@ mod tests {
     use bytes::Bytes;
     use ethrex_common::H256;
     use ethrex_storage::{EngineType, Store};
+    use lru::LruCache;
     use rand::{SeedableRng, rngs::StdRng};
     use rustc_hash::FxHashSet;
     use secp256k1::SecretKey;
     use std::{
         net::{IpAddr, SocketAddr},
+        num::NonZero,
         sync::Arc,
         time::Instant,
     };
     use tokio::net::UdpSocket;
+
+    use super::MAX_WHOAREYOU_RATE_LIMIT_ENTRIES;
 
     #[tokio::test]
     async fn test_next_nonce_counter() {
@@ -1303,7 +1307,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1339,7 +1348,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1362,7 +1376,8 @@ mod tests {
         assert!(
             server
                 .whoareyou_rate_limit
-                .contains_key(&(addr.ip(), src_id1))
+                .peek(&(addr.ip(), src_id1))
+                .is_some()
         );
         // Should have added a pending challenge (proves packet was processed)
         assert!(server.pending_challenges.contains_key(&src_id1));
@@ -1432,7 +1447,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1516,7 +1536,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1568,7 +1593,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1612,7 +1642,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1661,7 +1696,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1714,7 +1754,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1760,7 +1805,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
