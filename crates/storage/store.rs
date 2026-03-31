@@ -6,10 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_PROOFS,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_PROOF_ROOTS,
+            EXECUTION_PROOFS, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -2076,19 +2076,16 @@ impl Store {
     /// Store a mapping from new_payload_request_root to block_number (EIP-8025).
     /// Persists the root→block association so it survives node restarts.
     pub fn store_root_to_block(&self, root: H256, block_number: u64) -> Result<(), StoreError> {
-        let mut key = Vec::with_capacity(36);
-        key.extend_from_slice(b"rtb:");
-        key.extend_from_slice(root.as_bytes());
-        // NOTE: we're not using apply_prefix here — key is already unique.
-        self.write(EXECUTION_PROOFS, key, block_number.to_be_bytes().to_vec())
+        self.write(
+            EXECUTION_PROOF_ROOTS,
+            root.as_bytes().to_vec(),
+            block_number.to_be_bytes().to_vec(),
+        )
     }
 
     /// Look up the block number for a given new_payload_request_root (EIP-8025).
     pub fn get_block_number_by_root(&self, root: &H256) -> Result<Option<u64>, StoreError> {
-        let mut key = Vec::with_capacity(36);
-        key.extend_from_slice(b"rtb:");
-        key.extend_from_slice(root.as_bytes());
-        let data: Option<Vec<u8>> = self.read(EXECUTION_PROOFS, key)?;
+        let data: Option<Vec<u8>> = self.read(EXECUTION_PROOF_ROOTS, root.as_bytes().to_vec())?;
         Ok(data.and_then(|bytes| {
             if bytes.len() == 8 {
                 let mut buf = [0u8; 8];
@@ -2154,9 +2151,6 @@ impl Store {
         Ok(proofs)
     }
 
-    // TODO: cleanup only deletes rtb: entries for roots that had proofs stored.
-    // Roots that were mapped (via store_root_to_block) but never received a proof
-    // are leaked. Consider cleaning those up as well.
     fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
         if latest_block_number <= MAX_PROOF_BLOCKS {
             return Ok(());
@@ -2199,13 +2193,10 @@ impl Store {
                 self.delete(EXECUTION_PROOFS, key)?;
             }
 
-            // Clean up the corresponding rtb: (root→block) mappings.
+            // Clean up the corresponding root→block mappings.
             for root_bytes in roots_to_delete {
-                let mut rtb_key = Vec::with_capacity(36);
-                rtb_key.extend_from_slice(b"rtb:");
-                rtb_key.extend_from_slice(&root_bytes);
                 // Ignore errors — the mapping may already be gone.
-                let _ = self.delete(EXECUTION_PROOFS, rtb_key);
+                let _ = self.delete(EXECUTION_PROOF_ROOTS, root_bytes.to_vec());
             }
         };
 

@@ -113,7 +113,12 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// - [`Vec<u8>`] = serialized proof data
 pub const EXECUTION_PROOFS: &str = "execution_proofs";
 
-pub const TABLES: [&str; 20] = [
+/// Root-to-block mapping column family (EIP-8025): [`Vec<u8>`] => [`u8; 8`]
+/// - [`Vec<u8>`] = `new_payload_request_root.as_bytes()` (32 bytes)
+/// - [`u8; 8`] = `block_number.to_be_bytes()`
+pub const EXECUTION_PROOF_ROOTS: &str = "execution_proof_roots";
+
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -134,4 +139,5 @@ pub const TABLES: [&str; 20] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     EXECUTION_PROOFS,
+    EXECUTION_PROOF_ROOTS,
 ];
