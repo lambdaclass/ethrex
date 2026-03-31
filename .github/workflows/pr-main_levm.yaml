@@ -85,7 +85,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Run EF state tests with no_std crypto fallbacks
-        run: make -C tooling/ef_tests/state test-levm-no-std
+        run: make -C tooling/ef_tests/state test-levm-nostd-crypto
 
   ef-test-main:
     if: ${{ github.event_name != 'merge_group' }}
