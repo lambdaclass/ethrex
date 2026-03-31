@@ -255,8 +255,14 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64, Duration)>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+            Vec<BlockHeader>,
+            H256,
+            PeerConnection,
+            u64,
+            u64,
+            Duration,
+        )>(1000);
 
         let mut current_show = 0;
 
@@ -396,11 +402,18 @@ impl PeerHandler {
                 .unwrap_or_default();
                 let req_elapsed = req_start.elapsed();
 
-                tx.send((headers, peer_id, connection, startblock, chunk_limit, req_elapsed))
-                    .await
-                    .inspect_err(|err| {
-                        error!("Failed to send headers result through channel. Error: {err}")
-                    })
+                tx.send((
+                    headers,
+                    peer_id,
+                    connection,
+                    startblock,
+                    chunk_limit,
+                    req_elapsed,
+                ))
+                .await
+                .inspect_err(|err| {
+                    error!("Failed to send headers result through channel. Error: {err}")
+                })
             });
         }
 
