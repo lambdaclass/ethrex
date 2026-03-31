@@ -4,10 +4,10 @@
 //! `NewPayloadRequest` and producing the `PublicInput` committed to by
 //! execution proofs.
 
-use ssz::{SszDecode, SszEncode};
-use ssz_derive::{HashTreeRoot, SszDecode, SszEncode};
-use ssz_merkle::HashTreeRoot;
-use ssz_types::{SszList, SszVector};
+use libssz::{SszDecode, SszEncode};
+use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
+use libssz_merkle::{HashTreeRoot, Sha256Hasher};
+use libssz_types::{SszList, SszVector};
 
 // ── Spec limits (Electra) ──────────────────────────────────────────
 
@@ -65,13 +65,13 @@ impl SszDecode for Bytes20 {
     fn fixed_size() -> usize {
         20
     }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, libssz::DecodeError> {
         <[u8; 20]>::from_ssz_bytes(bytes).map(Self)
     }
 }
 
 impl HashTreeRoot for Bytes20 {
-    fn hash_tree_root(&self) -> ssz_merkle::Node {
+    fn hash_tree_root(&self, _hasher: &impl Sha256Hasher) -> libssz_merkle::Node {
         let mut node = [0u8; 32];
         node[..20].copy_from_slice(&self.0);
         node
@@ -232,7 +232,7 @@ pub struct PublicInput {
 impl ExecutionPayload {
     /// Produce the headerized version by computing `hash_tree_root` of
     /// each variable-length list field.
-    pub fn to_header(&self) -> ExecutionPayloadHeader {
+    pub fn to_header(&self, hasher: &impl Sha256Hasher) -> ExecutionPayloadHeader {
         ExecutionPayloadHeader {
             parent_hash: self.parent_hash,
             fee_recipient: self.fee_recipient,
@@ -247,13 +247,13 @@ impl ExecutionPayload {
             extra_data: self.extra_data.clone(),
             base_fee_per_gas: self.base_fee_per_gas,
             block_hash: self.block_hash,
-            transactions_root: self.transactions.hash_tree_root(),
-            withdrawals_root: self.withdrawals.hash_tree_root(),
+            transactions_root: self.transactions.hash_tree_root(hasher),
+            withdrawals_root: self.withdrawals.hash_tree_root(hasher),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
-            deposit_requests_root: self.deposit_requests.hash_tree_root(),
-            withdrawal_requests_root: self.withdrawal_requests.hash_tree_root(),
-            consolidation_requests_root: self.consolidation_requests.hash_tree_root(),
+            deposit_requests_root: self.deposit_requests.hash_tree_root(hasher),
+            withdrawal_requests_root: self.withdrawal_requests.hash_tree_root(hasher),
+            consolidation_requests_root: self.consolidation_requests.hash_tree_root(hasher),
         }
     }
 }
@@ -261,16 +261,16 @@ impl ExecutionPayload {
 impl NewPayloadRequest {
     /// Compute the `hash_tree_root` of this request — the value that
     /// becomes the execution proof's public input.
-    pub fn public_input(&self) -> PublicInput {
+    pub fn public_input(&self, hasher: &impl Sha256Hasher) -> PublicInput {
         PublicInput {
-            new_payload_request_root: self.hash_tree_root(),
+            new_payload_request_root: self.hash_tree_root(hasher),
         }
     }
 
     /// Produce the headerized version.
-    pub fn to_header(&self) -> NewPayloadRequestHeader {
+    pub fn to_header(&self, hasher: &impl Sha256Hasher) -> NewPayloadRequestHeader {
         NewPayloadRequestHeader {
-            execution_payload_header: self.execution_payload.to_header(),
+            execution_payload_header: self.execution_payload.to_header(hasher),
             versioned_hashes: self.versioned_hashes.clone(),
             parent_beacon_block_root: self.parent_beacon_block_root,
             execution_requests: self.execution_requests.clone(),
@@ -281,6 +281,9 @@ impl NewPayloadRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libssz_merkle::Sha2Hasher;
+
+    const HASHER: Sha2Hasher = Sha2Hasher;
 
     fn sample_payload() -> ExecutionPayload {
         ExecutionPayload {
@@ -332,10 +335,10 @@ mod tests {
     #[test]
     fn test_ssz_root_roundtrip_payload_vs_header() {
         let request = sample_request();
-        let header = request.to_header();
+        let header = request.to_header(&HASHER);
 
-        let request_root = request.hash_tree_root();
-        let header_root = header.hash_tree_root();
+        let request_root = request.hash_tree_root(&HASHER);
+        let header_root = header.hash_tree_root(&HASHER);
 
         assert_eq!(
             request_root, header_root,
@@ -350,8 +353,8 @@ mod tests {
         request2.execution_payload.block_number = 99;
 
         assert_ne!(
-            request1.hash_tree_root(),
-            request2.hash_tree_root(),
+            request1.hash_tree_root(&HASHER),
+            request2.hash_tree_root(&HASHER),
             "Different payloads must produce different roots"
         );
     }
@@ -359,7 +362,7 @@ mod tests {
     #[test]
     fn test_empty_vs_nonempty_list_roots_differ() {
         let payload = sample_payload();
-        let header = payload.to_header();
+        let header = payload.to_header(&HASHER);
 
         let empty_payload = ExecutionPayload {
             transactions: vec![].try_into().unwrap(),
@@ -369,7 +372,7 @@ mod tests {
             consolidation_requests: vec![].try_into().unwrap(),
             ..sample_payload()
         };
-        let empty_header = empty_payload.to_header();
+        let empty_header = empty_payload.to_header(&HASHER);
 
         // Non-empty lists (sample has 1 tx + 1 withdrawal) produce different roots
         // than empty lists.
@@ -392,8 +395,8 @@ mod tests {
     #[test]
     fn test_ssz_root_is_deterministic() {
         let request = sample_request();
-        let root1 = request.hash_tree_root();
-        let root2 = request.hash_tree_root();
+        let root1 = request.hash_tree_root(&HASHER);
+        let root2 = request.hash_tree_root(&HASHER);
         assert_eq!(root1, root2, "Same request must produce same root");
     }
 }

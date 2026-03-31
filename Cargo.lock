@@ -3937,6 +3937,10 @@ dependencies = [
  "kzg-rs",
  "lazy_static",
  "libc",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
  "once_cell",
  "rayon",
  "rkyv",
@@ -3946,10 +3950,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
- "ssz",
- "ssz-derive",
- "ssz-merkle",
- "ssz-types",
  "thiserror 2.0.18",
  "tinyvec",
  "tracing",
@@ -4022,14 +4022,14 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "k256",
+ "libssz",
+ "libssz-merkle",
  "risc0-build",
  "rkyv",
  "serde",
  "serde_with",
  "sp1-build",
  "sp1-sdk",
- "ssz",
- "ssz-merkle",
  "substrate-bn",
  "thiserror 2.0.18",
  "ziskos",
@@ -4393,6 +4393,8 @@ dependencies = [
  "hex-literal 0.4.1",
  "jemalloc_pprof",
  "jsonwebtoken",
+ "libssz-merkle",
+ "libssz-types",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
@@ -4401,8 +4403,6 @@ dependencies = [
  "sha2",
  "spawned-concurrency",
  "spawned-rt",
- "ssz-merkle",
- "ssz-types",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -6675,6 +6675,43 @@ dependencies = [
  "tracing",
  "uuid 1.20.0",
  "zerocopy 0.7.35",
+]
+
+[[package]]
+name = "libssz"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
+name = "libssz-derive"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "libssz-merkle"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "libssz",
+ "sha2",
+]
+
+[[package]]
+name = "libssz-types"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "libssz",
+ "libssz-merkle",
+ "smallvec",
 ]
 
 [[package]]
@@ -12779,43 +12816,6 @@ checksum = "d9c900139f3f6fdc8db217881a946adf00e935102fdd82b0e1bc19bacbffa311"
 dependencies = [
  "cc",
  "which",
-]
-
-[[package]]
-name = "ssz"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
-dependencies = [
- "smallvec",
-]
-
-[[package]]
-name = "ssz-derive"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "ssz-merkle"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
-dependencies = [
- "sha2",
- "ssz",
-]
-
-[[package]]
-name = "ssz-types"
-version = "0.1.0"
-source = "git+https://github.com/lambdaclass/libssz#c49f74b07398a0139c4fc5e8687d39d68991a8fc"
-dependencies = [
- "smallvec",
- "ssz",
- "ssz-merkle",
 ]
 
 [[package]]

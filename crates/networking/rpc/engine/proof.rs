@@ -18,9 +18,9 @@ use super::proof_types::{
 use ethrex_common::H256;
 use ethrex_common::types::eip8025_ssz;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
+use libssz_merkle::{HashTreeRoot, Sha2Hasher};
+use libssz_types::SszList;
 use serde_json::Value;
-use ssz_merkle::HashTreeRoot;
-use ssz_types::SszList;
 use tracing::{debug, info, warn};
 
 use std::time::Instant;
@@ -388,7 +388,7 @@ fn compute_new_payload_request_root(
         execution_requests: ssz_requests,
     };
 
-    let root = ssz_request.hash_tree_root();
+    let root = ssz_request.hash_tree_root(&Sha2Hasher);
     debug!("SSZ root (full payload): 0x{}", hex::encode(root));
 
     Ok(root)
@@ -562,7 +562,7 @@ fn json_header_to_ssz_root(header: &EngineNewPayloadRequestHeaderV1) -> Result<[
         execution_requests: ssz_requests,
     };
 
-    let root = ssz_header.hash_tree_root();
+    let root = ssz_header.hash_tree_root(&Sha2Hasher);
     info!("SSZ root (json_header): 0x{}", hex::encode(root),);
     Ok(root)
 }

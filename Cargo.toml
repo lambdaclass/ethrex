@@ -137,5 +137,11 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "lz4",
 ] }
 
+# libssz (EIP-8025 SSZ support) — pinned to latest commit
+libssz = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-types = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-merkle = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-derive = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+
 [workspace.lints.clippy]
 redundant_clone = "warn"

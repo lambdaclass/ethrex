@@ -67,10 +67,10 @@ pub fn execution_program(
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
-    use ssz_merkle::HashTreeRoot;
+    use libssz_merkle::{HashTreeRoot, Sha2Hasher};
 
     // Compute the hash_tree_root before consuming the payload.
-    let request_root = new_payload_request.hash_tree_root();
+    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
 
     // Transform SSZ NewPayloadRequest → Block
     let block = new_payload_request_to_block(&new_payload_request, crypto.as_ref())
