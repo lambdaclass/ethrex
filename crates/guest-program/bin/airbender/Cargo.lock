@@ -1150,9 +1150,7 @@ name = "ethrex-guest-airbender"
 version = "9.0.0"
 dependencies = [
  "airbender-sdk",
- "ethrex-common",
  "ethrex-guest-program",
- "ethrex-vm",
  "rkyv",
  "sha2",
 ]

@@ -219,6 +219,7 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path crates/guest-program/bin/risc0/Cargo.toml
 	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/bin/airbender/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
 	cargo tree --manifest-path tooling/Cargo.toml
