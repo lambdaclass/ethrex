@@ -131,12 +131,7 @@ fn bench_encode_bytes_strings(c: &mut Criterion) {
         b.iter_batched_ref(
             || {
                 (0..N)
-                    .map(|_| {
-                        rand::rng()
-                            .random_iter::<u8>()
-                            .take(L)
-                            .collect::<Vec<u8>>()
-                    })
+                    .map(|_| rand::rng().random_iter::<u8>().take(L).collect::<Vec<u8>>())
                     .collect::<Vec<_>>()
             },
             |data| {
@@ -655,8 +650,7 @@ fn bench_encode_trie(c: &mut Criterion) {
                     .map(|_| {
                         let mut choices = BranchNode::EMPTY_CHOICES;
                         for i in [0, 3, 7, 15] {
-                            choices[i] =
-                                NodeRef::Hash(NodeHash::Hashed(H256(rng.random())));
+                            choices[i] = NodeRef::Hash(NodeHash::Hashed(H256(rng.random())));
                         }
                         Node::Branch(Box::new(BranchNode::new(choices)))
                     })

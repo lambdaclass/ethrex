@@ -675,8 +675,7 @@ fn bench_decode_trie(c: &mut Criterion) {
                     .map(|_| {
                         let mut choices = BranchNode::EMPTY_CHOICES;
                         for i in [0, 3, 7, 15] {
-                            choices[i] =
-                                NodeRef::Hash(NodeHash::Hashed(H256(rng.random())));
+                            choices[i] = NodeRef::Hash(NodeHash::Hashed(H256(rng.random())));
                         }
                         Node::Branch(Box::new(BranchNode::new(choices))).encode_to_vec()
                     })
