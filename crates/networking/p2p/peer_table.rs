@@ -369,8 +369,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
-    fn record_response_latency(&self, node_id: H256, latency: Duration)
-    -> Result<(), ActorError>;
+    fn record_response_latency(&self, node_id: H256, latency: Duration) -> Result<(), ActorError>;
     fn record_bandwidth(
         &self,
         node_id: H256,
