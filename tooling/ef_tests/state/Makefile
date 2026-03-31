@@ -74,6 +74,9 @@ run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM
 test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
+test-levm-nostd-crypto: $(VECTORS_DIR) amsterdam-vectors ## 🧪 Run EF state tests with no_std crypto fallbacks
+	cargo test --test all --profile release-with-debug --no-default-features --features nostd-crypto -- --summary
+
 test-revm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--revm"
 

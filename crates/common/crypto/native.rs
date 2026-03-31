@@ -1,7 +1,7 @@
 use crate::provider::Crypto;
 
 /// A crypto provider that uses the native implementations
-/// (default trait methods in `Crypto`). Only available with the `std` feature.
+/// (default trait methods in `Crypto`).
 #[derive(Debug)]
 pub struct NativeCrypto;
 

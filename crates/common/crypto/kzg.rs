@@ -1,5 +1,5 @@
 #[cfg(not(feature = "std"))]
-use alloc::string::{String, ToString};
+use alloc::string::String;
 
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
@@ -128,7 +128,7 @@ pub fn verify_blob_kzg_proof(
         let _commitment = commitment;
         let _proof = proof;
         return Err(KzgError::Unimplemented(
-            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
+            "One of features c-kzg, openvm-kzg or kzg-rs should be active".into(),
         ));
     }
     #[cfg(all(
@@ -148,7 +148,7 @@ pub fn verify_blob_kzg_proof(
     #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
     {
         Err(KzgError::Unimplemented(
-            "openvm-kzg doesn't implement verify_blob_kzg_proof".to_string(),
+            "openvm-kzg doesn't implement verify_blob_kzg_proof".into(),
         ))
     }
     #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
@@ -208,7 +208,7 @@ pub fn verify_kzg_proof(
         let _y = y;
         let _proof_bytes = proof_bytes;
         return Err(KzgError::Unimplemented(
-            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
+            "One of features c-kzg, openvm-kzg or kzg-rs should be active".into(),
         ));
     }
     #[cfg(all(

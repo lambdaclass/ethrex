@@ -89,16 +89,62 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         }
         #[cfg(not(feature = "secp256k1"))]
         {
-            use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+            use k256::{
+                AffinePoint, ProjectivePoint, Scalar,
+                elliptic_curve::{
+                    group::prime::PrimeCurveAffine,
+                    ops::{Invert, LinearCombination, Reduce},
+                    point::DecompressPoint,
+                    sec1::ToEncodedPoint,
+                    PrimeField,
+                },
+            };
 
-            let recovery_id =
-                RecoveryId::try_from(recid).map_err(|_| CryptoError::InvalidRecoveryId)?;
-            let signature =
-                Signature::from_slice(sig).map_err(|_| CryptoError::InvalidSignature)?;
-            let public_key = VerifyingKey::recover_from_prehash(msg, &signature, recovery_id)
-                .map_err(|_| CryptoError::RecoveryFailed)?;
+            // Parse r and s as scalars, rejecting values >= curve order
+            let r_bytes = k256::FieldBytes::from_slice(&sig[..32]);
+            let s_bytes = k256::FieldBytes::from_slice(&sig[32..]);
+            let r: Option<Scalar> = Scalar::from_repr(*r_bytes).into();
+            let s: Option<Scalar> = Scalar::from_repr(*s_bytes).into();
 
-            let uncompressed = public_key.to_encoded_point(false);
+            let (Some(r), Some(s)) = (r, s) else {
+                return Err(CryptoError::InvalidSignature);
+            };
+
+            if r.is_zero().into() || s.is_zero().into() {
+                return Err(CryptoError::InvalidSignature);
+            }
+
+            // Decompress R from r and recovery id parity
+            let y_is_odd = (recid & 1) != 0;
+            let r_point: Option<AffinePoint> =
+                AffinePoint::decompress(r_bytes, u8::from(y_is_odd).into()).into();
+            let Some(r_point) = r_point else {
+                return Err(CryptoError::RecoveryFailed);
+            };
+
+            // Recover public key: pk = r^(-1) * (s*R - z*G)
+            let r_proj = ProjectivePoint::from(r_point);
+            let z = <Scalar as Reduce<k256::U256>>::reduce_bytes(
+                k256::FieldBytes::from_slice(msg),
+            );
+            let r_inv: Option<Scalar> = r.invert_vartime().into();
+            let Some(r_inv) = r_inv else {
+                return Err(CryptoError::RecoveryFailed);
+            };
+            let u1 = -(r_inv * z);
+            let u2 = r_inv * s;
+            let pk = ProjectivePoint::lincomb(
+                &ProjectivePoint::GENERATOR,
+                &u1,
+                &r_proj,
+                &u2,
+            );
+
+            let pk_affine = pk.to_affine();
+            if bool::from(pk_affine.is_identity()) {
+                return Err(CryptoError::RecoveryFailed);
+            }
+            let uncompressed = pk_affine.to_encoded_point(false);
             let hash = crate::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
             Ok(hash)
         }
@@ -494,12 +540,20 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     #[cfg(not(feature = "c-kzg"))]
     fn verify_kzg_proof(
         &self,
-        _z: &[u8; 32],
-        _y: &[u8; 32],
-        _commitment: &[u8; 48],
-        _proof: &[u8; 48],
+        z: &[u8; 32],
+        y: &[u8; 32],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
     ) -> Result<(), CryptoError> {
-        Err(CryptoError::Other("c-kzg feature not enabled".to_string()))
+        crate::kzg::verify_kzg_proof(*commitment, *z, *y, *proof)
+            .map_err(|e| CryptoError::Other(e.to_string()))
+            .and_then(|valid| {
+                if valid {
+                    Ok(())
+                } else {
+                    Err(CryptoError::VerificationFailed)
+                }
+            })
     }
 
     /// Verify blob KZG proof. Used by blob transaction validation.
@@ -525,11 +579,18 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     #[cfg(not(feature = "c-kzg"))]
     fn verify_blob_kzg_proof(
         &self,
-        _blob: &[u8],
-        _commitment: &[u8; 48],
-        _proof: &[u8; 48],
+        blob: &[u8],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
     ) -> Result<bool, CryptoError> {
-        Err(CryptoError::Other("c-kzg feature not enabled".to_string()))
+        use crate::kzg::BYTES_PER_BLOB;
+
+        let blob_arr: [u8; BYTES_PER_BLOB] = blob
+            .try_into()
+            .map_err(|_| CryptoError::InvalidInput("blob must be 131072 bytes"))?;
+
+        crate::kzg::verify_blob_kzg_proof(blob_arr, *commitment, *proof)
+            .map_err(|e| CryptoError::Other(e.to_string()))
     }
 
     // ── BLS12-381 (Prague, EIP-2537) ───────────────────────────────────
