@@ -114,6 +114,8 @@ use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::fullsync::METRICS_FULLSYNC;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -2178,7 +2180,8 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
-        let interval = Instant::now();
+        let interval = std::time::Instant::now();
+        let exec_start = std::time::Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             if cancellation_token.is_cancelled() {
                 info!("Received shutdown signal, aborting");
@@ -2222,9 +2225,13 @@ impl Blockchain {
             tokio::task::yield_now().await;
         }
 
+        let exec_ms = exec_start.elapsed().as_millis();
+
+        let transitions_start = std::time::Instant::now();
         let account_updates = vm
             .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
+        let transitions_ms = transitions_start.elapsed().as_millis();
 
         let last_block = blocks
             .last()
@@ -2234,11 +2241,13 @@ impl Blockchain {
         let last_block_gas_limit = last_block.header.gas_limit;
 
         // Apply the account updates over all blocks and compute the new state root
+        let merkle_start = std::time::Instant::now();
         let account_updates_list = self
             .storage
             .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
+        let merkle_ms = merkle_start.elapsed().as_millis();
 
         let new_state_root = account_updates_list.state_trie_hash;
         let state_updates = account_updates_list.state_updates;
@@ -2248,6 +2257,7 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        let store_start = std::time::Instant::now();
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
@@ -2260,6 +2270,12 @@ impl Blockchain {
         self.storage
             .store_block_updates(update_batch)
             .map_err(|e| (e.into(), None))?;
+        let store_ms = store_start.elapsed().as_millis();
+
+        info!(
+            "[FULLSYNC TIMING] Batch {}: exec={}ms, transitions={}ms, merkle={}ms, store={}ms, total={}ms",
+            blocks_len, exec_ms, transitions_ms, merkle_ms, store_ms, interval.elapsed().as_millis()
+        );
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
@@ -2275,6 +2291,9 @@ impl Blockchain {
             // Set the latest gas used as the average gas used per block in the batch
             METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
             METRICS_BLOCKS.set_latest_gigagas(throughput);
+            METRICS_FULLSYNC.set_batch_execution_ms(exec_ms as f64);
+            METRICS_FULLSYNC.set_batch_merkle_ms(merkle_ms as f64);
+            METRICS_FULLSYNC.set_batch_store_ms(store_ms as f64);
         );
 
         if self.options.perf_logs_enabled {
