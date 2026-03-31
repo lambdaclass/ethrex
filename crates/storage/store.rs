@@ -1472,6 +1472,27 @@ impl Store {
         }
     }
 
+    /// Creates a Store backed by a lightweight RocksDB configuration.
+    ///
+    /// Checkpoint stores are short-lived (re-execute a handful of blocks then dropped),
+    /// so they don't need the aggressive buffer settings of the main store. This avoids
+    /// wasting ~1.5-3 GB of memory per checkpoint instance.
+    #[cfg(feature = "rocksdb")]
+    pub fn new_checkpoint(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let db_path = path.as_ref().to_path_buf();
+        validate_store_schema_version(&db_path)?;
+        let backend = Arc::new(RocksDBBackend::open_checkpoint(path)?);
+        Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+    }
+
+    /// Fallback for non-rocksdb builds: creates a regular in-memory store.
+    #[cfg(not(feature = "rocksdb"))]
+    pub fn new_checkpoint(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let db_path = path.as_ref().to_path_buf();
+        let backend = Arc::new(InMemoryBackend::open()?);
+        Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+    }
+
     fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
