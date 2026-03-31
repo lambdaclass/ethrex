@@ -309,6 +309,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
         Store::new("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
+        Default::default(),
     )
     .await
 }

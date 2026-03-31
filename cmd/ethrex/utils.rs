@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    peer_table::{PeerTable, PeerTableServerProtocol as _},
+    peer_table::{PeerTable, PeerTableServerProtocol as _, ScoringStrategy},
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -76,6 +76,17 @@ pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
         "snap" => Ok(SyncMode::Snap),
         other => Err(eyre::eyre!(
             "Invalid syncmode {other:?} expected either snap or full",
+        )),
+    }
+}
+
+pub fn parse_scoring_strategy(s: &str) -> eyre::Result<ScoringStrategy> {
+    match s {
+        "success" => Ok(ScoringStrategy::Success),
+        "latency" => Ok(ScoringStrategy::Latency),
+        "bandwidth" => Ok(ScoringStrategy::Bandwidth),
+        other => Err(eyre::eyre!(
+            "Invalid scoring strategy {other:?}, expected one of: success, latency, bandwidth",
         )),
     }
 }
