@@ -4,7 +4,7 @@ pub mod prover;
 
 pub use crate::backend::{BackendError, BackendType, ExecBackend, ProverBackend};
 pub use crate::protocol::ProofData;
-pub use crate::prover::{InMessage as ProverInMessage, Prover, ProverPullConfig};
+pub use crate::prover::{Prover, ProverPullConfig};
 
 // Re-export prover types so downstream crates (e.g. proof_coordinator) can import from
 // ethrex_prover without depending on ethrex_common directly.

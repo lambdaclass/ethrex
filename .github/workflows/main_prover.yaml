@@ -9,6 +9,11 @@ on:
     paths:
       - ".github/workflows/main_prover.yaml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag to checkout"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -31,6 +36,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

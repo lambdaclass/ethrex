@@ -1,6 +1,6 @@
-//! L1 ProofCoordinator GenServer — manages prover connections and proof delivery.
+//! L1 ProofCoordinator actor — manages prover connections and proof delivery.
 //!
-//! Follows the same `spawned_concurrency::GenServer` pattern as the L2
+//! Follows the same `spawned_concurrency` actor pattern as the L2
 //! `ProofCoordinator`, using the generic `ProofData<ProgramInput>` protocol
 //! from `ethrex-prover` for communication with prover workers.
 //!
@@ -22,8 +22,12 @@ use ethrex_guest_program::input::ProgramInput;
 use ethrex_prover::ProofData;
 use ethrex_prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_storage::Store;
-use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorStart as _, Context, Handler, send_after},
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -84,28 +88,22 @@ pub struct ProofRequest {
     pub created_at: Instant,
 }
 
-/// Cast messages for the L1ProofCoordinator.
-#[derive(Clone)]
-pub enum CoordCastMsg {
+/// Protocol for the L1ProofCoordinator actor.
+#[protocol]
+pub trait L1CoordinatorProtocol: Send + Sync {
     /// Try to accept the next prover connection, then re-enqueue via `send_after`.
-    AcceptNext,
+    fn accept_next(&self) -> Result<(), ActorError>;
     /// Enqueue a new proof request from the RPC handler.
-    AddRequest {
-        block_number: u64,
-        request: Box<ProofRequest>,
-    },
+    fn add_request(&self, block_number: u64, request: Box<ProofRequest>) -> Result<(), ActorError>;
 }
 
-/// Output message (unused — coordinator runs indefinitely).
-#[derive(Clone, PartialEq)]
-pub enum CoordOutMsg {
-    Done,
-}
+/// Handle to send messages to the L1ProofCoordinator actor.
+///
+/// Used by RPC handlers to enqueue proof requests via
+/// `coordinator.send(l1_coordinator_protocol::AddRequest { .. })`.
+pub type CoordinatorHandle = Context<L1ProofCoordinator>;
 
-/// Handle to send messages to the L1ProofCoordinator GenServer.
-pub type CoordinatorHandle = GenServerHandle<L1ProofCoordinator>;
-
-/// L1 Proof Coordinator GenServer.
+/// L1 Proof Coordinator actor.
 ///
 /// Manages a map of pending proof requests keyed by block number, accepts
 /// prover TCP connections, and dispatches work using the `ProofData<ProgramInput>`
@@ -159,7 +157,7 @@ impl L1ProofCoordinator {
 
     /// Handle one accept iteration: check for a connection, handle it,
     /// then reschedule.
-    async fn handle_accept_next(&mut self, handle: &GenServerHandle<Self>) {
+    async fn do_accept_next(&mut self, ctx: &Context<Self>) {
         if let Some((stream, peer_addr)) = self.try_accept().await {
             debug!("Prover connected from {peer_addr}");
             self.handle_connection(stream).await;
@@ -167,7 +165,11 @@ impl L1ProofCoordinator {
 
         // Reschedule: the next AcceptNext will be processed after any
         // AddRequest messages already in the queue.
-        send_after(Duration::ZERO, handle.clone(), CoordCastMsg::AcceptNext);
+        send_after(
+            Duration::ZERO,
+            ctx.clone(),
+            l1_coordinator_protocol::AcceptNext,
+        );
     }
 
     /// Handle a single prover connection with timeout and size limit.
@@ -444,44 +446,48 @@ impl L1ProofCoordinator {
     }
 }
 
-impl GenServer for L1ProofCoordinator {
-    type CallMsg = Unused;
-    type CastMsg = CoordCastMsg;
-    type OutMsg = CoordOutMsg;
-    type Error = L1CoordinatorError;
+#[actor(protocol = L1CoordinatorProtocol)]
+impl L1ProofCoordinator {
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        // Kick off the accept cycle.
+        let _ = ctx
+            .send(l1_coordinator_protocol::AcceptNext)
+            .inspect_err(|e| error!("Failed to send initial AcceptNext: {e}"));
+    }
 
-    async fn handle_cast(
+    #[send_handler]
+    async fn handle_accept_next(
         &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            CoordCastMsg::AcceptNext => {
-                self.handle_accept_next(handle).await;
-            }
-            CoordCastMsg::AddRequest {
-                block_number,
-                request,
-            } => {
-                // Evict stale entries before adding.
-                self.evict_stale_requests();
+        _msg: l1_coordinator_protocol::AcceptNext,
+        ctx: &Context<Self>,
+    ) {
+        self.do_accept_next(ctx).await;
+    }
 
-                // Enforce capacity limit: evict the oldest (lowest block number) entry.
-                if self.pending.len() >= MAX_PENDING_REQUESTS
-                    && let Some(&oldest_bn) = self.pending.keys().min()
-                {
-                    self.pending.remove(&oldest_bn);
-                    warn!(
-                        evicted_block = oldest_bn,
-                        "Pending queue at capacity ({MAX_PENDING_REQUESTS}); evicted oldest request"
-                    );
-                }
+    #[send_handler]
+    async fn handle_add_request(
+        &mut self,
+        msg: l1_coordinator_protocol::AddRequest,
+        _ctx: &Context<Self>,
+    ) {
+        // Evict stale entries before adding.
+        self.evict_stale_requests();
 
-                self.pending.insert(block_number, *request);
-                debug!(block_number, "Proof request added to queue");
-            }
+        // Enforce capacity limit: evict the oldest (lowest block number) entry.
+        if self.pending.len() >= MAX_PENDING_REQUESTS
+            && let Some(&oldest_bn) = self.pending.keys().min()
+        {
+            self.pending.remove(&oldest_bn);
+            warn!(
+                evicted_block = oldest_bn,
+                "Pending queue at capacity ({MAX_PENDING_REQUESTS}); evicted oldest request"
+            );
         }
-        CastResponse::NoReply
+
+        let block_number = msg.block_number;
+        self.pending.insert(block_number, *msg.request);
+        debug!(block_number, "Proof request added to queue");
     }
 }
 
@@ -499,12 +505,12 @@ async fn send_response<I: serde::Serialize>(
 ///
 /// Call this during node startup when the `eip-8025` feature is enabled.
 /// The returned `CoordinatorHandle` is used by RPC handlers to enqueue
-/// new proof requests via `CoordCastMsg::AddRequest`.
+/// new proof requests via `coordinator.send(l1_coordinator_protocol::AddRequest { .. })`.
 pub async fn start_proof_coordinator(
     store: Store,
     config: ProofCoordinatorConfig,
 ) -> Result<CoordinatorHandle, L1CoordinatorError> {
-    // Bind the TCP listener before starting the GenServer.
+    // Bind the TCP listener before starting the actor.
     let bind_addr = format!("{}:{}", config.coordinator_addr, config.coordinator_port);
     let listener = Arc::new(TcpListener::bind(&bind_addr).await?);
     info!("L1 ProofCoordinator bound to {bind_addr}");
@@ -512,13 +518,8 @@ pub async fn start_proof_coordinator(
     let mut coordinator = L1ProofCoordinator::new(store, config);
     coordinator.listener = Some(listener);
 
-    let mut coord_handle = coordinator.start();
+    // The #[started] hook sends the initial AcceptNext message automatically.
+    let actor_ref = coordinator.start();
 
-    // Kick off the accept cycle.
-    coord_handle
-        .cast(CoordCastMsg::AcceptNext)
-        .await
-        .map_err(|e| L1CoordinatorError::Internal(e.to_string()))?;
-
-    Ok(coord_handle)
+    Ok(actor_ref.context())
 }

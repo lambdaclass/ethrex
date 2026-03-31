@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use ethrex_common::H256;
-use ethrex_common::{serde_utils, tracing::CallTrace, types::BlockNumber};
+use ethrex_common::{serde_utils, tracing::CallTraceFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{rpc::RpcHandler, utils::RpcErr};
+use crate::{rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
 
 /// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: u32 = 128;
@@ -18,7 +18,7 @@ pub struct TraceTransactionRequest {
 }
 
 pub struct TraceBlockByNumberRequest {
-    number: BlockNumber,
+    block: BlockIdentifier,
     trace_config: TraceConfig,
 }
 
@@ -116,7 +116,13 @@ impl RpcHandler for TraceTransactionRequest {
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                Ok(serde_json::to_value(call_trace)?)
+                // Geth returns a single CallTraceFrame object, not an array.
+                // Blockscout expects this format for internal transaction indexing.
+                let top_frame = call_trace
+                    .into_iter()
+                    .next()
+                    .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                Ok(serde_json::to_value(top_frame)?)
             }
         }
     }
@@ -136,8 +142,10 @@ impl RpcHandler for TraceBlockByNumberRequest {
             TraceConfig::default()
         };
 
+        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+
         Ok(TraceBlockByNumberRequest {
-            number: serde_json::from_value(params[0].clone())?,
+            block,
             trace_config,
         })
     }
@@ -146,9 +154,14 @@ impl RpcHandler for TraceBlockByNumberRequest {
         &self,
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let block_number = self
+            .block
+            .resolve_block_number(&context.storage)
+            .await?
+            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
         let block = context
             .storage
-            .get_block_by_number(self.number)
+            .get_block_by_number(block_number)
             .await?
             .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
@@ -173,9 +186,18 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // We need to show transactions from newest to oldest
-                let block_trace: BlockTrace<CallTrace> =
-                    call_traces.into_iter().rev().map(Into::into).collect();
+                // Unwrap each CallTrace (Vec<CallTraceFrame>) to a single
+                // CallTraceFrame to match geth's callTracer response format.
+                let block_trace: BlockTrace<CallTraceFrame> = call_traces
+                    .into_iter()
+                    .map(|(hash, trace)| {
+                        let frame = trace
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
+                        Ok((hash, frame).into())
+                    })
+                    .collect::<Result<_, RpcErr>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
         }

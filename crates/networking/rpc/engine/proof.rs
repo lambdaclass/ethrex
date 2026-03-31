@@ -7,7 +7,7 @@
 
 use bytes::Bytes;
 use ethrex_blockchain::proof_coordinator::coordinator::{
-    CoordCastMsg, CoordinatorHandle, ProofRequest,
+    CoordinatorHandle, ProofRequest, l1_coordinator_protocol,
 };
 use ethrex_blockchain::proof_coordinator::types::{ExecutionProofV1, MAX_PROOF_SIZE, ProofGenId};
 
@@ -107,7 +107,7 @@ impl RpcHandler for RequestProofsV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let mut coordinator = get_coordinator(&context)?.clone();
+        let coordinator = get_coordinator(&context)?.clone();
 
         let block_number = self.payload.block_number;
         info!(
@@ -160,9 +160,9 @@ impl RpcHandler for RequestProofsV1 {
         // Generate a ProofGenId from (block_number, root).
         let proof_gen_id = make_proof_gen_id(block_number, &new_payload_request_root);
 
-        // Send the proof request to the coordinator via GenServer message.
+        // Send the proof request to the coordinator via actor message.
         coordinator
-            .cast(CoordCastMsg::AddRequest {
+            .send(l1_coordinator_protocol::AddRequest {
                 block_number,
                 request: Box::new(ProofRequest {
                     proof_gen_id,
@@ -173,7 +173,6 @@ impl RpcHandler for RequestProofsV1 {
                     created_at: Instant::now(),
                 }),
             })
-            .await
             .map_err(|e| {
                 RpcErr::ProofGenerationUnavailable(format!("Coordinator unavailable: {e}"))
             })?;
