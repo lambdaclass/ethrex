@@ -11,14 +11,15 @@ mod snap_sync;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{PeerHandler, PeerHandlerError};
-use crate::peer_table::PeerTableError;
 use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
-use crate::snap::mpt_stubs::{TrieError, TrieGenerationError};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
 use ethrex_common::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::TrieError;
+use ethrex_trie::trie_sorted::TrieGenerationError;
+use spawned_concurrency::error::ActorError;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
@@ -235,7 +236,7 @@ pub enum SyncError {
     #[error("Bytecode file error")]
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
-    PeerTableError(#[from] PeerTableError),
+    PeerTableError(#[from] ActorError),
     #[error("Missing fullsync batch")]
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]

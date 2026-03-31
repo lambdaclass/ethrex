@@ -3,10 +3,11 @@
 //! This module consolidates all snap-related errors into a unified `SnapError` type
 //! for consistent error handling across server and client operations.
 
-use crate::peer_table::PeerTableError;
 use crate::rlpx::error::PeerConnectionError;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
+use spawned_concurrency::error::ActorError;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -22,13 +23,17 @@ pub enum SnapError {
     #[error(transparent)]
     Protocol(#[from] PeerConnectionError),
 
+    /// Trie operation errors
+    #[error(transparent)]
+    Trie(#[from] TrieError),
+
     /// RLP decoding errors
     #[error(transparent)]
     RlpDecode(#[from] RLPDecodeError),
 
     /// Peer table errors
     #[error(transparent)]
-    PeerTable(#[from] PeerTableError),
+    PeerTable(#[from] ActorError),
 
     /// Bad request from peer (invalid or malformed request)
     #[error("Bad request: {0}")]
