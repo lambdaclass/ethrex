@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_p2p::discv5::{messages::PongMessage, server::DiscoveryServer, session::Session};
-use ethrex_p2p::peer_table::PeerTable;
+use ethrex_p2p::peer_table::{PeerTable, PeerTableServer, PeerTableServerProtocol as _};
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::{EngineType, Store};
 use rand::{SeedableRng, rngs::StdRng};
@@ -21,7 +21,7 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
     let signer = SecretKey::new(&mut rand::rngs::OsRng);
     let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
     let peer_table = peer_table.unwrap_or_else(|| {
-        PeerTable::spawn(
+        PeerTableServer::spawn(
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         )
@@ -104,14 +104,13 @@ async fn test_enr_update_request_on_pong() {
     let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
     let remote_node_id = remote_node.node_id();
 
-    let mut peer_table = PeerTable::spawn(
+    let peer_table = PeerTableServer::spawn(
         10,
         Store::new("", EngineType::InMemory).expect("Failed to create store"),
     );
 
     peer_table
         .new_contact_records(vec![remote_record], local_node.node_id())
-        .await
         .unwrap();
 
     let session = Session {
@@ -120,7 +119,6 @@ async fn test_enr_update_request_on_pong() {
     };
     peer_table
         .set_session_info(remote_node_id, session)
-        .await
         .unwrap();
 
     let mut server = DiscoveryServer::new_for_test(
