@@ -1,7 +1,0 @@
-{
-  "body": "`SyncError::CorruptPath` is semantically wrong here — that variant was introduced for filesystem path failures (`create_dir_all`, `DirEntry`), not for a missing parent in the healing queue. More importantly, the old panic message included `parent_path` and `path` which are very useful for debugging sync issues; this replacement loses that context entirely.\n\nConsider a dedicated variant like `SyncError::HealingQueueInconsistency(String)` or at least something that carries the parent/child path info, e.g.:\n```rust\nlet mut healing_queue_entry = healing_queue.remove(parent_path).ok_or_else(|| {\n    SyncError::Custom(format!(\"Parent not found in healing queue. Parent: {parent_path:?}, path: {path:?}\"))\n})?\n```\n(assuming a `Custom(String)` variant exists or is added).",
-  "path": "crates/networking/p2p/sync/healing/state.rs",
-  "line": 387,
-  "side": "RIGHT",
-  "commit_id": "f340d9de8e1acd593c0354e8967a72f7399a6b40"
-}

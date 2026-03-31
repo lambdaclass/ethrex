@@ -1,3 +1,0 @@
-{
-  "body": "## Review Summary\n\nThis PR is **obsolete**. The exact issue it addresses (redundant `.to_string()` on already-`String` tuple fields in `render()`) was resolved by PR #5012 (commit 5f2ef54a8, merged Dec 18 2025), which replaced the 7-element tuple with a `BlockListItem` struct and switched `render()` to use `&item.field` references directly.\n\nThe PR has merge conflicts because the entire tuple-based approach it modifies no longer exists on `main`. Recommend closing."
-}

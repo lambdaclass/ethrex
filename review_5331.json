@@ -1,3 +1,0 @@
-{
-  "body": "## Review Summary\n\nClean and correct. Paths match the existing `start-lighthouse` (line 181) and `start-ethrex` (line 195) targets exactly, and the `clear-data` composition is straightforward.\n\nNote: this will conflict on the `.PHONY` line since main has been extended with `multisync-*` targets since this PR was opened — needs a rebase."
-}
