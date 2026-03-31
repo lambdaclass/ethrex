@@ -31,6 +31,7 @@ use spawned_concurrency::{
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_message_on},
 };
 use std::{
+    collections::VecDeque,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -47,6 +48,116 @@ const SCORE_WEIGHT: i64 = 1;
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
+/// Number of latency/bandwidth samples to keep per peer for scoring.
+const METRICS_WINDOW_SIZE: usize = 20;
+/// Smoothing factor for exponential moving average (0..1, higher = more weight on recent).
+const EMA_ALPHA: f64 = 0.3;
+
+/// Determines which scoring dimension is used for peer selection.
+///
+/// All three dimensions are always collected; the strategy only controls which
+/// one feeds into `weight_peer` / `can_try_more_requests`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScoringStrategy {
+    /// Score peers by successful/failed request count (the original behaviour).
+    #[default]
+    Success,
+    /// Score peers by response latency (lower is better).
+    Latency,
+    /// Score peers by throughput in bytes/second (higher is better).
+    Bandwidth,
+}
+
+/// Per-phase scoring configuration.
+///
+/// During snap sync, bandwidth matters most (bulk data transfer).
+/// During live/full sync, latency matters most (block-by-block propagation).
+#[derive(Debug, Clone, Copy)]
+pub struct ScoringConfig {
+    /// Strategy used during snap sync.
+    pub snap: ScoringStrategy,
+    /// Strategy used during live/full sync.
+    pub live: ScoringStrategy,
+}
+
+impl Default for ScoringConfig {
+    fn default() -> Self {
+        Self {
+            snap: ScoringStrategy::Bandwidth,
+            live: ScoringStrategy::Latency,
+        }
+    }
+}
+
+/// Rolling performance metrics collected per peer.
+#[derive(Debug, Clone, Default)]
+pub struct PeerMetrics {
+    latency_samples: VecDeque<Duration>,
+    latency_ema_ms: Option<f64>,
+    bandwidth_samples: VecDeque<f64>,
+    bandwidth_ema: Option<f64>,
+}
+
+impl PeerMetrics {
+    pub fn record_latency(&mut self, latency: Duration) {
+        if self.latency_samples.len() >= METRICS_WINDOW_SIZE {
+            self.latency_samples.pop_front();
+        }
+        self.latency_samples.push_back(latency);
+        let ms = latency.as_secs_f64() * 1000.0;
+        self.latency_ema_ms = Some(match self.latency_ema_ms {
+            Some(prev) => prev * (1.0 - EMA_ALPHA) + ms * EMA_ALPHA,
+            None => ms,
+        });
+    }
+
+    pub fn record_bandwidth(&mut self, bytes: u64, elapsed: Duration) {
+        if elapsed.is_zero() || bytes == 0 {
+            return;
+        }
+        let bps = bytes as f64 / elapsed.as_secs_f64();
+        if self.bandwidth_samples.len() >= METRICS_WINDOW_SIZE {
+            self.bandwidth_samples.pop_front();
+        }
+        self.bandwidth_samples.push_back(bps);
+        self.bandwidth_ema = Some(match self.bandwidth_ema {
+            Some(prev) => prev * (1.0 - EMA_ALPHA) + bps * EMA_ALPHA,
+            None => bps,
+        });
+    }
+
+    pub fn latency_ema_ms(&self) -> Option<f64> {
+        self.latency_ema_ms
+    }
+
+    pub fn bandwidth_ema_bps(&self) -> Option<f64> {
+        self.bandwidth_ema
+    }
+
+    /// Peers with ≤50ms get MAX_SCORE, ≥5000ms get MIN_SCORE, linear interpolation.
+    pub fn latency_score(&self) -> i64 {
+        let Some(ema) = self.latency_ema_ms else {
+            return 0;
+        };
+        let clamped = ema.clamp(50.0, 5000.0);
+        let ratio = (clamped - 50.0) / (5000.0 - 50.0);
+        let score_f = MAX_SCORE as f64 - ratio * (MAX_SCORE - MIN_SCORE) as f64;
+        score_f.round() as i64
+    }
+
+    /// Peers with ≥2MB/s get MAX_SCORE, ≤10KB/s get MIN_SCORE, log interpolation.
+    pub fn bandwidth_score(&self) -> i64 {
+        let Some(ema) = self.bandwidth_ema else {
+            return 0;
+        };
+        let low = 10_000_f64;
+        let high = 2_000_000_f64;
+        let clamped = ema.clamp(low, high);
+        let ratio = (clamped.ln() - low.ln()) / (high.ln() - low.ln());
+        let score_f = MIN_SCORE as f64 + ratio * (MAX_SCORE - MIN_SCORE) as f64;
+        score_f.round() as i64
+    }
+}
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
 /// The target number of contacts to maintain in peer_table.
@@ -185,12 +296,14 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
-    /// This tracks the score of a peer
+    /// Success-based score (the original +1/-1 mechanism).
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
     /// Timestamp (seconds since UNIX epoch) of the last successful response from this peer
     pub last_response_time: Option<u64>,
+    /// Rolling latency and bandwidth metrics for this peer.
+    pub metrics: PeerMetrics,
 }
 
 impl PeerData {
@@ -209,6 +322,16 @@ impl PeerData {
             score: Default::default(),
             requests: Default::default(),
             last_response_time: None,
+            metrics: Default::default(),
+        }
+    }
+
+    /// Return the effective score for this peer under the given strategy.
+    pub fn effective_score(&self, strategy: ScoringStrategy) -> i64 {
+        match strategy {
+            ScoringStrategy::Success => self.score,
+            ScoringStrategy::Latency => self.metrics.latency_score(),
+            ScoringStrategy::Bandwidth => self.metrics.bandwidth_score(),
         }
     }
 }
@@ -265,6 +388,15 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
+    fn record_response_latency(&self, node_id: H256, latency: Duration)
+    -> Result<(), ActorError>;
+    fn record_bandwidth(
+        &self,
+        node_id: H256,
+        bytes: u64,
+        elapsed: Duration,
+    ) -> Result<(), ActorError>;
+    fn set_scoring_strategy(&self, strategy: ScoringStrategy) -> Result<(), ActorError>;
     fn record_ping_sent(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_pong_received(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_enr_request_sent(&self, node_id: H256, request_hash: H256) -> Result<(), ActorError>;
@@ -341,6 +473,8 @@ pub struct PeerTableServer {
     /// Standalone session store, independent of contacts.
     /// Allows sessions to be stored even before the contact's ENR is known/parseable.
     sessions: FxHashMap<H256, Session>,
+    /// The active scoring strategy used for peer selection.
+    scoring_strategy: ScoringStrategy,
 }
 
 #[actor(protocol = PeerTableServerProtocol)]
@@ -358,6 +492,7 @@ impl PeerTableServer {
             target_peers,
             store,
             sessions: Default::default(),
+            scoring_strategy: ScoringStrategy::default(),
         }
     }
 
@@ -506,6 +641,37 @@ impl PeerTableServer {
         self.peers
             .entry(msg.node_id)
             .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+    }
+
+    #[send_handler]
+    async fn handle_record_response_latency(
+        &mut self,
+        msg: peer_table_server_protocol::RecordResponseLatency,
+        _ctx: &Context<Self>,
+    ) {
+        self.peers
+            .entry(msg.node_id)
+            .and_modify(|peer_data| peer_data.metrics.record_latency(msg.latency));
+    }
+
+    #[send_handler]
+    async fn handle_record_bandwidth(
+        &mut self,
+        msg: peer_table_server_protocol::RecordBandwidth,
+        _ctx: &Context<Self>,
+    ) {
+        self.peers
+            .entry(msg.node_id)
+            .and_modify(|peer_data| peer_data.metrics.record_bandwidth(msg.bytes, msg.elapsed));
+    }
+
+    #[send_handler]
+    async fn handle_set_scoring_strategy(
+        &mut self,
+        msg: peer_table_server_protocol::SetScoringStrategy,
+        _ctx: &Context<Self>,
+    ) {
+        self.scoring_strategy = msg.strategy;
     }
 
     #[send_handler]
@@ -879,17 +1045,20 @@ impl PeerTableServer {
 
     // === Private helper methods ===
 
-    // Weighting function used to select best peer
-    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
-        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    // Weighting function used to select best peer.
+    // Uses the effective score from the active scoring strategy.
+    fn weight_peer(&self, peer_data: &PeerData) -> i64 {
+        let score = peer_data.effective_score(self.scoring_strategy);
+        score * SCORE_WEIGHT - peer_data.requests * REQUESTS_WEIGHT
     }
 
     // Returns if the peer has room for more connections given the current score
-    // and amount of inflight requests
-    fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
+    // and amount of inflight requests.
+    fn can_try_more_requests(&self, peer_data: &PeerData) -> bool {
+        let score = peer_data.effective_score(self.scoring_strategy);
         let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
         let max_requests = (MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio).max(1.0);
-        (*requests as f64) < max_requests
+        (peer_data.requests as f64) < max_requests
     }
 
     fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
@@ -907,7 +1076,7 @@ impl PeerTableServer {
             .iter()
             .filter_map(|(id, peer_data)| {
                 if excluded.contains(id)
-                    || !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                    || !self.can_try_more_requests(peer_data)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -915,11 +1084,11 @@ impl PeerTableServer {
                     None
                 } else {
                     let connection = peer_data.connection.clone()?;
-                    Some((*id, peer_data.score, peer_data.requests, connection))
+                    Some((*id, peer_data, connection))
                 }
             })
-            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
-            .map(|(k, _, _, v)| (k, v))
+            .max_by_key(|(_, peer_data, _)| self.weight_peer(peer_data))
+            .map(|(k, _, v)| (k, v))
     }
 
     fn prune(&mut self) {

@@ -276,6 +276,10 @@ pub async fn init_l2(
         let peer_handler = PeerHandler::new(peer_table, initiator);
 
         // Create SyncManager
+        let scoring_config = ethrex_p2p::peer_table::ScoringConfig {
+            snap: opts.node_opts.snap_scoring,
+            live: opts.node_opts.live_scoring,
+        };
         let syncer = SyncManager::new(
             peer_handler.clone(),
             &opts.node_opts.syncmode,
@@ -283,6 +287,7 @@ pub async fn init_l2(
             blockchain.clone(),
             store.clone(),
             opts.node_opts.datadir.clone(),
+            scoring_config,
         )
         .await;
 

@@ -18,6 +18,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
+    peer_table::ScoringConfig,
     sync::{SyncDiagnostics, SyncMode, Syncer},
 };
 
@@ -41,6 +42,7 @@ impl SyncManager {
         blockchain: Arc<Blockchain>,
         store: Store,
         datadir: PathBuf,
+        scoring_config: ScoringConfig,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
 
@@ -85,6 +87,7 @@ impl SyncManager {
             blockchain,
             datadir,
             diagnostics.clone(),
+            scoring_config,
         )));
         let sync_manager = Self {
             snap_enabled,
