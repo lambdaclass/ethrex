@@ -60,7 +60,7 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
-            if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
                     "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
                 );

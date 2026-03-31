@@ -1062,7 +1062,7 @@ impl PeerTableServer {
     }
 
     fn get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
-        let peers: Vec<(H256, PeerConnection, i64)> = self
+        let peers: Vec<(H256, &PeerConnection, i64)> = self
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -1074,7 +1074,7 @@ impl PeerTableServer {
                 }
                 peer_data
                     .connection
-                    .clone()
+                    .as_ref()
                     .map(|connection| (*node_id, connection, peer_data.score))
             })
             .collect();
@@ -1084,7 +1084,7 @@ impl PeerTableServer {
         // Weight by score: maps [-150, 50] to [1, 201] so bad peers are unlikely but not excluded
         let weights: Vec<u64> = peers
             .iter()
-            .map(|(_, _, score)| (score - MIN_SCORE_CRITICAL + 1) as u64)
+            .map(|(_, _, score)| (score.max(&MIN_SCORE_CRITICAL) - MIN_SCORE_CRITICAL + 1) as u64)
             .collect();
         let dist = WeightedIndex::new(&weights).ok()?;
         let idx = dist.sample(&mut rand::rngs::OsRng);

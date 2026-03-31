@@ -135,7 +135,7 @@ pub async fn sync_cycle_snap(
             .request_block_headers(current_head_number, sync_head)
             .await?
         else {
-            if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
                     "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
                 );
@@ -143,7 +143,7 @@ pub async fn sync_cycle_snap(
             }
             attempts += 1;
             warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
             );
             tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
