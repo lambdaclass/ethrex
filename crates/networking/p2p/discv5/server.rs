@@ -1002,8 +1002,6 @@ impl DiscoveryServer {
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
 
-
-
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW

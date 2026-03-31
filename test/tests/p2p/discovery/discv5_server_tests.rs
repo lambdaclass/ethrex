@@ -64,7 +64,12 @@ async fn test_whoareyou_rate_limiting() {
     let _ = server.send_who_are_you(nonce, src_id1, addr).await;
 
     // Rate limit is keyed by (IP, node_id)
-    assert!(server.whoareyou_rate_limit.peek(&(addr.ip(), src_id1)).is_some());
+    assert!(
+        server
+            .whoareyou_rate_limit
+            .peek(&(addr.ip(), src_id1))
+            .is_some()
+    );
     assert!(server.pending_challenges.contains_key(&src_id1));
 
     // Same IP but different node_id should NOT be rate limited
