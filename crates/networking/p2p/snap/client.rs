@@ -144,8 +144,12 @@ pub async fn request_account_range(
     let mut all_accounts_state = Vec::new();
 
     // channel to send the tasks to the peers
-    let (task_sender, mut task_receiver) =
-        tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>, TransferStats)>(1000);
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+        Vec<AccountRangeUnit>,
+        H256,
+        Option<(H256, H256)>,
+        TransferStats,
+    )>(1000);
 
     info!("Starting to download account ranges from peers");
 
@@ -197,9 +201,15 @@ pub async fn request_account_range(
         if let Ok((accounts, peer_id, chunk_start_end, stats)) = task_receiver.try_recv() {
             // Feed transfer stats for bandwidth/latency scoring.
             if !stats.elapsed.is_zero() {
-                let _ = peers.peer_table.record_response_latency(peer_id, stats.elapsed);
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
                 if stats.response_bytes > 0 {
-                    let _ = peers.peer_table.record_bandwidth(peer_id, stats.response_bytes, stats.elapsed);
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
                 }
             }
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
@@ -396,9 +406,15 @@ pub async fn request_bytecodes(
             } = result;
             // Feed transfer stats for bandwidth/latency scoring.
             if !stats.elapsed.is_zero() {
-                let _ = peers.peer_table.record_response_latency(peer_id, stats.elapsed);
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
                 if stats.response_bytes > 0 {
-                    let _ = peers.peer_table.record_bandwidth(peer_id, stats.response_bytes, stats.elapsed);
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
                 }
             }
 
@@ -481,7 +497,10 @@ pub async fn request_bytecodes(
             let (bytecodes, remaining_start, transfer_stats) = match response {
                 Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) if !codes.is_empty() => {
                     let response_bytes: u64 = codes.iter().map(|c| c.len() as u64).sum();
-                    let stats = TransferStats { elapsed: req_elapsed, response_bytes };
+                    let stats = TransferStats {
+                        elapsed: req_elapsed,
+                        response_bytes,
+                    };
                     let validated_codes: Vec<Bytes> = codes
                         .into_iter()
                         .zip(hashes_to_request)
@@ -659,9 +678,15 @@ pub async fn request_storage_ranges(
             } = result;
             // Feed transfer stats for bandwidth/latency scoring.
             if !stats.elapsed.is_zero() {
-                let _ = peers.peer_table.record_response_latency(peer_id, stats.elapsed);
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
                 if stats.response_bytes > 0 {
-                    let _ = peers.peer_table.record_bandwidth(peer_id, stats.response_bytes, stats.elapsed);
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
                 }
             }
             completed_tasks += 1;
@@ -1149,7 +1174,12 @@ async fn request_account_range_worker(
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>, TransferStats)>,
+    tx: tokio::sync::mpsc::Sender<(
+        Vec<AccountRangeUnit>,
+        H256,
+        Option<(H256, H256)>,
+        TransferStats,
+    )>,
     permit: RequestPermit,
 ) -> Result<(), SnapError> {
     debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
@@ -1189,7 +1219,10 @@ async fn request_account_range_worker(
             .map(|u| u.account.encode_to_vec().len() + 32)
             .sum::<usize>()
             + proof.iter().map(|p| p.len()).sum::<usize>();
-        let stats = TransferStats { elapsed, response_bytes: response_bytes as u64 };
+        let stats = TransferStats {
+            elapsed,
+            response_bytes: response_bytes as u64,
+        };
 
         if accounts.is_empty() {
             retry(stats)
@@ -1238,7 +1271,10 @@ async fn request_account_range_worker(
             }
         }
     } else {
-        let stats = TransferStats { elapsed, response_bytes: 0 };
+        let stats = TransferStats {
+            elapsed,
+            response_bytes: 0,
+        };
         tracing::debug!("Failed to get account range");
         retry(stats)
     };
