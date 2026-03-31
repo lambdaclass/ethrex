@@ -63,7 +63,7 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Number of retry attempts when selecting a peer for a request.
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
@@ -89,11 +89,10 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
 /// Maximum attempts before giving up on header downloads during syncing.
-/// Each attempt queries multiple peers with a 15s timeout, so this
-/// should be low to avoid stalling for tens of minutes when the sync
-/// head is unknown to peers. The caller can re-enter with a newer
-/// sync head from the CL.
-pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 5;
+/// Each attempt queries a single peer with a timeout, so this needs to be
+/// high enough to tolerate transient failures across the ~2500 sequential
+/// requests needed for a full header walk.
+pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 30;
 
 // =============================================================================
 // SNAP SYNC THRESHOLDS

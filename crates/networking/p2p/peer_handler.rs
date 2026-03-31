@@ -440,11 +440,13 @@ impl PeerHandler {
                     if !block_headers.is_empty()
                         && are_block_headers_chained(&block_headers, &order)
                     {
+                        self.peer_table.record_success(&peer_id).await?;
                         return Ok(Some(block_headers));
                     } else {
                         warn!(
                             "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                         );
+                        self.peer_table.record_failure(&peer_id).await?;
                         return Ok(None);
                     }
                 }
@@ -452,6 +454,7 @@ impl PeerHandler {
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
+                self.peer_table.record_failure(&peer_id).await?;
                 Ok(None)
             }
         }
