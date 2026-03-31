@@ -97,8 +97,7 @@ impl AirbenderBackend {
             )));
         }
 
-        let proof_bytes =
-            std::fs::read(PROOF_OUTPUT_PATH).map_err(BackendError::proving)?;
+        let proof_bytes = std::fs::read(PROOF_OUTPUT_PATH).map_err(BackendError::proving)?;
 
         Ok(AirbenderProveOutput(proof_bytes))
     }

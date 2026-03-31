@@ -1,21 +1,21 @@
 use std::ops::Mul;
 
-use airbender_crypto::ark_ec::{pairing::Pairing, CurveGroup};
+use airbender_crypto::MiniDigest;
+use airbender_crypto::ark_ec::{CurveGroup, pairing::Pairing};
 use airbender_crypto::ark_ff::{BigInteger, One, PrimeField, QuadExtField, Zero};
 use airbender_crypto::bn254::curves::Bn254;
 use airbender_crypto::bn254::{Fq, Fr, G1Affine, G1Projective, G2Affine};
-use airbender_crypto::k256::ecdsa::{hazmat::bits2field, RecoveryId, Signature};
+use airbender_crypto::k256::ecdsa::{RecoveryId, Signature, hazmat::bits2field};
 use airbender_crypto::k256::elliptic_curve::ops::Reduce;
 use airbender_crypto::k256::{Scalar, Secp256k1, U256};
 use airbender_crypto::p256::ecdsa::{
-    signature::hazmat::PrehashVerifier, Signature as P256Signature,
+    Signature as P256Signature, signature::hazmat::PrehashVerifier,
 };
-use airbender_crypto::p256::{elliptic_curve::bigint::U256 as P256Uint, EncodedPoint};
+use airbender_crypto::p256::{EncodedPoint, elliptic_curve::bigint::U256 as P256Uint};
 use airbender_crypto::ripemd160::{Digest as RipemdDigest, Ripemd160};
-use airbender_crypto::secp256k1::{recover, SECP256K1N_HALF};
-use airbender_crypto::sha256::{Digest as Sha2Digest, Sha256};
+use airbender_crypto::secp256k1::{SECP256K1N_HALF, recover};
 use airbender_crypto::sha3::Keccak256;
-use airbender_crypto::MiniDigest;
+use airbender_crypto::sha256::{Digest as Sha2Digest, Sha256};
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
@@ -39,8 +39,7 @@ impl Crypto for AirbenderCrypto {
         recid: u8,
         msg: &[u8; 32],
     ) -> Result<[u8; 32], CryptoError> {
-        let mut sig_obj =
-            Signature::from_slice(sig).map_err(|_| CryptoError::InvalidSignature)?;
+        let mut sig_obj = Signature::from_slice(sig).map_err(|_| CryptoError::InvalidSignature)?;
 
         let mut recid_byte = recid;
         if let Some(low_s) = sig_obj.normalize_s() {
@@ -54,8 +53,8 @@ impl Crypto for AirbenderCrypto {
             &bits2field::<Secp256k1>(msg).map_err(|_| CryptoError::RecoveryFailed)?,
         );
 
-        let recovered =
-            recover(&msg_scalar, &sig_obj, &recovery_id).map_err(|_| CryptoError::RecoveryFailed)?;
+        let recovered = recover(&msg_scalar, &sig_obj, &recovery_id)
+            .map_err(|_| CryptoError::RecoveryFailed)?;
 
         let pubkey_bytes = recovered.to_bytes();
         // Skip the 0x04 prefix byte for uncompressed point
@@ -138,22 +137,20 @@ impl Crypto for AirbenderCrypto {
             let g2_x_re = Fq::from_be_bytes_mod_order(&g2_bytes[32..64]);
             let g2_y_im = Fq::from_be_bytes_mod_order(&g2_bytes[64..96]);
             let g2_y_re = Fq::from_be_bytes_mod_order(&g2_bytes[96..128]);
-            let g2 = if g2_x_im.is_zero()
-                && g2_x_re.is_zero()
-                && g2_y_im.is_zero()
-                && g2_y_re.is_zero()
-            {
-                G2Affine::identity()
-            } else {
-                let p = G2Affine::new_unchecked(
-                    QuadExtField::new(g2_x_re, g2_x_im),
-                    QuadExtField::new(g2_y_re, g2_y_im),
-                );
-                if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
-                    return Err(CryptoError::InvalidPoint("G2 not on BN254 curve"));
-                }
-                p
-            };
+            let g2 =
+                if g2_x_im.is_zero() && g2_x_re.is_zero() && g2_y_im.is_zero() && g2_y_re.is_zero()
+                {
+                    G2Affine::identity()
+                } else {
+                    let p = G2Affine::new_unchecked(
+                        QuadExtField::new(g2_x_re, g2_x_im),
+                        QuadExtField::new(g2_y_re, g2_y_im),
+                    );
+                    if !p.is_on_curve() || !p.is_in_correct_subgroup_assuming_on_curve() {
+                        return Err(CryptoError::InvalidPoint("G2 not on BN254 curve"));
+                    }
+                    p
+                };
             g2_points.push(g2);
         }
 
