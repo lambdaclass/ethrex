@@ -17,11 +17,11 @@ use crate::{
     utils::distance,
 };
 use bytes::Bytes;
-use ethrex_common::{H256, U256};
+use ethrex_common::H256;
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
 use rand::seq::SliceRandom;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use spawned_concurrency::{
     actor,
     error::ActorError,
@@ -313,6 +313,9 @@ pub struct PeerTableServer {
     discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
     store: Store,
+    /// Standalone session store, independent of contacts.
+    /// Allows sessions to be stored even before the contact's ENR is known/parseable.
+    sessions: FxHashMap<H256, Session>,
 }
 
 #[actor(protocol = PeerTableServerProtocol)]
@@ -329,6 +332,7 @@ impl PeerTableServer {
             discarded_contacts: Default::default(),
             target_peers,
             store,
+            sessions: Default::default(),
         }
     }
 
@@ -380,9 +384,12 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::SetSessionInfo,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.session = Some(msg.session));
+        // Store in the standalone sessions map (always succeeds, no contact required).
+        self.sessions.insert(msg.node_id, msg.session.clone());
+        // Also update the contact's cached session if the contact exists.
+        if let Some(contact) = self.contacts.get_mut(&msg.node_id) {
+            contact.session = Some(msg.session);
+        }
     }
 
     #[send_handler]
@@ -794,9 +801,11 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetSessionInfo,
         _ctx: &Context<Self>,
     ) -> Option<Session> {
-        self.contacts
+        // Check standalone sessions map first; fall back to contact.session.
+        self.sessions
             .get(&msg.node_id)
-            .and_then(|c| c.session.clone())
+            .cloned()
+            .or_else(|| self.contacts.get(&msg.node_id)?.session.clone())
     }
 
     // === Private helper methods ===
@@ -946,13 +955,16 @@ impl PeerTableServer {
         nodes.into_iter().map(|(node, _)| node).collect()
     }
 
-    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>)
+    /// Get nodes at distances for discv5 (returns Vec<NodeRecord>).
+    /// Uses the discv5 spec log-distance: `floor(log2(XOR))` for non-zero XOR.
+    /// Distance 0 is reserved for the local node itself (handled by the caller),
+    /// so contacts start at distance >= 1.
     fn do_get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
         self.contacts
             .iter()
             .filter_map(|(contact_id, contact)| {
-                let d = distance(&local_node_id, contact_id) as u32;
-                if distances.contains(&d) {
+                let dist = distance(&local_node_id, contact_id) as u32;
+                if distances.contains(&dist) {
                     contact.record.clone()
                 } else {
                     None
@@ -1095,9 +1107,7 @@ impl PeerTableServer {
     }
 
     fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-        let xor = node_id_1 ^ node_id_2;
-        let dist = U256::from_big_endian(xor.as_bytes());
-        dist.bits().saturating_sub(1)
+        distance(node_id_1, node_id_2)
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
