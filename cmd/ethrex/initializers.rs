@@ -18,7 +18,7 @@ use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, PeerTableServer},
+    peer_table::{PeerTable, PeerTableServer, ScoringConfig},
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{NetworkConfig, Node, NodeRecord},
@@ -199,6 +199,10 @@ pub async fn init_rpc_api(
     };
 
     // Create SyncManager
+    let scoring_config = ScoringConfig {
+        snap: opts.snap_scoring,
+        live: opts.live_scoring,
+    };
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
@@ -206,6 +210,7 @@ pub async fn init_rpc_api(
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
+        scoring_config,
     )
     .await;
 
