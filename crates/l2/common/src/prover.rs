@@ -29,7 +29,6 @@ pub enum ProverType {
     RISC0,
     SP1,
     TDX,
-    Airbender,
 }
 
 impl From<ProverType> for u32 {
@@ -39,7 +38,6 @@ impl From<ProverType> for u32 {
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
             ProverType::TDX => 3,
-            ProverType::Airbender => 4,
         }
     }
 }
@@ -52,7 +50,6 @@ impl ProverType {
             ProverType::RISC0,
             ProverType::SP1,
             ProverType::TDX,
-            ProverType::Airbender,
         ]
         .into_iter()
     }
@@ -70,9 +67,6 @@ impl ProverType {
             ProverType::TDX => {
                 vec![Value::Bytes(vec![].into())]
             }
-            ProverType::Airbender => {
-                vec![Value::Bytes(vec![].into())]
-            }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
         }
     }
@@ -84,7 +78,6 @@ impl ProverType {
             Self::RISC0 => Some("REQUIRE_RISC0_PROOF()".to_string()),
             Self::SP1 => Some("REQUIRE_SP1_PROOF()".to_string()),
             Self::TDX => Some("REQUIRE_TDX_PROOF()".to_string()),
-            Self::Airbender => Some("REQUIRE_AIRBENDER_PROOF()".to_string()),
             Self::Exec => None,
         }
     }
@@ -97,7 +90,6 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
-            Self::Airbender => write!(f, "Airbender"),
         }
     }
 }
