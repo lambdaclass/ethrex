@@ -12,12 +12,12 @@ use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
-use ethrex_l2::sequencer::block_producer;
-use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
+use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
+use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::PeerTable,
+    peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -26,7 +26,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -157,22 +157,19 @@ pub fn init_tracing(
 }
 
 async fn shutdown_sequencer_handles(
-    committer_handle: Option<GenServerHandle<l1_committer::L1Committer>>,
-    block_producer_handle: Option<GenServerHandle<block_producer::BlockProducer>>,
+    committer_handle: Option<ActorRef<l1_committer::L1Committer>>,
+    block_producer_handle: Option<ActorRef<block_producer::BlockProducer>>,
 ) {
-    // These GenServers run via start_blocking, so aborting the JoinSet alone never stops them.
-    // Sending Abort elicits CastResponse::Stop and lets the blocking loop unwind cleanly.
-    if let Some(mut handle) = committer_handle {
+    // Sending Abort triggers ctx.stop() and lets the actor unwind cleanly.
+    if let Some(handle) = committer_handle {
         handle
-            .cast(l1_committer::InMessage::Abort)
-            .await
+            .send(l1_committer_protocol::Abort)
             .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
             .ok();
     }
-    if let Some(mut handle) = block_producer_handle {
+    if let Some(handle) = block_producer_handle {
         handle
-            .cast(block_producer::InMessage::Abort)
-            .await
+            .send(block_producer_protocol::Abort)
             .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
             .ok();
     }
@@ -243,7 +240,7 @@ pub async fn init_l2(
         if !opts.sequencer_opts.based {
             blockchain.set_synced();
         }
-        let peer_table = PeerTable::spawn(opts.node_opts.target_peers, store.clone());
+        let peer_table = PeerTableServer::spawn(opts.node_opts.target_peers, store.clone());
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
             tracker.clone(),
@@ -273,7 +270,7 @@ pub async fn init_l2(
             opts.node_opts.lookup_interval,
         )
         .expect("P2P context could not be created");
-        let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+        let initiator = RLPxInitiator::spawn(p2p_context.clone());
         let peer_handler = PeerHandler::new(peer_table, initiator);
 
         // Create SyncManager
