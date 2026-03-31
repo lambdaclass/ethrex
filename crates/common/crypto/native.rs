@@ -1,7 +1,10 @@
 use crate::provider::Crypto;
 
-/// A crypto provider that uses the native implementations
-/// (default trait methods in `Crypto`). Only available with the `std` feature.
+/// Native crypto implementation using system libraries.
+///
+/// All method bodies live as defaults on the [`Crypto`] trait itself.
+/// This struct exists so callers outside zkVM contexts have a concrete
+/// type to instantiate.
 #[derive(Debug)]
 pub struct NativeCrypto;
 
