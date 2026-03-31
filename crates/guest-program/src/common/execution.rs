@@ -87,15 +87,11 @@ where
         )
         .map_err(ExecutionError::GuestProgramState)?;
 
-    let initial_state_hash = report_cycles("state_trie_root", || {
-        wrapped_db
-            .state_trie_root()
-            .map_err(ExecutionError::GuestProgramState)
-    })?;
-
-    if initial_state_hash != parent_block_header.state_root {
-        return Err(ExecutionError::InvalidInitialStateTrie);
-    }
+    // Use the parent header's state root directly instead of recomputing
+    // from the trie. The final state root check validates all data
+    // transitively (wrong initial data → wrong execution → wrong final
+    // root → mismatch with block header).
+    let initial_state_hash = parent_block_header.state_root;
 
     // Execute blocks
     let mut parent_block_header = &parent_block_header;

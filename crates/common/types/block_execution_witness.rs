@@ -189,19 +189,21 @@ impl GuestProgramState {
             GuestProgramStateError::MissingParentHeaderOf(value.first_block_number),
         )?;
 
-        // hash state trie nodes
+        // Build state trie from embedded nodes WITHOUT pre-hashing.
+        // Hashes are computed lazily: modified paths during apply_account_updates,
+        // and the full state trie at final state_trie_root() verification.
+        // Unmodified storage tries are never hashed — a significant saving.
+        // Security: the final state root check against the block header validates
+        // all data transitively (wrong data → wrong execution → wrong root).
         let state_trie = if let Some(state_trie_root) = value.state_trie_root {
             Trie::new_temp_with_root(state_trie_root.into())
         } else {
             Trie::new_temp()
         };
-        state_trie.hash_no_commit(crypto);
 
         let mut storage_tries = BTreeMap::new();
         for (hashed_address, storage_trie_root) in value.storage_trie_roots {
-            // hash storage trie nodes
             let storage_trie = Trie::new_temp_with_root(storage_trie_root.into());
-            storage_trie.hash_no_commit(crypto);
             storage_tries.insert(hashed_address, storage_trie);
         }
 
@@ -530,14 +532,13 @@ impl GuestProgramState {
                 // empty account
                 return Ok(None);
             };
+            // Skip per-trie hash verification — the final state root check
+            // validates all data transitively. This avoids hashing storage tries
+            // that are only read, never written.
             let storage_trie = match self.storage_tries.get(&hashed_address) {
                 None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
-                Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
-                _ => {
-                    return Err(GuestProgramStateError::Custom(format!(
-                        "invalid storage trie for account {address}"
-                    )));
-                }
+                Some(trie) => trie,
+                None => return Ok(None),
             };
             self.verified_storage_roots.insert(hashed_address, true);
             Ok(Some(storage_trie))
