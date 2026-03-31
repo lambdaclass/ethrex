@@ -9,7 +9,7 @@ This project uses three key repositories for Hive testing:
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
    - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
 2. **[ethereum/execution-spec-tests](https://github.com/ethereum/execution-spec-tests)** - Test fixtures and vectors
-   - Current version: `bal@v5.1.0` (Amsterdam fork support)
+   - Current version: `bal@v5.5.1` (Amsterdam fork support)
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
    - Current branch: `forks/amsterdam`
 
@@ -289,8 +289,8 @@ The workflow uses fork-specific fixtures to ensure comprehensive test coverage:
 ```yaml
 # Amsterdam tests use fixtures_bal (includes BAL-specific tests)
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz"
-  FLAGS+=" --sim.buildarg branch=devnets/bal/2"
+  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz"
+  FLAGS+=" --sim.buildarg branch=devnets/bal/3"
 else
   # Other forks use fixtures_develop (comprehensive coverage including static tests)
   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
@@ -310,10 +310,10 @@ Contents:
 https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
 
 # .fixtures_url_amsterdam
-https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
+https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz
 ```
 
-**Note**: The CI workflow uses `fixtures_bal` with `branch=devnets/bal/2` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
+**Note**: The CI workflow uses `fixtures_bal` with `branch=devnets/bal/3` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
 
 ## Updating Repository Versions
 
@@ -331,7 +331,7 @@ To update to a different fork or newer versions:
 
    ```yaml
    FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz"
-   FLAGS+=" --sim.buildarg branch=devnets/bal/2"
+   FLAGS+=" --sim.buildarg branch=devnets/bal/3"
    ```
 
    For other forks (fixtures_develop):

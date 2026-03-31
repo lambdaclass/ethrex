@@ -93,6 +93,7 @@ fn random_eip1559_tx(rng: &mut impl Rng) -> EIP1559Transaction {
         signature_s: U256(rng.random()),
         inner_hash: OnceCell::new(),
         sender_cache: OnceCell::new(),
+        cached_canonical: OnceCell::new(),
     }
 }
 

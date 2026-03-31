@@ -25,4 +25,3 @@ colored = "2.1.0"
 sha3.workspace = true
 hex.workspace = true
 thiserror.workspace = true
-ethereum-types.workspace = true

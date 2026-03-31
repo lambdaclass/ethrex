@@ -946,7 +946,7 @@ impl L1Committer {
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
                     "Failed to get state root from storage".to_owned(),
                 ))?
-                .hash_no_commit();
+                .hash_no_commit(&ethrex_common::NativeCrypto);
 
             last_added_block_number += 1;
             acc_gas_used += current_block_gas_used;
@@ -1597,15 +1597,14 @@ async fn estimate_blob_gas(
     // If the blob's market is in high demand, the equation may give a really big number.
     // This function doesn't panic, it performs checked/saturating operations.
     let blob_gas = fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
-        U256::from(total_blob_gas),
+        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        total_blob_gas.into(),
         BLOB_BASE_FEE_UPDATE_FRACTION,
     )
     .map_err(BlobEstimationError::FakeExponentialError)?;
 
     let gas_with_headroom = (blob_gas * (100 + headroom)) / 100;
 
-    // Check if we have an overflow when we take the headroom into account.
     let blob_gas = U256::from(arbitrary_base_blob_gas_price)
         .checked_add(gas_with_headroom)
         .ok_or(BlobEstimationError::OverflowError)?;
@@ -1626,21 +1625,28 @@ async fn estimate_blob_gas(
 /// re-applying the blocks from the last known state root up to the head block.
 ///
 /// This function performs that regeneration.
+///
+/// When `target_block_number` is `Some(n)`, this function regenerates state up
+/// to block `n - 1` (exclusive of `n`). The intent is to prepare the state so
+/// that block `n` can be applied by the caller afterwards.
+///
+/// When `target_block_number` is `None`, the function regenerates state up to
+/// the latest block number stored in the database (inclusive).
 pub async fn regenerate_state(
     store: &Store,
     rollup_store: &StoreRollup,
     blockchain: &Arc<Blockchain>,
     target_block_number: Option<u64>,
 ) -> Result<(), CommitterError> {
-    let target_block_number = if let Some(target_block_number) = target_block_number {
-        target_block_number - 1
-    } else {
-        store.get_latest_block_number().await?
+    let target_block_number = match target_block_number {
+        Some(0) => return Ok(()),
+        Some(n) => n - 1,
+        None => store.get_latest_block_number().await?,
     };
-    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
     if target_block_number == 0 {
         return Ok(());
     }
+    let last_state_number = find_last_known_state_root(store, target_block_number).await?;
     if last_state_number == target_block_number {
         debug!("State is already up to date");
         return Ok(());

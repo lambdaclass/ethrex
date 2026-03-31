@@ -89,6 +89,7 @@ fn random_eip1559_tx(rng: &mut impl Rng) -> EIP1559Transaction {
         signature_s: U256(rng.random()),
         inner_hash: OnceCell::new(),
         sender_cache: OnceCell::new(),
+        cached_canonical: OnceCell::new(),
     }
 }
 
@@ -500,11 +501,7 @@ fn bench_decode_nibbles(c: &mut Criterion) {
                 for _ in 0..N {
                     data.push(
                         Nibbles::from_raw(
-                            &rand::distr::Uniform::<u8>::new(0, 16)
-                                .unwrap()
-                                .sample_iter(rand::rng())
-                                .take(L)
-                                .collect::<Vec<_>>(),
+                            &rand::rng().random_iter::<u8>().take(L).collect::<Vec<_>>(),
                             IS_LEAF,
                         )
                         .encode_to_vec(),

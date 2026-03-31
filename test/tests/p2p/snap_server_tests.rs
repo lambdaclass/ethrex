@@ -6,6 +6,7 @@
 use std::str::FromStr;
 
 use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
+use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::snap::GetAccountRange;
 use ethrex_p2p::snap::{SnapError, process_account_range_request};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -820,5 +821,5 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
             .insert(hashed_address, account.encode_to_vec())
             .unwrap();
     }
-    Ok((store, state_trie.hash().unwrap()))
+    Ok((store, state_trie.hash(&NativeCrypto).unwrap()))
 }
