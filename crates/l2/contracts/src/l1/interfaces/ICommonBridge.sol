@@ -101,7 +101,7 @@ interface ICommonBridge {
     /// @dev Used by OnChainProposer to verify batches when previous committed
     /// batches haven't been verified yet.
     /// @param offset number of entries to skip from the front of the pending queue.
-    /// @param number of pending privileged transactions to hash.
+    /// @param number the number of pending privileged transactions to hash.
     function getPendingTransactionsVersionedHashWithOffset(
         uint256 offset,
         uint16 number
@@ -113,7 +113,7 @@ interface ICommonBridge {
     /// batches haven't been verified yet.
     /// @param chainId the chain id of the L2 messages to retrieve.
     /// @param offset number of entries to skip from the front of the pending queue.
-    /// @param number of pending L2 messages to hash.
+    /// @param number the number of pending L2 messages to hash.
     function getPendingL2MessagesVersionedHashWithOffset(
         uint256 chainId,
         uint256 offset,
