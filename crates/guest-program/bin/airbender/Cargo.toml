@@ -18,6 +18,4 @@ sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 ethrex-guest-program = { path = "../../", default-features = false, features = ["airbender"] }
-ethrex-vm = { path = "../../../vm", default-features = false }
-ethrex-common = { path = "../../../common", default-features = false }
 
