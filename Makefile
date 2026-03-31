@@ -233,6 +233,7 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/bin/airbender/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null

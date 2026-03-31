@@ -21,7 +21,8 @@ guest-program/
 │   │   ├── sp1.rs
 │   │   ├── risc0.rs
 │   │   ├── zisk.rs
-│   │   └── openvm.rs
+│   │   ├── openvm.rs
+│   │   └── airbender.rs # Airbender (uses airbender-crypto delegation)
 │   ├── l1/             # L1 (mainnet) program
 │   │   ├── mod.rs
 │   │   ├── input.rs
@@ -40,7 +41,8 @@ guest-program/
     ├── risc0/          # RISC Zero guest
     ├── sp1/            # Succinct SP1 guest
     ├── zisk/           # Polygon ZisK guest
-    └── openvm/         # Axiom OpenVM guest
+    ├── openvm/         # Axiom OpenVM guest
+    └── airbender/      # Matter Labs Airbender guest
 ```
 
 ## Prerequisites
@@ -68,6 +70,7 @@ make sp1                    # Build SP1 guest
 make risc0                  # Build RISC0 guest
 make zisk                   # Build ZisK guest
 make openvm                 # Build OpenVM guest
+make airbender              # Build Airbender guest
 
 # L2 guests
 make l2-sp1                 # Build SP1 guest with L2 support
@@ -95,6 +98,9 @@ cargo check -r -p ethrex-guest-program --features zisk-build-elf
 # Build OpenVM guest (requires cargo-openvm toolchain or Docker)
 cargo check -r -p ethrex-guest-program --features openvm-build-elf
 
+# Build Airbender guest (requires cargo-airbender + nightly-2026-02-10)
+cargo check -r -p ethrex-guest-program --features airbender-build-elf
+
 # Reproducible build using Docker
 PROVER_REPRODUCIBLE_BUILD=true cargo check -r -p ethrex-guest-program --features sp1-build-elf
 
@@ -120,10 +126,12 @@ cargo check -p ethrex-guest-program --features sp1
 | `risc0` | Base RISC Zero feature: enables RISC0 crypto module and feature propagation |
 | `zisk` | Base ZisK feature: enables ZisK crypto module and feature propagation |
 | `openvm` | Base OpenVM feature: enables OpenVM crypto module and feature propagation |
+| `airbender` | Base Airbender feature: enables Airbender crypto module (uses `airbender-crypto`) |
 | `sp1-build-elf` | SP1 base + build tooling. Triggers `build.rs` to compile the SP1 guest ELF |
 | `risc0-build-elf` | RISC Zero base + build tooling. Triggers `build.rs` to compile the RISC0 guest ELF |
 | `zisk-build-elf` | ZisK base + build tooling. Triggers `build.rs` to compile the ZisK guest ELF |
 | `openvm-build-elf` | OpenVM base + build tooling. Triggers `build.rs` to compile the OpenVM guest ELF |
+| `airbender-build-elf` | Airbender base + ELF inclusion. Guest binary is built separately via `cargo airbender build` |
 | `l2` | Enables L2 (rollup) program mode. Used for L2 provers. Can be combined with one zkVM feature |
 | `sp1-cycles` | Reports cycle counts (SP1 only) |
 | `c-kzg` | Enables KZG precompile support |
