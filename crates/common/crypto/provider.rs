@@ -63,145 +63,111 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Recover the Ethereum address from a 64-byte signature + recovery id + 32-byte message hash.
     /// Used by the ECRECOVER precompile (0x01).
     /// Returns the 32-byte keccak hash of the uncompressed public key (address is last 20 bytes).
+    #[cfg(feature = "secp256k1")]
     fn secp256k1_ecrecover(
         &self,
         sig: &[u8; 64],
         recid: u8,
         msg: &[u8; 32],
     ) -> Result<[u8; 32], CryptoError> {
-        #[cfg(feature = "secp256k1")]
-        {
-            let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid as i32)
-                .map_err(|_| CryptoError::InvalidRecoveryId)?;
+        let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid as i32)
+            .map_err(|_| CryptoError::InvalidRecoveryId)?;
 
-            let recoverable_sig =
-                secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
-                    .map_err(|_| CryptoError::InvalidSignature)?;
+        let recoverable_sig =
+            secp256k1::ecdsa::RecoverableSignature::from_compact(sig, recovery_id)
+                .map_err(|_| CryptoError::InvalidSignature)?;
 
-            let message = secp256k1::Message::from_digest(*msg);
+        let message = secp256k1::Message::from_digest(*msg);
 
-            let public_key = recoverable_sig
-                .recover(&message)
-                .map_err(|_| CryptoError::RecoveryFailed)?;
+        let public_key = recoverable_sig
+            .recover(&message)
+            .map_err(|_| CryptoError::RecoveryFailed)?;
 
-            let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
-            Ok(hash)
+        let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
+        Ok(hash)
+    }
+
+    #[cfg(not(feature = "secp256k1"))]
+    fn secp256k1_ecrecover(
+        &self,
+        sig: &[u8; 64],
+        recid: u8,
+        msg: &[u8; 32],
+    ) -> Result<[u8; 32], CryptoError> {
+        use k256::{
+            AffinePoint, ProjectivePoint, Scalar,
+            elliptic_curve::{
+                PrimeField,
+                group::prime::PrimeCurveAffine,
+                ops::{Invert, LinearCombination, Reduce},
+                point::DecompressPoint,
+                sec1::ToEncodedPoint,
+            },
+        };
+
+        // Parse r and s as scalars, rejecting values >= curve order
+        let r_bytes = k256::FieldBytes::from_slice(&sig[..32]);
+        let s_bytes = k256::FieldBytes::from_slice(&sig[32..]);
+        let r: Option<Scalar> = Scalar::from_repr(*r_bytes).into();
+        let s: Option<Scalar> = Scalar::from_repr(*s_bytes).into();
+
+        let (Some(r), Some(s)) = (r, s) else {
+            return Err(CryptoError::InvalidSignature);
+        };
+
+        if r.is_zero().into() || s.is_zero().into() {
+            return Err(CryptoError::InvalidSignature);
         }
-        #[cfg(not(feature = "secp256k1"))]
-        {
-            use k256::{
-                AffinePoint, ProjectivePoint, Scalar,
-                elliptic_curve::{
-                    group::prime::PrimeCurveAffine,
-                    ops::{Invert, LinearCombination, Reduce},
-                    point::DecompressPoint,
-                    sec1::ToEncodedPoint,
-                    PrimeField,
-                },
-            };
 
-            // Parse r and s as scalars, rejecting values >= curve order
-            let r_bytes = k256::FieldBytes::from_slice(&sig[..32]);
-            let s_bytes = k256::FieldBytes::from_slice(&sig[32..]);
-            let r: Option<Scalar> = Scalar::from_repr(*r_bytes).into();
-            let s: Option<Scalar> = Scalar::from_repr(*s_bytes).into();
+        // Decompress R from r and recovery id parity.
+        // Note: recid >= 2 means R.x = r + n (curve order), which has ~2^-128
+        // probability on secp256k1 and never occurs in practice. We don't handle
+        // it here — decompression will simply fail and return RecoveryFailed.
+        let y_is_odd = (recid & 1) != 0;
+        let r_point: Option<AffinePoint> =
+            AffinePoint::decompress(r_bytes, u8::from(y_is_odd).into()).into();
+        let Some(r_point) = r_point else {
+            return Err(CryptoError::RecoveryFailed);
+        };
 
-            let (Some(r), Some(s)) = (r, s) else {
-                return Err(CryptoError::InvalidSignature);
-            };
+        // Recover public key: pk = r^(-1) * (s*R - z*G)
+        let r_proj = ProjectivePoint::from(r_point);
+        let z = <Scalar as Reduce<k256::U256>>::reduce_bytes(k256::FieldBytes::from_slice(msg));
+        let r_inv: Option<Scalar> = r.invert_vartime().into();
+        let Some(r_inv) = r_inv else {
+            return Err(CryptoError::RecoveryFailed);
+        };
+        let u1 = -(r_inv * z);
+        let u2 = r_inv * s;
+        let pk = ProjectivePoint::lincomb(&ProjectivePoint::GENERATOR, &u1, &r_proj, &u2);
 
-            if r.is_zero().into() || s.is_zero().into() {
-                return Err(CryptoError::InvalidSignature);
-            }
-
-            // Decompress R from r and recovery id parity.
-            // Note: recid >= 2 means R.x = r + n (curve order), which has ~2^-128
-            // probability on secp256k1 and never occurs in practice. We don't handle
-            // it here — decompression will simply fail and return RecoveryFailed.
-            let y_is_odd = (recid & 1) != 0;
-            let r_point: Option<AffinePoint> =
-                AffinePoint::decompress(r_bytes, u8::from(y_is_odd).into()).into();
-            let Some(r_point) = r_point else {
-                return Err(CryptoError::RecoveryFailed);
-            };
-
-            // Recover public key: pk = r^(-1) * (s*R - z*G)
-            let r_proj = ProjectivePoint::from(r_point);
-            let z = <Scalar as Reduce<k256::U256>>::reduce_bytes(
-                k256::FieldBytes::from_slice(msg),
-            );
-            let r_inv: Option<Scalar> = r.invert_vartime().into();
-            let Some(r_inv) = r_inv else {
-                return Err(CryptoError::RecoveryFailed);
-            };
-            let u1 = -(r_inv * z);
-            let u2 = r_inv * s;
-            let pk = ProjectivePoint::lincomb(
-                &ProjectivePoint::GENERATOR,
-                &u1,
-                &r_proj,
-                &u2,
-            );
-
-            let pk_affine = pk.to_affine();
-            if bool::from(pk_affine.is_identity()) {
-                return Err(CryptoError::RecoveryFailed);
-            }
-            let uncompressed = pk_affine.to_encoded_point(false);
-            let hash = crate::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
-            Ok(hash)
+        let pk_affine = pk.to_affine();
+        if bool::from(pk_affine.is_identity()) {
+            return Err(CryptoError::RecoveryFailed);
         }
+        let uncompressed = pk_affine.to_encoded_point(false);
+        let hash = crate::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        Ok(hash)
     }
 
     /// Recover the signer address from a 65-byte signature (r||s||v) + 32-byte message hash.
     /// Used by transaction validation (tx.sender()) and EIP-7702 authority recovery.
     fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
-        #[cfg(feature = "secp256k1")]
-        {
-            // EIP-2: reject high-s signatures (s > secp256k1n/2)
-            const SECP256K1_N_HALF: [u8; 32] = hex_literal::hex!(
-                "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
-            );
-            if sig[32..64] > SECP256K1_N_HALF[..] {
-                return Err(CryptoError::InvalidSignature);
-            }
-
-            let recid_byte = sig[64] as i32;
-            let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(recid_byte)
-                .map_err(|_| CryptoError::InvalidRecoveryId)?;
-
-            let recoverable_sig =
-                secp256k1::ecdsa::RecoverableSignature::from_compact(&sig[..64], recovery_id)
-                    .map_err(|_| CryptoError::InvalidSignature)?;
-
-            let message = secp256k1::Message::from_digest(*msg);
-
-            let public_key = secp256k1::SECP256K1
-                .recover_ecdsa(&message, &recoverable_sig)
-                .map_err(|_| CryptoError::RecoveryFailed)?;
-
-            let hash = crate::keccak::keccak_hash(&public_key.serialize_uncompressed()[1..]);
-            Ok(Address::from_slice(&hash[12..]))
+        // EIP-2: reject high-s signatures (s > secp256k1n/2)
+        const SECP256K1_N_HALF: [u8; 32] =
+            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+        if sig[32..64] > SECP256K1_N_HALF[..] {
+            return Err(CryptoError::InvalidSignature);
         }
-        #[cfg(not(feature = "secp256k1"))]
-        {
-            // EIP-2: reject high-s signatures (s > secp256k1n/2)
-            const SECP256K1_N_HALF: [u8; 32] = hex_literal::hex!(
-                "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
-            );
-            if sig[32..64] > SECP256K1_N_HALF[..] {
-                return Err(CryptoError::InvalidSignature);
-            }
 
-            let hash = self.secp256k1_ecrecover(
-                sig[..64]
-                    .try_into()
-                    .map_err(|_| CryptoError::InvalidSignature)?,
-                sig[64],
-                msg,
-            )?;
-            Ok(Address::from_slice(&hash[12..]))
-        }
+        let hash = self.secp256k1_ecrecover(
+            sig[..64]
+                .try_into()
+                .map_err(|_| CryptoError::InvalidSignature)?,
+            sig[64],
+            msg,
+        )?;
+        Ok(Address::from_slice(&hash[12..]))
     }
 
     // ── Hashing ────────────────────────────────────────────────────────
@@ -367,59 +333,50 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
 
     /// Modular exponentiation (arbitrary precision).
     /// Used by MODEXP precompile (0x05).
+    #[cfg(feature = "std")]
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        #[cfg(feature = "std")]
-        let res_bytes: Vec<u8> = {
-            use malachite::base::num::arithmetic::traits::ModPow as _;
-            use malachite::base::num::basic::traits::Zero as _;
-            use malachite::{Natural, base::num::conversion::traits::*};
+        use malachite::base::num::arithmetic::traits::ModPow as _;
+        use malachite::base::num::basic::traits::Zero as _;
+        use malachite::{Natural, base::num::conversion::traits::*};
 
-            let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
-                .ok_or(CryptoError::InvalidInput("base"))?;
-            let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
-                .ok_or(CryptoError::InvalidInput("exponent"))?;
-            let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
-                .ok_or(CryptoError::InvalidInput("modulus"))?;
+        let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
+            .ok_or(CryptoError::InvalidInput("base"))?;
+        let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
+            .ok_or(CryptoError::InvalidInput("exponent"))?;
+        let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
+            .ok_or(CryptoError::InvalidInput("modulus"))?;
 
-            let result = if mod_nat == Natural::ZERO {
-                Natural::ZERO
-            } else if exp_nat == Natural::ZERO {
-                Natural::from(1_u8) % &mod_nat
-            } else {
-                let base_mod = base_nat % &mod_nat;
-                base_mod.mod_pow(&exp_nat, &mod_nat)
-            };
-
-            result.to_power_of_2_digits_desc(8)
-        };
-        #[cfg(not(feature = "std"))]
-        let res_bytes: Vec<u8> = {
-            use num_bigint::BigUint;
-
-            let base_nat = BigUint::from_bytes_be(base);
-            let exp_nat = BigUint::from_bytes_be(exp);
-            let mod_nat = BigUint::from_bytes_be(modulus);
-
-            let result = if mod_nat == BigUint::ZERO {
-                BigUint::ZERO
-            } else if exp_nat == BigUint::ZERO {
-                BigUint::from(1_u8) % &mod_nat
-            } else {
-                base_nat.modpow(&exp_nat, &mod_nat)
-            };
-
-            result.to_bytes_be()
-        };
-
-        let modulus_len = modulus.len();
-        let mut out = vec![0u8; modulus_len];
-        if res_bytes.len() <= modulus_len {
-            let offset = modulus_len - res_bytes.len();
-            out[offset..].copy_from_slice(&res_bytes);
+        let result = if mod_nat == Natural::ZERO {
+            Natural::ZERO
+        } else if exp_nat == Natural::ZERO {
+            Natural::from(1_u8) % &mod_nat
         } else {
-            out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
-        }
-        Ok(out)
+            let base_mod = base_nat % &mod_nat;
+            base_mod.mod_pow(&exp_nat, &mod_nat)
+        };
+
+        let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
+        pad_modexp_output(res_bytes, modulus.len())
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        use num_bigint::BigUint;
+
+        let base_nat = BigUint::from_bytes_be(base);
+        let exp_nat = BigUint::from_bytes_be(exp);
+        let mod_nat = BigUint::from_bytes_be(modulus);
+
+        let result = if mod_nat == BigUint::ZERO {
+            BigUint::ZERO
+        } else if exp_nat == BigUint::ZERO {
+            BigUint::from(1_u8) % &mod_nat
+        } else {
+            base_nat.modpow(&exp_nat, &mod_nat)
+        };
+
+        let res_bytes = result.to_bytes_be();
+        pad_modexp_output(res_bytes, modulus.len())
     }
 
     /// 256-bit modular multiplication.
@@ -741,6 +698,20 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         let point = G2Projective::map_to_curve(&fp2_elem).clear_h();
         serialize_bls12_g2(&G2Affine::from(point))
     }
+}
+
+// ── Modexp helper ──────────────────────────────────────────────────────────
+
+/// Pad or truncate modexp result bytes to match the modulus length.
+fn pad_modexp_output(res_bytes: Vec<u8>, modulus_len: usize) -> Result<Vec<u8>, CryptoError> {
+    let mut out = vec![0u8; modulus_len];
+    if res_bytes.len() <= modulus_len {
+        let offset = modulus_len - res_bytes.len();
+        out[offset..].copy_from_slice(&res_bytes);
+    } else {
+        out.copy_from_slice(&res_bytes[res_bytes.len() - modulus_len..]);
+    }
+    Ok(out)
 }
 
 // ── BLS12-381 helpers (used by trait default methods) ──────────────────────
