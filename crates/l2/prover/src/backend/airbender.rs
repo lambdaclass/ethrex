@@ -109,7 +109,7 @@ impl ProverBackend for AirbenderBackend {
     type SerializedInput = ();
 
     fn prover_type(&self) -> ProverType {
-        ProverType::Airbender
+        unimplemented!("Airbender is not yet enabled as a backend for the L2")
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
