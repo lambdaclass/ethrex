@@ -44,7 +44,9 @@ pub async fn sync_cycle_full(
 ) -> Result<(), SyncError> {
     info!("Syncing to sync_head {:?}", sync_head);
     fullsync_metrics!(
+        METRICS_FULLSYNC.reset_cycle();
         METRICS_FULLSYNC.set_stage(1);
+        METRICS_FULLSYNC.set_header_stage_start_now();
         METRICS_FULLSYNC.inc_cycles_started();
     );
 
@@ -144,6 +146,7 @@ pub async fn sync_cycle_full(
     start_block_number = start_block_number.max(1);
     fullsync_metrics!(
         METRICS_FULLSYNC.set_blocks_total(end_block_number - start_block_number);
+        METRICS_FULLSYNC.set_execution_stage_start_now();
     );
 
     // Download block bodies and execute full blocks in batches

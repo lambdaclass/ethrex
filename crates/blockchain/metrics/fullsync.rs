@@ -29,6 +29,10 @@ pub struct MetricsFullSync {
     batch_total_ms: Gauge,
     batch_size: IntGauge,
 
+    // Timestamps (Unix epoch seconds, for Grafana elapsed time calculation)
+    header_stage_start_timestamp: Gauge,
+    execution_stage_start_timestamp: Gauge,
+
     // Reliability
     header_failures: IntCounter,
     body_failures: IntCounter,
@@ -130,6 +134,18 @@ impl MetricsFullSync {
             )
             .expect("Failed to create fullsync_batch_size metric"),
 
+            // Timestamps
+            header_stage_start_timestamp: Gauge::new(
+                "fullsync_header_stage_start_timestamp",
+                "Unix timestamp (seconds) when header download stage began",
+            )
+            .expect("Failed to create fullsync_header_stage_start_timestamp metric"),
+            execution_stage_start_timestamp: Gauge::new(
+                "fullsync_execution_stage_start_timestamp",
+                "Unix timestamp (seconds) when block execution stage began",
+            )
+            .expect("Failed to create fullsync_execution_stage_start_timestamp metric"),
+
             // Reliability
             header_failures: IntCounter::new(
                 "fullsync_header_failures",
@@ -208,6 +224,41 @@ impl MetricsFullSync {
         self.batch_size.set(size);
     }
 
+    // Timestamp setters
+    pub fn set_header_stage_start_now(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        self.header_stage_start_timestamp.set(now);
+    }
+    pub fn set_execution_stage_start_now(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        self.execution_stage_start_timestamp.set(now);
+    }
+
+    /// Reset gauges at the start of a new sync cycle so stale data doesn't persist
+    pub fn reset_cycle(&self) {
+        self.blocks_executed.set(0);
+        self.blocks_total.set(0);
+        self.blocks_per_second.set(0.0);
+        self.bodies_per_second.set(0.0);
+        self.headers_per_second.set(0.0);
+        self.lowest_header.set(0);
+        self.target_block.set(0);
+        self.batch_body_download_ms.set(0.0);
+        self.batch_execution_ms.set(0.0);
+        self.batch_merkle_ms.set(0.0);
+        self.batch_store_ms.set(0.0);
+        self.batch_total_ms.set(0.0);
+        self.batch_size.set(0);
+        self.header_stage_start_timestamp.set(0.0);
+        self.execution_stage_start_timestamp.set(0.0);
+    }
+
     // Reliability setters
     pub fn inc_header_failures(&self) {
         self.header_failures.inc();
@@ -244,6 +295,8 @@ impl MetricsFullSync {
             Box::new(self.batch_size.clone()),
             Box::new(self.header_failures.clone()),
             Box::new(self.body_failures.clone()),
+            Box::new(self.header_stage_start_timestamp.clone()),
+            Box::new(self.execution_stage_start_timestamp.clone()),
             Box::new(self.cycles_started.clone()),
             Box::new(self.cycles_completed.clone()),
         ];
