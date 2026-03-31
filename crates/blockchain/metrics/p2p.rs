@@ -1,4 +1,6 @@
-use prometheus::{Encoder, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
+};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -10,6 +12,7 @@ pub struct MetricsP2P {
     peer_count: IntGauge,
     peer_clients: IntGaugeVec,
     disconnections: IntCounterVec,
+    unrecognized_discovery_packets: IntCounter,
 }
 
 impl Default for MetricsP2P {
@@ -36,6 +39,11 @@ impl MetricsP2P {
                 &["reason", "client_name"],
             )
             .expect("Failed to create disconnections metric"),
+            unrecognized_discovery_packets: IntCounter::new(
+                "ethrex_p2p_unrecognized_discovery_packets",
+                "Total number of discovery packets not matching discv4 or discv5",
+            )
+            .expect("Failed to create unrecognized_discovery_packets metric"),
         }
     }
 
@@ -67,6 +75,10 @@ impl MetricsP2P {
             .inc_by(0);
     }
 
+    pub fn inc_unrecognized_discovery_packets(&self) {
+        self.unrecognized_discovery_packets.inc();
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -75,6 +87,8 @@ impl MetricsP2P {
         r.register(Box::new(self.peer_clients.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.disconnections.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.unrecognized_discovery_packets.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
