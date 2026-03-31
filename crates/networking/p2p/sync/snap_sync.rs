@@ -145,9 +145,11 @@ pub async fn sync_cycle_snap(
             warn!(
                 "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
             );
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         };
+        // Reset failure counter on success so it tracks consecutive failures
+        attempts = 0;
 
         debug!("Sync Log 1: In snap sync");
         debug!(

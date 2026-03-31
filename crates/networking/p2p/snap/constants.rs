@@ -88,11 +88,10 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 /// <https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43>
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
-/// Maximum attempts before giving up on header downloads during syncing.
-/// Each attempt queries a single peer with a timeout, so this needs to be
-/// high enough to tolerate transient failures across the ~2500 sequential
-/// requests needed for a full header walk.
-pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 30;
+/// Maximum *consecutive* failures before giving up on header downloads.
+/// The counter resets on each successful response, so this only triggers
+/// when no peer can serve headers at all.
+pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 10;
 
 // =============================================================================
 // SNAP SYNC THRESHOLDS
