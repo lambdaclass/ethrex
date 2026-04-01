@@ -262,7 +262,11 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     if matches!(vm_type, VMType::Polygon(_)) {
         // Polygon: Cancun precompiles (1-10) + BLS (11-17) + P256Verify (0x100)
-        let addr_low = address.to_low_u64_be();
+        // Must check high bytes are zero — addresses like 0x4200...000f are NOT precompiles.
+        if address.0[..18] != [0u8; 18] {
+            return *address == P256VERIFY.address;
+        }
+        let addr_low = u16::from_be_bytes([address.0[18], address.0[19]]) as u64;
         return (1..=SIZE_PRECOMPILES_PRAGUE).contains(&addr_low) || *address == P256VERIFY.address;
     }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
@@ -348,7 +352,6 @@ pub fn execute_precompile(
     };
 
     if address[0..18] != [0u8; 18] {
-        eprintln!("PRECOMPILE_DEBUG invalid high bytes addr={:?}", address);
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
     let index = u16::from_be_bytes([address[18], address[19]]) as usize;
@@ -356,7 +359,6 @@ pub fn execute_precompile(
 
     let precompile = PRECOMPILES.get(index).copied().flatten();
     if !is_modexp && precompile.is_none() {
-        eprintln!("PRECOMPILE_DEBUG not found index={} addr={:?}", index, address);
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
 
