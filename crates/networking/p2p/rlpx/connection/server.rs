@@ -749,7 +749,7 @@ where
 
         // On Polygon chains, signal the sync manager with the remote peer's head.
         let chain_id = state.storage.get_chain_config().chain_id;
-        if (chain_id == 137 || chain_id == 80002)
+        if ethrex_polygon::genesis::is_polygon_chain(chain_id)
             && !remote_head.is_zero()
             && state.blockchain.secs_since_last_block() > 4
         {
@@ -837,7 +837,7 @@ where
     // by Bor (genesis hash decoded as TD → BitLen > 100 → disconnect).
     // Restrict to eth/68 for Polygon so both sides use the compatible eth/68 Status.
     let chain_id = state.storage.get_chain_config().chain_id;
-    let is_polygon = chain_id == 137 || chain_id == 80002;
+    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
     let supported_eth: &[Capability] = if is_polygon {
         &[Capability::eth(68)]
     } else {
@@ -1207,7 +1207,7 @@ async fn handle_incoming_message(
         // primary block propagation mechanism for Polygon.
         Message::EthNewBlock(new_block) if peer_supports_eth => {
             let chain_id = state.storage.get_chain_config().chain_id;
-            let is_polygon = chain_id == 137 || chain_id == 80002;
+            let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
             if is_polygon {
                 let new_block = *new_block;
                 let block_hash = new_block.block.hash();
@@ -1374,7 +1374,7 @@ async fn handle_incoming_message(
         }
         Message::NewBlockHashes(new_block_hashes) if peer_supports_eth => {
             let chain_id = state.storage.get_chain_config().chain_id;
-            let is_polygon = chain_id == 137 || chain_id == 80002;
+            let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
             if is_polygon {
                 // Request full block headers+bodies for unknown, non-in-flight hashes.
                 let latest_nbh = state.storage.get_latest_block_number().await.unwrap_or(0);

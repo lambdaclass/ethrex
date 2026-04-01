@@ -61,7 +61,7 @@ pub async fn sync_cycle_full(
     // For Polygon (fast block times), the sync_head hash from peer Status is always stale.
     // Skip hash-based lookup entirely and go straight to forward sync by block number.
     let chain_id = store.get_chain_config().chain_id;
-    let is_polygon = chain_id == 137 || chain_id == 80002;
+    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
 
     if is_polygon {
         let latest = store.get_latest_block_number().await.unwrap_or(0);

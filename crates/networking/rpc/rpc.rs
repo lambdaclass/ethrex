@@ -903,8 +903,7 @@ pub async fn map_bor_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
 /// Returns true if the node is running on a Polygon PoS network (mainnet or Amoy testnet).
 fn is_polygon_network(context: &RpcApiContext) -> bool {
     let chain_id = context.storage.get_chain_config().chain_id;
-    // Polygon mainnet = 137, Amoy testnet = 80002
-    chain_id == 137 || chain_id == 80002
+    ethrex_polygon::genesis::is_polygon_chain(chain_id)
 }
 
 /// Formats a handler result into a JSON-RPC 2.0 response.

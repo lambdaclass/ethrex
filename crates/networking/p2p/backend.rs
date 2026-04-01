@@ -47,7 +47,7 @@ pub async fn validate_status<ST: StatusMessage>(
     let remote_fork_id = msg_data.get_fork_id();
     if !is_fork_id_valid(storage, &remote_fork_id).await? {
         let local_fork_id = get_fork_id(storage).await.ok();
-        let is_polygon = chain_config.chain_id == 137 || chain_config.chain_id == 80002;
+        let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_config.chain_id);
         if is_polygon {
             // Polygon: old Bor versions compute fork IDs with only EVM forks
             // (no Bor-specific forks). Warn but allow the connection — chain ID

@@ -16,6 +16,11 @@ pub const POLYGON_MAINNET_CHAIN_ID: u64 = 137;
 /// Amoy testnet chain ID.
 pub const AMOY_CHAIN_ID: u64 = 80002;
 
+/// Returns true if the chain ID is a known Polygon PoS network.
+pub fn is_polygon_chain(chain_id: u64) -> bool {
+    chain_id == POLYGON_MAINNET_CHAIN_ID || chain_id == AMOY_CHAIN_ID
+}
+
 /// Expected genesis hashes from Bor source.
 pub const POLYGON_MAINNET_GENESIS_HASH: &str =
     "a9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b";

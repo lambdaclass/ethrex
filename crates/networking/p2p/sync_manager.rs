@@ -62,7 +62,7 @@ impl SyncManager {
         if snap_enabled.load(Ordering::Relaxed) {
             let latest_block = store.get_latest_block_number().await.unwrap_or(0);
             let chain_config = store.get_chain_config();
-            let is_polygon = chain_config.chain_id == 137 || chain_config.chain_id == 80002;
+            let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_config.chain_id);
             let is_synced = if is_polygon || chain_config.terminal_total_difficulty_passed {
                 latest_block > 0
             } else if let Some(merge_block) = chain_config.merge_netsplit_block {
@@ -98,7 +98,7 @@ impl SyncManager {
         // Skip on Polygon: snap sync needs a real target hash from a peer, which we don't
         // have yet at startup. The Polygon sync bridge will trigger sync once a peer connects.
         let chain_id = store.get_chain_config().chain_id;
-        let is_polygon = chain_id == 137 || chain_id == 80002;
+        let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
         if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) && !is_polygon {
             sync_manager.start_sync();
         }
@@ -167,7 +167,7 @@ impl SyncManager {
                 // On Polygon, skip this wait — forward sync doesn't need a target hash.
                 if sync_head.is_zero() {
                     let chain_id = store.get_chain_config().chain_id;
-                    let is_polygon = chain_id == 137 || chain_id == 80002;
+                    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
                     if !is_polygon {
                         info!("Resuming sync after node restart, waiting for next FCU");
                         sleep(Duration::from_secs(5)).await;

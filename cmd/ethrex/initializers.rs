@@ -238,7 +238,7 @@ pub async fn init_rpc_api(
     // The bridge keeps `pending_head` locally so that if sync fails (e.g. stale
     // hash), it can re-trigger without waiting for a new peer status exchange.
     let chain_id = store.get_chain_config().chain_id;
-    let is_polygon = chain_id == 137 || chain_id == 80002;
+    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
     if is_polygon {
         let syncer_clone = syncer.clone();
         let blockchain_clone = blockchain.clone();

@@ -112,7 +112,7 @@ impl StatusMessage68 {
         let network_id = chain_config.chain_id;
         // Polygon doesn't use TTD — its cumulative difficulty grows with every block.
         // Use the latest block number as a lower-bound estimate (each block has diff >= 1).
-        let is_polygon = network_id == 137 || network_id == 80002;
+        let is_polygon = ethrex_polygon::genesis::is_polygon_chain(network_id);
         // These blocks must always be available
         let genesis_header = storage
             .get_block_header(0)?
