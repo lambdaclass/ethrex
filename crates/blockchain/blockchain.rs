@@ -373,21 +373,11 @@ impl Blockchain {
         let mut vm = self.new_evm(vm_db)?;
 
         // For Polygon, resolve the BorConfig addresses for this block number
-        if matches!(self.options.r#type, BlockchainType::Polygon)
-            && let Some(bor_config) =
-                ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
-        {
-            let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
-                .unwrap_or(block.header.coinbase);
-            debug!(
-                "POLYGON_AUTHOR block={} author={:?} header_coinbase={:?}",
-                block.header.number, author, block.header.coinbase
-            );
-            vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
-                burnt_contract: bor_config.get_burnt_contract(block.header.number),
-                coinbase: bor_config.get_coinbase(block.header.number),
-                author,
-            });
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            vm.set_polygon_fee_config(polygon_fee_config_for_block(
+                &block.header,
+                chain_config.chain_id,
+            ));
         }
 
         let (mut execution_result, bal) = vm.execute_block(block)?;
@@ -1549,16 +1539,8 @@ impl Blockchain {
                 }
                 BlockchainType::Polygon => {
                     let chain_config = self.storage.get_chain_config();
-                    let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
-                        .unwrap_or(block.header.coinbase);
                     let fee_config =
-                        ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
-                            .map(|bor_config| ethrex_common::types::PolygonFeeConfig {
-                                burnt_contract: bor_config.get_burnt_contract(block.header.number),
-                                coinbase: bor_config.get_coinbase(block.header.number),
-                                author,
-                            })
-                            .unwrap_or_default();
+                        polygon_fee_config_for_block(&block.header, chain_config.chain_id);
                     Evm::new_from_db_for_polygon(logger.clone(), fee_config, Arc::new(NativeCrypto))
                 }
             };
@@ -2201,35 +2183,21 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
-            // Resolve Polygon fee config for this specific block
-            if matches!(self.options.r#type, BlockchainType::Polygon)
-                && let Some(bor_config) =
-                    ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
-            {
-                let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
-                    .unwrap_or(block.header.coinbase);
-                vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
-                    burnt_contract: bor_config.get_burnt_contract(block.header.number),
-                    coinbase: bor_config.get_coinbase(block.header.number),
-                    author,
-                });
+            if matches!(self.options.r#type, BlockchainType::Polygon) {
+                vm.set_polygon_fee_config(polygon_fee_config_for_block(
+                    &block.header,
+                    chain_config.chain_id,
+                ));
             }
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
             let mut vm = self.new_evm(vm_db)?;
-            // Resolve Polygon fee config for this specific block
-            if matches!(self.options.r#type, BlockchainType::Polygon)
-                && let Some(bor_config) =
-                    ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
-            {
-                let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
-                    .unwrap_or(block.header.coinbase);
-                vm.set_polygon_fee_config(ethrex_common::types::PolygonFeeConfig {
-                    burnt_contract: bor_config.get_burnt_contract(block.header.number),
-                    coinbase: bor_config.get_coinbase(block.header.number),
-                    author,
-                });
+            if matches!(self.options.r#type, BlockchainType::Polygon) {
+                vm.set_polygon_fee_config(polygon_fee_config_for_block(
+                    &block.header,
+                    chain_config.chain_id,
+                ));
             }
             (vm, None)
         };
@@ -3145,6 +3113,22 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 ///   2. `commitState` — at sprint-start blocks, commits state sync events from Heimdall
 ///      to the StateReceiver contract (0x1001).
 ///
+/// Resolve the PolygonFeeConfig for a block by recovering the signer from the header
+/// and looking up the burnt contract and coinbase from BorConfig.
+fn polygon_fee_config_for_block(
+    header: &BlockHeader,
+    chain_id: u64,
+) -> ethrex_common::types::PolygonFeeConfig {
+    let author = ethrex_polygon::consensus::seal::recover_signer(header).unwrap_or(header.coinbase);
+    ethrex_polygon::genesis::bor_config_for_chain(chain_id)
+        .map(|bor_config| ethrex_common::types::PolygonFeeConfig {
+            burnt_contract: bor_config.get_burnt_contract(header.number),
+            coinbase: bor_config.get_coinbase(header.number),
+            author,
+        })
+        .unwrap_or_default()
+}
+
 /// Logs from both calls are collected into a single "state sync receipt" (type 0x7F)
 /// appended after all regular receipts.
 ///

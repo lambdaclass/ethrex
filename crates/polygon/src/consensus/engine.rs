@@ -8,10 +8,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::bor_config::BorConfig;
 use crate::heimdall::{HeimdallClient, HeimdallError, Milestone};
-use crate::system_calls::{
-    self, MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, SystemCallContext,
-    VALIDATOR_CONTRACT,
-};
 use crate::validation::validate_bor_header;
 
 use super::extra_data::{
@@ -291,53 +287,6 @@ impl BorEngine {
         Ok(())
     }
 
-    /// Build the list of system calls to execute during block finalization.
-    ///
-    /// System calls are executed AFTER all regular transactions but before state
-    /// root computation. Each call uses `state.Finalise(true)` after execution.
-    /// Gas is NOT counted toward block gasUsed.
-    ///
-    /// **Execution order** (matching Bor's `Finalize`):
-    /// 1. Span commit (`checkAndCommitSpan`) — at sprint-start of last sprint in span
-    /// 2. State sync (`CommitStates`) — at sprint-start blocks
-    /// 3. Contract code upgrades (`changeContractCodeIfNeeded`) — any matching block
-    ///
-    /// # Arguments
-    /// * `block_number` — the block being finalized
-    /// * `header_timestamp` — current block's timestamp (for state sync time window)
-    /// * `last_state_id` — the last committed state ID from the state receiver contract
-    ///   (obtained by calling `lastStateId()` on 0x1001)
-    ///
-    /// Returns the list of `SystemCallContext` to execute against the EVM in order.
-    pub async fn get_system_calls(
-        &self,
-        block_number: BlockNumber,
-        header_timestamp: u64,
-        last_state_id: u64,
-    ) -> Result<Vec<SystemCallContext>, BorEngineError> {
-        let mut calls = Vec::new();
-
-        // 1. Span commit at span boundaries (checked at sprint-start blocks)
-        if self.need_to_commit_span(block_number) {
-            let span_call = self.build_span_commit_call(block_number).await?;
-            calls.push(span_call);
-        }
-
-        // 2. State sync at sprint-start blocks
-        if self.config.is_sprint_start(block_number) && block_number > 0 {
-            let state_sync_calls = self
-                .build_state_sync_calls(block_number, header_timestamp, last_state_id)
-                .await?;
-            calls.extend(state_sync_calls);
-        }
-
-        // 3. Contract code upgrades are handled separately by the caller
-        // via get_block_alloc_updates(), since they modify code/storage directly
-        // rather than going through the EVM.
-
-        Ok(calls)
-    }
-
     /// Returns the block_alloc updates for a given block number, if any.
     ///
     /// These are direct code/storage modifications to system contracts
@@ -349,94 +298,6 @@ impl BorEngine {
         block_number: BlockNumber,
     ) -> Option<&std::collections::HashMap<Address, ethrex_common::types::GenesisAccount>> {
         self.config.block_alloc.get(&block_number)
-    }
-
-    /// Build commitState system calls for state sync events.
-    ///
-    /// Fetches pending state sync events from Heimdall for the time window
-    /// ending at `header_timestamp - confirmation_delay`, starting from
-    /// `last_state_id + 1`.
-    ///
-    /// Note: EVM reverts in individual commitState calls are non-fatal.
-    /// The caller should log them but continue to the next event.
-    async fn build_state_sync_calls(
-        &self,
-        block_number: BlockNumber,
-        header_timestamp: u64,
-        last_state_id: u64,
-    ) -> Result<Vec<SystemCallContext>, BorEngineError> {
-        let delay = self.config.get_state_sync_delay(block_number);
-        let to_time = header_timestamp - delay;
-        let from_id = last_state_id + 1;
-
-        // Heimdall returns events ordered by ID.
-        // The limit is generous — Bor uses 100 by default.
-        let events = self
-            .heimdall
-            .fetch_state_sync_events(from_id, to_time, 100)
-            .await?;
-
-        let calls = events
-            .into_iter()
-            .map(|event| {
-                // Each event's `data` field is hex-encoded RLP bytes for the record.
-                let record_bytes = hex_decode_data(&event.data);
-                let sync_time = to_time;
-                let data = system_calls::encode_commit_state(sync_time, &record_bytes);
-                SystemCallContext {
-                    from: SYSTEM_ADDRESS,
-                    to: STATE_RECEIVER_CONTRACT,
-                    data,
-                    gas_limit: MAX_SYSTEM_CALL_GAS,
-                    gas_price: ethereum_types::U256::zero(),
-                    value: ethereum_types::U256::zero(),
-                    revert_ok: true, // commitState reverts are non-fatal
-                }
-            })
-            .collect();
-
-        Ok(calls)
-    }
-
-    /// Build the commitSpan system call for a span boundary.
-    ///
-    /// Fetches the next span from Heimdall and encodes the commitSpan call
-    /// with the new validator and producer sets.
-    async fn build_span_commit_call(
-        &self,
-        block_number: BlockNumber,
-    ) -> Result<SystemCallContext, BorEngineError> {
-        // Use stored span ID if available, fall back to formula.
-        let current_span_id = self
-            .current_span_id()
-            .unwrap_or_else(|| self.config.span_id_at(block_number));
-        let next_span = self.heimdall.fetch_span(current_span_id + 1).await?;
-
-        // Encode validators and producers as Bor-format bytes (40 bytes each:
-        // 20-byte address + 20-byte big-endian padded voting power).
-        let validator_bytes = encode_validator_bytes(&next_span.validators);
-        let producer_bytes = encode_validator_bytes(&next_span.selected_producers);
-
-        let data = system_calls::encode_commit_span(
-            next_span.id,
-            next_span.start_block,
-            next_span.end_block,
-            &validator_bytes,
-            &producer_bytes,
-        );
-
-        // Update stored span to the next span (it becomes current after commit).
-        self.set_current_span(next_span);
-
-        Ok(SystemCallContext {
-            from: SYSTEM_ADDRESS,
-            to: VALIDATOR_CONTRACT,
-            data,
-            gas_limit: MAX_SYSTEM_CALL_GAS,
-            gas_price: ethereum_types::U256::zero(),
-            value: ethereum_types::U256::zero(),
-            revert_ok: false, // commitSpan reverts ARE fatal
-        })
     }
 
     // ---- Snapshot validator set update at span boundaries ----
@@ -742,13 +603,6 @@ pub fn encode_validator_bytes(validators: &[crate::heimdall::Validator]) -> Vec<
         out.extend_from_slice(val);
     }
     out
-}
-
-/// Decode a hex string (with or without 0x prefix) into bytes.
-/// Returns empty vec on invalid input.
-fn hex_decode_data(s: &str) -> Vec<u8> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    hex::decode(s).unwrap_or_default()
 }
 
 #[cfg(test)]

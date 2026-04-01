@@ -232,3 +232,132 @@ fn compute_root_hash(headers: &[BlockHeader]) -> [u8; 32] {
 
     level[0]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethereum_types::H256;
+    use ethrex_common::types::BlockHeader;
+
+    /// Build a minimal BlockHeader with only the fields used by compute_root_hash.
+    fn mock_header(
+        number: u64,
+        timestamp: u64,
+        tx_root: [u8; 32],
+        rx_root: [u8; 32],
+    ) -> BlockHeader {
+        BlockHeader {
+            number,
+            timestamp,
+            transactions_root: H256::from(tx_root),
+            receipts_root: H256::from(rx_root),
+            ..Default::default()
+        }
+    }
+
+    /// Compute the expected leaf hash for a header, matching the production logic.
+    fn expected_leaf(
+        number: u64,
+        timestamp: u64,
+        tx_root: [u8; 32],
+        rx_root: [u8; 32],
+    ) -> [u8; 32] {
+        let mut data = [0u8; 128];
+        data[24..32].copy_from_slice(&number.to_be_bytes());
+        data[56..64].copy_from_slice(&timestamp.to_be_bytes());
+        data[64..96].copy_from_slice(&tx_root);
+        data[96..128].copy_from_slice(&rx_root);
+        keccak_hash(data)
+    }
+
+    /// Helper: hash two 32-byte nodes together (keccak256(left || right)).
+    fn hash_pair(left: [u8; 32], right: [u8; 32]) -> [u8; 32] {
+        let mut combined = [0u8; 64];
+        combined[..32].copy_from_slice(&left);
+        combined[32..].copy_from_slice(&right);
+        keccak_hash(combined)
+    }
+
+    #[test]
+    fn test_empty_range_returns_zero_hash() {
+        let result = compute_root_hash(&[]);
+        assert_eq!(result, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_single_block_root_equals_leaf_hash() {
+        let h = mock_header(42, 1_000_000, [0xaa; 32], [0xbb; 32]);
+        let root = compute_root_hash(&[h]);
+        let leaf = expected_leaf(42, 1_000_000, [0xaa; 32], [0xbb; 32]);
+        assert_eq!(root, leaf, "single-block root should equal the leaf hash");
+    }
+
+    #[test]
+    fn test_two_blocks_root() {
+        let h0 = mock_header(100, 2_000, [0x01; 32], [0x02; 32]);
+        let h1 = mock_header(101, 2_002, [0x03; 32], [0x04; 32]);
+        let root = compute_root_hash(&[h0, h1]);
+
+        let leaf0 = expected_leaf(100, 2_000, [0x01; 32], [0x02; 32]);
+        let leaf1 = expected_leaf(101, 2_002, [0x03; 32], [0x04; 32]);
+        let expected = hash_pair(leaf0, leaf1);
+        assert_eq!(root, expected, "two-block root = keccak(leaf0 || leaf1)");
+    }
+
+    #[test]
+    fn test_three_blocks_padded_to_four() {
+        let h0 = mock_header(10, 100, [0x10; 32], [0x20; 32]);
+        let h1 = mock_header(11, 102, [0x30; 32], [0x40; 32]);
+        let h2 = mock_header(12, 104, [0x50; 32], [0x60; 32]);
+        let root = compute_root_hash(&[h0, h1, h2]);
+
+        let leaf0 = expected_leaf(10, 100, [0x10; 32], [0x20; 32]);
+        let leaf1 = expected_leaf(11, 102, [0x30; 32], [0x40; 32]);
+        let leaf2 = expected_leaf(12, 104, [0x50; 32], [0x60; 32]);
+        let zero = [0u8; 32];
+
+        // Level 1: pairs (leaf0,leaf1) and (leaf2,zero_pad)
+        let left = hash_pair(leaf0, leaf1);
+        let right = hash_pair(leaf2, zero);
+        let expected = hash_pair(left, right);
+        assert_eq!(
+            root, expected,
+            "three blocks padded to 4: keccak(keccak(l0||l1) || keccak(l2||zero))"
+        );
+    }
+
+    #[test]
+    fn test_four_blocks_power_of_two_no_padding() {
+        let headers: Vec<BlockHeader> = (0..4)
+            .map(|i| mock_header(i, i * 10, [i as u8; 32], [(i + 100) as u8; 32]))
+            .collect();
+        let root = compute_root_hash(&headers);
+
+        let leaves: Vec<[u8; 32]> = (0..4u64)
+            .map(|i| expected_leaf(i, i * 10, [i as u8; 32], [(i + 100) as u8; 32]))
+            .collect();
+
+        let left = hash_pair(leaves[0], leaves[1]);
+        let right = hash_pair(leaves[2], leaves[3]);
+        let expected = hash_pair(left, right);
+        assert_eq!(root, expected, "four blocks (power of two) need no padding");
+    }
+
+    #[test]
+    fn test_deterministic_different_inputs_differ() {
+        let h_a = mock_header(1, 100, [0xaa; 32], [0xbb; 32]);
+        let h_b = mock_header(2, 200, [0xcc; 32], [0xdd; 32]);
+        let root_a = compute_root_hash(&[h_a]);
+        let root_b = compute_root_hash(&[h_b]);
+        assert_ne!(
+            root_a, root_b,
+            "different headers should produce different roots"
+        );
+    }
+
+    #[test]
+    fn test_max_checkpoint_length_constant() {
+        // Verify the constant is 2^15 = 32768
+        assert_eq!(MAX_CHECKPOINT_LENGTH, 32768);
+    }
+}

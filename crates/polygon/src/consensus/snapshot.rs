@@ -17,8 +17,8 @@ pub const SNAPSHOT_PERSIST_INTERVAL: u64 = 1024;
 
 /// A validator entry with address, voting power, and proposer priority.
 ///
-/// Proposer priority is used by Bor's Tendermint-based proposer rotation algorithm.
-/// Full rotation logic will be implemented in Wave 3.
+/// Proposer priority is used by Bor's Tendermint-based proposer rotation algorithm
+/// (see `Snapshot::increment_proposer_priority`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatorInfo {
     pub address: Address,

@@ -1,4 +1,4 @@
-use ethereum_types::{Address, H160, U256};
+use ethereum_types::{Address, H160};
 use ethrex_common::utils::keccak;
 
 /// BorValidatorSet contract address (0x0000...1000).
@@ -19,20 +19,6 @@ pub const SYSTEM_ADDRESS: Address = H160([
 
 /// Maximum gas for Bor system calls (50 million, matching Bor's MaxTxGas).
 pub const MAX_SYSTEM_CALL_GAS: u64 = 50_000_000;
-
-/// Context for executing a system call against a Bor contract.
-pub struct SystemCallContext {
-    pub from: Address,
-    pub to: Address,
-    pub data: Vec<u8>,
-    pub gas_limit: u64,
-    pub gas_price: U256,
-    pub value: U256,
-    /// If true, EVM reverts should be logged but not fail the block.
-    /// This is true for commitState calls (state sync) where individual
-    /// event failures are non-fatal.
-    pub revert_ok: bool,
-}
 
 /// Compute the 4-byte Solidity function selector from a signature string.
 fn selector(sig: &str) -> [u8; 4] {

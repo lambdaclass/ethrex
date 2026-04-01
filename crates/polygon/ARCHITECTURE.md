@@ -44,7 +44,9 @@ Polygon has its own hard fork schedule, activated by block number rather than ti
        │  every 1s / 5s / 2s         │  │                                      │        │
        └─────────────────────────────│──│─ current_span ──► need_to_commit_    │        │
                                      │  │                    span()            │        │
-                                     │  │  milestone       (not yet wired up)  │        │
+                                     │  │  milestone       (polled, not yet     │        │
+                                     │  │                   enforced in fork    │        │
+                                     │  │                   choice)             │        │
                                      │  └──────────┬───────────────────────────┘        │
                                      │             │                                    │
                                      │             ▼                                    │
@@ -109,7 +111,7 @@ After snap sync there are no historical headers to reconstruct a snapshot. `boot
 
 ### Fork choice
 
-Total-difficulty-based: higher TD wins, then higher block number, then lower block hash. Bor uses Heimdall milestones to prevent deep reorgs; ethrex instead relies on the storage layer's 128-block commit threshold.
+Total-difficulty-based: higher TD wins, then higher block number, then lower block hash. Bor uses Heimdall milestones to prevent deep reorgs; ethrex has milestone polling implemented (`HeimdallPoller` + `BorEngine::set_milestone`/`is_reorg_allowed`) but enforcement in fork choice is not yet wired up — the storage layer's 128-block commit threshold serves as the current safety net.
 
 ## Fee distribution
 
