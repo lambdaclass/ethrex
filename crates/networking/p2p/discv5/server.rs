@@ -930,7 +930,9 @@ impl DiscoveryServer {
                 self.whoareyou_global_count = GLOBAL_WHOAREYOU_RATE_LIMIT + 1;
                 warn!(
                     protocol = "discv5",
-                    "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), possible attack"
+                    "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), \
+                     dropping excess packets. This is normal during initial discovery or \
+                     network churn; persistent occurrences may indicate a DoS attempt"
                 );
             }
             return Ok(());
