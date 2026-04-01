@@ -264,6 +264,11 @@ impl DiscoveryServer {
         if node_id(&sender_public_key) == self.local_node.node_id() {
             return Ok(());
         }
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_incoming(message.metric_label());
+        }
         match message {
             Message::Ping(ping_message) => {
                 trace!(protocol = "discv4", received = "Ping", msg = ?ping_message, from = %format!("{sender_public_key:#x}"));
@@ -749,6 +754,11 @@ impl DiscoveryServer {
         message: Message,
         addr: SocketAddr,
     ) -> Result<usize, DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_outgoing(message.metric_label());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
@@ -761,6 +771,11 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<H256, DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_outgoing(message.metric_label());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         let message_hash: [u8; 32] = buf[..32]

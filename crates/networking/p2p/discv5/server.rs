@@ -288,6 +288,15 @@ impl DiscoveryServer {
         Discv5Message { packet, from }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
         // TODO retrieve session info
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            match packet.header.flag {
+                0x01 => METRICS_P2P.inc_discv5_incoming("WhoAreYou"),
+                0x02 => METRICS_P2P.inc_discv5_incoming("Handshake"),
+                _ => {} // Ordinary messages are tracked in handle_message
+            }
+        }
         match packet.header.flag {
             0x00 => self.handle_ordinary(packet, from).await,
             0x01 => self.handle_who_are_you(packet, from).await,
@@ -769,6 +778,11 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing(message.metric_label());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message: message.clone(),
@@ -831,6 +845,11 @@ impl DiscoveryServer {
         addr: SocketAddr,
         encrypt_key: &[u8; 16],
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing(message.metric_label());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message,
@@ -854,6 +873,11 @@ impl DiscoveryServer {
         node: Node,
         record: Option<NodeRecord>,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing("Handshake");
+        }
         let handshake = Handshake {
             src_id: self.local_node.node_id(),
             id_signature: signature.serialize_compact().to_vec(),
@@ -894,6 +918,11 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing("WhoAreYou");
+        }
         // Rate limit: prevent amplification attacks by limiting WHOAREYOU per (IP, node).
         // Keyed by (IP, src_id) so distinct nodes behind the same IP are not blocked.
         // Exception: if we already have a pending challenge for src_id (e.g. HandshakeResend),
@@ -1161,6 +1190,11 @@ impl DiscoveryServer {
         let sender_id = ordinary.src_id;
         if sender_id == self.local_node.node_id() {
             return Ok(());
+        }
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_incoming(ordinary.message.metric_label());
         }
         match ordinary.message {
             Message::Ping(ping_message) => {
