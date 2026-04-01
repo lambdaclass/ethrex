@@ -3209,9 +3209,16 @@ fn execute_polygon_system_calls(
                 .unwrap_or_else(|| bor_config.span_id_at(block_number));
             let next_span_id = current_span_id + 1;
 
-            // Fetch the next span from Heimdall (async → sync bridge)
+            // Try pre-fetched span from poller cache, fall back to direct Heimdall fetch.
             let next_span = rt_handle
-                .block_on(engine.heimdall.fetch_span(next_span_id))
+                .block_on(async {
+                    if let Some(span) = engine.take_cached_next_span(next_span_id).await {
+                        debug!(next_span_id, "Using pre-fetched span from poller cache");
+                        Ok(span)
+                    } else {
+                        engine.heimdall.fetch_span(next_span_id).await
+                    }
+                })
                 .map_err(|e| {
                     ChainError::Custom(format!(
                         "Failed to fetch span {next_span_id} from Heimdall: {e}"
@@ -3320,12 +3327,23 @@ fn execute_polygon_system_calls(
         );
 
         let events = if let Some(engine) = bor_engine {
+            // Try pre-fetched events from poller cache, fall back to direct fetch.
             rt_handle
-                .block_on(
-                    engine
-                        .heimdall
-                        .fetch_state_sync_events(from_id, sync_time, 50),
-                )
+                .block_on(async {
+                    if let Some(cached) = engine.take_cached_state_sync_events(from_id).await {
+                        debug!(
+                            block_number,
+                            cached_count = cached.len(),
+                            "Using pre-fetched state sync events from poller cache"
+                        );
+                        Ok(cached)
+                    } else {
+                        engine
+                            .heimdall
+                            .fetch_state_sync_events(from_id, sync_time, 50)
+                            .await
+                    }
+                })
                 .map_err(|e| {
                     ChainError::Custom(format!(
                         "Failed to fetch state sync events from Heimdall: {e}"
@@ -3400,7 +3418,7 @@ fn execute_polygon_system_calls(
             ethrex_rlp::structs::Encoder::new(&mut record_bytes)
                 .encode_field(&event.id)
                 .encode_field(&event.contract)
-                .encode_field(&bytes::Bytes::from(data_bytes.clone()))
+                .encode_field(&data_bytes)
                 .encode_field(&event.tx_hash)
                 .encode_field(&event.log_index)
                 .encode_field(&event.bor_chain_id)

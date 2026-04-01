@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ethereum_types::Address;
 use ethrex_common::U256;
@@ -58,6 +58,10 @@ pub struct BorEngine {
     /// Current span from Heimdall, used for accurate span boundary detection.
     /// Set during bootstrap and updated after each commitSpan.
     current_span: Mutex<Option<crate::heimdall::Span>>,
+    /// Shared state from the background HeimdallPoller.
+    /// When set, system call execution can drain pre-fetched events and spans
+    /// instead of blocking on Heimdall I/O during block processing.
+    poller_state: Option<Arc<tokio::sync::RwLock<crate::heimdall::HeimdallPollerState>>>,
 }
 
 impl std::fmt::Debug for BorEngine {
@@ -82,6 +86,57 @@ impl BorEngine {
             snapshots: SnapshotCache::new(),
             latest_milestone: Mutex::new(None),
             current_span: Mutex::new(None),
+            poller_state: None,
+        }
+    }
+
+    /// Attach the HeimdallPoller's shared state so system call execution
+    /// can use pre-fetched events/spans instead of blocking on Heimdall I/O.
+    pub fn set_poller_state(
+        &mut self,
+        state: Arc<tokio::sync::RwLock<crate::heimdall::HeimdallPollerState>>,
+    ) {
+        self.poller_state = Some(state);
+    }
+
+    /// Try to drain pre-fetched state sync events from the poller cache.
+    /// Returns events with `id >= from_id`, removing them from the cache.
+    /// Returns `None` if the poller state is unavailable or has no matching events.
+    pub async fn take_cached_state_sync_events(
+        &self,
+        from_id: u64,
+    ) -> Option<Vec<crate::heimdall::EventRecord>> {
+        let poller = self.poller_state.as_ref()?;
+        let mut state = poller.write().await;
+        if state.pending_state_sync_events.is_empty() {
+            return None;
+        }
+        // Drain events with id >= from_id
+        let matching: Vec<_> = state
+            .pending_state_sync_events
+            .drain(..)
+            .filter(|e| e.id >= from_id)
+            .collect();
+        if matching.is_empty() {
+            None
+        } else {
+            Some(matching)
+        }
+    }
+
+    /// Try to get the next span from the poller cache.
+    /// Returns and clears `next_span` if its ID matches `expected_id`.
+    pub async fn take_cached_next_span(&self, expected_id: u64) -> Option<crate::heimdall::Span> {
+        let poller = self.poller_state.as_ref()?;
+        let mut state = poller.write().await;
+        if state
+            .next_span
+            .as_ref()
+            .is_some_and(|s| s.id == expected_id)
+        {
+            state.next_span.take()
+        } else {
+            None
         }
     }
 

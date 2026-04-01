@@ -570,14 +570,17 @@ pub async fn init_l1(
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
+    // Shared Heimdall poller state — populated by background poller,
+    // consumed by BorEngine during system call execution to avoid blocking I/O.
+    let heimdall_state = Arc::new(RwLock::new(HeimdallPollerState::default()));
+
     // Create BorEngine for Polygon chains.
     let bor_engine = if network.is_polygon() {
         bor_config_for_chain(chain_id).map(|config| {
-            Arc::new(BorEngine::new(
-                config.clone(),
-                &opts.bor_heimdall,
-                cancel_token.clone(),
-            ))
+            let mut engine =
+                BorEngine::new(config.clone(), &opts.bor_heimdall, cancel_token.clone());
+            engine.set_poller_state(heimdall_state.clone());
+            Arc::new(engine)
         })
     } else {
         None
@@ -661,11 +664,10 @@ pub async fn init_l1(
     // Spawn the Heimdall poller for Polygon networks (not in dev mode).
     if network.is_polygon() && !opts.dev {
         if let Some(bor_config) = bor_config_for_chain(chain_id) {
-            let heimdall_state = Arc::new(RwLock::new(HeimdallPollerState::default()));
             let poller = HeimdallPoller::new(
                 &opts.bor_heimdall,
                 bor_config.clone(),
-                heimdall_state,
+                heimdall_state.clone(),
                 cancel_token.clone(),
             );
             info!(
