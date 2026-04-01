@@ -33,7 +33,7 @@ impl ZiskBackend {
             Ok(meta) => {
                 // If the file size doesn't match, we know we need to rewrite without
                 // reading potentially large/corrupted file contents.
-                if meta.len() != ZKVM_ZISK_PROGRAM_ELF.len() as u64 {
+                if meta.len() != u64::try_from(ZKVM_ZISK_PROGRAM_ELF.len()).unwrap_or(0) {
                     true
                 } else {
                     // Size matches — read and compare contents.
