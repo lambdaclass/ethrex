@@ -20,7 +20,7 @@ use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use indexmap::{IndexMap, map::Entry};
-use rand::seq::SliceRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 use rustc_hash::{FxHashMap, FxHashSet};
 use spawned_concurrency::{
     actor,
@@ -915,9 +915,7 @@ impl PeerTableServer {
                 c.supports_protocol(protocol)
                     && Self::is_validation_needed(c, revalidation_interval)
             })
-            .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
-            .cloned()
             .cloned()
             .map(Box::new)
     }
@@ -1132,7 +1130,7 @@ impl PeerTableServer {
                 || contact
                     .validation_timestamp
                     .map(|ts| Instant::now().saturating_duration_since(ts) > revalidation_interval)
-                    .unwrap_or(true)
+                    .unwrap_or(false)
         }
     }
 }
