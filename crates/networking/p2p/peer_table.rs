@@ -1131,9 +1131,7 @@ impl PeerTableServer {
             !contact.was_validated()
                 || contact
                     .validation_timestamp
-                    .map(|ts| {
-                        Instant::now().saturating_duration_since(ts) > revalidation_interval
-                    })
+                    .map(|ts| Instant::now().saturating_duration_since(ts) > revalidation_interval)
                     .unwrap_or(true)
         }
     }
