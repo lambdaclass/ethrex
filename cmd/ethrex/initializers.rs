@@ -17,7 +17,7 @@ use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServer},
     sync::SyncMode,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
@@ -186,6 +186,9 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
+        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
+    >,
 ) {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -229,6 +232,8 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        #[cfg(feature = "eip-8025")]
+        proof_coordinator,
     );
 
     tracker.spawn(rpc_api);
@@ -491,7 +496,7 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
+    let peer_table = PeerTableServer::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -512,9 +517,34 @@ pub async fn init_l1(
     )
     .expect("P2P context could not be created");
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+    let initiator = RLPxInitiator::spawn(p2p_context.clone());
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+
+    // Initialize EIP-8025 proof coordinator when the feature is enabled.
+    #[cfg(feature = "eip-8025")]
+    let proof_coordinator = {
+        use ethrex_blockchain::proof_coordinator::{
+            config::ProofCoordinatorConfig, coordinator::start_proof_coordinator,
+        };
+        let proof_config = ProofCoordinatorConfig {
+            callback_url: opts.proof_callback_url.clone(),
+            coordinator_addr: opts.proof_coordinator_addr.clone(),
+            coordinator_port: opts.proof_coordinator_port,
+        };
+        match start_proof_coordinator(store.clone(), proof_config).await {
+            Ok(handle) => {
+                info!("EIP-8025 proof coordinator started");
+                Some(handle)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to start proof coordinator: {e}. Proof endpoints will be unavailable."
+                );
+                None
+            }
+        }
+    };
 
     init_rpc_api(
         &opts,
@@ -527,6 +557,8 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        #[cfg(feature = "eip-8025")]
+        proof_coordinator,
     )
     .await;
 

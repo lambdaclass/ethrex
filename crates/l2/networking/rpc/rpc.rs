@@ -110,6 +110,8 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil,
             block_worker_channel,
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator: None,
         },
         valid_delegation_addresses,
         sponsor_pk,
