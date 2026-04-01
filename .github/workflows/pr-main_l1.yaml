@@ -215,7 +215,7 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: discv4|discv5|eth|snap
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine

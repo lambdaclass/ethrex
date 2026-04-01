@@ -9,6 +9,11 @@ on:
     paths:
       - ".github/workflows/main_prover.yaml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag to checkout"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -31,6 +36,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -149,7 +156,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
+          RUST_LOG=info,ethrex_l2_prover=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" & DOCKER_LOGS_L2_PID=$!
           docker logs --follow ethrex_l1 & DOCKER_LOGS_L1_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
