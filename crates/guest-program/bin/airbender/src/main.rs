@@ -10,10 +10,6 @@ use sha2::{Digest, Sha256};
 
 #[airbender::main]
 fn main() -> [u32; 8] {
-    std::panic::set_hook(Box::new(|info| {
-        println!("GUEST PANIC: {info}");
-    }));
-
     println!("start reading input");
     let input_bytes: Vec<u8> = airbender::guest::read().expect("failed to read input");
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input_bytes).unwrap();
@@ -22,13 +18,7 @@ fn main() -> [u32; 8] {
     let crypto = Arc::new(AirbenderCrypto);
 
     println!("start execution");
-    let output = match execution_program(input, crypto) {
-        Ok(output) => output,
-        Err(e) => {
-            println!("execution failed: {e}");
-            panic!("execution failed: {e}");
-        }
-    };
+    let output = execution_program(input, crypto).unwrap();
     println!("finish execution");
 
     println!("start hashing output");
