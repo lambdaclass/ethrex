@@ -42,9 +42,9 @@ use tracing::{error, info, trace};
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
 const MAX_ENRS_PER_MESSAGE: usize = 3;
 /// Interval between revalidation checks (how often we run the revalidation loop).
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Nodes not validated within this interval are candidates for revalidation.
-const REVALIDATION_INTERVAL: Duration = Duration::from_secs(30);
+const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
@@ -537,15 +537,13 @@ impl DiscoveryServer {
     }
 
     async fn do_revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        let contacts = self
+        if let Some(contact) = self
             .peer_table
-            .get_contacts_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
-            .await?;
-
-        for contact in contacts {
-            if let Err(e) = self.send_ping(&contact.node).await {
-                trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
-            }
+            .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
+            .await?
+            && let Err(e) = self.send_ping(&contact.node).await
+        {
+            trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
         }
         Ok(())
     }
