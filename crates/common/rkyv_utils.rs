@@ -1,5 +1,5 @@
-use bytes::Bytes;
 use crate::U256;
+use bytes::Bytes;
 use ethereum_types::{Bloom, H160, H256};
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,

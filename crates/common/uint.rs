@@ -2,7 +2,9 @@
 // Selected at compile time via feature flags: `uint-ethereum-types` (default) or `uint-ruint`.
 
 #[cfg(all(feature = "uint-ethereum-types", feature = "uint-ruint"))]
-compile_error!("Only one uint backend can be enabled: choose `uint-ethereum-types` or `uint-ruint`");
+compile_error!(
+    "Only one uint backend can be enabled: choose `uint-ethereum-types` or `uint-ruint`"
+);
 
 #[cfg(not(any(feature = "uint-ethereum-types", feature = "uint-ruint")))]
 compile_error!("A uint backend must be enabled: `uint-ethereum-types` or `uint-ruint`");
@@ -85,7 +87,7 @@ impl U256 {
     pub fn as_limbs(&self) -> &[u64; 4] {
         #[cfg(feature = "uint-ethereum-types")]
         {
-            &self.0 .0
+            &self.0.0
         }
         #[cfg(feature = "uint-ruint")]
         {
@@ -98,7 +100,7 @@ impl U256 {
     pub fn as_limbs_mut(&mut self) -> &mut [u64; 4] {
         #[cfg(feature = "uint-ethereum-types")]
         {
-            &mut self.0 .0
+            &mut self.0.0
         }
         #[cfg(feature = "uint-ruint")]
         {
@@ -764,7 +766,7 @@ impl U512 {
         #[cfg(feature = "uint-ethereum-types")]
         {
             // ethereum_types::U512 stores as [u64; 8], low limbs first
-            U256::from_limbs([self.0 .0[0], self.0 .0[1], self.0 .0[2], self.0 .0[3]])
+            U256::from_limbs([self.0.0[0], self.0.0[1], self.0.0[2], self.0.0[3]])
         }
         #[cfg(feature = "uint-ruint")]
         {
@@ -778,7 +780,7 @@ impl U512 {
     pub fn as_limbs(&self) -> &[u64; 8] {
         #[cfg(feature = "uint-ethereum-types")]
         {
-            &self.0 .0
+            &self.0.0
         }
         #[cfg(feature = "uint-ruint")]
         {

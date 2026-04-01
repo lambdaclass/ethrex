@@ -1,6 +1,6 @@
 // Hash/address types from ethereum_types (not switched by uint backend)
 pub use ethereum_types::{
-    BigEndianHash, Bloom, BloomInput, FromStrRadixErr, H128, H160, H256, H264, H32, H512, H520,
+    BigEndianHash, Bloom, BloomInput, FromStrRadixErr, H32, H128, H160, H256, H264, H512, H520,
     Signature,
 };
 pub type Address = H160;

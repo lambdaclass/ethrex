@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use bytes::{BufMut, Bytes};
 use crate::U256;
+use bytes::{BufMut, Bytes};
 use ethereum_types::H256;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;

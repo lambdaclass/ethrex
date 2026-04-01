@@ -192,8 +192,14 @@ impl Stack {
         #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
         unsafe {
             std::ptr::copy_nonoverlapping(
-                self.values.get_unchecked_mut(index).as_limbs_mut().as_mut_ptr(),
-                self.values.get_unchecked_mut(self.offset).as_limbs_mut().as_mut_ptr(),
+                self.values
+                    .get_unchecked_mut(index)
+                    .as_limbs_mut()
+                    .as_mut_ptr(),
+                self.values
+                    .get_unchecked_mut(self.offset)
+                    .as_limbs_mut()
+                    .as_mut_ptr(),
                 U64_PER_U256,
             );
         }

@@ -1693,13 +1693,12 @@ impl LEVM {
         let slots: Vec<(Address, ethrex_common::H256)> = accounts
             .iter()
             .flat_map(|ac| {
-                ac.all_storage_slots()
-                    .map(move |slot| {
-                        let mut bytes = [0u8; 32];
-                        let be = slot.to_big_endian();
-                        bytes.copy_from_slice(&be);
-                        (ac.address, ethrex_common::H256::from(bytes))
-                    })
+                ac.all_storage_slots().map(move |slot| {
+                    let mut bytes = [0u8; 32];
+                    let be = slot.to_big_endian();
+                    bytes.copy_from_slice(&be);
+                    (ac.address, ethrex_common::H256::from(bytes))
+                })
             })
             .collect();
         store
