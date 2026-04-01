@@ -1,5 +1,6 @@
 use bytes::{BufMut, Bytes};
-use ethereum_types::{Address, H256, U256};
+use crate::U256;
+use ethereum_types::{Address, H256};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::{RLPEncode, encode_length, list_length},

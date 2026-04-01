@@ -1,7 +1,8 @@
 use super::utils::random_duration;
 use crate::sequencer::errors::L1WatcherError;
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
+use ethrex_common::U256;
 use ethrex_blockchain::{Blockchain, BlockchainType};
 use ethrex_common::types::{Log, PrivilegedL2Transaction, Transaction, TxKind};
 use ethrex_common::utils::keccak;

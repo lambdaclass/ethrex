@@ -25,7 +25,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    H256, U256,
     types::{AccountState, BlockHeader},
 };
 use ethrex_crypto::NativeCrypto;
@@ -118,8 +118,8 @@ pub async fn request_account_range(
         let chunk_start_u256 = chunk_size * i + start_u256;
         // We subtract one because ranges are inclusive
         let chunk_end_u256 = chunk_start_u256 + chunk_size - 1u64;
-        let chunk_start = H256::from_uint(&(chunk_start_u256));
-        let chunk_end = H256::from_uint(&(chunk_end_u256));
+        let chunk_start = chunk_start_u256.to_h256();
+        let chunk_end = chunk_end_u256.to_h256();
         tasks_queue_not_started.push_back((chunk_start, chunk_end));
     }
     // Modify the last chunk to include the limit
@@ -823,14 +823,14 @@ pub async fn request_storage_ranges(
 
                             for i in 0..chunk_count {
                                 let start_hash_u256 = start_hash_u256 + chunk_size * i;
-                                let start_hash = H256::from_uint(&start_hash_u256);
+                                let start_hash = start_hash_u256.to_h256();
                                 let end_hash = if i == chunk_count - 1 {
                                     HASH_MAX
                                 } else {
                                     let end_hash_u256 = start_hash_u256
                                         .checked_add(chunk_size)
                                         .unwrap_or(U256::MAX);
-                                    H256::from_uint(&end_hash_u256)
+                                    end_hash_u256.to_h256()
                                 };
 
                                 let task = StorageTask {
@@ -858,13 +858,13 @@ pub async fn request_storage_ranges(
 
                         for i in 0..chunk_count {
                             let start_hash_u256 = start_hash_u256 + chunk_size * i;
-                            let start_hash = H256::from_uint(&start_hash_u256);
+                            let start_hash = start_hash_u256.to_h256();
                             let end_hash = if i == chunk_count - 1 {
                                 HASH_MAX
                             } else {
                                 let end_hash_u256 =
                                     start_hash_u256.checked_add(chunk_size).unwrap_or(U256::MAX);
-                                H256::from_uint(&end_hash_u256)
+                                end_hash_u256.to_h256()
                             };
 
                             let task = StorageTask {
@@ -1221,8 +1221,8 @@ async fn request_account_range_worker(
                     return Err(SnapError::NoAccountHashes);
                 }
             };
-            let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-            let new_start = H256::from_uint(&new_start_u256);
+            let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1u64;
+            let new_start = new_start_u256.to_h256();
             Some((new_start, chunk_end))
         } else {
             None
@@ -1381,8 +1381,8 @@ async fn request_storage_ranges_worker(
                 return Err(SnapError::NoAccountStorages);
             }
         };
-        let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
-        let next_hash = H256::from_uint(&next_hash_u256);
+        let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(U256::from(1u64));
+        let next_hash = next_hash_u256.to_h256();
         (start + account_storages.len() - 1, end, next_hash)
     } else {
         (start + account_storages.len(), end, H256::zero())

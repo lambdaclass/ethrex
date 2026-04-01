@@ -188,7 +188,7 @@ impl OpcodeHandler for OpAddModHandler {
             let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
             vm.current_call_frame
                 .stack
-                .push(U256([res.0[0], res.0[1], res.0[2], res.0[3]]))?;
+                .push(res.low_u256())?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -255,7 +255,7 @@ impl OpcodeHandler for OpSignExtendHandler {
                     if value.bit(8 * x + 7) {
                         value |= U256::MAX << (8 * (x + 1));
                     } else if x != 31 {
-                        value &= (U256::one() << (8 * (x + 1))) - 1;
+                        value &= (U256::one() << (8 * (x + 1))) - U256::one();
                     }
 
                     value

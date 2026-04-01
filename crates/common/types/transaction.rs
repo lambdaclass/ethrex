@@ -7,7 +7,8 @@ use std::{
 
 use crate::utils::keccak;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use crate::U256;
+use ethereum_types::{Address, H256};
 use ethrex_crypto::{Crypto, CryptoError};
 use lru::LruCache;
 pub use mempool::MempoolTransaction;

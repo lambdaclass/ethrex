@@ -10,7 +10,8 @@ use crate::{
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::keccak,
 };
-use ethereum_types::{Address, H256, U256};
+use crate::U256;
+use ethereum_types::{Address, H256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};

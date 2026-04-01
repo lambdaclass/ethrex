@@ -4078,6 +4078,7 @@ dependencies = [
  "once_cell",
  "rayon",
  "rkyv",
+ "ruint",
  "rustc-hash 2.1.1",
  "secp256k1",
  "serde",

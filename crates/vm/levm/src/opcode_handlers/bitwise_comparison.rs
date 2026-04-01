@@ -233,7 +233,7 @@ impl OpcodeHandler for OpShlHandler {
             .stack
             .push(match u8::try_from(shift_amount) {
                 #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
-                Ok(shift_amount) => value << shift_amount,
+                Ok(shift_amount) => value << usize::from(shift_amount),
                 Err(_) => U256::zero(),
             })?;
 
@@ -253,7 +253,7 @@ impl OpcodeHandler for OpShrHandler {
             .stack
             .push(match u8::try_from(shift_amount) {
                 #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
-                Ok(shift_amount) => value >> shift_amount,
+                Ok(shift_amount) => value >> usize::from(shift_amount),
                 Err(_) => U256::zero(),
             })?;
 
@@ -273,8 +273,8 @@ impl OpcodeHandler for OpSarHandler {
         vm.current_call_frame
             .stack
             .push(match (u8::try_from(shift_amount), value.bit(255)) {
-                (Ok(shift_amount), false) => value >> shift_amount,
-                (Ok(shift_amount), true) => !(!value >> shift_amount),
+                (Ok(shift_amount), false) => value >> usize::from(shift_amount),
+                (Ok(shift_amount), true) => !(!value >> usize::from(shift_amount)),
                 (Err(_), false) => U256::zero(),
                 (Err(_), true) => U256::MAX,
             })?;

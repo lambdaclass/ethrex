@@ -51,7 +51,7 @@ impl OpcodeHandler for OpBlockHashHandler {
             vm.current_call_frame.stack.push(unsafe {
                 let mut bytes = vm.db.store.get_block_hash(block_number)?.0;
                 bytes.reverse();
-                U256(mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes))
+                U256::from_limbs(mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes))
             })?;
         } else {
             vm.current_call_frame.stack.push_zero()?;
@@ -118,7 +118,7 @@ impl OpcodeHandler for OpPrevRandaoHandler {
         // After Paris, `PREVRANDAO` is the prev_randao (or current_random) field.
         // Source: https://eips.ethereum.org/EIPS/eip-4399
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes = vm.env.prev_randao.unwrap_or_default().0;
             bytes.reverse();
             mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
@@ -211,7 +211,7 @@ impl OpcodeHandler for OpBlobHashHandler {
             Some(hash) =>
             {
                 #[expect(unsafe_code, reason = "safe")]
-                vm.current_call_frame.stack.push(U256(unsafe {
+                vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
                     let mut bytes = hash.0;
                     bytes.reverse();
                     mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
