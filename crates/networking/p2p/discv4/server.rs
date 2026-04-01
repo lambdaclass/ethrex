@@ -37,9 +37,8 @@ use tokio::net::UdpSocket;
 use tracing::{debug, error, info, trace};
 
 const EXPIRATION_SECONDS: u64 = 20;
-/// Interval between revalidation checks (how often we run the revalidation loop).
-/// Must be short so that new contacts from handle_neighbors (which no longer
-/// sends immediate pings) get validated quickly and become usable for lookups.
+/// Interval between revalidation checks. Each check pings one random stale
+/// contact, so this controls the maximum revalidation ping rate (~1/sec).
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
