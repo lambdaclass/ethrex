@@ -376,6 +376,11 @@ impl DiscoveryServer {
                 self.peer_table.set_disposable(contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
             } else {
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::p2p::METRICS_P2P;
+                    METRICS_P2P.inc_discv4_outgoing("FindNode");
+                }
                 self.pending_find_node
                     .insert(contact.node.node_id(), Instant::now());
             }
