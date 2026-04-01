@@ -11,13 +11,12 @@ use ethrex_guest_program::l1::{decode_eip8025, execution_program};
 
 use ethrex_guest_program::crypto::zisk::ZiskCrypto;
 use rkyv::rancor::Error;
-use sha2::{Digest, Sha256};
 
 ziskos::entrypoint!(main);
 
 pub fn main() {
     println!("start reading input");
-    let input = ziskos::read_input();
+    let input = ziskos::io::read_vec();
 
     #[cfg(feature = "eip-8025")]
     let (new_payload_request, execution_witness) = decode_eip8025(&input).unwrap();
@@ -34,13 +33,7 @@ pub fn main() {
     let output = execution_program(input, crypto).unwrap();
     println!("finish execution");
 
-    println!("start hashing output");
-    let output = Sha256::digest(output.encode());
-    println!("finish hashing output");
-
     println!("start revealing output");
-    output.chunks_exact(4).enumerate().for_each(|(idx, bytes)| {
-        ziskos::set_output(idx, u32::from_le_bytes(bytes.try_into().unwrap()))
-    });
+    ziskos::io::commit(&output.encode());
     println!("finish revealing output");
 }
