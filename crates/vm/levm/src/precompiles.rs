@@ -261,13 +261,19 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     if matches!(vm_type, VMType::Polygon(_)) {
-        // Polygon: use fork-aware precompile set.
-        // Must check high bytes are zero — addresses like 0x4200...000f are NOT precompiles.
+        // Polygon: fork-aware precompile check using direct range + fork gates.
+        // Avoids iterator overhead — this is called on every CALL/DELEGATECALL opcode.
+        // High bytes must be zero (addresses like 0x4200...000f are NOT precompiles).
         if address.0[..18] != [0u8; 18] {
-            return *address == P256VERIFY.address
-                && precompiles_for_fork(fork).any(|p| p.address == P256VERIFY.address);
+            return *address == P256VERIFY.address && fork >= Fork::Lisovo;
         }
-        return precompiles_for_fork(fork).any(|p| p.address == *address);
+        let addr = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
+        return match addr {
+            1..=9 => true,                                          // Basic + Istanbul
+            0x0a => fork >= Fork::Lisovo && fork < Fork::LisovoPro, // KZG point evaluation
+            0x0b..=0x11 => fork >= Fork::Bhilai,                    // BLS (Prague-equivalent)
+            _ => false,
+        };
     }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)

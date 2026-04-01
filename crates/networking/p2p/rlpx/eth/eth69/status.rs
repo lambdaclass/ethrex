@@ -98,7 +98,7 @@ impl StatusMessage69 {
         let is_polygon = network_id == 137 || network_id == 80002;
         let fork_id = if is_polygon {
             if let Some(bor_config) = bor_config_for_chain(network_id) {
-                polygon_fork_id(genesis, &bor_config, lastest_block)
+                polygon_fork_id(genesis, bor_config, lastest_block)
             } else {
                 ForkId::new(
                     chain_config,

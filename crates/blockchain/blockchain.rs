@@ -358,8 +358,8 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            self.verify_bor_header(&block.header, &parent_header)?;
+        let bor_signer = if matches!(self.options.r#type, BlockchainType::Polygon) {
+            Some(self.verify_bor_header(&block.header, &parent_header)?)
         } else {
             validate_block_pre_execution(
                 block,
@@ -367,7 +367,8 @@ impl Blockchain {
                 &chain_config,
                 ELASTICITY_MULTIPLIER,
             )?;
-        }
+            None
+        };
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
@@ -377,6 +378,7 @@ impl Blockchain {
             vm.set_polygon_fee_config(polygon_fee_config_for_block(
                 &block.header,
                 chain_config.chain_id,
+                bor_signer,
             ));
         }
 
@@ -478,7 +480,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         if matches!(self.options.r#type, BlockchainType::Polygon) {
-            self.verify_bor_header(&block.header, parent_header)?;
+            let _signer = self.verify_bor_header(&block.header, parent_header)?;
         } else {
             validate_block_pre_execution(
                 block,
@@ -1391,7 +1393,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         if matches!(self.options.r#type, BlockchainType::Polygon) {
-            self.verify_bor_header(&block.header, parent_header)?;
+            let _signer = self.verify_bor_header(&block.header, parent_header)?;
         } else {
             validate_block_pre_execution(
                 block,
@@ -1540,7 +1542,7 @@ impl Blockchain {
                 BlockchainType::Polygon => {
                     let chain_config = self.storage.get_chain_config();
                     let fee_config =
-                        polygon_fee_config_for_block(&block.header, chain_config.chain_id);
+                        polygon_fee_config_for_block(&block.header, chain_config.chain_id, None);
                     Evm::new_from_db_for_polygon(logger.clone(), fee_config, Arc::new(NativeCrypto))
                 }
             };
@@ -2187,6 +2189,7 @@ impl Blockchain {
                 vm.set_polygon_fee_config(polygon_fee_config_for_block(
                     &block.header,
                     chain_config.chain_id,
+                    None,
                 ));
             }
             (vm, Some(logger))
@@ -2197,6 +2200,7 @@ impl Blockchain {
                 vm.set_polygon_fee_config(polygon_fee_config_for_block(
                     &block.header,
                     chain_config.chain_id,
+                    None,
                 ));
             }
             (vm, None)
@@ -3036,19 +3040,17 @@ impl Blockchain {
     ///
     /// Without a BorEngine (e.g. tests), falls back to `validate_bor_header` which
     /// only checks structural fields.
+    /// Returns the recovered signer address on success (reusable as cached author).
     fn verify_bor_header(
         &self,
         header: &BlockHeader,
         parent_header: &BlockHeader,
-    ) -> Result<(), ChainError> {
+    ) -> Result<Address, ChainError> {
         if let Some(engine) = &self.bor_engine {
             let parent_hash = parent_header.compute_block_hash();
-            let mut snapshot = match engine.get_snapshot(&parent_hash) {
+            let mut snapshot = match engine.take_snapshot(&parent_hash) {
                 Some(snap) => snap,
                 None => {
-                    // No cached snapshot — bootstrap on-demand from Heimdall.
-                    // This happens after snap sync when the initial genesis snapshot
-                    // doesn't cover the current chain position.
                     info!(
                         block = header.number,
                         parent = parent_header.number,
@@ -3060,21 +3062,18 @@ impl Blockchain {
                     })?
                 }
             };
-            engine.verify_header(header, parent_header, &mut snapshot)?;
-            // Update validator set at span boundaries so subsequent blocks
-            // are verified against the new span's validators.
+            let signer = engine.verify_header(header, parent_header, &mut snapshot)?;
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current()
                     .block_on(engine.update_snapshot_at_span_boundary(header.number, &mut snapshot))
             })?;
-            // Cache the updated snapshot (now includes this block's signer in recents).
             engine.put_snapshot(snapshot);
+            Ok(signer)
         } else {
-            return Err(ChainError::Custom(
+            Err(ChainError::Custom(
                 "BorEngine not configured — cannot verify Polygon block seal".to_string(),
-            ));
+            ))
         }
-        Ok(())
     }
 }
 
@@ -3113,13 +3112,17 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 ///   2. `commitState` — at sprint-start blocks, commits state sync events from Heimdall
 ///      to the StateReceiver contract (0x1001).
 ///
-/// Resolve the PolygonFeeConfig for a block by recovering the signer from the header
-/// and looking up the burnt contract and coinbase from BorConfig.
+/// Resolve the PolygonFeeConfig for a block.
+/// If `cached_author` is provided (from a prior `verify_header` call), reuses it
+/// to avoid a redundant ecrecover (~3μs per call).
 fn polygon_fee_config_for_block(
     header: &BlockHeader,
     chain_id: u64,
+    cached_author: Option<Address>,
 ) -> ethrex_common::types::PolygonFeeConfig {
-    let author = ethrex_polygon::consensus::seal::recover_signer(header).unwrap_or(header.coinbase);
+    let author = cached_author.unwrap_or_else(|| {
+        ethrex_polygon::consensus::seal::recover_signer(header).unwrap_or(header.coinbase)
+    });
     ethrex_polygon::genesis::bor_config_for_chain(chain_id)
         .map(|bor_config| ethrex_common::types::PolygonFeeConfig {
             burnt_contract: bor_config.get_burnt_contract(header.number),

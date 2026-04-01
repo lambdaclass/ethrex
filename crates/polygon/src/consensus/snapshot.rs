@@ -255,9 +255,15 @@ impl SnapshotCache {
         }
     }
 
-    /// Get a snapshot by block hash, if cached.
+    /// Peek at a snapshot by block hash (clones, does not remove).
     pub fn get(&self, hash: &H256) -> Option<Snapshot> {
         self.cache.lock().unwrap().get(hash).cloned()
+    }
+
+    /// Take a snapshot by block hash, removing it from cache.
+    /// Avoids cloning — the caller owns the snapshot and can put it back after mutation.
+    pub fn take(&self, hash: &H256) -> Option<Snapshot> {
+        self.cache.lock().unwrap().pop(hash)
     }
 
     /// Insert a snapshot into the cache.

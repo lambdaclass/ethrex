@@ -134,11 +134,10 @@ impl BorEngine {
         }
     }
 
-    /// Look up or create the snapshot for a given block hash.
-    ///
-    /// Returns the cached snapshot if available.
-    pub fn get_snapshot(&self, hash: &ethrex_common::H256) -> Option<Snapshot> {
-        self.snapshots.get(hash)
+    /// Take a snapshot by block hash, removing it from cache.
+    /// The caller should put it back via `put_snapshot` after mutation.
+    pub fn take_snapshot(&self, hash: &ethrex_common::H256) -> Option<Snapshot> {
+        self.snapshots.take(hash)
     }
 
     /// Insert a snapshot into the cache.

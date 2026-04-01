@@ -83,7 +83,7 @@ pub async fn is_fork_id_valid(
         let genesis_hash = genesis_header.hash();
         return Ok(polygon_is_fork_id_valid(
             genesis_hash,
-            &bor_config,
+            bor_config,
             latest_block_number,
             remote_fork_id,
         ));
@@ -121,7 +121,7 @@ pub async fn get_fork_id(storage: &Store) -> Result<ForkId, StoreError> {
         let latest_block_number = storage.get_latest_block_number().await?;
         return Ok(polygon_fork_id(
             genesis_header.hash(),
-            &bor_config,
+            bor_config,
             latest_block_number,
         ));
     }

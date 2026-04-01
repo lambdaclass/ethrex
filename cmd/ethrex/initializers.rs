@@ -574,7 +574,7 @@ pub async fn init_l1(
     let bor_engine = if network.is_polygon() {
         bor_config_for_chain(chain_id).map(|config| {
             Arc::new(BorEngine::new(
-                config,
+                config.clone(),
                 &opts.bor_heimdall,
                 cancel_token.clone(),
             ))
@@ -664,7 +664,7 @@ pub async fn init_l1(
             let heimdall_state = Arc::new(RwLock::new(HeimdallPollerState::default()));
             let poller = HeimdallPoller::new(
                 &opts.bor_heimdall,
-                bor_config,
+                bor_config.clone(),
                 heimdall_state,
                 cancel_token.clone(),
             );

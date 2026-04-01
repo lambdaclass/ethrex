@@ -1664,7 +1664,7 @@ impl Store {
         {
             return Ok(ethrex_polygon::fork_id::polygon_fork_id(
                 genesis_header.hash(),
-                &bor_config,
+                bor_config,
                 block_header.number,
             ));
         }

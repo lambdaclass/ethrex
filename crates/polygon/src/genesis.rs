@@ -307,17 +307,18 @@ fn amoy_chain_config() -> ChainConfig {
     }
 }
 
-/// Returns the BorConfig for a given chain ID, if it's a known Polygon network.
+/// Returns a reference to the BorConfig for a given chain ID, if it's a known Polygon network.
 ///
 /// The config is parsed from JSON once and cached for subsequent calls.
-pub fn bor_config_for_chain(chain_id: u64) -> Option<BorConfig> {
+/// Returns a `&'static` reference — no cloning overhead.
+pub fn bor_config_for_chain(chain_id: u64) -> Option<&'static BorConfig> {
     use std::sync::OnceLock;
     static MAINNET: OnceLock<BorConfig> = OnceLock::new();
     static AMOY: OnceLock<BorConfig> = OnceLock::new();
 
     match chain_id {
-        POLYGON_MAINNET_CHAIN_ID => Some(MAINNET.get_or_init(polygon_mainnet_bor_config).clone()),
-        AMOY_CHAIN_ID => Some(AMOY.get_or_init(amoy_bor_config).clone()),
+        POLYGON_MAINNET_CHAIN_ID => Some(MAINNET.get_or_init(polygon_mainnet_bor_config)),
+        AMOY_CHAIN_ID => Some(AMOY.get_or_init(amoy_bor_config)),
         _ => None,
     }
 }

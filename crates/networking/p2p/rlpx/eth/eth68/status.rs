@@ -134,7 +134,7 @@ impl StatusMessage68 {
         let lastest_block_hash = block_header.hash();
         let fork_id = if is_polygon {
             if let Some(bor_config) = bor_config_for_chain(network_id) {
-                polygon_fork_id(genesis, &bor_config, lastest_block)
+                polygon_fork_id(genesis, bor_config, lastest_block)
             } else {
                 ForkId::new(
                     chain_config,
