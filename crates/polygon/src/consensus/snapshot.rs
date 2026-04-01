@@ -238,6 +238,22 @@ impl Snapshot {
 
         Some((total - succession) as u64)
     }
+
+    /// Compute the succession number (ring distance from proposer to signer).
+    /// Returns 0 for the in-turn proposer, 1 for the next, etc.
+    pub fn succession(&self, signer: &Address) -> Option<usize> {
+        let total = self.validator_set.len();
+        if total == 0 {
+            return None;
+        }
+        let proposer_idx = self.get_proposer_index()?;
+        let signer_idx = self.get_signer_index(signer)?;
+        Some(if signer_idx >= proposer_idx {
+            signer_idx - proposer_idx
+        } else {
+            total + signer_idx - proposer_idx
+        })
+    }
 }
 
 /// In-memory LRU cache of snapshots, keyed by block hash.

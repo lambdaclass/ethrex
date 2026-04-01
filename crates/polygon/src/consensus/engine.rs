@@ -35,6 +35,12 @@ pub enum BorEngineError {
         expected: u64,
         actual: U256,
     },
+    #[error("block {block} too early: minimum timestamp {min_time}, actual {actual}")]
+    BlockTooEarly {
+        block: BlockNumber,
+        min_time: u64,
+        actual: u64,
+    },
     #[error("no snapshot available for parent block {0}")]
     MissingSnapshot(BlockNumber),
     #[error("reorg blocked by milestone: cannot revert past block {0}")]
@@ -165,6 +171,34 @@ impl BorEngine {
         *self.current_span.lock().unwrap() = Some(span);
     }
 
+    /// Compute the minimum delay before a block can be produced, based on
+    /// the producer's succession number. Matches Bor's `CalcProducerDelay`.
+    ///
+    /// - Base delay is the block period
+    /// - At sprint starts, uses producer_delay instead of period
+    /// - Backup producers (succession > 0) add `succession * backup_multiplier`
+    /// - Post-Rio: just the period (single producer, no backup delay)
+    fn calc_producer_delay(&self, block_number: BlockNumber, succession: usize) -> u64 {
+        let mut delay = self.config.get_period(block_number);
+
+        // Post-Rio: single producer per block, no backup delay
+        if self.config.is_rio_active(block_number) {
+            return delay;
+        }
+
+        // Sprint-start blocks use producer_delay instead of period
+        if self.config.is_sprint_start(block_number) {
+            delay = self.config.get_producer_delay(block_number);
+        }
+
+        // Backup producers wait longer based on their succession number
+        if succession > 0 {
+            delay += succession as u64 * self.config.get_backup_multiplier(block_number);
+        }
+
+        delay
+    }
+
     /// Returns true if a span commit system call is needed at this block.
     ///
     /// Uses the actual span boundaries from Heimdall instead of the formula-based
@@ -238,7 +272,22 @@ impl BorEngine {
         let sprint_size = self.config.get_sprint_size(header.number);
         let signer = parent_snapshot.apply_header(header, sprint_size)?;
 
-        // 4. Difficulty validation.
+        // 4. Block timing validation (Bor verifySeal: IsBlockEarly).
+        // Reject blocks whose timestamp is earlier than expected based on
+        // the producer's succession number. Post-Rio: only enforce period.
+        if let Some(succession) = parent_snapshot.succession(&signer) {
+            let min_time =
+                parent_header.timestamp + self.calc_producer_delay(header.number, succession);
+            if header.timestamp < min_time {
+                return Err(BorEngineError::BlockTooEarly {
+                    block: header.number,
+                    min_time,
+                    actual: header.timestamp,
+                });
+            }
+        }
+
+        // 5. Difficulty validation.
         // difficulty = total_validators - succession, where succession is the
         // ring distance from proposer to signer. In-turn proposer gets the
         // highest difficulty (= total_validators), farthest gets 1.
