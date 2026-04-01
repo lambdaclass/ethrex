@@ -37,7 +37,7 @@ use std::{
     io::IsTerminal,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::RwLock;
@@ -568,10 +568,17 @@ pub async fn init_l1(
         BlockchainType::L1
     };
 
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
     // Create BorEngine for Polygon chains.
     let bor_engine = if network.is_polygon() {
-        bor_config_for_chain(chain_id)
-            .map(|config| Arc::new(BorEngine::new(config, &opts.bor_heimdall)))
+        bor_config_for_chain(chain_id).map(|config| {
+            Arc::new(BorEngine::new(
+                config,
+                &opts.bor_heimdall,
+                cancel_token.clone(),
+            ))
+        })
     } else {
         None
     };
@@ -616,8 +623,6 @@ pub async fn init_l1(
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
 
-    let cancel_token = tokio_util::sync::CancellationToken::new();
-
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
         tracker.clone(),
@@ -657,24 +662,18 @@ pub async fn init_l1(
     if network.is_polygon() && !opts.dev {
         if let Some(bor_config) = bor_config_for_chain(chain_id) {
             let heimdall_state = Arc::new(RwLock::new(HeimdallPollerState::default()));
-            let poller = HeimdallPoller::new(&opts.bor_heimdall, bor_config, heimdall_state);
-            let shutdown = Arc::new(AtomicBool::new(false));
-            let shutdown_clone = shutdown.clone();
-            let cancel_clone = cancel_token.clone();
+            let poller = HeimdallPoller::new(
+                &opts.bor_heimdall,
+                bor_config,
+                heimdall_state,
+                cancel_token.clone(),
+            );
             info!(
                 heimdall_url = %opts.bor_heimdall,
                 "Starting Heimdall poller for chain {chain_id}"
             );
-            // Wire the CancellationToken to the poller's shutdown flag.
             tracker.spawn(async move {
-                tokio::select! {
-                    _ = cancel_clone.cancelled() => {
-                        shutdown_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    result = poller.spawn(shutdown) => {
-                        result.ok();
-                    }
-                }
+                poller.spawn().await.ok();
             });
         } else {
             warn!("No BorConfig found for chain ID {chain_id}, Heimdall poller not started");

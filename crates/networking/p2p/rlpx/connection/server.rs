@@ -67,7 +67,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -1306,12 +1306,18 @@ async fn handle_incoming_message(
 
                                     // Chain-follow: process buffered blocks whose parent we just stored
                                     let mut next_parent = blk_hash;
+                                    let mut chain_depth = 0u32;
                                     loop {
+                                        if chain_depth >= 64 {
+                                            debug!("Chain-follow depth limit reached (64)");
+                                            break;
+                                        }
                                         let Some(pending) =
                                             blockchain.take_polygon_pending_block(next_parent)
                                         else {
                                             break;
                                         };
+                                        chain_depth += 1;
                                         let pending_hash = pending.hash();
                                         let pending_number = pending.header.number;
                                         let bc_inner = blockchain.clone();
@@ -1352,6 +1358,7 @@ async fn handle_incoming_message(
                                             }
                                         }
                                     }
+                                    blockchain.clear_polygon_in_flight(&blk_hash);
                                 }
                                 Err(e) => {
                                     // Clear in-flight on error so the block can be retried.
@@ -1511,12 +1518,18 @@ async fn handle_incoming_message(
 
                                 // Chain-follow buffered blocks
                                 let mut next_parent = blk_hash;
+                                let mut chain_depth = 0u32;
                                 loop {
+                                    if chain_depth >= 64 {
+                                        debug!("Chain-follow depth limit reached (64)");
+                                        break;
+                                    }
                                     let Some(pending) =
                                         blockchain.take_polygon_pending_block(next_parent)
                                     else {
                                         break;
                                     };
+                                    chain_depth += 1;
                                     let pending_hash = pending.hash();
                                     let pending_number = pending.header.number;
                                     let bc_inner = blockchain.clone();
@@ -1550,11 +1563,14 @@ async fn handle_incoming_message(
                                         _ => break,
                                     }
                                 }
+                                blockchain.clear_polygon_in_flight(&blk_hash);
                             }
                             Ok(Err(e)) => {
+                                blockchain.clear_polygon_in_flight(&blk_hash);
                                 warn!(block_number = blk_number, error = %e, "Failed to process fetched block");
                             }
                             Err(e) => {
+                                blockchain.clear_polygon_in_flight(&blk_hash);
                                 warn!(block_number = blk_number, error = %e, "Fetched block task panicked");
                             }
                         }

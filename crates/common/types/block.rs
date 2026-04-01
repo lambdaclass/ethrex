@@ -652,6 +652,16 @@ pub enum InvalidBlockHeaderError {
     PolygonExcessBlobGasPresent,
     #[error("Polygon: requests_hash must be absent")]
     PolygonRequestsHashPresent,
+    #[error("Polygon: gas limit {gas_limit} exceeds cap (2^63-1)")]
+    PolygonGasLimitCap { gas_limit: u64 },
+    #[error("Polygon: mix digest (prev_randao) must be zero")]
+    PolygonNonZeroMixDigest,
+    #[error(
+        "Polygon: post-Giugliano block missing gas_target or base_fee_change_denominator in extra data"
+    )]
+    PolygonMissingGiuglianoFields,
+    #[error("Polygon: invalid validator set in sprint-end block extra data")]
+    PolygonInvalidSprintEndValidators,
 }
 
 #[derive(Debug, thiserror::Error)]

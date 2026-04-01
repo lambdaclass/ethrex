@@ -1,9 +1,13 @@
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::block_identifier::BlockIdentifierOrHash;
 use crate::utils::RpcErr;
+use ethrex_common::types::BlockHeader;
 use ethrex_crypto::keccak::keccak_hash;
 use serde_json::Value;
 use tracing::debug;
+
+/// Maximum number of blocks in a checkpoint range (2^15 = 32768).
+const MAX_CHECKPOINT_LENGTH: u64 = 1 << 15;
 
 /// bor_getAuthor — recover the block signer from the header's seal signature.
 pub struct BorGetAuthor {
@@ -140,19 +144,25 @@ impl RpcHandler for BorGetRootHash {
 
         debug!("bor_getRootHash for range [{}, {}]", self.start, self.end);
 
-        // Collect block hashes for the range
-        let count = (self.end - self.start + 1) as usize;
-        let mut hashes = Vec::with_capacity(count);
+        let length = self.end - self.start + 1;
+        if length > MAX_CHECKPOINT_LENGTH {
+            return Err(RpcErr::BadParams(format!(
+                "checkpoint range length {length} exceeds max {MAX_CHECKPOINT_LENGTH}"
+            )));
+        }
+
+        // Collect block headers for the range
+        let mut headers = Vec::with_capacity(length as usize);
         for block_num in self.start..=self.end {
             let header = storage
                 .get_block_header(block_num)
                 .map_err(|e| RpcErr::Internal(format!("Storage error: {e}")))?
                 .ok_or(RpcErr::Internal(format!("Block {block_num} not found")))?;
-            hashes.push(header.hash());
+            headers.push(header);
         }
 
-        // Compute binary Merkle tree root over keccak256(blockHash) leaves
-        let root = compute_root_hash(&hashes);
+        // Compute binary Merkle tree root over header-derived leaves
+        let root = compute_root_hash(&headers);
         let root_hex = hex::encode(root);
 
         serde_json::to_value(root_hex).map_err(|e| RpcErr::Internal(e.to_string()))
@@ -177,34 +187,45 @@ fn parse_block_number_param(value: &Value, arg_index: u64) -> Result<u64, RpcErr
 
 /// Compute the Bor checkpoint root hash.
 ///
-/// Builds a binary Merkle tree where each leaf is `keccak256(block_hash_bytes)`
-/// and each internal node is `keccak256(left || right)`.
-/// If the number of elements at any level is odd, the last element is promoted as-is.
-fn compute_root_hash(block_hashes: &[ethrex_common::H256]) -> [u8; 32] {
-    if block_hashes.is_empty() {
+/// For each block header, the leaf is:
+///   `keccak256(number_bytes32 || timestamp_bytes32 || tx_hash_bytes32 || receipt_hash_bytes32)`
+/// where each field is left-zero-padded to 32 bytes.
+///
+/// The leaf array is padded to the next power of two with zero-filled `[u8; 32]` entries,
+/// then a complete binary Merkle tree is built where each internal node is `keccak256(left || right)`.
+fn compute_root_hash(headers: &[BlockHeader]) -> [u8; 32] {
+    if headers.is_empty() {
         return [0u8; 32];
     }
 
-    // Leaves: keccak256 of each block hash
-    let mut level: Vec<[u8; 32]> = block_hashes
-        .iter()
-        .map(|h| keccak_hash(h.as_bytes()))
-        .collect();
+    let padded_len = (headers.len() as u64).next_power_of_two() as usize;
 
-    // Build tree bottom-up
+    // Compute leaves from header fields
+    let mut level: Vec<[u8; 32]> = Vec::with_capacity(padded_len);
+    for header in headers {
+        let mut data = [0u8; 128];
+        // number: left-zero-padded to 32 bytes (big-endian u64 at offset 24)
+        data[24..32].copy_from_slice(&header.number.to_be_bytes());
+        // timestamp: left-zero-padded to 32 bytes
+        data[56..64].copy_from_slice(&header.timestamp.to_be_bytes());
+        // transactions_root: already 32 bytes
+        data[64..96].copy_from_slice(header.transactions_root.as_bytes());
+        // receipts_root: already 32 bytes
+        data[96..128].copy_from_slice(header.receipts_root.as_bytes());
+        level.push(keccak_hash(data));
+    }
+
+    // Pad to next power of two with zero entries
+    level.resize(padded_len, [0u8; 32]);
+
+    // Build complete binary tree bottom-up
     while level.len() > 1 {
-        let mut next_level = Vec::with_capacity((level.len() + 1) / 2);
-        let mut i = 0;
-        while i + 1 < level.len() {
+        let mut next_level = Vec::with_capacity(level.len() / 2);
+        for pair in level.chunks_exact(2) {
             let mut combined = [0u8; 64];
-            combined[..32].copy_from_slice(&level[i]);
-            combined[32..].copy_from_slice(&level[i + 1]);
-            next_level.push(keccak_hash(&combined));
-            i += 2;
-        }
-        // Odd element: promote as-is
-        if i < level.len() {
-            next_level.push(level[i]);
+            combined[..32].copy_from_slice(&pair[0]);
+            combined[32..].copy_from_slice(&pair[1]);
+            next_level.push(keccak_hash(combined));
         }
         level = next_level;
     }

@@ -1120,7 +1120,7 @@ async fn insert_storages(
         info!(
             "Ingested batch {}/{} ({} files)",
             batch_idx + 1,
-            (total_files + 499) / 500,
+            total_files.div_ceil(500),
             batch.len()
         );
     }

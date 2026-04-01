@@ -1,5 +1,9 @@
+use ethrex_common::H256;
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{BlockHeader, InvalidBlockHeaderError};
+
+use crate::bor_config::BorConfig;
+use crate::consensus::extra_data::parse_extra_data;
 
 /// Validates a Bor block header against its parent.
 ///
@@ -11,9 +15,13 @@ use ethrex_common::types::{BlockHeader, InvalidBlockHeaderError};
 ///   requests_hash must all be absent (None)
 /// - nonce is always 0
 /// - ommers_hash is always the default empty hash
+/// - gas limit must not exceed 2^63-1
+/// - mix digest (prev_randao) must be zero
+/// - post-Giugliano blocks must contain gas_target and base_fee_change_denominator
 pub fn validate_bor_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    config: &BorConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
     // Gas used must not exceed gas limit
     if header.gas_used > header.gas_limit {
@@ -78,6 +86,34 @@ pub fn validate_bor_header(
         return Err(InvalidBlockHeaderError::PolygonRequestsHashPresent);
     }
 
+    // Gas limit must not exceed 2^63-1
+    if header.gas_limit > 0x7fffffffffffffff {
+        return Err(InvalidBlockHeaderError::PolygonGasLimitCap {
+            gas_limit: header.gas_limit,
+        });
+    }
+
+    // Mix digest (prev_randao) must be zero
+    if header.prev_randao != H256::zero() {
+        return Err(InvalidBlockHeaderError::PolygonNonZeroMixDigest);
+    }
+
+    // Post-Giugliano blocks must contain gas_target and base_fee_change_denominator
+    // in the extra data. We only check presence, not correctness, because these
+    // parameters are configurable per-node via CLI flags.
+    if config.is_giugliano_active(header.number) {
+        if let Ok((_vanity, block_extra, _sig)) = parse_extra_data(&header.extra_data) {
+            if block_extra.gas_target.is_none() || block_extra.base_fee_change_denominator.is_none()
+            {
+                return Err(InvalidBlockHeaderError::PolygonMissingGiuglianoFields);
+            }
+        } else {
+            // If we can't parse the extra data at all on a post-Giugliano block,
+            // the fields are definitely missing.
+            return Err(InvalidBlockHeaderError::PolygonMissingGiuglianoFields);
+        }
+    }
+
     Ok(())
 }
 
@@ -86,6 +122,24 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use ethereum_types::{Address, H256, U256};
+
+    /// Minimal BorConfig for tests — Giugliano not active at test block numbers.
+    fn test_config() -> BorConfig {
+        serde_json::from_str(
+            r#"{
+                "period": {"0": 2},
+                "producerDelay": {"0": 6},
+                "sprint": {"0": 16},
+                "backupMultiplier": {"0": 2},
+                "validatorContract": "0x0000000000000000000000000000000000001000",
+                "stateReceiverContract": "0x0000000000000000000000000000000000001001",
+                "jaipurBlock": 0,
+                "delhiBlock": 0,
+                "indoreBlock": 0
+            }"#,
+        )
+        .expect("valid test config")
+    }
 
     fn make_parent() -> BlockHeader {
         BlockHeader {
@@ -122,7 +176,7 @@ mod tests {
     fn valid_bor_header() {
         let parent = make_parent();
         let child = make_child(&parent);
-        assert!(validate_bor_header(&child, &parent).is_ok());
+        assert!(validate_bor_header(&child, &parent, &test_config()).is_ok());
     }
 
     #[test]
@@ -130,7 +184,7 @@ mod tests {
         let parent = make_parent();
         let mut child = make_child(&parent);
         child.difficulty = U256::from(2);
-        assert!(validate_bor_header(&child, &parent).is_ok());
+        assert!(validate_bor_header(&child, &parent, &test_config()).is_ok());
     }
 
     #[test]
@@ -139,7 +193,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.difficulty = U256::zero();
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonInvalidDifficulty(_))
         ));
     }
@@ -150,7 +204,7 @@ mod tests {
         let mut child = make_child(&parent);
         // Pre-Rio blocks can have difficulty up to totalValidators (e.g. 21)
         child.difficulty = U256::from(21);
-        assert!(validate_bor_header(&child, &parent).is_ok());
+        assert!(validate_bor_header(&child, &parent, &test_config()).is_ok());
     }
 
     #[test]
@@ -159,7 +213,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.coinbase = Address::from_low_u64_be(1);
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonCoinbaseNotZero)
         ));
     }
@@ -170,7 +224,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.withdrawals_root = Some(H256::zero());
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonWithdrawalsRootPresent)
         ));
     }
@@ -181,7 +235,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.blob_gas_used = Some(0);
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonBlobGasUsedPresent)
         ));
     }
@@ -192,7 +246,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.excess_blob_gas = Some(0);
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonExcessBlobGasPresent)
         ));
     }
@@ -203,7 +257,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.parent_beacon_block_root = Some(H256::zero());
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonParentBeaconBlockRootPresent)
         ));
     }
@@ -214,7 +268,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.requests_hash = Some(H256::zero());
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::PolygonRequestsHashPresent)
         ));
     }
@@ -225,7 +279,7 @@ mod tests {
         let mut child = make_child(&parent);
         // Bor extra_data can be much larger than 32 bytes
         child.extra_data = Bytes::from(vec![0u8; 500]);
-        assert!(validate_bor_header(&child, &parent).is_ok());
+        assert!(validate_bor_header(&child, &parent, &test_config()).is_ok());
     }
 
     #[test]
@@ -235,7 +289,7 @@ mod tests {
         child.gas_limit = 1_000_000;
         child.gas_used = 1_000_001;
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit)
         ));
     }
@@ -245,7 +299,7 @@ mod tests {
         let parent = make_parent();
         let mut child = make_child(&parent);
         child.gas_used = child.gas_limit;
-        assert!(validate_bor_header(&child, &parent).is_ok());
+        assert!(validate_bor_header(&child, &parent, &test_config()).is_ok());
     }
 
     #[test]
@@ -256,7 +310,7 @@ mod tests {
         // Need to recompute parent_hash since number changed doesn't affect hash,
         // but the check is on number not hash
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::BlockNumberNotOneGreater)
         ));
     }
@@ -267,7 +321,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.timestamp = parent.timestamp; // equal, not greater
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent)
         ));
     }
@@ -278,7 +332,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.timestamp = parent.timestamp - 1;
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent)
         ));
     }
@@ -289,7 +343,7 @@ mod tests {
         let mut child = make_child(&parent);
         child.parent_hash = H256::from_low_u64_be(0xdead);
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::ParentHashIncorrect)
         ));
     }
@@ -302,7 +356,7 @@ mod tests {
         // Need correct parent_hash
         child.parent_hash = parent.hash();
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::NonceNotZero)
         ));
     }
@@ -316,7 +370,7 @@ mod tests {
         // timestamp check and before nonce — let's set up correctly
         child.parent_hash = parent.hash();
         assert!(matches!(
-            validate_bor_header(&child, &parent),
+            validate_bor_header(&child, &parent, &test_config()),
             Err(InvalidBlockHeaderError::OmmersHashNotDefault)
         ));
     }

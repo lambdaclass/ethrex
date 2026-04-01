@@ -22,3 +22,4 @@ tracing.workspace = true
 reqwest.workspace = true
 crc32fast.workspace = true
 tokio = { workspace = true, features = ["time", "macros", "rt"] }
+tokio-util.workspace = true

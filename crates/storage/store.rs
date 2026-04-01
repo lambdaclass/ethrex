@@ -1774,7 +1774,6 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let old_storage_root = account_state.storage_root;
                 let mut storage_trie =
                     self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
@@ -1787,26 +1786,10 @@ impl Store {
                 }
                 let (storage_hash, storage_updates) =
                     storage_trie.collect_changes_since_last_hash();
-                tracing::warn!(
-                    address = ?update.address,
-                    old_storage_root = ?old_storage_root,
-                    new_storage_root = ?storage_hash,
-                    slots_changed = update.added_storage.len(),
-                    "Storage root update"
-                );
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
             let encoded_account = account_state.encode_to_vec();
-            tracing::warn!(
-                address = ?update.address,
-                nonce = account_state.nonce,
-                balance = ?account_state.balance,
-                storage_root = ?account_state.storage_root,
-                code_hash = ?account_state.code_hash,
-                rlp_hex = %hex::encode(&encoded_account),
-                "Account state inserted into trie"
-            );
             state_trie.insert(hashed_address.as_bytes().to_vec(), encoded_account)?;
         }
         let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();

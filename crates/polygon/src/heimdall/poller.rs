@@ -1,11 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::client::HeimdallClient;
@@ -38,6 +36,7 @@ pub struct HeimdallPoller {
     client: HeimdallClient,
     bor_config: BorConfig,
     state: Arc<RwLock<HeimdallPollerState>>,
+    cancel_token: CancellationToken,
 }
 
 impl HeimdallPoller {
@@ -45,25 +44,27 @@ impl HeimdallPoller {
         heimdall_url: &str,
         bor_config: BorConfig,
         state: Arc<RwLock<HeimdallPollerState>>,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
-            client: HeimdallClient::new(heimdall_url),
+            client: HeimdallClient::new(heimdall_url, cancel_token.clone()),
             bor_config,
             state,
+            cancel_token,
         }
     }
 
     /// Spawns the background polling loop. Returns a handle that can be awaited
-    /// for clean shutdown. Set `shutdown` to `true` to stop the poller.
-    pub fn spawn(self, shutdown: Arc<AtomicBool>) -> JoinHandle<()> {
+    /// for clean shutdown. Cancel the token to stop the poller.
+    pub fn spawn(self) -> JoinHandle<()> {
         tokio::spawn(async move {
             info!("Heimdall poller started");
-            self.run(shutdown).await;
+            self.run().await;
             info!("Heimdall poller stopped");
         })
     }
 
-    async fn run(&self, shutdown: Arc<AtomicBool>) {
+    async fn run(&self) {
         let mut milestone_tick = tokio::time::interval(MILESTONE_POLL_INTERVAL);
         let mut span_tick = tokio::time::interval(SPAN_POLL_INTERVAL);
         let mut state_sync_tick = tokio::time::interval(STATE_SYNC_POLL_INTERVAL);
@@ -74,11 +75,10 @@ impl HeimdallPoller {
         state_sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
-            if shutdown.load(Ordering::Relaxed) {
-                return;
-            }
-
             tokio::select! {
+                _ = self.cancel_token.cancelled() => {
+                    return;
+                }
                 _ = milestone_tick.tick() => {
                     self.poll_milestone().await;
                 }

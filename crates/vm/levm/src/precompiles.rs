@@ -266,7 +266,7 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         if address.0[..18] != [0u8; 18] {
             return *address == P256VERIFY.address;
         }
-        let addr_low = u16::from_be_bytes([address.0[18], address.0[19]]) as u64;
+        let addr_low = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
         return (1..=SIZE_PRECOMPILES_PRAGUE).contains(&addr_low) || *address == P256VERIFY.address;
     }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)

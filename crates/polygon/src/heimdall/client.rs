@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use reqwest::Client;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::types::*;
@@ -21,6 +22,8 @@ pub enum HeimdallError {
     Unavailable,
     #[error("Service unavailable (503)")]
     ServiceUnavailable,
+    #[error("Operation cancelled")]
+    Cancelled,
 }
 
 impl HeimdallError {
@@ -47,7 +50,7 @@ impl HeimdallError {
                 // Other request errors (e.g., redirect) are retryable
                 e.is_request()
             }
-            HeimdallError::ServiceUnavailable => false,
+            HeimdallError::ServiceUnavailable | HeimdallError::Cancelled => false,
             HeimdallError::NotFound
             | HeimdallError::Deserialize(_)
             | HeimdallError::Unavailable => false,
@@ -64,16 +67,18 @@ impl HeimdallError {
 pub struct HeimdallClient {
     base_url: String,
     http: Client,
+    cancel_token: CancellationToken,
 }
 
 impl HeimdallClient {
     /// Creates a new client pointing at the given Heimdall base URL.
     ///
-    /// Example: `HeimdallClient::new("http://localhost:1317")`
-    pub fn new(base_url: &str) -> Self {
+    /// Example: `HeimdallClient::new("http://localhost:1317", cancel_token)`
+    pub fn new(base_url: &str, cancel_token: CancellationToken) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http: Client::new(),
+            cancel_token,
         }
     }
 
@@ -179,6 +184,9 @@ impl HeimdallClient {
     /// timeout) with exponential backoff and jitter. Bor retries indefinitely
     /// because Heimdall is essential for consensus. Logs every 5th retry to
     /// avoid spam.
+    ///
+    /// Returns `HeimdallError::Cancelled` if the cancellation token fires
+    /// during a backoff sleep, allowing the node to shut down cleanly.
     async fn with_retry<T, F, Fut>(&self, f: F) -> Result<T, HeimdallError>
     where
         F: Fn() -> Fut,
@@ -211,7 +219,15 @@ impl HeimdallClient {
                         );
                     }
 
-                    tokio::time::sleep(delay).await;
+                    // Race the backoff sleep against the cancellation token
+                    // so the node can shut down without waiting for the full delay.
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => {}
+                        _ = self.cancel_token.cancelled() => {
+                            warn!("Heimdall retry cancelled during shutdown");
+                            return Err(HeimdallError::Cancelled);
+                        }
+                    }
                 }
             }
         }
@@ -429,7 +445,7 @@ mod tests {
 
     #[test]
     fn client_strips_trailing_slash() {
-        let client = HeimdallClient::new("http://localhost:1317/");
+        let client = HeimdallClient::new("http://localhost:1317/", CancellationToken::new());
         assert_eq!(client.base_url, "http://localhost:1317");
     }
 
@@ -556,6 +572,8 @@ mod tests {
         assert!(!HeimdallError::Unavailable.is_retryable());
         // ServiceUnavailable (503) is NOT retryable per Bor behavior
         assert!(!HeimdallError::ServiceUnavailable.is_retryable());
+        // Cancelled is not retryable
+        assert!(!HeimdallError::Cancelled.is_retryable());
     }
 
     // ---- v2 extraction tests ----

@@ -7,6 +7,19 @@ use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
 use ethrex_polygon::genesis::{amoy_genesis, polygon_mainnet_genesis};
 use serde::{Deserialize, Serialize};
 
+pub const MAINNET_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
+pub const HOLESKY_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/holesky/genesis.json");
+pub const SEPOLIA_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
+pub const HOODI_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
+
+pub const MAINNET_CHAIN_ID: u64 = 1;
+pub const HOLESKY_CHAIN_ID: u64 = 17000;
+pub const SEPOLIA_CHAIN_ID: u64 = 11155111;
+pub const HOODI_CHAIN_ID: u64 = 560048;
 pub const POLYGON_MAINNET_CHAIN_ID: u64 = 137;
 pub const AMOY_CHAIN_ID: u64 = 80002;
 
@@ -22,6 +35,10 @@ pub enum Network {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicNetwork {
+    Mainnet,
+    Holesky,
+    Sepolia,
+    Hoodi,
     Polygon,
     Amoy,
 }
@@ -29,6 +46,10 @@ pub enum PublicNetwork {
 impl From<&str> for Network {
     fn from(value: &str) -> Self {
         match value {
+            "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
+            "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
+            "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
             "polygon" => Network::PublicNetwork(PublicNetwork::Polygon),
             "amoy" => Network::PublicNetwork(PublicNetwork::Amoy),
             // Note that we don't allow to manually specify the local devnet genesis
@@ -42,6 +63,10 @@ impl TryFrom<u64> for Network {
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         match value {
+            MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
+            HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
+            SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
+            HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
             POLYGON_MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Polygon)),
             AMOY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Amoy)),
             _ => Err(format!("Unknown chain ID: {}", value)),
@@ -57,13 +82,17 @@ impl From<PathBuf> for Network {
 
 impl Default for Network {
     fn default() -> Self {
-        Network::PublicNetwork(PublicNetwork::Polygon)
+        Network::PublicNetwork(PublicNetwork::Mainnet)
     }
 }
 
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
+            Network::PublicNetwork(PublicNetwork::Holesky) => write!(f, "holesky"),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Polygon) => write!(f, "polygon"),
             Network::PublicNetwork(PublicNetwork::Amoy) => write!(f, "amoy"),
             Network::LocalDevnet => write!(f, "local-devnet"),
@@ -87,6 +116,18 @@ impl Network {
 
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
+            Network::PublicNetwork(PublicNetwork::Mainnet) => {
+                Ok(serde_json::from_str(MAINNET_GENESIS_CONTENTS)?)
+            }
+            Network::PublicNetwork(PublicNetwork::Holesky) => {
+                Ok(serde_json::from_str(HOLESKY_GENESIS_CONTENTS)?)
+            }
+            Network::PublicNetwork(PublicNetwork::Sepolia) => {
+                Ok(serde_json::from_str(SEPOLIA_GENESIS_CONTENTS)?)
+            }
+            Network::PublicNetwork(PublicNetwork::Hoodi) => {
+                Ok(serde_json::from_str(HOODI_GENESIS_CONTENTS)?)
+            }
             Network::PublicNetwork(PublicNetwork::Polygon) => Ok(polygon_mainnet_genesis()),
             Network::PublicNetwork(PublicNetwork::Amoy) => Ok(amoy_genesis()),
             Network::LocalDevnet => Ok(serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS)?),

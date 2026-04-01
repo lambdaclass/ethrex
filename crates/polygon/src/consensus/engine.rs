@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use ethereum_types::Address;
 use ethrex_common::U256;
 use ethrex_common::types::{BlockHeader, BlockNumber, InvalidBlockHeaderError};
+use tokio_util::sync::CancellationToken;
 
 use crate::bor_config::BorConfig;
 use crate::heimdall::{HeimdallClient, HeimdallError, Milestone};
@@ -13,6 +14,9 @@ use crate::system_calls::{
 };
 use crate::validation::validate_bor_header;
 
+use super::extra_data::{
+    EXTRA_SEAL_LENGTH, EXTRA_VANITY_LENGTH, parse_extra_data, parse_validators,
+};
 use super::seal::{SealError, recover_signer};
 use super::snapshot::{Snapshot, SnapshotCache, SnapshotError};
 
@@ -74,10 +78,11 @@ impl BorEngine {
     /// # Arguments
     /// * `config` — Bor consensus parameters (parsed from genesis or chain config)
     /// * `heimdall_url` — Base URL of the Heimdall REST API (e.g., "http://localhost:1317")
-    pub fn new(config: BorConfig, heimdall_url: &str) -> Self {
+    /// * `cancel_token` — Token to signal shutdown and cancel in-flight Heimdall retries
+    pub fn new(config: BorConfig, heimdall_url: &str, cancel_token: CancellationToken) -> Self {
         Self {
             config,
-            heimdall: HeimdallClient::new(heimdall_url),
+            heimdall: HeimdallClient::new(heimdall_url, cancel_token),
             snapshots: SnapshotCache::new(),
             latest_milestone: Mutex::new(None),
             current_span: Mutex::new(None),
@@ -175,7 +180,7 @@ impl BorEngine {
         parent_snapshot: &mut Snapshot,
     ) -> Result<Address, BorEngineError> {
         // 1. Structural validation
-        validate_bor_header(header, parent_header)?;
+        validate_bor_header(header, parent_header, &self.config)?;
 
         // 2 & 3. Recover signer and check authorization via snapshot.
         // apply_header recovers the signer, checks they're in the validator set,
@@ -200,7 +205,18 @@ impl BorEngine {
             });
         }
 
-        // 5. Proposer rotation at sprint boundaries.
+        // 5. Validator bytes verification at sprint-end.
+        // At sprint-end blocks, verify that the validator set in the header's extra data
+        // matches the snapshot's validator set (sorted by address).
+        // Skipped post-Rio (same as difficulty check — different validator set semantics).
+        if !self.config.is_rio_active(header.number)
+            && header.number > 0
+            && (header.number + 1).is_multiple_of(sprint_size)
+        {
+            self.verify_sprint_end_validators(header, parent_snapshot)?;
+        }
+
+        // 6. Proposer rotation at sprint boundaries.
         // Must happen AFTER the difficulty check since difficulty is computed
         // against the pre-rotation proposer.
         if header.number > 0 && (header.number + 1).is_multiple_of(sprint_size) {
@@ -208,6 +224,71 @@ impl BorEngine {
         }
 
         Ok(signer)
+    }
+
+    /// Verify that a sprint-end block's extra data contains the correct validator set.
+    ///
+    /// Extracts validator bytes from the header and compares them against the
+    /// snapshot's validator set (sorted by address). This matches Bor's
+    /// `verifyCascadingFields` check at `bor.go:614-656`.
+    fn verify_sprint_end_validators(
+        &self,
+        header: &BlockHeader,
+        snapshot: &Snapshot,
+    ) -> Result<(), BorEngineError> {
+        // Extract validator bytes from the header's extra data.
+        // Pre-Lisovo: raw bytes between vanity and seal.
+        // Post-Lisovo: RLP-decoded BlockExtraData.validator_bytes.
+        let validator_bytes = if self.config.is_lisovo_active(header.number) {
+            let (_vanity, block_extra, _sig) = parse_extra_data(&header.extra_data)
+                .map_err(|_| InvalidBlockHeaderError::PolygonInvalidSprintEndValidators)?;
+            block_extra.validator_bytes
+        } else {
+            let extra = &header.extra_data[..];
+            if extra.len() < EXTRA_VANITY_LENGTH + EXTRA_SEAL_LENGTH {
+                return Err(InvalidBlockHeaderError::PolygonInvalidSprintEndValidators.into());
+            }
+            extra[EXTRA_VANITY_LENGTH..extra.len() - EXTRA_SEAL_LENGTH].to_vec()
+        };
+
+        let header_vals = parse_validators(&validator_bytes)
+            .map_err(|_| InvalidBlockHeaderError::PolygonInvalidSprintEndValidators)?;
+
+        // Build expected validator set from snapshot, sorted by address.
+        let mut expected: Vec<_> = snapshot
+            .validator_set
+            .iter()
+            .map(|v| (v.address, v.voting_power))
+            .collect();
+        expected.sort_by_key(|(addr, _)| *addr);
+
+        if header_vals.len() != expected.len() {
+            tracing::warn!(
+                block = header.number,
+                header_count = header_vals.len(),
+                snapshot_count = expected.len(),
+                "Validator set length mismatch at sprint-end"
+            );
+            return Err(InvalidBlockHeaderError::PolygonInvalidSprintEndValidators.into());
+        }
+
+        for (i, (header_val, (exp_addr, exp_power))) in
+            header_vals.iter().zip(expected.iter()).enumerate()
+        {
+            if header_val.address != *exp_addr || header_val.voting_power != U256::from(*exp_power)
+            {
+                tracing::warn!(
+                    block = header.number,
+                    index = i,
+                    header_addr = ?header_val.address,
+                    expected_addr = ?exp_addr,
+                    "Validator mismatch at sprint-end"
+                );
+                return Err(InvalidBlockHeaderError::PolygonInvalidSprintEndValidators.into());
+            }
+        }
+
+        Ok(())
     }
 
     /// Build the list of system calls to execute during block finalization.
@@ -356,6 +437,76 @@ impl BorEngine {
             value: ethereum_types::U256::zero(),
             revert_ok: false, // commitSpan reverts ARE fatal
         })
+    }
+
+    // ---- Snapshot validator set update at span boundaries ----
+
+    /// Update the snapshot's validator set if this block is the last block of a span.
+    ///
+    /// In Bor, the validator set changes at span boundaries. The `commitSpan` system call
+    /// (executed at the sprint-start of the last sprint in the span) writes the next span's
+    /// validators to the ValidatorSet contract and updates `current_span`. At the sprint-end
+    /// block (= span end), the snapshot must be updated so subsequent blocks in the new span
+    /// are verified against the correct validator set.
+    ///
+    /// Two cases are handled:
+    /// 1. `commitSpan` already ran → `current_span` is the next span, use it directly.
+    /// 2. `commitSpan` didn't run (e.g., node bootstrapped after the commitSpan block) →
+    ///    fetch the next span from Heimdall.
+    pub async fn update_snapshot_at_span_boundary(
+        &self,
+        block_number: BlockNumber,
+        snapshot: &mut Snapshot,
+    ) -> Result<(), BorEngineError> {
+        // Only sprint-end blocks can be span boundaries.
+        if !self.config.is_sprint_end(block_number) {
+            return Ok(());
+        }
+
+        let next_block = block_number + 1;
+
+        // Check if the next block enters a new span.
+        let (needs_update, have_next_span) = {
+            let span = self.current_span.lock().unwrap();
+            match span.as_ref() {
+                // commitSpan already updated current_span to the next span.
+                Some(s) if next_block == s.start_block => (true, true),
+                // current_span was NOT updated (bootstrapped after commitSpan block).
+                Some(s) if block_number == s.end_block => (true, false),
+                _ => (false, false),
+            }
+        };
+
+        if !needs_update {
+            return Ok(());
+        }
+
+        let next_span = if have_next_span {
+            self.current_span.lock().unwrap().clone().unwrap()
+        } else {
+            // Fetch the span covering the next block from Heimdall.
+            self.fetch_span_for_block(next_block).await?
+        };
+
+        let is_rio = self.config.is_rio_active(next_block);
+        let new_validators = span_to_validator_set(&next_span, is_rio);
+
+        tracing::info!(
+            block_number,
+            new_span_id = next_span.id,
+            new_span_start = next_span.start_block,
+            new_span_end = next_span.end_block,
+            validators = new_validators.len(),
+            "Updating snapshot validator set at span boundary"
+        );
+
+        snapshot.update_validator_set(new_validators);
+
+        if !have_next_span {
+            self.set_current_span(next_span);
+        }
+
+        Ok(())
     }
 
     // ---- Snapshot bootstrapping ----
@@ -624,7 +775,11 @@ mod tests {
     }
 
     fn test_engine() -> BorEngine {
-        BorEngine::new(test_config(), "http://localhost:1317")
+        BorEngine::new(
+            test_config(),
+            "http://localhost:1317",
+            CancellationToken::new(),
+        )
     }
 
     // ---- compare_td tests ----

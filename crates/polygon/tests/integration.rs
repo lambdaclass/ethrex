@@ -100,10 +100,10 @@ fn make_child_of(parent: &BlockHeader) -> BlockHeader {
 fn validate_chain_of_three_blocks() {
     let parent = make_parent_at(100, 1000);
     let child1 = make_child_of(&parent);
-    assert!(validate_bor_header(&child1, &parent).is_ok());
+    assert!(validate_bor_header(&child1, &parent, &test_config()).is_ok());
 
     let child2 = make_child_of(&child1);
-    assert!(validate_bor_header(&child2, &child1).is_ok());
+    assert!(validate_bor_header(&child2, &child1, &test_config()).is_ok());
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn validate_rejects_skipped_block_number() {
     let parent = make_parent_at(100, 1000);
     let mut child = make_child_of(&parent);
     child.number = parent.number + 2; // Skip a block
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn validate_rejects_non_increasing_timestamp() {
     let parent = make_parent_at(100, 1000);
     let mut child = make_child_of(&parent);
     child.timestamp = parent.timestamp; // Not strictly greater
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 }
 
 #[test]
@@ -129,27 +129,27 @@ fn validate_rejects_post_merge_fields() {
     // withdrawals_root
     let mut child = make_child_of(&parent);
     child.withdrawals_root = Some(H256::zero());
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 
     // blob_gas_used
     let mut child = make_child_of(&parent);
     child.blob_gas_used = Some(0);
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 
     // excess_blob_gas
     let mut child = make_child_of(&parent);
     child.excess_blob_gas = Some(0);
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 
     // parent_beacon_block_root
     let mut child = make_child_of(&parent);
     child.parent_beacon_block_root = Some(H256::zero());
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 
     // requests_hash
     let mut child = make_child_of(&parent);
     child.requests_hash = Some(H256::zero());
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn validate_accepts_various_difficulties() {
         let mut child = make_child_of(&parent);
         child.difficulty = U256::from(diff);
         assert!(
-            validate_bor_header(&child, &parent).is_ok(),
+            validate_bor_header(&child, &parent, &test_config()).is_ok(),
             "difficulty {diff} should be accepted"
         );
     }
@@ -171,7 +171,7 @@ fn validate_rejects_zero_difficulty() {
     let parent = make_parent_at(100, 1000);
     let mut child = make_child_of(&parent);
     child.difficulty = U256::zero();
-    assert!(validate_bor_header(&child, &parent).is_err());
+    assert!(validate_bor_header(&child, &parent, &test_config()).is_err());
 }
 
 // ====================================================================
@@ -490,7 +490,7 @@ fn genesis_block_validate_as_parent_for_block_1() {
     };
 
     // Structural validation should pass
-    assert!(validate_bor_header(&block1, genesis_header).is_ok());
+    assert!(validate_bor_header(&block1, genesis_header, &test_config()).is_ok());
 }
 
 // ====================================================================
@@ -511,7 +511,7 @@ fn pipeline_genesis_through_sprint_boundary() {
 
         // Validate structural checks
         assert!(
-            validate_bor_header(&child, &parent).is_ok(),
+            validate_bor_header(&child, &parent, &test_config()).is_ok(),
             "block {block_num} should pass validation"
         );
 
@@ -574,7 +574,11 @@ fn pipeline_difficulty_across_validator_rotation() {
 fn milestone_reorg_protection_integration() {
     use ethrex_polygon::heimdall::Milestone;
 
-    let engine = BorEngine::new(test_config(), "http://localhost:1317");
+    let engine = BorEngine::new(
+        test_config(),
+        "http://localhost:1317",
+        tokio_util::sync::CancellationToken::new(),
+    );
 
     // No milestone: all reorgs allowed
     assert!(engine.is_reorg_allowed(0));

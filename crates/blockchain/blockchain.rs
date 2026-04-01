@@ -192,7 +192,8 @@ pub struct Blockchain {
     polygon_sync_head: std::sync::Mutex<Option<H256>>,
     /// In-memory buffer for Polygon NewBlock blocks whose parent hasn't arrived yet.
     /// Keyed by parent_hash so we can chain-follow after processing a block.
-    polygon_pending_blocks: std::sync::Mutex<HashMap<H256, Block>>,
+    /// Multiple children of the same parent (forks) are stored as a Vec.
+    polygon_pending_blocks: std::sync::Mutex<HashMap<H256, Vec<Block>>>,
     /// Set of block hashes currently being executed by spawned tasks.
     /// Prevents duplicate execution when multiple peers announce the same block.
     polygon_in_flight_blocks: std::sync::Mutex<HashSet<H256>>,
@@ -424,65 +425,6 @@ impl Blockchain {
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
 
-        // Diagnostic logging for receipts root mismatch (Polygon debugging)
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            let computed_root =
-                ethrex_common::types::compute_receipts_root(&execution_result.receipts);
-            let expected_root = block.header.receipts_root;
-            if computed_root != expected_root {
-                warn!(
-                    block_number = block.header.number,
-                    block_hash = ?block.hash(),
-                    tx_count = block.body.transactions.len(),
-                    receipt_count = execution_result.receipts.len(),
-                    gas_used_header = block.header.gas_used,
-                    gas_used_exec = execution_result.block_gas_used,
-                    cumulative_gas_last = execution_result.receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0),
-                    expected = ?expected_root,
-                    computed = ?computed_root,
-                    "Receipts root mismatch"
-                );
-                // Log each receipt's details including individual log data
-                for (i, receipt) in execution_result.receipts.iter().enumerate() {
-                    let encoded = receipt.encode_inner_with_bloom();
-                    let preview_len = encoded.len().min(64);
-                    warn!(
-                        receipt_idx = i,
-                        tx_type = ?receipt.tx_type,
-                        tx_type_byte = receipt.tx_type as u8,
-                        succeeded = receipt.succeeded,
-                        cumulative_gas = receipt.cumulative_gas_used,
-                        log_count = receipt.logs.len(),
-                        encoded_len = encoded.len(),
-                        encoded_hex = hex::encode(&encoded[..preview_len]),
-                        "Receipt detail"
-                    );
-                    // Dump each log's address, topics, and data for comparison
-                    for (j, log) in receipt.logs.iter().enumerate() {
-                        warn!(
-                            receipt_idx = i,
-                            log_idx = j,
-                            address = ?log.address,
-                            topic_count = log.topics.len(),
-                            topics = ?log.topics,
-                            data_len = log.data.len(),
-                            data_hex = hex::encode(&log.data),
-                            "Log detail"
-                        );
-                    }
-                }
-                // Also log the tx types from the block body for comparison
-                for (i, tx) in block.body.transactions.iter().enumerate() {
-                    warn!(
-                        tx_idx = i,
-                        tx_type = ?tx.tx_type(),
-                        tx_type_byte = tx.tx_type() as u8,
-                        "Block tx type"
-                    );
-                }
-            }
-        }
-
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         // Polygon doesn't implement EIP-7685 (execution requests)
         if !matches!(self.options.r#type, BlockchainType::Polygon) {
@@ -495,47 +437,6 @@ impl Blockchain {
                 bal,
                 block.body.transactions.len(),
             )?;
-        }
-
-        // Diagnostic: dump key account balances for Polygon state root debugging
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            // Collect tx senders
-            let mut key_addresses: Vec<(String, Address)> = Vec::new();
-            for (i, tx) in block.body.transactions.iter().enumerate() {
-                if let Ok(sender) = tx.sender(&NativeCrypto) {
-                    key_addresses.push((format!("tx_sender_{i}"), sender));
-                }
-            }
-            // BorConfig coinbase
-            if let Some(bor_config) =
-                ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
-            {
-                let bor_coinbase = bor_config.get_coinbase(block.header.number);
-                key_addresses.push(("bor_coinbase".to_string(), bor_coinbase));
-                if let Some(burnt) = bor_config.get_burnt_contract(block.header.number) {
-                    key_addresses.push(("burnt_contract".to_string(), burnt));
-                }
-            }
-            // Header coinbase (0x0 on Polygon)
-            key_addresses.push(("header_coinbase".to_string(), block.header.coinbase));
-
-            // Build a lookup from account_updates
-            let balance_map: std::collections::HashMap<Address, U256> = account_updates
-                .iter()
-                .filter_map(|u| u.info.as_ref().map(|info| (u.address, info.balance)))
-                .collect();
-
-            for (label, addr) in &key_addresses {
-                let balance = balance_map.get(addr);
-                warn!(
-                    block_number = block.header.number,
-                    label = label.as_str(),
-                    address = ?addr,
-                    balance = ?balance,
-                    in_updates = balance.is_some(),
-                    "Polygon state debug"
-                );
-            }
         }
 
         Ok((execution_result, account_updates))
@@ -617,8 +518,8 @@ impl Blockchain {
         // scoped OS threads don't inherit the tokio context.
         let rt_handle = tokio::runtime::Handle::current();
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
-            |s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) =
+            std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
                 let warm_handle = std::thread::Builder::new()
@@ -699,84 +600,7 @@ impl Blockchain {
                         }
 
                         // Validate execution went alright
-                        if matches!(self.options.r#type, BlockchainType::Polygon)
-                            && execution_result.block_gas_used != block.header.gas_used
-                        {
-                            // Compact dump: one line per receipt with cumulative gas
-                            let gas_list: Vec<String> = execution_result.receipts.iter().enumerate()
-                                .map(|(i, r)| format!("{}:{}", i, r.cumulative_gas_used))
-                                .collect();
-                            warn!(
-                                block_number = block.header.number,
-                                gas_used = execution_result.block_gas_used,
-                                expected = block.header.gas_used,
-                                diff = execution_result.block_gas_used as i64 - block.header.gas_used as i64,
-                                receipt_count = execution_result.receipts.len(),
-                                "Pipeline: Gas mismatch"
-                            );
-                            // Print in chunks to avoid log line limits
-                            for chunk in gas_list.chunks(50) {
-                                warn!(receipts = chunk.join(","), "Pipeline: Gas cumulative");
-                            }
-                        }
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-
-                        // Diagnostic logging for receipts root mismatch (Polygon debugging)
-                        if matches!(self.options.r#type, BlockchainType::Polygon) {
-                            let computed_root =
-                                ethrex_common::types::compute_receipts_root(&execution_result.receipts);
-                            let expected_root = block.header.receipts_root;
-                            if computed_root != expected_root {
-                                warn!(
-                                    block_number = block.header.number,
-                                    block_hash = ?block.hash(),
-                                    tx_count = block.body.transactions.len(),
-                                    receipt_count = execution_result.receipts.len(),
-                                    gas_used_header = block.header.gas_used,
-                                    gas_used_exec = execution_result.block_gas_used,
-                                    cumulative_gas_last = execution_result.receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0),
-                                    expected = ?expected_root,
-                                    computed = ?computed_root,
-                                    "Pipeline: Receipts root mismatch"
-                                );
-                                for (i, receipt) in execution_result.receipts.iter().enumerate() {
-                                    let encoded = receipt.encode_inner_with_bloom();
-                                    let preview_len = encoded.len().min(64);
-                                    warn!(
-                                        receipt_idx = i,
-                                        tx_type = ?receipt.tx_type,
-                                        tx_type_byte = receipt.tx_type as u8,
-                                        succeeded = receipt.succeeded,
-                                        cumulative_gas = receipt.cumulative_gas_used,
-                                        log_count = receipt.logs.len(),
-                                        encoded_len = encoded.len(),
-                                        encoded_hex = hex::encode(&encoded[..preview_len]),
-                                        "Pipeline: Receipt detail"
-                                    );
-                                    for (j, log) in receipt.logs.iter().enumerate() {
-                                        warn!(
-                                            receipt_idx = i,
-                                            log_idx = j,
-                                            address = ?log.address,
-                                            topic_count = log.topics.len(),
-                                            topics = ?log.topics,
-                                            data_len = log.data.len(),
-                                            data_hex = hex::encode(&log.data),
-                                            "Pipeline: Log detail"
-                                        );
-                                    }
-                                }
-                                for (i, tx) in block.body.transactions.iter().enumerate() {
-                                    warn!(
-                                        tx_idx = i,
-                                        tx_type = ?tx.tx_type(),
-                                        tx_type_byte = tx.tx_type() as u8,
-                                        "Pipeline: Block tx type"
-                                    );
-                                }
-                            }
-                        }
-
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         if !matches!(self.options.r#type, BlockchainType::Polygon) {
                             validate_requests_hash(
@@ -844,8 +668,7 @@ impl Blockchain {
                     .ok()
                     .unwrap_or(Duration::ZERO);
                 Ok((execution_result, merkleization_result, warmer_duration))
-            },
-        )?;
+            })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
@@ -3114,18 +2937,30 @@ impl Blockchain {
     }
 
     /// Buffers a Polygon NewBlock whose parent hasn't been processed yet.
+    /// Capped at 512 total buffered blocks to prevent unbounded memory growth.
     pub fn buffer_polygon_pending_block(&self, block: Block) {
         if let Ok(mut pending) = self.polygon_pending_blocks.lock() {
-            pending.insert(block.header.parent_hash, block);
+            let total: usize = pending.values().map(|v| v.len()).sum();
+            if total >= 512 {
+                return;
+            }
+            pending
+                .entry(block.header.parent_hash)
+                .or_default()
+                .push(block);
         }
     }
 
-    /// Takes a buffered pending block whose parent matches the given hash.
+    /// Takes one buffered pending block whose parent matches the given hash.
+    /// If multiple children exist for the same parent (forks), returns one at a time.
     pub fn take_polygon_pending_block(&self, parent_hash: H256) -> Option<Block> {
-        self.polygon_pending_blocks
-            .lock()
-            .ok()?
-            .remove(&parent_hash)
+        let mut pending = self.polygon_pending_blocks.lock().ok()?;
+        let blocks = pending.get_mut(&parent_hash)?;
+        let block = blocks.pop();
+        if blocks.is_empty() {
+            pending.remove(&parent_hash);
+        }
+        block
     }
 
     /// Mark a block hash as currently being processed. Returns false if already in-flight.
@@ -3258,6 +3093,12 @@ impl Blockchain {
                 }
             };
             engine.verify_header(header, parent_header, &mut snapshot)?;
+            // Update validator set at span boundaries so subsequent blocks
+            // are verified against the new span's validators.
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(engine.update_snapshot_at_span_boundary(header.number, &mut snapshot))
+            })?;
             // Cache the updated snapshot (now includes this block's signer in recents).
             engine.put_snapshot(snapshot);
         } else {
@@ -3344,32 +3185,6 @@ fn execute_polygon_system_calls(
             _ => None,
         })
         .collect();
-
-    // Debug dump: raw StateSyncTransaction info for diagnosing RLP decode issues
-    if !state_sync_txs.is_empty() {
-        let first_tx = state_sync_txs[0];
-        let rlp_bytes = first_tx.encode_to_vec();
-        let rlp_preview_len = rlp_bytes.len().min(200);
-        let rlp_hex: String = rlp_bytes[..rlp_preview_len]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        warn!(
-            block_number,
-            state_sync_tx_count = state_sync_txs.len(),
-            first_tx_event_count = first_tx.state_sync_data.len(),
-            rlp_total_len = rlp_bytes.len(),
-            rlp_hex = %rlp_hex,
-            "StateSyncTransaction debug dump"
-        );
-        // Log individual event IDs from the body
-        let event_ids: Vec<u64> = first_tx.state_sync_data.iter().map(|e| e.id).collect();
-        warn!(
-            block_number,
-            event_ids = ?event_ids,
-            "StateSyncTransaction body event IDs"
-        );
-    }
 
     let state_sync_data: Vec<_> = state_sync_txs
         .iter()
@@ -3543,6 +3358,39 @@ fn execute_polygon_system_calls(
             body_event_count = state_sync_data.len(),
             "State sync events fetched"
         );
+
+        // Validate events before processing: sequential IDs and matching chain ID.
+        let local_chain_id = chain_config.chain_id.to_string();
+        let events: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .filter(|(i, event)| {
+                // Check that IDs are sequential: event[i].id == from_id + i.
+                let expected_id = from_id + *i as u64;
+                if event.id != expected_id {
+                    warn!(
+                        block_number,
+                        event_id = event.id,
+                        expected_id,
+                        "Skipping state sync event: non-sequential ID"
+                    );
+                    return false;
+                }
+                // Check that bor_chain_id matches the local chain.
+                if event.bor_chain_id != local_chain_id {
+                    warn!(
+                        block_number,
+                        event_id = event.id,
+                        event_chain_id = %event.bor_chain_id,
+                        local_chain_id = %local_chain_id,
+                        "Skipping state sync event: chain ID mismatch"
+                    );
+                    return false;
+                }
+                true
+            })
+            .map(|(_, event)| event)
+            .collect();
 
         for (idx, event) in events.iter().enumerate() {
             // Decode event data: Heimdall may return hex (0x-prefixed or plain)
