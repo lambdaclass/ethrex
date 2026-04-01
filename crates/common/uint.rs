@@ -215,26 +215,8 @@ impl U256 {
         }
         #[cfg(feature = "uint-ruint")]
         {
-            // alloy/ruint overflowing_pow takes a usize exponent; we need u256-wide.
-            // Use manual square-and-multiply for the alloy backend.
-            let mut base = self;
-            let mut e = exp;
-            let mut result = Self::ONE;
-            let mut overflowed = false;
-            while !e.is_zero() {
-                if e.as_limbs()[0] & 1 == 1 {
-                    let (r, o) = result.overflowing_mul(base);
-                    result = r;
-                    overflowed |= o;
-                }
-                e = Self(e.0 >> 1);
-                if !e.is_zero() {
-                    let (b, o) = base.overflowing_mul(base);
-                    base = b;
-                    overflowed |= o;
-                }
-            }
-            (result, overflowed)
+            let (v, o) = self.0.overflowing_pow(exp.0);
+            (Self(v), o)
         }
     }
 
@@ -486,7 +468,36 @@ macro_rules! impl_from_uint {
     };
 }
 
-impl_from_uint!(u8, u16, u32, u64, usize, u128, i32, i64);
+impl_from_uint!(u8, u16, u32, u64, usize, u128);
+
+// Signed conversions need special handling: ruint panics on negative values,
+// but ethereum_types sign-extends (e.g., -1i32 → U256::MAX).
+// The EVM relies on two's complement sign extension for signed arithmetic.
+impl From<i32> for U256 {
+    #[inline]
+    fn from(v: i32) -> Self {
+        if v >= 0 {
+            Self::from(v as u64)
+        } else {
+            // Two's complement: -n = NOT(n-1) = MAX - (n-1)
+            // -1 → MAX, -2 → MAX-1, etc.
+            let abs_minus_one = (!(v as u32)) as u64; // = |v| - 1
+            Self::MAX - Self::from(abs_minus_one)
+        }
+    }
+}
+
+impl From<i64> for U256 {
+    #[inline]
+    fn from(v: i64) -> Self {
+        if v >= 0 {
+            Self::from(v as u64)
+        } else {
+            let abs_minus_one = (!(v as u64)) as u64;
+            Self::MAX - Self::from(abs_minus_one)
+        }
+    }
+}
 
 impl From<bool> for U256 {
     #[inline]
