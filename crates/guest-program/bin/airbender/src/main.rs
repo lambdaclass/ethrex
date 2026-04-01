@@ -10,6 +10,10 @@ use sha2::{Digest, Sha256};
 
 #[airbender::main]
 fn main() -> [u32; 8] {
+    std::panic::set_hook(Box::new(|info| {
+        println!("GUEST PANIC: {info}");
+    }));
+
     println!("start reading input");
     let input_bytes: Vec<u8> = airbender::guest::read().expect("failed to read input");
     let input = rkyv::from_bytes::<ProgramInput, Error>(&input_bytes).unwrap();
