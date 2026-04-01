@@ -36,7 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, trace};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
@@ -776,9 +776,10 @@ impl DiscoveryServer {
         let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
             Some(s) => s.outbound_key,
             None => {
-                warn!(
-                    "No session found for {:?} in send_ordinary, falling back to zeroed key",
-                    node.node_id()
+                trace!(
+                    protocol = "discv5",
+                    node = %node.node_id(),
+                    "No session found in send_ordinary, using zeroed key to trigger handshake"
                 );
                 [0; 16]
             }
@@ -810,7 +811,11 @@ impl DiscoveryServer {
         match self.peer_table.get_session_info(*node_id).await? {
             Some(s) => Ok(s.outbound_key),
             None => {
-                warn!("No session found for {node_id:?}, falling back to zeroed key");
+                trace!(
+                    protocol = "discv5",
+                    node = %node_id,
+                    "No session found in resolve_outbound_key, using zeroed key"
+                );
                 Ok([0; 16])
             }
         }
@@ -859,9 +864,10 @@ impl DiscoveryServer {
         let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
             Some(s) => s.outbound_key,
             None => {
-                warn!(
-                    "No session found for {:?} in send_handshake, falling back to zeroed key",
-                    node.node_id()
+                trace!(
+                    protocol = "discv5",
+                    node = %node.node_id(),
+                    "No session found in send_handshake, using zeroed key"
                 );
                 [0; 16]
             }
