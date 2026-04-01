@@ -541,10 +541,9 @@ impl DiscoveryServer {
             .peer_table
             .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
             .await?
+            && let Err(e) = self.send_ping(&contact.node).await
         {
-            if let Err(e) = self.send_ping(&contact.node).await {
-                trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
-            }
+            trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
         }
         Ok(())
     }
