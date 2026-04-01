@@ -123,6 +123,10 @@ contract CommonBridge is
     mapping(uint256 chainId => uint256 index)
         public pendingMessagesIndexPerChain;
 
+    /// @notice The L2 block gas limit. Privileged transactions submitted via sendToL2
+    /// must have a gasLimit at or below this value.
+    uint256 public l2GasLimit;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -142,7 +146,8 @@ contract CommonBridge is
         address onChainProposer,
         uint256 inclusionMaxWait,
         address _sharedBridgeRouter,
-        uint256 chainId
+        uint256 chainId,
+        uint256 _l2GasLimit
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -162,6 +167,9 @@ contract CommonBridge is
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
 
         CHAIN_ID = chainId;
+
+        require(_l2GasLimit > 0, "CommonBridge: l2GasLimit cannot be zero");
+        l2GasLimit = _l2GasLimit;
     }
 
     /// @inheritdoc ICommonBridge
@@ -232,6 +240,10 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
+        require(
+            sendValues.gasLimit <= l2GasLimit,
+            "CommonBridge: gasLimit exceeds l2GasLimit"
+        );
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes32(CHAIN_ID),
@@ -265,6 +277,10 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
+        require(
+            sendValues.gasLimit <= l2GasLimit,
+            "CommonBridge: gasLimit exceeds l2GasLimit"
+        );
         _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
@@ -725,6 +741,13 @@ contract CommonBridge is
             data: callData
         });
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function setL2GasLimit(uint256 newL2GasLimit) external onlyOwner {
+        require(newL2GasLimit > 0, "CommonBridge: l2GasLimit cannot be zero");
+        l2GasLimit = newL2GasLimit;
+        emit L2GasLimitUpdated(newL2GasLimit);
     }
 
     /// @notice Allow owner to upgrade the contract.

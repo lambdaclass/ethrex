@@ -52,6 +52,7 @@ pub async fn start_l2(
     l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
+    l2_gas_limit: u64,
 ) -> Result<
     (
         Option<ActorRef<L1Committer>>,
@@ -69,7 +70,7 @@ pub async fn start_l2(
     };
 
     if let Some(batch_gas_limit) = cfg.l1_committer.batch_gas_limit {
-        let block_gas_limit = cfg.block_producer.block_gas_limit;
+        let block_gas_limit = l2_gas_limit;
         if batch_gas_limit < block_gas_limit {
             error!(
                 "The block gas limit ({block_gas_limit}) cannot be greater than the batch gas limit ({batch_gas_limit})."
@@ -158,6 +159,7 @@ pub async fn start_l2(
         cfg.clone(),
         shared_state.clone(),
         cfg.l1_watcher.router_address,
+        l2_gas_limit,
     )
     .await
     .inspect_err(|err| {

@@ -82,6 +82,7 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
         router_address: Address,
+        l2_gas_limit: u64,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
             block_time_ms,
@@ -89,7 +90,6 @@ impl BlockProducer {
             base_fee_vault_address,
             operator_fee_vault_address,
             elasticity_multiplier,
-            block_gas_limit,
         } = config;
 
         let eth_client = EthClient::new_with_multiple_urls(l1_rpc_url)?;
@@ -118,7 +118,7 @@ impl BlockProducer {
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
             privileged_nonces: std::collections::HashMap::new(),
-            block_gas_limit: *block_gas_limit,
+            block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
         })
@@ -297,6 +297,7 @@ impl BlockProducer {
         cfg: SequencerConfig,
         sequencer_state: SequencerState,
         router_address: Address,
+        l2_gas_limit: u64,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
         let block_producer = Self::new(
             &cfg.block_producer,
@@ -306,6 +307,7 @@ impl BlockProducer {
             blockchain,
             sequencer_state,
             router_address,
+            l2_gas_limit,
         )?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);
         Ok(actor_ref)
