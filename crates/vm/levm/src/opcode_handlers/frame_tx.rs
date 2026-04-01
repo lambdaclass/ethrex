@@ -648,6 +648,14 @@ fn execute_default_sender(
         let saved_call_frame = mem::replace(&mut vm.current_call_frame, call_frame);
         let saved_call_frames = mem::take(&mut vm.call_frames);
 
+        // Validate sender has enough balance for the value transfer
+        if !call.value.is_zero() {
+            let sender_balance = vm.db.get_account(sender)?.info.balance;
+            if sender_balance < call.value {
+                return Ok((false, gas_remaining, all_logs));
+            }
+        }
+
         vm.substate.push_backup();
         let subcall_result = vm.run_execution();
 
@@ -655,6 +663,10 @@ fn execute_default_sender(
             Ok(ctx_result) => {
                 let gas_used = ctx_result.gas_used;
                 if ctx_result.is_success() {
+                    // Transfer value from sender to target
+                    if !call.value.is_zero() {
+                        vm.transfer(sender, call.target, call.value)?;
+                    }
                     vm.substate.commit_backup();
                     let logs = vm.substate.extract_logs();
                     for log in &logs {
