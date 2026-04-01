@@ -1180,7 +1180,7 @@ async fn handle_incoming_message(
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
             if !hashes.is_empty() {
-                state.blockchain.mempool.mark_txs_as_in_flight(&hashes)?;
+                // hashes are already marked as in-flight by get_transactions_to_request
                 let request = GetPooledTransactions::new(random(), hashes.clone());
                 state
                     .requested_pooled_txs
@@ -1196,7 +1196,7 @@ async fn handle_incoming_message(
             // Always clear in-flight tracking for this response, regardless of sync status,
             // so other connections can re-request these hashes if needed.
             let removed_request = state.requested_pooled_txs.remove(&msg.id);
-            if let Some((ref _announced, ref requested_hashes)) = removed_request {
+            if let Some((_, ref requested_hashes)) = removed_request {
                 state
                     .blockchain
                     .mempool

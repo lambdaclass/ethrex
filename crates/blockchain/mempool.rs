@@ -311,29 +311,25 @@ impl Mempool {
         Ok(txs_by_sender)
     }
 
-    /// Gets hashes from possible_hashes that are not already known in the mempool
-    /// and not already being fetched (in-flight).
-    pub fn filter_unknown_transactions(
+    /// Filters hashes to those not already in the mempool or in-flight, and
+    /// atomically marks the returned hashes as in-flight under a single write
+    /// lock so that concurrent peer handlers cannot request the same hashes.
+    pub fn filter_unknown_and_mark_in_flight(
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
-        let inner = self.read()?;
+        let mut inner = self.write()?;
 
-        Ok(possible_hashes
+        let unknown: Vec<H256> = possible_hashes
             .iter()
             .filter(|hash| {
                 !inner.transaction_pool.contains_key(hash) && !inner.in_flight_txs.contains(hash)
             })
             .copied()
-            .collect())
-    }
+            .collect();
 
-    /// Marks transaction hashes as in-flight so other peer connections
-    /// won't request them again.
-    pub fn mark_txs_as_in_flight(&self, hashes: &[H256]) -> Result<(), StoreError> {
-        let mut inner = self.write()?;
-        inner.in_flight_txs.extend(hashes.iter().copied());
-        Ok(())
+        inner.in_flight_txs.extend(unknown.iter().copied());
+        Ok(unknown)
     }
 
     /// Removes transaction hashes from the in-flight set, typically called
