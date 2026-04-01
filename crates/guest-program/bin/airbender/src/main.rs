@@ -18,7 +18,13 @@ fn main() -> [u32; 8] {
     let crypto = Arc::new(AirbenderCrypto);
 
     println!("start execution");
-    let output = execution_program(input, crypto).unwrap();
+    let output = match execution_program(input, crypto) {
+        Ok(output) => output,
+        Err(e) => {
+            println!("execution failed: {e}");
+            panic!("execution failed: {e}");
+        }
+    };
     println!("finish execution");
 
     println!("start hashing output");
