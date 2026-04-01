@@ -38,6 +38,28 @@ pub fn validate_bor_header(
         return Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent);
     }
 
+    // Minimum timestamp gap: parent.Time + period (Bor bor.go:610)
+    let period = config.get_period(header.number);
+    if parent_header.timestamp + period > header.timestamp {
+        return Err(InvalidBlockHeaderError::PolygonTimestampGapTooSmall {
+            minimum: parent_header.timestamp + period,
+            actual: header.timestamp,
+        });
+    }
+
+    // Reject blocks too far in the future (Bor bor.go:422-461)
+    // Allow 1 second of clock drift.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if header.timestamp > now + 1 {
+        return Err(InvalidBlockHeaderError::PolygonFutureBlock {
+            header_time: header.timestamp,
+            now,
+        });
+    }
+
     // Parent hash must match
     if header.parent_hash != parent_header.hash() {
         return Err(InvalidBlockHeaderError::ParentHashIncorrect);

@@ -662,6 +662,10 @@ pub enum InvalidBlockHeaderError {
     PolygonMissingGiuglianoFields,
     #[error("Polygon: invalid validator set in sprint-end block extra data")]
     PolygonInvalidSprintEndValidators,
+    #[error("Polygon: timestamp gap too small (minimum {minimum}, actual {actual})")]
+    PolygonTimestampGapTooSmall { minimum: u64, actual: u64 },
+    #[error("Polygon: block timestamp {header_time} is in the future (now={now})")]
+    PolygonFutureBlock { header_time: u64, now: u64 },
 }
 
 #[derive(Debug, thiserror::Error)]

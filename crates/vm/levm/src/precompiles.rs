@@ -261,13 +261,13 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     if matches!(vm_type, VMType::Polygon(_)) {
-        // Polygon: Cancun precompiles (1-10) + BLS (11-17) + P256Verify (0x100)
+        // Polygon: use fork-aware precompile set.
         // Must check high bytes are zero — addresses like 0x4200...000f are NOT precompiles.
         if address.0[..18] != [0u8; 18] {
-            return *address == P256VERIFY.address;
+            return *address == P256VERIFY.address
+                && precompiles_for_fork(fork).any(|p| p.address == P256VERIFY.address);
         }
-        let addr_low = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
-        return (1..=SIZE_PRECOMPILES_PRAGUE).contains(&addr_low) || *address == P256VERIFY.address;
+        return precompiles_for_fork(fork).any(|p| p.address == *address);
     }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
