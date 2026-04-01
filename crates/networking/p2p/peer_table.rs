@@ -272,11 +272,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
     -> Response<Option<Box<Contact>>>;
     fn get_contact_for_enr_lookup(&self) -> Response<Option<Box<Contact>>>;
     fn get_contact(&self, node_id: H256) -> Response<Option<Box<Contact>>>;
-    fn get_contacts_to_revalidate(
+    fn get_contact_to_revalidate(
         &self,
         revalidation_interval: Duration,
         protocol: DiscoveryProtocol,
-    ) -> Response<Vec<Contact>>;
+    ) -> Response<Option<Box<Contact>>>;
     fn get_best_peer(
         &self,
         capabilities: Vec<Capability>,
@@ -664,12 +664,12 @@ impl PeerTableServer {
     }
 
     #[request_handler]
-    async fn handle_get_contacts_to_revalidate(
+    async fn handle_get_contact_to_revalidate(
         &mut self,
-        msg: peer_table_server_protocol::GetContactsToRevalidate,
+        msg: peer_table_server_protocol::GetContactToRevalidate,
         _ctx: &Context<Self>,
-    ) -> Vec<Contact> {
-        self.do_get_contacts_to_revalidate(msg.revalidation_interval, msg.protocol)
+    ) -> Option<Box<Contact>> {
+        self.do_get_contact_to_revalidate(msg.revalidation_interval, msg.protocol)
     }
 
     #[request_handler]
@@ -904,19 +904,22 @@ impl PeerTableServer {
             .cloned()
     }
 
-    fn do_get_contacts_to_revalidate(
+    fn do_get_contact_to_revalidate(
         &self,
         revalidation_interval: Duration,
         protocol: DiscoveryProtocol,
-    ) -> Vec<Contact> {
+    ) -> Option<Box<Contact>> {
         self.contacts
             .values()
             .filter(|c| {
                 c.supports_protocol(protocol)
                     && Self::is_validation_needed(c, revalidation_interval)
             })
+            .collect::<Vec<_>>()
+            .choose(&mut rand::rngs::OsRng)
             .cloned()
-            .collect()
+            .cloned()
+            .map(Box::new)
     }
 
     fn do_validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> ContactValidation {
@@ -1111,20 +1114,28 @@ impl PeerTableServer {
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
+        if contact.disposable {
+            return false;
+        }
+
         let sent_ping_ttl = Duration::from_secs(30);
 
-        let validation_is_stale = !contact.was_validated()
-            || contact
+        if contact.has_pending_ping() {
+            // Outstanding ping — only re-ping if it timed out (stale).
+            contact
                 .validation_timestamp
-                .map(|ts| Instant::now().saturating_duration_since(ts) > revalidation_interval)
-                .unwrap_or(false);
-
-        let sent_ping_is_stale = contact
-            .validation_timestamp
-            .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
-            .unwrap_or(false);
-
-        !contact.disposable && (validation_is_stale || sent_ping_is_stale)
+                .map(|ts| Instant::now().saturating_duration_since(ts) > sent_ping_ttl)
+                .unwrap_or(false)
+        } else {
+            // No pending ping — check if never validated or validation expired.
+            !contact.was_validated()
+                || contact
+                    .validation_timestamp
+                    .map(|ts| {
+                        Instant::now().saturating_duration_since(ts) > revalidation_interval
+                    })
+                    .unwrap_or(true)
+        }
     }
 }
 

@@ -40,7 +40,7 @@ const EXPIRATION_SECONDS: u64 = 20;
 /// Interval between revalidation checks (how often we run the revalidation loop).
 /// Must be short so that new contacts from handle_neighbors (which no longer
 /// sends immediate pings) get validated quickly and become usable for lookups.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// The initial interval between peer lookups, until the number of peers reaches
@@ -351,9 +351,9 @@ impl DiscoveryServer {
     }
 
     async fn revalidate_peers(&mut self) -> Result<(), DiscoveryServerError> {
-        for contact in self
+        if let Some(contact) = self
             .peer_table
-            .get_contacts_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv4)
+            .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv4)
             .await?
         {
             self.send_ping(&contact.node).await?;
