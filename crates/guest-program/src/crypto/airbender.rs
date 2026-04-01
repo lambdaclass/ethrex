@@ -56,9 +56,10 @@ impl Crypto for AirbenderCrypto {
         let recovered = recover(&msg_scalar, &sig_obj, &recovery_id)
             .map_err(|_| CryptoError::RecoveryFailed)?;
 
-        let pubkey_bytes = recovered.to_bytes();
-        // Skip the 0x04 prefix byte for uncompressed point
-        let hash = Keccak256::digest(&pubkey_bytes[1..]);
+        // Uncompressed SEC1 encoding: 04 || x (32 bytes) || y (32 bytes)
+        let pubkey_bytes = recovered.to_encoded_point(false);
+        // Ethereum address = keccak256(x || y)[12..], skip the 0x04 prefix
+        let hash = Keccak256::digest(&pubkey_bytes.as_bytes()[1..]);
         Ok(hash)
     }
 
