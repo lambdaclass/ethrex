@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -184,13 +184,13 @@ impl ProverBackend for ZiskBackend {
         ))
     }
 
-    fn to_batch_proof(
+    fn to_proof_bytes(
         &self,
         _proof: Self::ProofOutput,
         _format: ProofFormat,
-    ) -> Result<BatchProof, BackendError> {
+    ) -> Result<ProverOutput, BackendError> {
         Err(BackendError::not_implemented(
-            "to_batch_proof is not implemented for ZisK backend",
+            "to_proof_bytes is not implemented for ZisK backend",
         ))
     }
 }
