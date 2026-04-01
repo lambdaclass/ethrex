@@ -122,15 +122,11 @@ impl MetricsP2P {
     }
 
     pub fn inc_incoming_message(&self, msg_type: &str) {
-        self.incoming_messages
-            .with_label_values(&[msg_type])
-            .inc();
+        self.incoming_messages.with_label_values(&[msg_type]).inc();
     }
 
     pub fn inc_outgoing_message(&self, msg_type: &str) {
-        self.outgoing_messages
-            .with_label_values(&[msg_type])
-            .inc();
+        self.outgoing_messages.with_label_values(&[msg_type]).inc();
     }
 
     pub fn inc_discv4_incoming(&self, msg_type: &str) {
