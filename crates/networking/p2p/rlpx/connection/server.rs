@@ -73,6 +73,9 @@ use tracing::{debug, error, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
+/// How often to flush buffered transaction hash requests into a single
+/// batched GetPooledTransactions message.
+const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -89,6 +92,7 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
     fn send_ping(&self) -> Result<(), ActorError>;
     fn block_range_update(&self) -> Result<(), ActorError>;
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
+    fn flush_pending_tx_requests(&self) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -200,6 +204,9 @@ pub struct Established {
     /// Maps request ID to (original announcement, actually requested hashes).
     /// The announcement is kept for response validation; the hashes track in-flight state.
     pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>)>,
+    /// Buffered transaction requests waiting to be flushed as a single batch.
+    /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
+    pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -231,6 +238,10 @@ impl Established {
                 .blockchain
                 .mempool
                 .clear_in_flight_txs(&requested_hashes);
+        }
+        // Also clear hashes that were buffered but not yet sent.
+        for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
+            let _ = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes);
         }
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
@@ -468,6 +479,18 @@ impl PeerConnectionServer {
     }
 
     #[send_handler]
+    async fn handle_flush_pending_tx_requests(
+        &mut self,
+        _msg: peer_connection_server_protocol::FlushPendingTxRequests,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            let result = flush_pending_tx_requests(established_state).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        }
+    }
+
+    #[send_handler]
     async fn handle_broadcast_message(
         &mut self,
         msg: peer_connection_server_protocol::BroadcastMessage,
@@ -636,6 +659,13 @@ where
         BLOCK_RANGE_UPDATE_INTERVAL,
         ctx.clone(),
         peer_connection_server_protocol::BlockRangeUpdate,
+    );
+
+    // Periodic flush of buffered transaction requests.
+    send_interval(
+        TX_REQUEST_BATCH_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::FlushPendingTxRequests,
     );
 
     #[cfg(feature = "l2")]
@@ -1177,15 +1207,17 @@ async fn handle_incoming_message(
             }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            let hashes =
-                new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
-            if !hashes.is_empty() {
-                // hashes are already marked as in-flight by get_transactions_to_request
-                let request = GetPooledTransactions::new(random(), hashes.clone());
-                state
-                    .requested_pooled_txs
-                    .insert(request.id, (new_pooled_transaction_hashes, hashes));
-                send(state, Message::GetPooledTransactions(request)).await?;
+            // Don't request transactions if we're not synced — we won't be building blocks soon.
+            if state.blockchain.is_synced() {
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+                if !hashes.is_empty() {
+                    // Buffer hashes for batched requesting instead of sending immediately.
+                    // The periodic flush_pending_tx_requests handler will send them.
+                    state
+                        .pending_tx_requests
+                        .push((new_pooled_transaction_hashes, hashes));
+                }
             }
         }
         Message::GetPooledTransactions(msg) => {
@@ -1377,4 +1409,49 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerCo
     } else {
         Ok(())
     }
+}
+
+/// Drains the pending transaction request buffer and sends batched
+/// GetPooledTransactions requests, respecting the 256-hash-per-request
+/// limit from the devp2p ETH spec.
+async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_tx_requests.is_empty() {
+        return Ok(());
+    }
+
+    let pending = std::mem::take(&mut state.pending_tx_requests);
+
+    // Build a trimmed announcement containing only the hashes we're actually requesting,
+    // with their original types and sizes for response validation.
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut all_types: Vec<u8> = Vec::new();
+    let mut all_sizes: Vec<usize> = Vec::new();
+
+    for (announcement, hashes) in &pending {
+        let trimmed = announcement.filter_to(hashes);
+        all_hashes.extend_from_slice(&trimmed.transaction_hashes);
+        all_types.extend_from_slice(&trimmed.transaction_types);
+        all_sizes.extend(trimmed.transaction_sizes);
+    }
+
+    // Send in chunks of MAX_HASHES_PER_REQUEST per the devp2p spec.
+    const MAX_HASHES_PER_REQUEST: usize = 256;
+    for (i, chunk) in all_hashes.chunks(MAX_HASHES_PER_REQUEST).enumerate() {
+        let offset = i * MAX_HASHES_PER_REQUEST;
+        let chunk_types = &all_types[offset..offset + chunk.len()];
+        let chunk_sizes = &all_sizes[offset..offset + chunk.len()];
+
+        let announcement = NewPooledTransactionHashes::from_raw(
+            chunk_types.to_vec().into(),
+            chunk_sizes.to_vec(),
+            chunk.to_vec(),
+        );
+        let request = GetPooledTransactions::new(random(), chunk.to_vec());
+        state
+            .requested_pooled_txs
+            .insert(request.id, (announcement, chunk.to_vec()));
+        send(state, Message::GetPooledTransactions(request)).await?;
+    }
+
+    Ok(())
 }
