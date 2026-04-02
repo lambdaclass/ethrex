@@ -4474,6 +4474,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-trie",
  "hex-literal 0.4.1",
+ "once_cell",
  "rand 0.9.2",
  "thiserror 2.0.18",
 ]
