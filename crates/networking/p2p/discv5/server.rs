@@ -18,6 +18,7 @@ use crate::{
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
+use lru::LruCache;
 use rand::{Rng, RngCore, rngs::OsRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
@@ -32,6 +33,7 @@ use spawned_concurrency::{
 };
 use std::{
     net::{IpAddr, SocketAddr},
+    num::NonZero,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -58,6 +60,15 @@ const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Minimum interval between WHOAREYOU packets to the same IP address.
 /// Prevents amplification attacks where attackers spoof source IPs.
 const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
+/// Maximum number of entries in the per-IP WHOAREYOU rate limit cache.
+/// Bounded via LRU to prevent memory exhaustion from spoofed source IPs.
+const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
+/// Maximum number of WHOAREYOU packets sent globally per second.
+/// Caps total outgoing WHOAREYOU bandwidth regardless of source IP.
+/// Note: uses a fixed-window counter, so up to 2x this limit can be sent in a
+/// short burst at window boundaries. This is acceptable since the global limit
+/// is a secondary defense — the per-IP limit is the primary protection.
+const GLOBAL_WHOAREYOU_RATE_LIMIT: u32 = 100;
 /// Time window for collecting IP votes from PONG recipient_addr.
 /// Votes older than this are discarded. Reference: nim-eth uses 5 minutes.
 const IP_VOTE_WINDOW: Duration = Duration::from_secs(300);
@@ -119,7 +130,12 @@ pub struct DiscoveryServer {
     /// Tracks last WHOAREYOU send time per (source IP, node ID) to prevent amplification attacks.
     /// Keyed by (IP, node_id) so that distinct nodes behind the same IP (e.g. Docker) are not
     /// blocked by each other's handshakes.
-    pub whoareyou_rate_limit: FxHashMap<(IpAddr, H256), Instant>,
+    /// Bounded via LRU cache to prevent memory exhaustion from spoofed IPs.
+    pub whoareyou_rate_limit: LruCache<(IpAddr, H256), Instant>,
+    /// Global WHOAREYOU rate limit: count of packets sent in the current second.
+    pub whoareyou_global_count: u32,
+    /// Start of the current global rate limit window.
+    pub whoareyou_global_window_start: Instant,
     /// Tracks the source IP that each session was established from.
     /// Used to detect IP changes: if a packet arrives from a different IP than the session was
     /// established with, we invalidate the session by sending WHOAREYOU (PingMultiIP behaviour).
@@ -168,7 +184,12 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             session_ips: Default::default(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
@@ -202,7 +223,12 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             session_ips: Default::default(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
@@ -341,7 +367,7 @@ impl DiscoveryServer {
                         // Clear the rate limit for the new address so the WHOAREYOU
                         // is not suppressed. The sender proved identity by successfully
                         // decrypting, so this is not an amplification attack.
-                        self.whoareyou_rate_limit.remove(&(addr.ip(), src_id));
+                        self.whoareyou_rate_limit.pop(&(addr.ip(), src_id));
                         return self
                             .send_who_are_you(packet.header.nonce, src_id, addr)
                             .await;
@@ -928,6 +954,27 @@ impl DiscoveryServer {
         let rate_key = (addr.ip(), src_id);
         let now = Instant::now();
 
+        // Global rate limit: cap total outgoing WHOAREYOU bandwidth
+        if now.duration_since(self.whoareyou_global_window_start) >= Duration::from_secs(1) {
+            // Reset window
+            self.whoareyou_global_count = 0;
+            self.whoareyou_global_window_start = now;
+        }
+        if self.whoareyou_global_count >= GLOBAL_WHOAREYOU_RATE_LIMIT {
+            // Log once per window (when count first hits the limit) to avoid flooding
+            // logs during an attack while still signaling it's ongoing.
+            if self.whoareyou_global_count == GLOBAL_WHOAREYOU_RATE_LIMIT {
+                self.whoareyou_global_count = GLOBAL_WHOAREYOU_RATE_LIMIT + 1;
+                warn!(
+                    protocol = "discv5",
+                    "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), \
+                     dropping excess packets. This is normal during initial discovery or \
+                     network churn; persistent occurrences may indicate a DoS attempt"
+                );
+            }
+            return Ok(());
+        }
+
         // If we already have a pending challenge for this node (e.g. the peer retransmitted its
         // ordinary packet before completing the handshake), re-send the original WHOAREYOU bytes
         // verbatim. The nonce inside that WHOAREYOU echoes the *first* request's nonce, which is
@@ -943,6 +990,8 @@ impl DiscoveryServer {
             return Ok(());
         }
 
+        // Per-(IP, node) rate limit: prevent amplification attacks.
+        // Keyed by (IP, src_id) so distinct nodes behind the same IP are not blocked.
         // Skip rate limiting for private/local IPs -- amplification attacks
         // are not a concern on local networks, and Docker/Hive tests use the
         // same private IP for many nodes.
@@ -957,7 +1006,10 @@ impl DiscoveryServer {
             );
             return Ok(());
         }
-        self.whoareyou_rate_limit.insert(rate_key, now);
+
+        // Update rate limit trackers
+        self.whoareyou_rate_limit.push(rate_key, now);
+        self.whoareyou_global_count += 1;
 
         let mut rng = OsRng;
 
@@ -1026,6 +1078,8 @@ impl DiscoveryServer {
 
     /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
+    /// Note: whoareyou_rate_limit is an LRU cache with bounded capacity,
+    /// so it doesn't need periodic cleanup.
     pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
@@ -1045,12 +1099,6 @@ impl DiscoveryServer {
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
 
-        // Clean stale WHOAREYOU rate limit entries
-        let before_rate_limits = self.whoareyou_rate_limit.len();
-        self.whoareyou_rate_limit
-            .retain(|_key, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
-        let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
-
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW
@@ -1058,15 +1106,14 @@ impl DiscoveryServer {
             self.finalize_ip_vote_round();
         }
 
-        let total_removed = removed_messages + removed_challenges + removed_rate_limits;
+        let total_removed = removed_messages + removed_challenges;
         if total_removed > 0 {
             trace!(
                 protocol = "discv5",
-                "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
+                "Cleaned up {} stale entries ({} messages, {} challenges)",
                 total_removed,
                 removed_messages,
                 removed_challenges,
-                removed_rate_limits
             );
         }
     }
@@ -1269,15 +1316,19 @@ mod tests {
     use bytes::Bytes;
     use ethrex_common::H256;
     use ethrex_storage::{EngineType, Store};
+    use lru::LruCache;
     use rand::{SeedableRng, rngs::StdRng};
     use rustc_hash::FxHashSet;
     use secp256k1::SecretKey;
     use std::{
         net::{IpAddr, SocketAddr},
+        num::NonZero,
         sync::Arc,
         time::Instant,
     };
     use tokio::net::UdpSocket;
+
+    use super::MAX_WHOAREYOU_RATE_LIMIT_ENTRIES;
 
     #[tokio::test]
     async fn test_next_nonce_counter() {
@@ -1300,7 +1351,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1336,7 +1392,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1359,7 +1420,8 @@ mod tests {
         assert!(
             server
                 .whoareyou_rate_limit
-                .contains_key(&(addr.ip(), src_id1))
+                .peek(&(addr.ip(), src_id1))
+                .is_some()
         );
         // Should have added a pending challenge (proves packet was processed)
         assert!(server.pending_challenges.contains_key(&src_id1));
@@ -1429,7 +1491,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1513,7 +1580,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1565,7 +1637,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1609,7 +1686,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1658,7 +1740,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1711,7 +1798,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
@@ -1757,7 +1849,12 @@ mod tests {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
