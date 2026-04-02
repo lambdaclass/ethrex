@@ -1411,30 +1411,45 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerCo
     }
 }
 
-/// Drains the pending transaction request buffer, merges all announcements,
-/// and sends a single batched GetPooledTransactions request.
+/// Drains the pending transaction request buffer and sends batched
+/// GetPooledTransactions requests, respecting the 256-hash-per-request
+/// limit from the devp2p ETH spec.
 async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerConnectionError> {
     if state.pending_tx_requests.is_empty() {
         return Ok(());
     }
 
     let pending = std::mem::take(&mut state.pending_tx_requests);
-    let mut all_hashes: Vec<H256> = Vec::new();
-    let mut merged_announcement: Option<NewPooledTransactionHashes> = None;
 
-    for (announcement, hashes) in pending {
-        all_hashes.extend_from_slice(&hashes);
-        match merged_announcement.as_mut() {
-            Some(merged) => merged.merge(announcement),
-            None => merged_announcement = Some(announcement),
-        }
+    // Build a trimmed announcement containing only the hashes we're actually requesting,
+    // with their original types and sizes for response validation.
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut all_types: Vec<u8> = Vec::new();
+    let mut all_sizes: Vec<usize> = Vec::new();
+
+    for (announcement, hashes) in &pending {
+        let trimmed = announcement.filter_to(hashes);
+        all_hashes.extend_from_slice(&trimmed.transaction_hashes);
+        all_types.extend_from_slice(&trimmed.transaction_types);
+        all_sizes.extend(trimmed.transaction_sizes);
     }
 
-    if let Some(announcement) = merged_announcement {
-        let request = GetPooledTransactions::new(random(), all_hashes.clone());
+    // Send in chunks of MAX_HASHES_PER_REQUEST per the devp2p spec.
+    const MAX_HASHES_PER_REQUEST: usize = 256;
+    for (i, chunk) in all_hashes.chunks(MAX_HASHES_PER_REQUEST).enumerate() {
+        let offset = i * MAX_HASHES_PER_REQUEST;
+        let chunk_types = &all_types[offset..offset + chunk.len()];
+        let chunk_sizes = &all_sizes[offset..offset + chunk.len()];
+
+        let announcement = NewPooledTransactionHashes::from_raw(
+            chunk_types.to_vec().into(),
+            chunk_sizes.to_vec(),
+            chunk.to_vec(),
+        );
+        let request = GetPooledTransactions::new(random(), chunk.to_vec());
         state
             .requested_pooled_txs
-            .insert(request.id, (announcement, all_hashes));
+            .insert(request.id, (announcement, chunk.to_vec()));
         send(state, Message::GetPooledTransactions(request)).await?;
     }
 
