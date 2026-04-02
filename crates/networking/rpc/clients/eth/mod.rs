@@ -545,14 +545,8 @@ impl EthClient {
         let request = RpcRequest::new("eth_getCode", params);
 
         match self.send_request(request).await? {
-            RpcResponse::Success(result) => hex::decode(
+            RpcResponse::Success(result) => decode_hex(
                 &serde_json::from_value::<String>(result.result)
-                    .map(|hex_str| {
-                        hex_str
-                            .strip_prefix("0x")
-                            .map(ToString::to_string)
-                            .unwrap_or(hex_str)
-                    })
                     .map_err(|e| RpcRequestError::SerdeJSONError {
                         method: "eth_getCode".to_string(),
                         source: e,
