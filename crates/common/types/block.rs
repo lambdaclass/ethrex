@@ -2,8 +2,6 @@ use super::{
     BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
-use crate::errors::EcdsaError;
-use crate::utils::keccak;
 use crate::{
     Address, H256, U256,
     constants::{
@@ -14,6 +12,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
+use ethrex_crypto::{Crypto, CryptoError, NativeCrypto};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -142,6 +141,16 @@ pub struct BlockHeader {
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
+    #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
+    pub block_access_list_hash: Option<H256>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
+    pub slot_number: Option<u64>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -170,6 +179,8 @@ impl PartialEq for BlockHeader {
             excess_blob_gas,
             parent_beacon_block_root,
             requests_hash,
+            block_access_list_hash,
+            slot_number,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -191,6 +202,8 @@ impl PartialEq for BlockHeader {
             && difficulty == &other.difficulty
             && ommers_hash == &other.ommers_hash
             && requests_hash == &other.requests_hash
+            && block_access_list_hash == &other.block_access_list_hash
+            && slot_number == &other.slot_number
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -220,6 +233,8 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.excess_blob_gas)
             .encode_optional_field(&self.parent_beacon_block_root)
             .encode_optional_field(&self.requests_hash)
+            .encode_optional_field(&self.block_access_list_hash)
+            .encode_optional_field(&self.slot_number)
             .finish();
     }
 }
@@ -249,6 +264,8 @@ impl RLPDecode for BlockHeader {
         let (excess_blob_gas, decoder) = decoder.decode_optional_field();
         let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
         let (requests_hash, decoder) = decoder.decode_optional_field();
+        let (block_access_list_hash, decoder) = decoder.decode_optional_field();
+        let (slot_number, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -274,6 +291,8 @@ impl RLPDecode for BlockHeader {
                 excess_blob_gas,
                 parent_beacon_block_root,
                 requests_hash,
+                block_access_list_hash,
+                slot_number,
             },
             decoder.finish()?,
         ))
@@ -301,41 +320,44 @@ impl BlockBody {
         }
     }
 
-    pub fn get_transactions_with_sender(&self) -> Result<Vec<(&Transaction, Address)>, EcdsaError> {
+    pub fn get_transactions_with_sender(
+        &self,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
             .par_iter()
-            .map(|tx| Ok((tx, tx.sender()?)))
-            .collect::<Result<Vec<(&Transaction, Address)>, EcdsaError>>()
+            .map(|tx| Ok((tx, tx.sender(crypto)?)))
+            .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }
 }
 
-pub fn compute_transactions_root(transactions: &[Transaction]) -> H256 {
+pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
     let iter = transactions.iter().enumerate().map(|(idx, tx)| {
         // Key: RLP(tx_index)
         // Value: tx_type || RLP(tx)  if tx_type != 0
         //                   RLP(tx)  else
         (idx.encode_to_vec(), tx.encode_canonical_to_vec())
     });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
-pub fn compute_receipts_root(receipts: &[Receipt]) -> H256 {
+pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
     let iter = receipts
         .iter()
         .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
-pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
+pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
         .iter()
         .enumerate()
         .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl RLPEncode for BlockBody {
@@ -366,14 +388,16 @@ impl RLPDecode for BlockBody {
 }
 
 impl BlockHeader {
-    pub fn compute_block_hash(&self) -> H256 {
+    pub fn compute_block_hash(&self, crypto: &dyn Crypto) -> H256 {
         let mut buf = vec![];
         self.encode(&mut buf);
-        keccak(buf)
+        H256(crypto.keccak256(&buf))
     }
 
     pub fn hash(&self) -> H256 {
-        *self.hash.get_or_init(|| self.compute_block_hash())
+        *self
+            .hash
+            .get_or_init(|| self.compute_block_hash(&NativeCrypto))
     }
 }
 
@@ -675,11 +699,12 @@ pub fn validate_block_header(
 pub fn validate_block_body(
     block_header: &BlockHeader,
     block_body: &BlockBody,
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockBodyError> {
     // Validates that:
     //  - Transactions root and withdrawals root matches with the header
     //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
-    let computed_tx_root = compute_transactions_root(&block_body.transactions);
+    let computed_tx_root = compute_transactions_root(&block_body.transactions, crypto);
 
     if block_header.transactions_root != computed_tx_root {
         return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
@@ -691,7 +716,7 @@ pub fn validate_block_body(
 
     match (block_header.withdrawals_root, &block_body.withdrawals) {
         (Some(withdrawals_root), Some(withdrawals)) => {
-            let computed_withdrawals_root = compute_withdrawals_root(withdrawals);
+            let computed_withdrawals_root = compute_withdrawals_root(withdrawals, crypto);
             if withdrawals_root != computed_withdrawals_root {
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
@@ -852,7 +877,7 @@ mod test {
         let expected_root = H256::from_slice(&hex!(
             "48a703da164234812273ea083e4ec3d09d028300cd325b46a6a75402e5a7ab95"
         ));
-        let root = compute_withdrawals_root(&withdrawals);
+        let root = compute_withdrawals_root(&withdrawals, &ethrex_crypto::NativeCrypto);
         assert_eq!(root, expected_root);
     }
 
@@ -966,7 +991,8 @@ mod test {
                     .unwrap()
             })
             .collect();
-        let transactions_root = compute_transactions_root(&transactions);
+        let transactions_root =
+            compute_transactions_root(&transactions, &ethrex_crypto::NativeCrypto);
         let expected_root = H256::from_slice(
             &hex::decode("adf0387d2303fe80aeca23bf6828c979b44d8a8fe4a1ba1d3511bc1567ca80de")
                 .unwrap(),
@@ -1052,7 +1078,7 @@ mod test {
     #[test]
     fn test_fake_exponential_overflow() {
         // With u64 this overflows
-        assert!(fake_exponential(U256::from(57532635), U256::from(3145728), 3338477).is_ok());
+        assert!(fake_exponential(57532635.into(), 3145728.into(), 3338477).is_ok());
     }
 
     #[test]

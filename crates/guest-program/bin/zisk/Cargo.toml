@@ -1,0 +1,28 @@
+[package]
+version = "9.0.0"
+name = "ethrex-guest-zisk"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[dependencies]
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1" }
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+
+ethrex-guest-program = { path = "../../", default-features = false, features = ["zisk"] }
+ethrex-vm = { path = "../../../vm", default-features = false, features = [
+    "zisk",
+] }
+ethrex-common = { path = "../../../common", default-features = false, features = [
+    "zisk",
+] }
+
+[features]
+l2 = ["ethrex-guest-program/l2"]

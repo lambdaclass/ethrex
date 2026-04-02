@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,17 +17,22 @@ ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-metrics = { path = "./metrics", default-features = false }
 
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+spawned-concurrency = { workspace = true, optional = true }
+ethrex-guest-program = { workspace = true, optional = true, default-features = false }
+ethrex-prover = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
-hex.workspace = true
 rustc-hash.workspace = true
-tokio = { workspace = true, features = ["time", "rt"] }
+crossbeam.workspace = true
+tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
-hex = "0.4.3"
 tokio = { workspace = true, features = ["full"] }
 
 [lib]
@@ -37,9 +43,20 @@ default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
-sp1 = ["ethrex-common/sp1", "ethrex-vm/sp1"]
-risc0 = ["ethrex-common/risc0", "ethrex-vm/risc0", "c-kzg"]
-zisk = ["ethrex-common/zisk", "ethrex-vm/zisk"]
+eip-8025 = [
+    "ethrex-common/eip-8025",
+    "ethrex-guest-program/eip-8025",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:url",
+    "dep:reqwest",
+    "dep:spawned-concurrency",
+    "dep:ethrex-guest-program",
+    "dep:ethrex-prover",
+    "ethrex-prover?/eip-8025",
+    "tokio/io-util",
+    "tokio/net",
+]
 
 [lints.clippy]
 unwrap_used = "deny"

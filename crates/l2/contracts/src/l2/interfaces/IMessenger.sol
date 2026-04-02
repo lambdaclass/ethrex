@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @author LambdaClass
 /// @notice The Messenger contract is a contract that allows L2->L1 communication and L2->L2 communication.
-/// It handles message sending to L1, which is used to handle withdrawals.
+/// It handles message sending to L1, which is currently used exclusively for withdrawals.
 /// It also handles message sending to other L2 chains.
 interface IMessenger {
     /// @notice A withdrawal to L1 has initiated.

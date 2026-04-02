@@ -7,9 +7,14 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256};
-use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked};
+use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
+use ethrex_common::{Address, H256, U256, types::Code};
+use rustc_hash::FxHashMap;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    hint::assert_unchecked,
+};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -83,13 +88,17 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
+        // Store each limb individually so LLVM treats them as 4 independent i64 scalars.
+        // This prevents LLVM from grouping limbs[1..3] into a [24 x i8] alloca that would
+        // then need a memset + memcpy round-trip for values with known-zero upper limbs
+        // (e.g. PUSH1-PUSH31), allowing it to emit direct zero stores instead.
         #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                value.0.as_ptr(),
-                self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                U64_PER_U256,
-            );
+            let slot = self.values.get_unchecked_mut(next_offset);
+            slot.0[0] = value.0[0];
+            slot.0[1] = value.0[1];
+            slot.0[2] = value.0[2];
+            slot.0[3] = value.0[3];
         }
         self.offset = next_offset;
 
@@ -218,6 +227,16 @@ impl fmt::Debug for Stack {
     }
 }
 
+impl Hash for Stack {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offset is always within bounds of values"
+    )]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.values[self.offset..].hash(state);
+    }
+}
+
 #[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
@@ -268,12 +287,17 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
+    /// EIP-8037: snapshot of VM.state_gas_used at the start of this frame (for revert restoration)
+    pub state_gas_used_snapshot: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
+    /// while preserving touched_addresses.
+    pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
 }
 
 impl CallFrameBackup {
@@ -289,6 +313,7 @@ impl CallFrameBackup {
                 storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
+                exists: account.exists,
             });
 
         Ok(())
@@ -297,6 +322,7 @@ impl CallFrameBackup {
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
+        self.bal_checkpoint = None;
     }
 
     pub fn extend(&mut self, other: CallFrameBackup) {
@@ -304,11 +330,15 @@ impl CallFrameBackup {
             .extend(other.original_account_storage_slots);
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        // Don't extend bal_checkpoint - it's specific to each call frame
     }
 }
 
 impl CallFrame {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "inlined constructor, many args needed for performance"
+    )]
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
     #[inline(always)]
@@ -353,6 +383,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
+            state_gas_used_snapshot: 0,
         }
     }
 

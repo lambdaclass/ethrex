@@ -1,4 +1,4 @@
-# Ethrex L1 Performance Dashboard (Nov 2025)
+# Ethrex L1 Performance Dashboard (Dec 2025)
 
 Our Grafana dashboard provides a comprehensive overview of key metrics to help developers and operators ensure optimal performance and reliability of their Ethrex nodes. The only configured datasource today is `prometheus`, and the `job` variable defaults to `ethrex L1`, which is the job configured by default in our provisioning.
 
@@ -12,19 +12,20 @@ Use the `network` variable (discovered via the consensus config metric) to scope
 ## Execution and consensus summary
 
 ### Execution Client
-Confirms the execution client name and build that each monitored instance is running so you can spot mismatched deployments quickly.
+Confirms the execution client name, build and network that each monitored instance is running so you can spot mismatched deployments quickly.
 
 ![Execution Client](img/execution_client.png)
-
-### Consensus Config
-Shows the consensus configuration reported by `ethereum-metrics-exporter`, helping you verify which network the node is running.
-
-![Consensus Config](img/consensus_config.png)
 
 ### Consensus Fork
 Highlights the active fork reported by `ethereum-metrics-exporter`, which is a useful signal during planned upgrades.
 
 ![Consensus Fork](img/consensus_fork.png)
+
+## Logs
+
+Collapsed row that allows you to view the logs of the selected instances directly within the dashboard. This is useful for correlating metrics with log events without leaving Grafana.
+
+![Logs row](img/logs_row.png)
 
 ## Block processing
 
@@ -114,7 +115,7 @@ Live timeseries that tries to correlate to the per-block execution time by showi
 
 ![Engine Latency by Method](img/engine_latency_by_method.png)
 
-_**Limitations**: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure._
+_**Limitations**: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window to calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure._
 
 ## RPC API
 
@@ -146,7 +147,7 @@ _**Limitations**: The RPC latency views inherit the same windowing caveats as th
 
 ## Engine and RPC Error rates
 
-Collapsed row showing error rates for both Engine and RPC APIs side by side and a deagreagated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.
+Collapsed row showing error rates for both Engine and RPC APIs side by side and a disaggregated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.
 
 ![Engine and RPC Error rates row](img/engine_and_rpc_error_rates_row.png)
 

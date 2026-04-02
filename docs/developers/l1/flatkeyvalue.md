@@ -23,7 +23,7 @@ When X needs to read values, it only uses the flatkeyvalues on the left of `last
 
 # Debugging
 
-You can inspect it's progress by [inspecting the DB](../rocksdb-inspection.md).
+You can inspect its progress by [inspecting the DB](./rocksdb-inspection.md).
 
 In particular, you might want to run
 
@@ -33,4 +33,4 @@ In particular, you might want to run
 
 to know how advanced the progress is.
 
-A value of 0xff marks it's complete.
+A value of 0xff marks it as complete.

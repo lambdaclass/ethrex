@@ -3,11 +3,12 @@ use std::sync::LazyLock;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256};
-use ethrex_common::types::balance_diff::BalanceDiff;
+use ethrex_common::types::balance_diff::{AssetDiff, BalanceDiff};
 use ethrex_common::utils::keccak;
 use ethrex_common::{H160, U256, types::Receipt};
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 pub const MESSENGER_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0xff, 0xfe,
@@ -20,6 +21,9 @@ pub static L1MESSAGE_EVENT_SELECTOR: LazyLock<H256> =
 pub static L2MESSAGE_EVENT_SELECTOR: LazyLock<H256> = LazyLock::new(|| {
     keccak("L2Message(uint256,address,address,uint256,uint256,uint256,bytes)".as_bytes())
 });
+
+// crosschainMintERC20(address,address,address,address,uint256)
+pub static CROSSCHAIN_MINT_ERC20_SELECTOR: [u8; 4] = [0xf0, 0x26, 0x31, 0x95];
 
 pub const BRIDGE_ADDRESS: Address = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -85,18 +89,13 @@ pub fn get_block_l1_messages(receipts: &[Receipt]) -> Vec<L1Message> {
         .collect()
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct L2MessageProof {
-    pub batch_number: u64,
-    pub message_hash: H256,
-    pub merkle_proof: Vec<H256>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 /// Represents a message from the L2 to another L2
 pub struct L2Message {
     /// Chain id of the destination chain
-    pub chain_id: U256,
+    pub dest_chain_id: U256,
+    /// Chain id of the source chain
+    pub source_chain_id: u64,
     /// Address that originated the transaction
     pub from: Address,
     /// Address of the recipient in the destination chain
@@ -113,17 +112,19 @@ pub struct L2Message {
 
 impl L2Message {
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&self.chain_id.to_big_endian());
-        bytes.extend_from_slice(&self.from.to_fixed_bytes());
-        bytes.extend_from_slice(&self.to.to_fixed_bytes());
-        bytes.extend_from_slice(&self.value.to_big_endian());
-        bytes.extend_from_slice(&self.gas_limit.to_big_endian());
-        bytes.extend_from_slice(&self.data);
-        bytes
+        [
+            U256::from(self.source_chain_id).to_big_endian().as_ref(),
+            self.from.as_bytes(),
+            self.to.as_bytes(),
+            &self.tx_id.to_big_endian(),
+            &self.value.to_big_endian(),
+            &self.gas_limit.to_big_endian(),
+            keccak(&self.data).as_bytes(),
+        ]
+        .concat()
     }
-    pub fn from_log(log: &ethrex_common::types::Log) -> Option<L2Message> {
-        let chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
+    pub fn from_log(log: &ethrex_common::types::Log, source_chain_id: u64) -> Option<L2Message> {
+        let dest_chain_id = U256::from_big_endian(&log.topics.get(1)?.0);
         let from = H256::from_slice(log.data.get(0..32)?);
         let from = Address::from_slice(&from.as_fixed_bytes()[12..]);
         let to = H256::from_slice(log.data.get(32..64)?);
@@ -136,7 +137,8 @@ impl L2Message {
         let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
 
         Some(L2Message {
-            chain_id,
+            dest_chain_id,
+            source_chain_id,
             from,
             to,
             value,
@@ -147,7 +149,7 @@ impl L2Message {
     }
 }
 
-pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
+pub fn get_block_l2_out_messages(receipts: &[Receipt], source_chain_id: u64) -> Vec<L2Message> {
     receipts
         .iter()
         .flat_map(|receipt| {
@@ -159,7 +161,7 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
                         && log.topics.first() == Some(&*L2MESSAGE_EVENT_SELECTOR)
                         && log.topics.len() >= 2 // need chainId
                 })
-                .filter_map(L2Message::from_log)
+                .filter_map(|log| L2Message::from_log(log, source_chain_id))
         })
         .collect()
 }
@@ -167,16 +169,68 @@ pub fn get_block_l2_messages(receipts: &[Receipt]) -> Vec<L2Message> {
 pub fn get_balance_diffs(messages: &[L2Message]) -> Vec<BalanceDiff> {
     let mut balance_diffs: BTreeMap<U256, BalanceDiff> = BTreeMap::new();
     for message in messages {
-        if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
-            continue;
-        }
+        let mut offset = 4;
+        let (value, value_per_token_decoded) = if let Some(selector) = message.data.get(..4)
+            && *selector == CROSSCHAIN_MINT_ERC20_SELECTOR
+        {
+            let Some(token_l1) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_l1 from crosschainMintERC20 message");
+                continue;
+            };
+            offset += 32;
+            let Some(token_src_l2) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_src_l2 from crosschainMintERC20 message");
+                continue;
+            };
+            offset += 32;
+            let Some(token_dst_l2) = message.data.get(offset + 12..offset + 32) else {
+                warn!("Failed to decode token_dst_l2 from crosschainMintERC20 message");
+                continue;
+            };
+            offset += 32;
+            offset += 32; // skip "to" param
+            let Some(value_bytes) = message.data.get(offset..offset + 32) else {
+                warn!("Failed to decode value from crosschainMintERC20 message");
+                continue;
+            };
+            (
+                U256::zero(),
+                Some(AssetDiff {
+                    token_l1: Address::from_slice(token_l1),
+                    token_src_l2: Address::from_slice(token_src_l2),
+                    token_dst_l2: Address::from_slice(token_dst_l2),
+                    value: U256::from_big_endian(value_bytes),
+                }),
+            )
+        } else {
+            let mut value = message.value;
+            if message.to == BRIDGE_ADDRESS && message.from == BRIDGE_ADDRESS {
+                // This is the mint transaction, ignore the value
+                value = U256::zero();
+            }
+            (value, None)
+        };
         let entry = balance_diffs
-            .entry(message.chain_id)
+            .entry(message.dest_chain_id)
             .or_insert(BalanceDiff {
-                chain_id: message.chain_id,
+                chain_id: message.dest_chain_id,
                 value: U256::zero(),
+                value_per_token: Vec::new(),
+                message_hashes: Vec::new(),
             });
-        entry.value += message.value;
+        if let Some(value_per_token_decoded) = value_per_token_decoded {
+            if let Some(existing) = entry.value_per_token.iter_mut().find(|v| {
+                v.token_l1 == value_per_token_decoded.token_l1
+                    && v.token_src_l2 == value_per_token_decoded.token_src_l2
+                    && v.token_dst_l2 == value_per_token_decoded.token_dst_l2
+            }) {
+                existing.value += value_per_token_decoded.value;
+            } else {
+                entry.value_per_token.push(value_per_token_decoded);
+            }
+        }
+        entry.value += value;
+        entry.message_hashes.push(get_l2_message_hash(message));
     }
     balance_diffs.into_values().collect()
 }

@@ -4,7 +4,7 @@ You can deploy smart contracts to your L2 using [`rex`](https://github.com/lambd
 
 ## 1. Generate the Contract Bytecode
 
-First, compile your Solidity contract to get the deployment bytecode. You can use [solc (v0.8.29)](https://docs.soliditylang.org/en/latest/installing-solidity.html) for this:
+First, compile your Solidity contract to get the deployment bytecode. You can use [solc (v0.8.31)](https://docs.soliditylang.org/en/latest/installing-solidity.html) for this:
 
 ```sh
 solc --bin MyContract.sol -o out/

@@ -7,6 +7,8 @@ Key requirements:
 - `lockFee` must reserve funds when invoked by the l2 bridge (the L2 bridge/`COMMON_BRIDGE_L2_ADDRESS`), and `payFee` must release or burn those funds when the transaction finishes.
 - The token address must be registered in the L2 `FeeTokenRegistry` system contract (`0x…fffc`). Registration happens through the L1 `CommonBridge` by calling `registerNewFeeToken(address)`; only the bridge owner can do this, and the call queues a privileged transaction that the sequencer forces on L2. Likewise, `unregisterFeeToken(address)` removes it.
 
+Fee token ratios are also updated through the same privileged transaction path (deposits from L1 to L2). This is because we want the changes to be done through the L1, and via an owner that we want to be the same as the owner in the L1 bridge.
+
 ### Minimal Contract Surface
 
 ```solidity
@@ -41,47 +43,7 @@ contract FeeToken is ERC20, IFeeToken {
 }
 ```
 
-Compile and deploy:
-
-```shell
-rex deploy 0 <PRIVATE_KEY> \
-    --rpc-url http://localhost:1729 \
-    --contract-path crates/l2/contracts/src/example/FeeToken.sol \
-    --remappings "@openzeppelin=https://github.com/OpenZeppelin/openzeppelin-contracts.git" \
-    -- "constructor(address)" 0000000000000000000000000000000000000000
-```
-
-## Operator Workflow
-
-Operators decide which ERC-20s are valid fee tokens:
-
-1. Deploy or reuse an `IFeeToken` implementation and note its L2 address. When initializing the network, the deployer binary can automatically register one by passing `--initial-fee-token <address>` so the bridge queues it during startup.
-2. Register additional tokens (or remove them) through the L1 `CommonBridge` using `registerNewFeeToken(address)` / `unregisterFeeToken(address)`. Each call enqueues a privileged transaction that the sequencer must force on L2.
-
-> ⚠️ **Warning:** Registration completes only after the L1 watcher processes the privileged transaction and the L2 registry emits `FeeTokenRegistered`. Until then, user transactions referencing the token will fail.
-
-If the token is not yet registered, the bridge owner can queue the privileged call from L1 with the SDK helpers:
-
-```rust
-let calldata = ethrex_l2_sdk::calldata::encode_calldata(
-    "registerNewFeeToken(address)",
-    &[Value::Address(fee_token_address)],
-)?;
-let tx = build_generic_tx(
-    &l1_client,
-    TxType::EIP1559,
-    ethrex_l2_sdk::bridge_address()?, // CommonBridge proxy on L1
-    owner_signer.address(),
-    calldata.into(),
-    Overrides {
-        gas_limit: Some(21000 * 10),
-        ..Default::default()
-    },
-).await?;
-let hash = send_generic_transaction(&l1_client, tx, &owner_signer).await?;
-wait_for_transaction_receipt(hash, &l1_client, 100).await?;
-// The L1 watcher will include the privileged tx and the registry will emit FeeTokenRegistered.
-```
+For deployment and operator steps, see [Deploying a Fee Token](../deployment/fee_token.md).
 
 ## User Workflow
 
@@ -92,6 +54,26 @@ Once a token is registered, users can submit fee-token transactions:
 3. Send the transaction with `send_generic_transaction` and wait for the receipt.
 
 Fee locking and distribution happen automatically inside `l2_hook.rs`.
+
+### Minimal `Cargo.toml`
+
+```toml
+[package]
+name = "fee-token-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.86"
+hex = "0.4.3"
+secp256k1 = { version = "0.30.0", default-features = false, features = ["global-context", "recovery", "rand"] }
+tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread"] }
+url = { version = "2.5.4", features = ["serde"] }
+ethrex_l2_sdk = { package = "ethrex-sdk", git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-common = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+ethrex-l2-rpc = { git = "https://github.com/lambdaclass/ethrex", tag = "v6.0.0" }
+```
 
 ```rust
 use anyhow::Result;

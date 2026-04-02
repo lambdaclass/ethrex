@@ -8,9 +8,8 @@ use crate::modules::{
 };
 use std::str::FromStr;
 
-use ::bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
         AuthorizationTuple, BASE_FEE_MAX_CHANGE_DENOMINATOR, Fork, Genesis, GenesisAccount, TxKind,
@@ -28,7 +27,7 @@ use std::{
     path::PathBuf,
 };
 
-const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
+const DEFAULT_FORKS: [&str; 5] = ["Merge", "Shanghai", "Cancun", "Prague", "Amsterdam"];
 
 /// `Tests` structure is the result of parsing a whole `.json` file from the EF tests. This file includes at
 /// least one general test enviroment and different test cases inside each enviroment.
@@ -277,6 +276,9 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
     if *fork >= Fork::Osaka {
         basic_chain_config.osaka_time = Some(0);
     }
+    if *fork >= Fork::Amsterdam {
+        basic_chain_config.amsterdam_time = Some(0);
+    }
 
     basic_chain_config
 }
@@ -377,6 +379,8 @@ pub struct Env {
     pub current_random: Option<H256>,
     #[serde(deserialize_with = "u256::deser_hex_str")]
     pub current_timestamp: U256,
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
+    pub slot_number: Option<U256>,
 }
 
 /// This structure represents a specific test case under general test conditions (`Test` struct). It is mainly
@@ -430,7 +434,7 @@ impl From<&AccountState> for GenesisAccount {
     fn from(value: &AccountState) -> Self {
         Self {
             code: value.code.clone(),
-            storage: value.storage.clone(),
+            storage: value.storage.iter().map(|(&k, &v)| (k, v)).collect(),
             balance: value.balance,
             nonce: value.nonce,
         }

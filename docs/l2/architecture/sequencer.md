@@ -18,7 +18,7 @@ As the name suggests, this component sends transactions to the L1. But not any t
 
 Commit transactions are sent when the Proposer wants to commit to a new batch of blocks. These transactions contain the batch data to be committed in the L1.
 
-Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contains the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.
+Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.
 
 ### Proof Coordinator
 

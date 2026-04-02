@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.29;
+pragma solidity =0.8.31;
 
 /// @title Interface for the L2 side of the CommonBridge contract.
 /// @author LambdaClass
@@ -10,10 +10,7 @@ interface ICommonBridgeL2 {
     /// @dev Event emitted when an ETH deposit is processed.
     /// @param receiver the address that received the ETH
     /// @param amount the amount of ether being deposited
-    event DepositProcessed(
-        address indexed receiver,
-        uint256 amount
-    );
+    event DepositProcessed(address indexed receiver, uint256 amount);
     /// @notice A withdrawal to L1 has initiated.
     /// @dev Event emitted when a withdrawal is initiated.
     /// @param senderOnL2 the sender of the transaction on L2.
@@ -24,7 +21,6 @@ interface ICommonBridgeL2 {
         address indexed receiverOnL1,
         uint256 indexed amount
     );
-
 
     /// @notice An ERC20 token deposit was successfully processed
     /// @dev Event emitted when an ERC20 deposit is processed.
@@ -71,7 +67,27 @@ interface ICommonBridgeL2 {
     /// @param tokenL2 Address of the token on L2
     /// @param destination Address that should receive the tokens
     /// @param amount Amount of tokens to give
-    function mintERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
+    function mintERC20(
+        address tokenL1,
+        address tokenL2,
+        address destination,
+        uint256 amount
+    ) external;
+
+    /// @notice Initiates the crosschain minting of ERC20 tokens on another L2 chain.
+    /// @dev This is used to send tokens to another L2 chain via L1.
+    /// @param tokenL1 Address of the token on L1
+    /// @param tokenL2 Address of the token on this L2
+    /// @param destTokenL2 Address of the token on the destination L2
+    /// @param to Address on the destination L2 that should receive the tokens
+    /// @param amount Amount of tokens to mint on the destination L2
+    function crosschainMintERC20(
+        address tokenL1,
+        address tokenL2,
+        address destTokenL2,
+        address to,
+        uint256 amount
+    ) external;
 
     /// @notice Initiates the withdrawal of ERC20 tokens to the L1.
     /// @dev This is the first step in the two step process of a user withdrawal.
@@ -81,7 +97,30 @@ interface ICommonBridgeL2 {
     /// @param tokenL2 Address of the token on L2
     /// @param destination Address on L1 that should receive the tokens
     /// @param amount Amount of tokens to withdraw
-    function withdrawERC20(address tokenL1, address tokenL2, address destination, uint256 amount) external;
+    function withdrawERC20(
+        address tokenL1,
+        address tokenL2,
+        address destination,
+        uint256 amount
+    ) external;
+
+    /// @notice Transfer ERC20 tokens to the desired L2 chain.
+    /// @dev This burns tokens on this L2 and sends a message to the destination L2
+    /// @dev so tokens can be minted on that chain.
+    /// @param chainId The chain ID of the destination chain.
+    /// @param to The address on the destination chain that should receive the tokens.
+    /// @param amount The amount of tokens to transfer.
+    /// @param tokenL2 The address of the ERC20 token on this L2 chain.
+    /// @param destTokenL2 The address of the ERC20 token on the destination L2 chain.
+    /// @param destGasLimit The gas limit for the destination chain execution.
+    function transferERC20(
+        uint256 chainId,
+        address to,
+        uint256 amount,
+        address tokenL2,
+        address destTokenL2,
+        uint256 destGasLimit
+    ) external;
 
     /// @notice Sends an arbitrary message to the another chain.
     /// @dev This can be used to perform simple transfers or to call contracts on the destination chain.
@@ -89,5 +128,10 @@ interface ICommonBridgeL2 {
     /// @param to The address of the contract on the destination chain.
     /// @param destGasLimit The gas limit for the destination chain execution.
     /// @param data The calldata to send to the destination contract.
-    function sendToL2(uint256 chainId, address to, uint256 destGasLimit, bytes calldata data) external payable;
+    function sendToL2(
+        uint256 chainId,
+        address to,
+        uint256 destGasLimit,
+        bytes calldata data
+    ) external payable;
 }

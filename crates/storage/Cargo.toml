@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,21 +14,18 @@ ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true
 
-async-trait.workspace = true
-ethereum-types.workspace = true
 anyhow = "1.0.86"
 bytes.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-hex.workspace = true
 serde.workspace = true
 serde_json = "1.0.117"
 rocksdb = { workspace = true, optional = true }
 rustc-hash.workspace = true
 tokio = { workspace = true, features = ["rt"] }
-qfilter = "0.2.5"
+fastbloom = "0.14"
 rayon.workspace = true
-lru = "0.16.2"
+lru.workspace = true
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 crossbeam.workspace = true
@@ -37,9 +35,6 @@ default = []
 rocksdb = ["dep:rocksdb"]
 
 [dev-dependencies]
-hex.workspace = true
-hex-literal.workspace = true
-tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lib]

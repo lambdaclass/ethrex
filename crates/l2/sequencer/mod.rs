@@ -1,16 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::based::sequencer_state::SequencerState;
-use crate::based::sequencer_state::SequencerStatus;
-use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
-use crate::{BlockFetcher, SequencerConfig, StateUpdater};
+use crate::sequencer::state_updater::StateUpdater;
+use crate::{BlockFetcher, SequencerConfig};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
+use ethrex_monitor::{EthrexMonitor, MonitorConfig as ExternalMonitorConfig};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -20,7 +19,7 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use reqwest::Url;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -35,6 +34,8 @@ pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
+pub use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
+pub mod state_updater;
 
 pub mod configs;
 pub mod errors;
@@ -53,14 +54,16 @@ pub async fn start_l2(
     checkpoints_dir: PathBuf,
 ) -> Result<
     (
-        Option<GenServerHandle<L1Committer>>,
-        Option<GenServerHandle<BlockProducer>>,
+        Option<ActorRef<L1Committer>>,
+        Option<ActorRef<BlockProducer>>,
         Pin<Box<dyn Future<Output = Result<(), errors::SequencerError>> + Send>>,
     ),
     errors::SequencerError,
 > {
     let initial_status = if cfg.based.enabled {
         SequencerStatus::default()
+    } else if cfg.state_updater.start_at > 0 {
+        SequencerStatus::Syncing
     } else {
         SequencerStatus::Sequencing
     };
@@ -112,7 +115,6 @@ pub async fn start_l2(
         shared_state.clone(),
         l2_url.clone(),
     )
-    .await
     .inspect_err(|err| {
         error!("Error starting Watcher: {err}");
     });
@@ -143,7 +145,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
-        checkpoints_dir,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -175,21 +177,21 @@ pub async fn start_l2(
             cfg.clone(),
             rollup_store.clone(),
             needed_proof_types.clone(),
+            checkpoints_dir.clone(),
         )));
     }
+    let state_updater = StateUpdater::spawn(
+        cfg.clone(),
+        shared_state.clone(),
+        blockchain.clone(),
+        store.clone(),
+        rollup_store.clone(),
+    )
+    .await
+    .inspect_err(|err| {
+        error!("Error starting State Updater: {err}");
+    });
     if cfg.based.enabled {
-        let _ = StateUpdater::spawn(
-            cfg.clone(),
-            shared_state.clone(),
-            blockchain.clone(),
-            store.clone(),
-            rollup_store.clone(),
-        )
-        .await
-        .inspect_err(|err| {
-            error!("Error starting State Updater: {err}");
-        });
-
         let _ = BlockFetcher::spawn(
             &cfg,
             store.clone(),
@@ -204,11 +206,12 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
+        let monitor_cfg = monitor_config_from(&cfg);
         EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
-            &cfg,
+            &monitor_cfg,
             cancellation_token.clone(),
         )
         .await?;
@@ -225,6 +228,7 @@ pub async fn start_l2(
         l1_watcher.ok(),
         l1_proof_sender.ok(),
         block_producer_handle.clone(),
+        state_updater.ok(),
         #[cfg(feature = "metrics")]
         metrics_gatherer.ok(),
     )
@@ -241,9 +245,9 @@ pub async fn start_l2(
                 if let Err(e) = server_res {
                     error!("Admin server task error: {e}");
                 }
-                handle_verifier_result(verifier_res).await;
+                handle_verifier_result(verifier_res);
             }
-            (Some(handle), None) => handle_verifier_result(tokio::join!(handle).0).await,
+            (Some(handle), None) => handle_verifier_result(tokio::join!(handle).0),
             (None, Some(admin_server)) => {
                 if let Err(e) = admin_server.into_future().await {
                     error!("Admin server task error: {e}");
@@ -257,7 +261,27 @@ pub async fn start_l2(
     Ok((l1_committer_handle, block_producer_handle, driver))
 }
 
-async fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
+fn monitor_config_from(cfg: &SequencerConfig) -> ExternalMonitorConfig {
+    let sequencer_registry_address =
+        if cfg.state_updater.sequencer_registry == ethrex_common::Address::default() {
+            None
+        } else {
+            Some(cfg.state_updater.sequencer_registry)
+        };
+    ExternalMonitorConfig {
+        enabled: cfg.monitor.enabled,
+        tick_rate: cfg.monitor.tick_rate,
+        batch_widget_height: cfg.monitor.batch_widget_height,
+        on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+        bridge_address: cfg.l1_watcher.bridge_address,
+        sequencer_registry_address,
+        rpc_urls: cfg.eth.rpc_url.clone(),
+        is_based: cfg.based.enabled,
+        osaka_activation_time: cfg.eth.osaka_activation_time,
+    }
+}
+
+fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {
     match res {
         Ok(Ok(_)) => {}
         Ok(Err(err)) => error!("verifier error: {err}"),

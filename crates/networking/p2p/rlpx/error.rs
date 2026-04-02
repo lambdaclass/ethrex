@@ -1,11 +1,12 @@
 use super::{message::Message, p2p::DisconnectReason};
-use crate::discv4::peer_table::PeerTableError;
+use crate::snap::error::SnapError;
 use aes::cipher::InvalidLength;
 use ethrex_blockchain::error::{ChainError, MempoolError};
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::RollupStoreError;
+use spawned_concurrency::error::ActorError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -85,7 +86,7 @@ pub enum PeerConnectionError {
     #[error("Received invalid block range update")]
     InvalidBlockRangeUpdate,
     #[error(transparent)]
-    PeerTableError(#[from] PeerTableError),
+    ActorError(#[from] ActorError),
     #[error("Request timeouted")]
     Timeout,
     #[error("Unexpected response: Expected {0}, got {1}")]
@@ -129,5 +130,16 @@ impl From<tokio::sync::broadcast::error::RecvError> for PeerConnectionError {
 impl From<tokio::sync::oneshot::error::RecvError> for PeerConnectionError {
     fn from(e: tokio::sync::oneshot::error::RecvError) -> Self {
         PeerConnectionError::RecvError(e.to_string())
+    }
+}
+
+impl From<SnapError> for PeerConnectionError {
+    fn from(e: SnapError) -> Self {
+        match e {
+            SnapError::Store(e) => PeerConnectionError::StoreError(e),
+            SnapError::Protocol(e) => e,
+            SnapError::BadRequest(msg) => PeerConnectionError::BadRequest(msg),
+            other => PeerConnectionError::InternalError(other.to_string()),
+        }
     }
 }

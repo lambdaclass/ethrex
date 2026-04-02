@@ -2,9 +2,9 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, get_client_version, store_node_config_file},
+    utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
-use ethrex_p2p::{discv4::peer_table::PeerTable, types::NodeRecord};
+use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
@@ -25,12 +25,25 @@ fn log_global_allocator() {
     }
 }
 
+// Tune jemalloc for throughput: use a background thread for memory purging instead
+// of doing it inline during malloc/free (which adds ~12% of total block execution CPU time
+// to jemalloc purge calls, measured via perf profiling on mainnet blocks).
+#[cfg(all(
+    feature = "jemalloc",
+    not(feature = "jemalloc_profiling"),
+    not(target_env = "msvc")
+))]
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "malloc_conf")]
+pub static malloc_conf: &[u8] =
+    b"background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";
+
 // This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
 // usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
 #[cfg(all(feature = "jemalloc_profiling", not(target_env = "msvc")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "malloc_conf")]
-pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19,background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";
 
 async fn server_shutdown(
     datadir: &Path,
@@ -39,13 +52,29 @@ async fn server_shutdown(
     local_node_record: NodeRecord,
 ) {
     info!("Server shut down started...");
-    let node_config_path = datadir.join("node_config.json");
-    info!("Storing config at {:?}...", node_config_path);
     cancel_token.cancel();
-    let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
-    store_node_config_file(node_config, node_config_path).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    if !is_memory_datadir(datadir) {
+        let node_config_path = datadir.join("node_config.json");
+        info!("Storing config at {:?}...", node_config_path);
+        let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
+        store_node_config_file(node_config, node_config_path);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     info!("Server shutting down!");
+}
+
+/// Builds the CPU profile report and writes it to `profile.pb` in the current directory.
+#[cfg(feature = "cpu_profiling")]
+fn write_cpu_profile(guard: pprof::ProfilerGuard<'_>) -> eyre::Result<()> {
+    use pprof::protos::Message;
+
+    let report = guard.report().build()?;
+    let profile = report.pprof()?;
+    let mut content = Vec::new();
+    profile.encode(&mut content)?;
+    std::fs::write("profile.pb", &content)?;
+    info!("CPU profile written to profile.pb");
+    Ok(())
 }
 
 /// Fetches the latest release version on github
@@ -135,7 +164,17 @@ async fn main() -> eyre::Result<()> {
         return subcommand.run(&opts).await;
     }
 
-    let log_filter_handler = init_tracing(&opts);
+    let (log_filter_handler, _guard) = init_tracing(&opts);
+
+    #[cfg(feature = "cpu_profiling")]
+    let profiler_guard = {
+        let guard = pprof::ProfilerGuardBuilder::default()
+            .frequency(1000)
+            .build()
+            .expect("failed to build CPU profiler");
+        info!("CPU profiling enabled (1000 Hz), will write profile.pb at shutdown");
+        guard
+    };
 
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
@@ -154,6 +193,11 @@ async fn main() -> eyre::Result<()> {
         _ = signal_terminate.recv() => {
             server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
+    }
+
+    #[cfg(feature = "cpu_profiling")]
+    if let Err(e) = write_cpu_profile(profiler_guard) {
+        tracing::error!("Failed to write CPU profile: {e}");
     }
 
     Ok(())

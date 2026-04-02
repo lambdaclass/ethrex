@@ -9,6 +9,11 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   report-loc-changes:
     name: Report PR Line Changes

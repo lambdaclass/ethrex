@@ -6,10 +6,10 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     U256,
-    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction},
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
 };
 use ethrex_l2_common::{
-    messages::get_block_l2_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
+    messages::get_block_l2_out_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
 };
 use ethrex_levm::vm::VMType;
 use ethrex_metrics::metrics;
@@ -108,6 +108,7 @@ pub async fn fill_transactions(
     let mut acc_encoded_size = context.payload.length();
     let fee_config_len = fee_config.to_vec().len();
     let chain_config = store.get_chain_config();
+    let chain_id = chain_config.chain_id;
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -166,10 +167,7 @@ pub async fn fill_transactions(
         };
 
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
-            let this_chain_id = store.get_chain_config().chain_id;
-            if privileged_tx.chain_id == this_chain_id
-                && privileged_tx_count >= PRIVILEGED_TX_BUDGET
-            {
+            if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
                 txs.pop();
                 continue;
@@ -211,9 +209,23 @@ pub async fn fill_transactions(
             continue;
         }
 
+        // Set BAL index for this transaction (1-indexed per EIP-7928)
+        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+        let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+        context.vm.set_bal_index(tx_index);
+
+        // Record tx sender and recipient for BAL
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head_tx.tx.sender());
+            if let TxKind::Call(to) = head_tx.to() {
+                recorder.record_touched_address(to);
+            }
+        }
+
         // Execute tx
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
+        let previous_cumulative_gas_spent = context.cumulative_gas_spent;
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
@@ -225,14 +237,15 @@ pub async fn fill_transactions(
             }
         };
 
-        let l2_messages = get_block_l2_messages(std::slice::from_ref(&receipt));
+        let l2_messages = get_block_l2_out_messages(std::slice::from_ref(&receipt), chain_id);
         let mut found_invalid_message = false;
         for msg in l2_messages {
-            if !registered_chains.contains(&msg.chain_id) {
+            if !registered_chains.contains(&msg.dest_chain_id) {
                 txs.pop();
                 context.vm.undo_last_tx()?;
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
+                context.cumulative_gas_spent = previous_cumulative_gas_spent;
                 found_invalid_message = true;
                 break;
             }
@@ -245,9 +258,7 @@ pub async fn fill_transactions(
             let id = head_tx.nonce();
             privileged_nonces.insert(privileged_tx.chain_id, Some(id));
 
-            if privileged_tx.chain_id == store.get_chain_config().chain_id {
-                privileged_tx_count += 1;
-            }
+            privileged_tx_count += 1;
         }
 
         // Update acc_encoded_size

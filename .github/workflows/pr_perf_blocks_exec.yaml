@@ -10,6 +10,11 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  # Work around frequent libgit2/submodule fetch flakiness in CI.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
 jobs:
   build-binaries:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
@@ -91,6 +96,7 @@ jobs:
           path: bench_pr_comparison.md
 
       - name: Find comment
+        if: ${{ github.event.pull_request.head.repo.fork != true }}
         continue-on-error: true
         uses: peter-evans/find-comment@v3
         id: fc
@@ -100,6 +106,7 @@ jobs:
           body-includes: "Benchmark Block Execution Results Comparison Against Main"
 
       - name: Create or update comment
+        if: ${{ github.event.pull_request.head.repo.fork != true }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}

@@ -9,7 +9,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProverInputData, ProverOutput, ProverType};
 
 use crate::error::RollupStoreError;
 
@@ -24,22 +24,10 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
     ) -> Result<Option<u64>, RollupStoreError>;
 
     /// Gets the L1 message hashes by a given batch number.
-    async fn get_l1_message_hashes_by_batch(
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError>;
-
-    /// Gets the L2 message hashes by a given batch number.
-    async fn get_l2_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, RollupStoreError>;
-
-    /// Returns the balance diffs by a given batch_number
-    async fn get_balance_diffs_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
 
     /// Returns the block numbers by a given batch_number
     async fn get_block_numbers_by_batch(
@@ -47,10 +35,26 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, RollupStoreError>;
 
-    async fn get_privileged_transactions_hash_by_batch_number(
+    /// Returns the balance diffs by a given batch_number
+    async fn get_balance_diffs_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BalanceDiff>>, RollupStoreError>;
+
+    async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError>;
+
+    async fn get_l2_in_message_rolling_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError>;
+
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError>;
 
     async fn get_state_root_by_batch_number(
         &self,
@@ -133,9 +137,21 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         batch_number: u64,
     ) -> Result<Option<ethereum_types::Signature>, RollupStoreError>;
 
-    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError>;
+    /// Returns `(batch_number, verified_at_secs)` for the latest batch verified on-chain.
+    async fn get_latest_verified_batch_proof(&self) -> Result<(u64, u64), RollupStoreError>;
 
-    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError>;
+    /// Records that `batch_number` was verified on-chain at `verified_at` (unix secs).
+    async fn set_latest_verified_batch_proof(
+        &self,
+        batch_number: u64,
+        verified_at: u64,
+    ) -> Result<(), RollupStoreError>;
+
+    /// Returns the batch number for the latest proof sent to the Aligned gateway.
+    async fn get_latest_sent_to_aligned(&self) -> Result<u64, RollupStoreError>;
+
+    /// Records that `batch_number` was sent to the Aligned gateway.
+    async fn set_latest_sent_to_aligned(&self, batch_number: u64) -> Result<(), RollupStoreError>;
 
     async fn get_account_updates_by_block_number(
         &self,
@@ -152,14 +168,14 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-        proof: BatchProof,
+        proof: ProverOutput,
     ) -> Result<(), RollupStoreError>;
 
     async fn get_proof_by_batch_and_type(
         &self,
         batch_number: u64,
         proof_type: ProverType,
-    ) -> Result<Option<BatchProof>, RollupStoreError>;
+    ) -> Result<Option<ProverOutput>, RollupStoreError>;
 
     async fn delete_proof_by_batch_and_type(
         &self,

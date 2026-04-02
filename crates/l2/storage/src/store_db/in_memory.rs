@@ -12,7 +12,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProverInputData, ProverOutput, ProverType};
 
 use crate::api::StoreEngineRollup;
 
@@ -24,21 +24,25 @@ struct StoreInner {
     /// Map of batches by block numbers
     batches_by_block: HashMap<BlockNumber, u64>,
     /// Map of l1 message hashes by batch numbers
-    l1_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
-    /// Map of l2 message hashes by batch numbers
-    l2_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    l1_out_message_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of balance diffs by batch numbers
     balance_diffs_by_batch: HashMap<u64, Vec<BalanceDiff>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
     /// Map of batch number to deposit logs hash
-    privileged_transactions_hashes: HashMap<u64, H256>,
+    l1_in_messages_rolling_hashes: HashMap<u64, H256>,
+    /// Map of batch number to L2 in message rolling hashes
+    l2_in_message_rolling_hashes: HashMap<u64, Vec<(u64, H256)>>,
+    /// Map of batch number to non-privileged transactions count
+    non_privileged_transactions_by_batch: HashMap<u64, u64>,
     /// Map of batch number to state root
     state_roots: HashMap<u64, H256>,
     /// Map of batch number to blob
     blobs: HashMap<u64, Vec<Blob>>,
-    /// latest sent batch proof
-    latest_sent_batch_proof: u64,
+    /// (batch_number, verified_at_secs) for the latest batch verified on-chain
+    latest_verified_batch_proof: (u64, u64),
+    /// batch_number for latest proof sent to Aligned gateway
+    latest_sent_to_aligned: u64,
     /// Metrics for transaction, deposits and messages count
     operations_counts: [u64; 3],
     /// Map of signatures from the sequencer by block hashes
@@ -48,7 +52,7 @@ struct StoreInner {
     /// Map of block number to account updates
     account_updates_by_block_number: HashMap<BlockNumber, Vec<AccountUpdate>>,
     /// Map of (ProverType, batch_number) to batch proof data
-    batch_proofs: HashMap<(ProverType, u64), BatchProof>,
+    batch_proofs: HashMap<(ProverType, u64), ProverOutput>,
     /// Map of batch number to commit transaction hash
     commit_txs: HashMap<u64, H256>,
     /// Map of batch number to verify transaction hash
@@ -79,24 +83,13 @@ impl StoreEngineRollup for Store {
         Ok(self.inner()?.batches_by_block.get(&block_number).copied())
     }
 
-    async fn get_l1_message_hashes_by_batch(
+    async fn get_l1_out_message_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, RollupStoreError> {
         Ok(self
             .inner()?
-            .l1_message_hashes_by_batch
-            .get(&batch_number)
-            .cloned())
-    }
-
-    async fn get_l2_message_hashes_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<H256>>, RollupStoreError> {
-        Ok(self
-            .inner()?
-            .l2_message_hashes_by_batch
+            .l1_out_message_hashes_by_batch
             .get(&batch_number)
             .cloned())
     }
@@ -125,13 +118,24 @@ impl StoreEngineRollup for Store {
         Ok(block_numbers)
     }
 
-    async fn get_privileged_transactions_hash_by_batch_number(
+    async fn get_l1_in_messages_rolling_hash_by_batch_number(
         &self,
         batch_number: u64,
     ) -> Result<Option<H256>, RollupStoreError> {
         Ok(self
             .inner()?
-            .privileged_transactions_hashes
+            .l1_in_messages_rolling_hashes
+            .get(&batch_number)
+            .cloned())
+    }
+
+    async fn get_l2_in_message_rolling_hashes_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<(u64, H256)>>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .l2_in_message_rolling_hashes
             .get(&batch_number)
             .cloned())
     }
@@ -246,12 +250,25 @@ impl StoreEngineRollup for Store {
             .cloned())
     }
 
-    async fn get_latest_sent_batch_proof(&self) -> Result<u64, RollupStoreError> {
-        Ok(self.inner()?.latest_sent_batch_proof)
+    async fn get_latest_verified_batch_proof(&self) -> Result<(u64, u64), RollupStoreError> {
+        Ok(self.inner()?.latest_verified_batch_proof)
     }
 
-    async fn set_latest_sent_batch_proof(&self, batch_number: u64) -> Result<(), RollupStoreError> {
-        self.inner()?.latest_sent_batch_proof = batch_number;
+    async fn set_latest_verified_batch_proof(
+        &self,
+        batch_number: u64,
+        verified_at: u64,
+    ) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_verified_batch_proof = (batch_number, verified_at);
+        Ok(())
+    }
+
+    async fn get_latest_sent_to_aligned(&self) -> Result<u64, RollupStoreError> {
+        Ok(self.inner()?.latest_sent_to_aligned)
+    }
+
+    async fn set_latest_sent_to_aligned(&self, batch_number: u64) -> Result<(), RollupStoreError> {
+        self.inner()?.latest_sent_to_aligned = batch_number;
         Ok(())
     }
 
@@ -281,7 +298,7 @@ impl StoreEngineRollup for Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-        proof: BatchProof,
+        proof: ProverOutput,
     ) -> Result<(), RollupStoreError> {
         self.inner()?
             .batch_proofs
@@ -293,11 +310,22 @@ impl StoreEngineRollup for Store {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-    ) -> Result<Option<BatchProof>, RollupStoreError> {
+    ) -> Result<Option<ProverOutput>, RollupStoreError> {
         Ok(self
             .inner()?
             .batch_proofs
             .get(&(proof_type, batch_number))
+            .cloned())
+    }
+
+    async fn get_non_privileged_transactions_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<u64>, RollupStoreError> {
+        Ok(self
+            .inner()?
+            .non_privileged_transactions_by_batch
+            .get(&batch_number)
             .cloned())
     }
 
@@ -307,16 +335,13 @@ impl StoreEngineRollup for Store {
             .batches_by_block
             .retain(|_, batch| *batch <= batch_number);
         store
-            .l1_message_hashes_by_batch
-            .retain(|batch, _| *batch <= batch_number);
-        store
-            .l2_message_hashes_by_batch
+            .l1_out_message_hashes_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
             .block_numbers_by_batch
             .retain(|batch, _| *batch <= batch_number);
         store
-            .privileged_transactions_hashes
+            .l1_in_messages_rolling_hashes
             .retain(|batch, _| *batch <= batch_number);
         store.state_roots.retain(|batch, _| *batch <= batch_number);
         store.blobs.retain(|batch, _| *batch <= batch_number);
@@ -337,16 +362,24 @@ impl StoreEngineRollup for Store {
         inner.block_numbers_by_batch.insert(batch.number, blocks);
 
         inner
-            .l1_message_hashes_by_batch
-            .insert(batch.number, batch.l1_message_hashes);
+            .l1_out_message_hashes_by_batch
+            .insert(batch.number, batch.l1_out_message_hashes);
 
         inner
-            .l2_message_hashes_by_batch
-            .insert(batch.number, batch.l2_message_hashes);
+            .l1_in_messages_rolling_hashes
+            .insert(batch.number, batch.l1_in_messages_rolling_hash);
 
         inner
-            .privileged_transactions_hashes
-            .insert(batch.number, batch.privileged_transactions_hash);
+            .non_privileged_transactions_by_batch
+            .insert(batch.number, batch.non_privileged_transactions);
+
+        inner
+            .balance_diffs_by_batch
+            .insert(batch.number, batch.balance_diffs);
+
+        inner
+            .l2_in_message_rolling_hashes
+            .insert(batch.number, batch.l2_in_message_rolling_hashes);
 
         inner.blobs.insert(batch.number, batch.blobs_bundle.blobs);
 

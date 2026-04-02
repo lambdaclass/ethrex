@@ -13,7 +13,7 @@ use crate::deserialize::deserialize_block_expected_exception;
 use crate::fork::Fork;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct TestUnit {
     #[serde(default, rename = "_info")]
     pub info: Info,
@@ -101,6 +101,7 @@ pub struct BlobSchedule {
     pub bpo4: Option<ForkBlobSchedule>,
     #[serde(rename = "BPO5")]
     pub bpo5: Option<ForkBlobSchedule>,
+    pub amsterdam: Option<ForkBlobSchedule>,
 }
 
 impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
@@ -129,6 +130,9 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
         }
         if let Some(bpo5_schedule) = val.bpo5 {
             blob_schedule.bpo5 = Some(bpo5_schedule.into())
+        }
+        if let Some(amsterdam_schedule) = val.amsterdam {
+            blob_schedule.amsterdam = Some(amsterdam_schedule.into())
         }
         blob_schedule
     }
@@ -188,6 +192,8 @@ impl TestUnit {
                 .excess_blob_gas
                 .map(|v| v.as_u64()),
             requests_hash: self.genesis_block_header.requests_hash,
+            block_access_list_hash: self.genesis_block_header.block_access_list_hash,
+            slot_number: self.genesis_block_header.slot_number.map(|v| v.as_u64()),
         }
     }
 }
@@ -266,6 +272,9 @@ pub struct Header {
     pub excess_blob_gas: Option<U256>,
     pub parent_beacon_block_root: Option<H256>,
     pub requests_hash: Option<H256>,
+    // Amsterdam fork fields (EIP-7928)
+    pub block_access_list_hash: Option<H256>,
+    pub slot_number: Option<U256>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
@@ -304,6 +313,21 @@ pub struct Block {
     #[serde(default)]
     pub uncle_headers: Vec<Header>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// Execution witness from zkevm fixtures (standard format: state/codes/headers).
+    #[serde(default, rename = "executionWitness")]
+    pub execution_witness: Option<serde_json::Value>,
+    /// Reference-encoded stateless input bytes from zkevm fixtures.
+    #[serde(default, rename = "statelessInputBytes")]
+    pub stateless_input_bytes: Option<String>,
+    /// Expected stateless output bytes from zkevm fixtures.
+    #[serde(default, rename = "statelessOutputBytes")]
+    pub stateless_output_bytes: Option<String>,
+    /// Block access list from zkevm fixtures.
+    #[serde(default, rename = "blockAccessList")]
+    pub block_access_list_data: Option<serde_json::Value>,
+    /// Transaction receipts from zkevm fixtures.
+    #[serde(default, rename = "receipts")]
+    pub receipts: Option<serde_json::Value>,
 }
 
 impl BlockWithRLP {
@@ -379,6 +403,8 @@ impl From<Header> for BlockHeader {
             excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
             parent_beacon_block_root: val.parent_beacon_block_root,
             requests_hash: val.requests_hash,
+            block_access_list_hash: val.block_access_list_hash,
+            slot_number: val.slot_number.map(|x| x.as_u64()),
             ..Default::default()
         }
     }
@@ -563,11 +589,11 @@ impl From<Account> for ethrexAccount {
     fn from(val: Account) -> Self {
         ethrexAccount {
             info: AccountInfo {
-                code_hash: code_hash(&val.code),
+                code_hash: code_hash(&val.code, &ethrex_crypto::NativeCrypto),
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: Code::from_bytecode(val.code),
+            code: Code::from_bytecode(val.code, &ethrex_crypto::NativeCrypto),
             storage: val
                 .storage
                 .into_iter()
@@ -581,7 +607,7 @@ impl From<Account> for GenesisAccount {
     fn from(val: Account) -> Self {
         GenesisAccount {
             code: val.code,
-            storage: val.storage,
+            storage: val.storage.into_iter().collect(),
             balance: val.balance,
             nonce: val.nonce.as_u64(),
         }

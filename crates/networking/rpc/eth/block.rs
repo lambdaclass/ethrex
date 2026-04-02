@@ -1,4 +1,3 @@
-use ethrex_blockchain::find_parent_header;
 use ethrex_rlp::encode::RLPEncode;
 use serde_json::Value;
 use tracing::debug;
@@ -278,7 +277,12 @@ impl RpcHandler for GetRawReceipts {
         let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
             .await?
             .iter()
-            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner_with_bloom())))
+            .map(|receipt| {
+                format!(
+                    "0x{}",
+                    hex::encode(receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))
+                )
+            })
             .collect();
         serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -311,14 +315,9 @@ impl RpcHandler for GetBlobBaseFee {
             Some(header) => header,
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
         };
-        let parent_header = match find_parent_header(&header, &context.storage) {
-            Ok(option_header) => option_header,
-            Err(error) => return Err(RpcErr::Internal(error.to_string())),
-        };
-
         let config = context.storage.get_chain_config();
         let blob_base_fee = calculate_base_fee_per_blob_gas(
-            parent_header.excess_blob_gas.unwrap_or_default(),
+            header.excess_blob_gas.unwrap_or_default(),
             config
                 .get_fork_blob_schedule(header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
@@ -341,8 +340,6 @@ pub async fn get_all_block_rpc_receipts(
     if header.parent_hash.is_zero() {
         return Ok(receipts);
     }
-    // TODO: Here we are calculating the base_fee_per_blob_gas with the current header.
-    // Check if we should be passing the parent header instead
     let config = storage.get_chain_config();
     let blob_base_fee = calculate_base_fee_per_blob_gas(
         header.excess_blob_gas.unwrap_or_default(),
@@ -352,6 +349,9 @@ pub async fn get_all_block_rpc_receipts(
             .unwrap_or_default(),
     );
     let base_fee_per_gas = header.base_fee_per_gas;
+    let blob_base_fee_u64: u64 = blob_base_fee
+        .try_into()
+        .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipt for each tx in the block and add block and tx info
@@ -368,7 +368,7 @@ pub async fn get_all_block_rpc_receipts(
             tx.clone(),
             index,
             gas_used,
-            blob_base_fee,
+            blob_base_fee_u64,
             base_fee_per_gas,
         )?;
         let receipt = RpcReceipt::new(

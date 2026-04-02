@@ -1,12 +1,13 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
-    STORE_SCHEMA_VERSION,
+    STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend,
+        StorageBackend, StorageReadView,
         tables::{
-            ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_PROOF_ROOTS,
+            EXECUTION_PROOFS, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
             MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
             STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
@@ -25,12 +26,13 @@ use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
-        BlockNumber, ChainConfig, Code, ForkId, Genesis, GenesisAccount, Index, Receipt,
-        Transaction,
+        BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
+        Receipt, Transaction,
+        block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
 };
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -39,26 +41,32 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitn
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
+use serde::{Deserialize, Serialize};
 use spawned_concurrency::{
-    messages::Unused,
-    threads::{CastResponse, GenServer, spawn_listener},
+    ActorError, actor, protocol,
+    threads::{Actor, ActorRef, ActorStart, Context, Handler, spawn_listener},
 };
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
+    io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
-        atomic::AtomicU64,
+        Arc, Mutex, RwLock,
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
+    thread::JoinHandle,
 };
 use tracing::{debug, error, info};
-/// Number of state trie segments to fetch concurrently during state sync
-pub const STATE_TRIE_SEGMENTS: usize = 2;
-/// Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
-/// This will always be the amount yielded by snapshot reads unless there are less elements left
-pub const MAX_SNAPSHOT_READS: usize = 100;
+
+/// Maximum number of execution witnesses to keep in the database
+pub const MAX_WITNESSES: u64 = 128;
+
+/// Maximum number of blocks to retain execution proofs for (EIP-8025).
+/// Matches the witness retention window (`MAX_WITNESSES`). 128 blocks is
+/// well beyond the Ethereum finality depth (~2 epochs ≈ 64 slots), giving
+/// validators enough time to verify proofs before they are pruned.
+pub const MAX_PROOF_BLOCKS: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -66,6 +74,10 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[allow(unused)]
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
+
+/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
+/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
+const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -77,106 +89,188 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
-// TODO: don't use atomic here, instead wrap in Mutex the whole cache
 #[derive(Debug)]
 struct CodeCache {
-    inner_cache: Mutex<LruCache<H256, Code, FxBuildHasher>>,
-    cache_size: AtomicU64,
+    inner_cache: LruCache<H256, Code, FxBuildHasher>,
+    cache_size: u64,
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: Mutex::new(LruCache::unbounded_with_hasher(FxBuildHasher)),
-            cache_size: AtomicU64::new(0),
+            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            cache_size: 0,
         }
     }
 }
 
 impl CodeCache {
-    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
-        Ok(cache.get(code_hash).cloned())
+    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.inner_cache.get(code_hash).cloned())
     }
 
-    fn insert(&self, code: &Code) -> Result<(), StoreError> {
-        let mut cache = self.inner_cache.lock().map_err(|_| StoreError::LockError)?;
+    fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         let code_size = code.size();
-        self.cache_size
-            .fetch_add(code_size as u64, std::sync::atomic::Ordering::SeqCst);
-        let cache_len = cache.len() + 1;
-        let mut current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        let cache_len = self.inner_cache.len() + 1;
+        self.cache_size += code_size as u64;
+        let current_size = self.cache_size;
         debug!(
             "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
         );
 
-        while current_size > CODE_CACHE_MAX_SIZE {
-            if let Some((_, code)) = cache.pop_lru() {
-                self.cache_size
-                    .fetch_sub(code.size() as u64, std::sync::atomic::Ordering::SeqCst);
-                current_size = self.cache_size.load(std::sync::atomic::Ordering::SeqCst);
+        while self.cache_size > CODE_CACHE_MAX_SIZE {
+            if let Some((_, code)) = self.inner_cache.pop_lru() {
+                self.cache_size -= code.size() as u64;
             } else {
                 break;
             }
         }
 
-        cache.get_or_insert(code.hash, || code.clone());
+        self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
 }
 
+/// Main storage interface for the ethrex client.
+///
+/// The `Store` provides a high-level API for all blockchain data operations:
+/// - Block storage and retrieval
+/// - State trie management
+/// - Account and storage queries
+/// - Transaction indexing
+///
+/// # Thread Safety
+///
+/// `Store` is `Clone` and thread-safe. All clones share the same underlying
+/// database connection and caches via `Arc`.
+///
+/// # Caching
+///
+/// The store maintains several caches for performance:
+/// - **Trie Layer Cache**: Recent trie nodes for fast state access
+/// - **Code Cache**: LRU cache for contract bytecode (64MB default)
+/// - **Latest Block Cache**: Cached latest block header for RPC
+///
+/// # Example
+///
+/// ```ignore
+/// let store = Store::new("./data", EngineType::RocksDB)?;
+///
+/// // Add a block
+/// store.add_block(block).await?;
+///
+/// // Query account balance
+/// let info = store.get_account_info(block_number, address)?;
+/// let balance = info.map(|a| a.balance).unwrap_or_default();
+/// ```
 #[derive(Debug, Clone)]
 pub struct Store {
+    /// Path to the database directory.
     db_path: PathBuf,
+    /// Storage backend (InMemory or RocksDB).
     backend: Arc<dyn StorageBackend>,
+    /// Chain configuration (fork schedule, chain ID, etc.).
     chain_config: ChainConfig,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    /// Cache for trie nodes from recent blocks.
+    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
+    /// Channel for sending trie updates to the background worker.
     trie_update_worker_tx: crossbeam::channel::Sender<TrieUpdate>,
-    /// Keeps the latest canonical block header
-    /// It's wrapped in an Arc to allow for cheap reads with infrequent writes
-    /// Reading an out-of-date value is acceptable, since it's only used as:
-    /// - a cache of the (frequently requested) header
-    /// - a Latest tag for RPC, where a small extra delay before the newest block is expected
-    /// - sync-related operations, which must be idempotent in order to handle reorgs
+    /// Cached latest canonical block header.
+    ///
+    /// Wrapped in Arc for cheap reads with infrequent writes.
+    /// May be slightly out of date, which is acceptable for:
+    /// - Caching frequently requested headers
+    /// - RPC "latest" block queries (small delay acceptable)
+    /// - Sync operations (must be idempotent anyway)
     latest_block_header: LatestBlockHeaderCache,
-    last_computed_flatkeyvalue: Arc<Mutex<Vec<u8>>>,
+    /// Last computed FlatKeyValue for incremental updates.
+    last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
-    account_code_cache: Arc<CodeCache>,
+    account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache for code metadata (code length), keyed by the bytecode hash.
+    /// Uses FxHashMap for efficient lookups, much smaller than code cache.
+    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    background_threads: Arc<ThreadList>,
+
+    update_worker: ActorRef<TrieUpdateWorker>,
 }
 
-pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+#[derive(Debug, Default)]
+struct ThreadList {
+    list: Vec<JoinHandle<()>>,
+}
 
+impl Drop for ThreadList {
+    fn drop(&mut self) {
+        for handle in self.list.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Storage trie nodes grouped by account address hash.
+///
+/// Each entry contains the hashed account address and the trie nodes
+/// for that account's storage trie.
+pub type StorageTrieNodes = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
+type StorageTries = HashMap<Address, (TrieWitness, Trie)>;
+
+/// Storage backend type selection.
+///
+/// Used when creating a new [`Store`] to specify which backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
+    /// In-memory storage, non-persistent. Suitable for testing.
     InMemory,
+    /// RocksDB storage, persistent. Suitable for production.
     #[cfg(feature = "rocksdb")]
     RocksDB,
 }
 
+/// Batch of updates to apply to the store atomically.
+///
+/// Used during block execution to collect all state changes before
+/// committing them to the database in a single transaction.
 pub struct UpdateBatch {
-    /// Nodes to be added to the state trie
+    /// New nodes to add to the state trie.
     pub account_updates: Vec<TrieNode>,
-    /// Storage tries updated and their new nodes
+    /// Storage trie updates per account (keyed by hashed address).
     pub storage_updates: Vec<(H256, Vec<TrieNode>)>,
-    /// Blocks to be added
+    /// Blocks to store.
     pub blocks: Vec<Block>,
-    /// Receipts added per block
+    /// Receipts to store, grouped by block hash.
     pub receipts: Vec<(H256, Vec<Receipt>)>,
-    /// Code updates
+    /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// Whether this batch comes from full sync (batch execution mode).
+    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
+    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
+    pub batch_mode: bool,
 }
 
+/// Storage trie updates grouped by account address hash.
 pub type StorageUpdates = Vec<(H256, Vec<(Nibbles, Vec<u8>)>)>;
 
+/// Collection of account state changes from block execution.
+///
+/// Contains all the data needed to update the state trie after
+/// executing a block: account updates, storage updates, and code deployments.
 pub struct AccountUpdatesList {
+    /// Root hash of the state trie after applying these updates.
     pub state_trie_hash: H256,
+    /// State trie node updates (path -> RLP-encoded node).
     pub state_updates: Vec<(Nibbles, Vec<u8>)>,
+    /// Storage trie updates per account.
     pub storage_updates: StorageUpdates,
+    /// New contract bytecode deployments.
     pub code_updates: Vec<(H256, Code)>,
 }
 
@@ -602,7 +696,12 @@ impl Store {
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
         // check cache first
-        if let Some(code) = self.account_code_cache.get(&code_hash)? {
+        if let Some(code) = self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+        {
             return Ok(Some(code));
         }
 
@@ -624,16 +723,124 @@ impl Store {
         };
 
         // insert into cache and evict if needed
-        self.account_code_cache.insert(&code)?;
+        self.account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(&code)?;
 
         Ok(Some(code))
+    }
+
+    /// Check if account code exists by its hash, without constructing the full `Code` struct.
+    /// More efficient than `get_account_code` for existence checks since it skips
+    /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
+    /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
+    pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
+        // Check cache first
+        if self
+            .account_code_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        // Check DB without reading the full value
+        Ok(self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODES, code_hash.as_bytes())?
+            .is_some())
+    }
+
+    /// Get code metadata (length) by its hash.
+    ///
+    /// Checks cache first, falls back to database. If metadata is missing,
+    /// falls back to loading full code and extracts length (auto-migration).
+    pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        // Empty code special case
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Some(CodeMetadata { length: 0 }));
+        }
+
+        // Check cache first
+        if let Some(metadata) = self
+            .code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .get(&code_hash)
+            .copied()
+        {
+            return Ok(Some(metadata));
+        }
+
+        // Try reading from metadata table
+        let metadata = if let Some(bytes) = self
+            .backend
+            .begin_read()?
+            .get(ACCOUNT_CODE_METADATA, code_hash.as_bytes())?
+        {
+            let length =
+                u64::from_be_bytes(bytes.try_into().map_err(|_| {
+                    StoreError::Custom("Invalid metadata length encoding".to_string())
+                })?);
+            CodeMetadata { length }
+        } else {
+            // Fallback: load full code and extract length (auto-migration)
+            let Some(code) = self.get_account_code(code_hash)? else {
+                return Ok(None);
+            };
+            let metadata = CodeMetadata {
+                length: code.bytecode.len() as u64,
+            };
+
+            // Write metadata for future use (async, fire and forget)
+            let metadata_buf = metadata.length.to_be_bytes().to_vec();
+            let hash_key = code_hash.0.to_vec();
+            let backend = self.backend.clone();
+            tokio::task::spawn(async move {
+                if let Err(e) = async {
+                    let mut tx = backend.begin_write()?;
+                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                    tx.commit()
+                }
+                .await
+                {
+                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
+                }
+            });
+
+            metadata
+        };
+
+        // Update cache
+        self.code_metadata_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?
+            .insert(code_hash, metadata);
+
+        Ok(Some(metadata))
     }
 
     /// Add account code
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        self.write_async(ACCOUNT_CODES, hash_key, buf).await
+        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+
+        // Write both code and metadata atomically
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = backend.begin_write()?;
+            tx.put(ACCOUNT_CODES, &hash_key, &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Clears all checkpoint data created during the last snap sync
@@ -813,7 +1020,7 @@ impl Store {
 
     pub async fn forkchoice_update_inner(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -824,12 +1031,10 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
-            if let Some(canonical_blocks) = new_canonical_blocks {
-                for (block_number, block_hash) in canonical_blocks {
-                    let head_key = block_number.to_le_bytes();
-                    let head_value = block_hash.encode_to_vec();
-                    txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
-                }
+            for (block_number, block_hash) in new_canonical_blocks {
+                let head_key = block_number.to_le_bytes();
+                let head_value = block_hash.encode_to_vec();
+                txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
             for number in (head_number + 1)..=(latest) {
@@ -865,8 +1070,18 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
+        self.get_receipts_for_block_from_index(block_hash, 0).await
+    }
+
+    /// Retrieves receipts for a block starting from the given index.
+    /// Used by eth/70 partial receipt requests (EIP-7975).
+    pub async fn get_receipts_for_block_from_index(
+        &self,
+        block_hash: &BlockHash,
+        start_index: u64,
+    ) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = Vec::new();
-        let mut index = 0u64;
+        let mut index = start_index;
 
         let txn = self.backend.begin_read()?;
         loop {
@@ -903,113 +1118,6 @@ impl Store {
             .begin_read()?
             .get(SNAP_STATE, &key)?
             .map(|bytes| H256::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub async fn set_state_trie_key_checkpoint(
-        &self,
-        last_keys: [H256; STATE_TRIE_SEGMENTS],
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
-        let value = last_keys.to_vec().encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub async fn get_state_trie_key_checkpoint(
-        &self,
-    ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieKeyCheckpoint);
-        let txn = self.backend.begin_read()?;
-        match txn.get(SNAP_STATE, &key)? {
-            Some(keys_bytes) => {
-                let keys_vec: Vec<H256> = Vec::<H256>::decode(keys_bytes.as_slice())?;
-                if keys_vec.len() == STATE_TRIE_SEGMENTS {
-                    let mut keys_array = [H256::zero(); STATE_TRIE_SEGMENTS];
-                    keys_array.copy_from_slice(&keys_vec);
-                    Ok(Some(keys_array))
-                } else {
-                    Err(StoreError::Custom("Invalid array size".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Sets the state trie paths in need of healing
-    pub async fn set_state_heal_paths(
-        &self,
-        paths: Vec<(Nibbles, H256)>,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateHealPaths);
-        let value = paths.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Gets the state trie paths in need of healing
-    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<(Nibbles, H256)>>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateHealPaths);
-
-        self.backend
-            .begin_read()?
-            .get(SNAP_STATE, &key)?
-            .map(|bytes| Vec::<(Nibbles, H256)>::decode(bytes.as_slice()))
-            .transpose()
-            .map_err(StoreError::from)
-    }
-
-    /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn set_state_trie_rebuild_checkpoint(
-        &self,
-        checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
-        let value = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub async fn get_state_trie_rebuild_checkpoint(
-        &self,
-    ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StateTrieRebuildCheckpoint);
-        let txn = self.backend.begin_read()?;
-        match txn.get(SNAP_STATE, &key)? {
-            Some(bytes) => {
-                let (root, keys_vec): (H256, Vec<H256>) =
-                    <(H256, Vec<H256>)>::decode(bytes.as_slice())?;
-                if keys_vec.len() == STATE_TRIE_SEGMENTS {
-                    let mut keys_array = [H256::zero(); STATE_TRIE_SEGMENTS];
-                    keys_array.copy_from_slice(&keys_vec);
-                    Ok(Some((root, keys_array)))
-                } else {
-                    Err(StoreError::Custom("Invalid array size".to_string()))
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn set_storage_trie_rebuild_pending(
-        &self,
-        pending: Vec<(H256, H256)>,
-    ) -> Result<(), StoreError> {
-        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
-        let value = pending.encode_to_vec();
-        self.write_async(SNAP_STATE, key, value).await
-    }
-
-    /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub async fn get_storage_trie_rebuild_pending(
-        &self,
-    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        let key = snap_state_key(SnapStateIndex::StorageTrieRebuildPending);
-        self.read_async(SNAP_STATE, key)
-            .await?
-            .map(|bytes| Vec::<(H256, H256)>::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1107,13 +1215,21 @@ impl Store {
         &self,
         account_codes: Vec<(H256, Code)>,
     ) -> Result<(), StoreError> {
-        let mut batch_items = Vec::new();
+        let mut code_batch_items = Vec::new();
+        let mut metadata_batch_items = Vec::new();
+
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
+            metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
 
-        self.write_batch_async(ACCOUNT_CODES, batch_items).await
+        // Write both batches
+        self.write_batch_async(ACCOUNT_CODES, code_batch_items)
+            .await?;
+        self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
+            .await
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1273,6 +1389,8 @@ impl Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
+        let is_batch = update_batch.batch_mode;
+
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -1288,6 +1406,7 @@ impl Store {
             storage_updates,
             result_sender: notify_tx,
             child_state_root: last_state_root,
+            is_batch,
         };
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
@@ -1328,7 +1447,9 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
+            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
 
         // Wait for an updated top layer so every caller afterwards sees a consistent view.
@@ -1345,6 +1466,12 @@ impl Store {
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
         // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
+
+        if engine_type != EngineType::InMemory {
+            // Check that the last used DB version matches the current version
+            validate_store_schema_version(&db_path)?;
+        }
+
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
@@ -1363,8 +1490,6 @@ impl Store {
         db_path: PathBuf,
         commit_threshold: usize,
     ) -> Result<Self, StoreError> {
-        check_schema_version(backend.as_ref())?;
-
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = crossbeam::channel::bounded(0);
@@ -1380,8 +1505,23 @@ impl Store {
                 last_written
             }
         };
-        let trie_cache = Arc::new(Mutex::new(Arc::new(TrieLayerCache::new(commit_threshold))));
-        let store = Self {
+        let trie_cache = Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold))));
+
+        /*
+            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this worker.
+            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
+            This background worker receives messages through a channel to apply new trie updates.
+        */
+        let update_worker = TrieUpdateWorker::new(
+            backend.clone(),
+            fkv_tx.clone(),
+            trie_cache.clone(),
+            trie_upd_rx,
+        )
+        .start();
+
+        let mut background_threads = Vec::new();
+        let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
@@ -1389,12 +1529,15 @@ impl Store {
             trie_cache,
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
-            last_computed_flatkeyvalue: Arc::new(Mutex::new(last_written)),
-            account_code_cache: Arc::new(CodeCache::default()),
+            last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            background_threads: Default::default(),
+            update_worker,
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        std::thread::spawn(move || {
+        background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
             // Wait for the first Continue to start generation
             loop {
@@ -1410,16 +1553,11 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
+        }));
+
+        store.background_threads = Arc::new(ThreadList {
+            list: background_threads,
         });
-        let backend = store.backend.clone();
-        let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
-        let trie_cache = store.trie_cache.clone();
-        /*
-            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this worker.
-            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
-            This background worker receives messages through a channel to apply new trie updates.
-        */
-        TrieUpdateWorker::new(backend, flatkeyvalue_control_tx, trie_cache, trie_upd_rx).start();
         Ok(store)
     }
 
@@ -1431,8 +1569,8 @@ impl Store {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
-        let genesis: Genesis =
-            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+        let genesis: Genesis = serde_json::from_reader(reader)
+            .map_err(|e| StoreError::Custom(format!("Failed to deserialize genesis file: {e}")))?;
         let mut store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
@@ -1457,9 +1595,9 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
+        let hashed_address = hash_address_fixed(&address);
 
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
 
@@ -1479,7 +1617,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let Some(encoded_state) = state_trie.get(&account_hash.to_fixed_bytes().to_vec())? else {
+        let Some(encoded_state) = state_trie.get(account_hash.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1512,8 +1650,8 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1531,8 +1669,8 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account_state = AccountState::decode(&encoded_state)?;
@@ -1563,17 +1701,17 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
         for update in account_updates {
-            let hashed_address = hash_address(&update.address);
+            let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(&hashed_address)?;
+                state_trie.remove(hashed_address.as_bytes())?;
                 continue;
             }
             // Add or update AccountState in the trie
             // Fetch current state or create a new state to be inserted
-            let mut account_state = match state_trie.get(&hashed_address)? {
+            let mut account_state = match state_trie.get(hashed_address.as_bytes())? {
                 Some(encoded_state) => AccountState::decode(&encoded_state)?,
                 None => AccountState::default(),
             };
@@ -1591,11 +1729,8 @@ impl Store {
             }
             // Store the added storage in the account's storage trie and compute its new root
             if !update.added_storage.is_empty() {
-                let mut storage_trie = self.open_storage_trie(
-                    H256::from_slice(&hashed_address),
-                    state_root,
-                    account_state.storage_root,
-                )?;
+                let mut storage_trie =
+                    self.open_storage_trie(hashed_address, state_root, account_state.storage_root)?;
                 for (storage_key, storage_value) in &update.added_storage {
                     let hashed_key = hash_key(storage_key);
                     if storage_value.is_zero() {
@@ -1605,13 +1740,17 @@ impl Store {
                     }
                 }
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
                 account_state.storage_root = storage_hash;
-                ret_storage_updates.push((H256::from_slice(&hashed_address), storage_updates));
+                ret_storage_updates.push((hashed_address, storage_updates));
             }
-            state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            state_trie.insert(
+                hashed_address.as_bytes().to_vec(),
+                account_state.encode_to_vec(),
+            )?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -1623,17 +1762,17 @@ impl Store {
 
     /// Performs the same actions as apply_account_updates_from_trie
     ///  but also returns the used storage tries with witness recorded
-    pub async fn apply_account_updates_from_trie_with_witness(
+    pub fn apply_account_updates_from_trie_with_witness(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
-        mut storage_tries: HashMap<Address, (TrieWitness, Trie)>,
-    ) -> Result<(HashMap<Address, (TrieWitness, Trie)>, AccountUpdatesList), StoreError> {
+        mut storage_tries: StorageTries,
+    ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
 
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -1694,7 +1833,7 @@ impl Store {
                 }
 
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
                 account_state.storage_root = storage_hash;
 
@@ -1704,7 +1843,8 @@ impl Store {
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         let account_updates_list = AccountUpdatesList {
             state_trie_hash,
@@ -1728,7 +1868,7 @@ impl Store {
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
-            let code = Code::from_bytecode(account.code);
+            let code = Code::from_bytecode(account.code, &NativeCrypto);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
 
@@ -1742,7 +1882,8 @@ impl Store {
                 }
             }
 
-            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
+            let (storage_root, storage_nodes) =
+                storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
             storage_trie_nodes.extend(
                 storage_nodes
@@ -1760,7 +1901,8 @@ impl Store {
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+        let (state_root, account_trie_nodes) =
+            genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
         let account_trie_nodes = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
@@ -1772,6 +1914,294 @@ impl Store {
         tx.commit()?;
 
         Ok(state_root)
+    }
+
+    // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
+    fn make_witness_key(block_number: u64, block_hash: &BlockHash) -> Vec<u8> {
+        let mut composite_key = Vec::with_capacity(8 + 32);
+        composite_key.extend_from_slice(&block_number.to_be_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
+        composite_key
+    }
+
+    /// Stores a pre-serialized execution witness for a block.
+    ///
+    /// The witness is converted to RPC format (RpcExecutionWitness) before storage
+    /// to avoid expensive `encode_subtrie` traversal on every read. This pre-computes
+    /// the serialization at write time instead of read time.
+    pub fn store_witness(
+        &self,
+        block_hash: BlockHash,
+        block_number: u64,
+        witness: ExecutionWitness,
+    ) -> Result<(), StoreError> {
+        // Convert to RPC format once at storage time
+        let rpc_witness = RpcExecutionWitness::try_from(witness)?;
+        let key = Self::make_witness_key(block_number, &block_hash);
+        let value = serde_json::to_vec(&rpc_witness)?;
+        self.write(EXECUTION_WITNESSES, key, value)?;
+        // Clean up old witnesses (keep only last 128)
+        self.cleanup_old_witnesses(block_number)
+    }
+
+    fn cleanup_old_witnesses(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        // If we have less than 128 blocks, no cleanup needed
+        if latest_block_number <= MAX_WITNESSES {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - MAX_WITNESSES;
+
+        if let Some(oldest_block_number) = self.get_oldest_witness_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut to_delete = Vec::new();
+
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_WITNESSES, &prefix)?;
+
+                // We may have multiple witnesses for the same block number (forks)
+                for item in iter {
+                    let (key, _value) = item?;
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    if block_number > threshold {
+                        break;
+                    }
+                    to_delete.push(key.to_vec());
+                }
+            }
+
+            for key in to_delete {
+                self.delete(EXECUTION_WITNESSES, key)?;
+            }
+        };
+
+        self.update_oldest_witness_number(threshold + 1)?;
+
+        Ok(())
+    }
+
+    fn update_oldest_witness_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"oldest_witness_block_number".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_witness_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(MISC_VALUES, b"oldest_witness_block_number".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest witness block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
+    }
+
+    /// Returns the raw JSON bytes of a cached witness for a block.
+    ///
+    /// This is the most efficient method for the RPC handler since it avoids
+    /// deserialization and re-serialization. The bytes can be parsed directly
+    /// as a JSON Value for the RPC response.
+    pub fn get_witness_json_bytes(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        self.read(EXECUTION_WITNESSES, key)
+    }
+
+    /// Returns the deserialized RpcExecutionWitness for a block.
+    ///
+    /// Prefer `get_witness_json_bytes` when you need to return the witness
+    /// as JSON (e.g., for RPC responses) to avoid re-serialization.
+    pub fn get_witness_by_number_and_hash(
+        &self,
+        block_number: u64,
+        block_hash: BlockHash,
+    ) -> Result<Option<RpcExecutionWitness>, StoreError> {
+        let key = Self::make_witness_key(block_number, &block_hash);
+        match self.read(EXECUTION_WITNESSES, key)? {
+            Some(value) => {
+                let witness: RpcExecutionWitness = serde_json::from_slice(&value)?;
+                Ok(Some(witness))
+            }
+            None => Ok(None),
+        }
+    }
+
+    // ── Execution proof storage (EIP-8025) ──────────────────────────────
+
+    /// Build the composite key for an execution proof.
+    /// Layout: `block_number (8 BE) || new_payload_request_root (32) || proof_type (8 BE)` = 48 bytes.
+    fn make_proof_key(
+        block_number: u64,
+        new_payload_request_root: &H256,
+        proof_type: u64,
+    ) -> Vec<u8> {
+        let mut key = Vec::with_capacity(48);
+        key.extend_from_slice(&block_number.to_be_bytes());
+        key.extend_from_slice(new_payload_request_root.as_bytes());
+        key.extend_from_slice(&proof_type.to_be_bytes());
+        key
+    }
+
+    /// Store a mapping from new_payload_request_root to block_number (EIP-8025).
+    /// Persists the root→block association so it survives node restarts.
+    pub fn store_root_to_block(&self, root: H256, block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            EXECUTION_PROOF_ROOTS,
+            root.as_bytes().to_vec(),
+            block_number.to_be_bytes().to_vec(),
+        )
+    }
+
+    /// Look up the block number for a given new_payload_request_root (EIP-8025).
+    pub fn get_block_number_by_root(&self, root: &H256) -> Result<Option<u64>, StoreError> {
+        let data: Option<Vec<u8>> = self.read(EXECUTION_PROOF_ROOTS, root.as_bytes().to_vec())?;
+        Ok(data.and_then(|bytes| {
+            if bytes.len() == 8 {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&bytes);
+                Some(u64::from_be_bytes(buf))
+            } else {
+                None
+            }
+        }))
+    }
+
+    /// Store a verified execution proof for a block (EIP-8025).
+    pub fn store_execution_proof(
+        &self,
+        block_number: u64,
+        new_payload_request_root: H256,
+        proof_type: u64,
+        proof_data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let key = Self::make_proof_key(block_number, &new_payload_request_root, proof_type);
+        self.write(EXECUTION_PROOFS, key, proof_data)?;
+        self.cleanup_old_proofs(block_number)
+    }
+
+    /// Retrieve a single execution proof by block number, root, and proof type.
+    pub fn get_execution_proof(
+        &self,
+        block_number: u64,
+        new_payload_request_root: &H256,
+        proof_type: u64,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = Self::make_proof_key(block_number, new_payload_request_root, proof_type);
+        self.read(EXECUTION_PROOFS, key)
+    }
+
+    /// Retrieve all execution proofs for a given block number + root.
+    /// Returns a Vec of `(proof_type, proof_data)` pairs.
+    pub fn get_execution_proofs(
+        &self,
+        block_number: u64,
+        new_payload_request_root: &H256,
+    ) -> Result<Vec<(u64, Vec<u8>)>, StoreError> {
+        let mut prefix = Vec::with_capacity(40);
+        prefix.extend_from_slice(&block_number.to_be_bytes());
+        prefix.extend_from_slice(new_payload_request_root.as_bytes());
+
+        let read_txn = self.backend.begin_read()?;
+        let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
+        let mut proofs = Vec::new();
+        for item in iter {
+            let (key, value) = item?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+            // Extract proof_type from the last 8 bytes of the key
+            if key.len() >= 48 {
+                let mut proof_type_bytes = [0u8; 8];
+                proof_type_bytes.copy_from_slice(&key[40..48]);
+                let proof_type = u64::from_be_bytes(proof_type_bytes);
+                proofs.push((proof_type, value.to_vec()));
+            }
+        }
+        Ok(proofs)
+    }
+
+    fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        if latest_block_number <= MAX_PROOF_BLOCKS {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - MAX_PROOF_BLOCKS;
+
+        if let Some(oldest_block_number) = self.get_oldest_proof_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut proof_keys_to_delete = Vec::new();
+            // Collect roots from deleted proofs so we can clean up their rtb: mappings.
+            let mut roots_to_delete = Vec::new();
+
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
+
+                for item in iter {
+                    let (key, _) = item?;
+                    if key.len() < 8 {
+                        continue;
+                    }
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    if block_number > threshold {
+                        break;
+                    }
+                    // Extract root (bytes 8..40) from the composite key to clean up rtb: mapping.
+                    if key.len() >= 40 {
+                        let mut root_bytes = [0u8; 32];
+                        root_bytes.copy_from_slice(&key[8..40]);
+                        roots_to_delete.push(root_bytes);
+                    }
+                    proof_keys_to_delete.push(key.to_vec());
+                }
+            }
+
+            for key in proof_keys_to_delete {
+                self.delete(EXECUTION_PROOFS, key)?;
+            }
+
+            // Clean up the corresponding root→block mappings.
+            for root_bytes in roots_to_delete {
+                // Ignore errors — the mapping may already be gone.
+                let _ = self.delete(EXECUTION_PROOF_ROOTS, root_bytes.to_vec());
+            }
+        };
+
+        self.update_oldest_proof_number(threshold + 1)?;
+
+        Ok(())
+    }
+
+    fn update_oldest_proof_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"oldest_proof_block_number".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_proof_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(MISC_VALUES, b"oldest_proof_block_number".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest proof block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
@@ -1821,7 +2251,7 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        self.forkchoice_update(None, genesis_block_number, genesis_hash, None, None)
+        self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
     }
@@ -1856,22 +2286,87 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let account_hash = H256::from_slice(&hashed_address);
-        let storage_root = if self.flatkeyvalue_computed(account_hash)? {
+        let account_hash = hash_address_fixed(&address);
+
+        // Pre-acquire shared resources once for both trie opens
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+
+        let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
             *EMPTY_TRIE_HASH
         } else {
-            let state_trie = self.open_state_trie(state_root)?;
-            let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+            let state_trie = self.open_state_trie_shared(
+                state_root,
+                read_view.clone(),
+                cache.clone(),
+                last_written.clone(),
+            )?;
+            let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
             let account = AccountState::decode(&encoded_account)?;
             account.storage_root
         };
-        let storage_trie = self.open_storage_trie(account_hash, state_root, storage_root)?;
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
 
-        let hashed_key = hash_key(&storage_key);
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    /// Gets storage value when the account hash and storage root are already known.
+    ///
+    /// This skips the state-trie account lookup and account RLP decode done by
+    /// [`Self::get_storage_at_root`], and directly opens the account storage trie.
+    pub fn get_storage_at_root_with_known_storage_root(
+        &self,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_view = self.backend.begin_read()?;
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        // When FKV is active the real storage root is in the flatkeyvalue store,
+        // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
+        // so open_storage_trie_shared falls through to the FKV path.
+        let storage_root =
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+                *EMPTY_TRIE_HASH
+            } else {
+                storage_root
+            };
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            read_view,
+            cache,
+            last_written,
+        )?;
+
+        let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
@@ -1892,7 +2387,7 @@ impl Store {
     /// All operations are performed in a single database transaction.
     pub async fn forkchoice_update(
         &self,
-        new_canonical_blocks: Option<Vec<(BlockNumber, BlockHash)>>,
+        new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
         head_hash: BlockHash,
         safe: Option<BlockNumber>,
@@ -1936,15 +2431,15 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_account) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_account) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let account = AccountState::decode(&encoded_account)?;
         // Open storage_trie
         let storage_root = account.storage_root;
         Ok(Some(self.open_storage_trie(
-            H256::from_slice(&hashed_address),
+            hashed_address,
             header.state_root,
             storage_root,
         )?))
@@ -1961,7 +2456,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_account_state_by_root(
@@ -1978,8 +2473,8 @@ impl Store {
         state_trie: &Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
+        let hashed_address = hash_address_fixed(&address);
+        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
@@ -2000,11 +2495,10 @@ impl Store {
         //     return Ok(None);
         // };
         let state_trie = self.open_state_trie(state_root)?;
-        let hashed_address = hash_address_fixed(&address);
-        let address_path = hashed_address.0.to_vec();
-        let proof = state_trie.get_proof(&address_path)?;
+        let address_path = hash_address_fixed(&address);
+        let proof = state_trie.get_proof(address_path.as_bytes())?;
         let account_opt = state_trie
-            .get(&address_path)?
+            .get(address_path.as_bytes())?
             .map(|encoded_state| AccountState::decode(&encoded_state))
             .transpose()?;
 
@@ -2012,7 +2506,7 @@ impl Store {
 
         if let Some(account) = &account_opt {
             let storage_trie =
-                self.open_storage_trie(hashed_address, state_root, account.storage_root)?;
+                self.open_storage_trie(address_path, state_root, account.storage_root)?;
 
             for key in storage_keys {
                 let hashed_key = hash_key(key);
@@ -2078,7 +2572,7 @@ impl Store {
         starting_slot: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.open_locked_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -2108,9 +2602,9 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
-        let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        let mut proof = state_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+            proof.extend_from_slice(&state_trie.get_proof(last_hash.as_bytes())?);
         }
         Ok(proof)
     }
@@ -2123,14 +2617,14 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
         let storage_trie = self.open_storage_trie(hashed_address, state_root, storage_root)?;
-        let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
+        let mut proof = storage_trie.get_proof(starting_hash.as_bytes())?;
         if let Some(last_hash) = last_hash {
-            proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
+            proof.extend_from_slice(&storage_trie.get_proof(last_hash.as_bytes())?);
         }
         Ok(Some(proof))
     }
@@ -2196,19 +2690,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2229,19 +2722,18 @@ impl Store {
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: None,
-        };
+            None,
+        );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
 
@@ -2253,19 +2745,64 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(BackendTrieDB::new_for_storages(
+            Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
+        Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Open a state trie using pre-acquired shared resources.
+    /// Avoids redundant RwLock acquisitions when multiple tries are opened
+    /// in the same operation (e.g., state trie + storage trie in get_storage_at_root).
+    fn open_state_trie_shared(
+        &self,
+        state_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            None,
+        );
+        Ok(Trie::open(Box::new(trie_db), state_root))
+    }
+
+    /// Open a storage trie using pre-acquired shared resources.
+    fn open_storage_trie_shared(
+        &self,
+        account_hash: H256,
+        state_root: H256,
+        storage_root: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Trie, StoreError> {
+        let trie_db = TrieWrapper::new(
+            state_root,
+            cache,
+            Box::new(BackendTrieDB::new_for_storages_with_view(
+                self.backend.clone(),
+                read_view,
+                last_written,
+            )?),
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2294,19 +2831,18 @@ impl Store {
         state_root: H256,
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper {
+        let trie_db = TrieWrapper::new(
             state_root,
-            inner: self
-                .trie_cache
-                .lock()
+            self.trie_cache
+                .read()
                 .map_err(|_| StoreError::LockError)?
                 .clone(),
-            db: Box::new(state_trie_locked_backend(
+            Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
             )?),
-            prefix: Some(account_hash),
-        };
+            Some(account_hash),
+        );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
@@ -2320,7 +2856,9 @@ impl Store {
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
-        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
+        let root_hash = ethrex_trie::Node::decode(&root)?
+            .compute_hash(&NativeCrypto)
+            .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
     }
 
@@ -2350,7 +2888,9 @@ impl Store {
     }
 
     pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
-        self.backend.create_checkpoint(path.as_ref())
+        self.backend.create_checkpoint(path.as_ref())?;
+        init_metadata_file(path.as_ref())?;
+        Ok(())
     }
 
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
@@ -2414,18 +2954,17 @@ impl Store {
         Ok(header)
     }
 
-    fn last_written(&self) -> Result<Vec<u8>, StoreError> {
+    pub fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue
-            .lock()
+            .read()
             .map_err(|_| StoreError::LockError)?;
         Ok(last_computed_flatkeyvalue.clone())
     }
 
-    fn flatkeyvalue_computed(&self, account: H256) -> Result<bool, StoreError> {
+    fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
-        let last_computed_flatkeyvalue = self.last_written()?;
-        Ok(&last_computed_flatkeyvalue[0..64] > account_nibbles.as_ref())
+        &last_written[0..64] > account_nibbles.as_ref()
     }
 }
 
@@ -2438,6 +2977,7 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    is_batch: bool,
 }
 
 /*
@@ -2461,7 +3001,7 @@ NOTE: we don't receive `Store` here to avoid cyclic dependencies with the other 
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2470,6 +3010,7 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
+        is_batch,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -2484,20 +3025,25 @@ fn apply_trie_updates(
         .collect();
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
-        .lock()
+        .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
-    *trie_cache.lock().map_err(|_| StoreError::LockError)? = trie.clone();
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let Some(root) = trie.get_commitable(parent_state_root) else {
+    let commitable = if is_batch {
+        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
+    } else {
+        trie.get_commitable(parent_state_root)
+    };
+    let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
@@ -2555,7 +3101,7 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
-    *trie_cache.lock().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
 }
 
@@ -2563,31 +3109,34 @@ fn apply_trie_updates(
 // with the other end of `control_rx`
 fn flatkeyvalue_generator(
     backend: &Arc<dyn StorageBackend>,
-    last_computed_fkv: &Mutex<Vec<u8>>,
+    last_computed_fkv: &RwLock<Vec<u8>>,
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
-    let read_tx = backend.begin_read()?;
-    let last_written = read_tx
+    let initial_last_written = backend
+        .begin_read()?
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
-    if last_written.is_empty() {
+    if initial_last_written.is_empty() {
         // First time generating the FKV. Remove all FKV entries just in case
         backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         backend.clear_table(STORAGE_FLATKEYVALUE)?;
-    } else if last_written == [0xff] {
+    } else if initial_last_written == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
         return Ok(());
     }
 
     loop {
+        // Acquire a fresh read view per iteration so updates performed while the
+        // generator is paused are visible after a Continue signal.
+        let read_tx = backend.begin_read()?;
         let root = read_tx
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
         let root: Node = ethrex_trie::Node::decode(&root)?;
-        let state_root = root.compute_hash().finalize();
+        let state_root = root.compute_hash(&NativeCrypto).finalize(&NativeCrypto);
 
         let last_written = read_tx
             .get(MISC_VALUES, "last_written".as_bytes())?
@@ -2606,8 +3155,9 @@ fn flatkeyvalue_generator(
         let mut ctr = 0;
         let mut write_txn = backend.begin_write()?;
         let mut iter = Trie::open(
-            Box::new(BackendTrieDB::new_for_accounts(
+            Box::new(BackendTrieDB::new_for_accounts_with_view(
                 backend.clone(),
+                read_tx.clone(),
                 last_written.clone(),
             )?),
             state_root,
@@ -2629,14 +3179,15 @@ fn flatkeyvalue_generator(
                 write_txn.commit()?;
                 write_txn = backend.begin_write()?;
                 *last_computed_fkv
-                    .lock()
+                    .write()
                     .map_err(|_| StoreError::LockError)? = path.as_ref().to_vec();
                 ctr = 0;
             }
 
             let mut iter_inner = Trie::open(
-                Box::new(BackendTrieDB::new_for_account_storage(
+                Box::new(BackendTrieDB::new_for_account_storage_with_view(
                     backend.clone(),
+                    read_tx.clone(),
                     account_hash,
                     path.as_ref().to_vec(),
                 )?),
@@ -2659,7 +3210,7 @@ fn flatkeyvalue_generator(
                     write_txn.commit()?;
                     write_txn = backend.begin_write()?;
                     *last_computed_fkv
-                        .lock()
+                        .write()
                         .map_err(|_| StoreError::LockError)? = key.into_vec();
                     ctr = 0;
                 }
@@ -2688,7 +3239,7 @@ fn flatkeyvalue_generator(
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
                 *last_computed_fkv
-                    .lock()
+                    .write()
                     .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
                 info!("FlatKeyValue generation finished.");
                 return Ok(());
@@ -2734,17 +3285,6 @@ pub struct StorageSlotProof {
     pub value: U256,
 }
 
-fn get_account_state_from_trie(
-    state_trie: &Trie,
-    address: Address,
-) -> Result<Option<AccountState>, StoreError> {
-    let hashed_address = hash_address(&address);
-    let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-        return Ok(None);
-    };
-    Ok(Some(AccountState::decode(&encoded_state)?))
-}
-
 pub struct AncestorIterator {
     store: Store,
     next_hash: BlockHash,
@@ -2779,39 +3319,16 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
     keccak_hash(key.to_fixed_bytes()).to_vec()
 }
 
+pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
+    keccak_hash(key.to_fixed_bytes())
+}
+
 fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
-}
-
-fn check_schema_version(backend: &dyn StorageBackend) -> Result<(), StoreError> {
-    // Check that the last used DB version matches the current version
-    let latest_store_schema_version = backend
-        .begin_read()?
-        .get(MISC_VALUES, b"store_schema_version")?
-        .map(|bytes| -> Result<u64, StoreError> {
-            let array: [u8; 8] = bytes.try_into().map_err(|_| {
-                StoreError::Custom("Invalid store schema version bytes".to_string())
-            })?;
-            Ok(u64::from_le_bytes(array))
-        })
-        .transpose()?;
-    if let Some(schema_version) = latest_store_schema_version
-        && schema_version != STORE_SCHEMA_VERSION
-    {
-        return Err(StoreError::IncompatibleDBVersion);
-    }
-    let mut tx = backend.begin_write()?;
-    tx.put(
-        MISC_VALUES,
-        b"store_schema_version",
-        &STORE_SCHEMA_VERSION.to_le_bytes(),
-    )?;
-    tx.commit()?;
-    Ok(())
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
@@ -2839,404 +3356,115 @@ impl LatestBlockHeaderCache {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use bytes::Bytes;
-    use ethereum_types::{H256, U256};
-    use ethrex_common::{
-        Bloom, H160,
-        constants::EMPTY_KECCACK_HASH,
-        types::{Transaction, TxType},
-        utils::keccak,
+#[derive(Debug, Serialize, Deserialize)]
+struct StoreMetadata {
+    schema_version: u64,
+}
+
+impl StoreMetadata {
+    fn new(schema_version: u64) -> Self {
+        Self { schema_version }
+    }
+}
+
+fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    // If metadata file does not exist, try to create it
+    if !metadata_path.exists() {
+        // If datadir exists but is not empty, this is probably a DB for an
+        // old ethrex version and we should return an error
+        if path.exists() && !dir_is_empty(path)? {
+            return Err(StoreError::NotFoundDBVersion {
+                expected: STORE_SCHEMA_VERSION,
+            });
+        }
+        init_metadata_file(path)?;
+        return Ok(());
+    }
+    if !metadata_path.is_file() {
+        return Err(StoreError::Custom(
+            "store schema path exists but is not a file".to_string(),
+        ));
+    }
+    let file_contents = std::fs::read_to_string(metadata_path)?;
+    let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
+
+    // Check schema version matches the expected one
+    if metadata.schema_version != STORE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleDBVersion {
+            found: metadata.schema_version,
+            expected: STORE_SCHEMA_VERSION,
+        });
+    }
+    Ok(())
+}
+
+fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
+    std::fs::create_dir_all(parent_path)?;
+
+    let metadata_path = parent_path.join(STORE_METADATA_FILENAME);
+    let metadata = StoreMetadata::new(STORE_SCHEMA_VERSION);
+    let serialized_metadata = serde_json::to_string_pretty(&metadata)?;
+    let mut new_file = std::fs::File::create_new(metadata_path)?;
+    new_file.write_all(serialized_metadata.as_bytes())?;
+    Ok(())
+}
+
+fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
+    let is_empty = std::fs::read_dir(path)?.next().is_none();
+    Ok(is_empty)
+}
+
+/// Checks whether a valid database exists at the given path by looking for
+/// a metadata.json file with a matching schema version.
+pub fn has_valid_db(path: &Path) -> bool {
+    let metadata_path = path.join(STORE_METADATA_FILENAME);
+    if !metadata_path.is_file() {
+        return false;
+    }
+    let Ok(contents) = std::fs::read_to_string(&metadata_path) else {
+        return false;
     };
-    use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, str::FromStr};
+    let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
+        return false;
+    };
+    metadata.schema_version == STORE_SCHEMA_VERSION
+}
 
-    use super::*;
-
-    #[tokio::test]
-    async fn test_in_memory_store() {
-        test_store_suite(EngineType::InMemory).await;
+/// Reads the chain ID from an existing database without performing a full
+/// store initialization. Returns `None` if the database doesn't exist or
+/// the chain config can't be read. Always returns `None` when compiled
+/// without the `rocksdb` feature.
+pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
+    if !has_valid_db(path) {
+        return None;
     }
-
     #[cfg(feature = "rocksdb")]
-    #[tokio::test]
-    async fn test_rocksdb_store() {
-        test_store_suite(EngineType::RocksDB).await;
-    }
-
-    // Creates an empty store, runs the test and then removes the store (if needed)
-    async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
-    where
-        F: FnOnce(Store) -> Fut,
-        Fut: std::future::Future<Output = ()>,
     {
-        let nonce: u64 = H256::random().to_low_u64_be();
-        let path = format!("store-test-db-{nonce}");
-        // Remove preexistent DBs in case of a failed previous test
-        if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs(&path);
-        };
-        // Build a new store
-        let store = Store::new(&path, engine_type).expect("Failed to create test db");
-        // Run the test
-        test_func(store).await;
-        // Remove store (if needed)
-        if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs(&path);
-        };
+        let backend = RocksDBBackend::open(path).ok()?;
+        let read = backend.begin_read().ok()?;
+        let key = chain_data_key(ChainDataIndex::ChainConfig);
+        let bytes = read.get(CHAIN_DATA, &key).ok()??;
+        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
+        Some(config.chain_id)
     }
-
-    async fn test_store_suite(engine_type: EngineType) {
-        run_test(test_store_block, engine_type).await;
-        run_test(test_store_block_number, engine_type).await;
-        run_test(test_store_block_receipt, engine_type).await;
-        run_test(test_store_account_code, engine_type).await;
-        run_test(test_store_block_tags, engine_type).await;
-        run_test(test_chain_config_storage, engine_type).await;
-        run_test(test_genesis_block, engine_type).await;
-        run_test(test_iter_accounts, engine_type).await;
-        run_test(test_iter_storage, engine_type).await;
-    }
-
-    async fn test_iter_accounts(store: Store) {
-        let mut accounts: Vec<_> = (0u64..1_000)
-            .map(|i| {
-                (
-                    keccak(i.to_be_bytes()),
-                    AccountState {
-                        nonce: 2 * i,
-                        balance: U256::from(3 * i),
-                        code_hash: *EMPTY_KECCACK_HASH,
-                        storage_root: *EMPTY_TRIE_HASH,
-                    },
-                )
-            })
-            .collect();
-        accounts.sort_by_key(|a| a.0);
-        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
-        for (address, state) in &accounts {
-            trie.insert(address.0.to_vec(), state.encode_to_vec())
-                .unwrap();
-        }
-        let state_root = trie.hash().unwrap();
-        let pivot = H256::random();
-        let pos = accounts.partition_point(|(key, _)| key < &pivot);
-        let account_iter = store.iter_accounts_from(state_root, pivot).unwrap();
-        for (expected, actual) in std::iter::zip(accounts.drain(pos..), account_iter) {
-            assert_eq!(expected, actual);
-        }
-    }
-
-    async fn test_iter_storage(store: Store) {
-        let address = keccak(12345u64.to_be_bytes());
-        let mut slots: Vec<_> = (0u64..1_000)
-            .map(|i| (keccak(i.to_be_bytes()), U256::from(2 * i)))
-            .collect();
-        slots.sort_by_key(|a| a.0);
-        let mut trie = store
-            .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
-            .unwrap();
-        for (slot, value) in &slots {
-            trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
-        }
-        let storage_root = trie.hash().unwrap();
-        let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
-        trie.insert(
-            address.0.to_vec(),
-            AccountState {
-                nonce: 1,
-                balance: U256::zero(),
-                storage_root,
-                code_hash: *EMPTY_KECCACK_HASH,
-            }
-            .encode_to_vec(),
-        )
-        .unwrap();
-        let state_root = trie.hash().unwrap();
-        let pivot = H256::random();
-        let pos = slots.partition_point(|(key, _)| key < &pivot);
-        let storage_iter = store
-            .iter_storage_from(state_root, address, pivot)
-            .unwrap()
-            .unwrap();
-        for (expected, actual) in std::iter::zip(slots.drain(pos..), storage_iter) {
-            assert_eq!(expected, actual);
-        }
-    }
-
-    async fn test_genesis_block(mut store: Store) {
-        const GENESIS_KURTOSIS: &str = include_str!("../../fixtures/genesis/kurtosis.json");
-        const GENESIS_HIVE: &str = include_str!("../../fixtures/genesis/hive.json");
-        assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
-        let genesis_kurtosis: Genesis =
-            serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
-        let genesis_hive: Genesis =
-            serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
-        store
-            .add_initial_state(genesis_kurtosis.clone())
-            .await
-            .expect("first genesis");
-        store
-            .add_initial_state(genesis_kurtosis)
-            .await
-            .expect("second genesis with same block");
-        let result = store.add_initial_state(genesis_hive).await;
-        assert!(result.is_err());
-        assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
-    }
-
-    fn remove_test_dbs(path: &str) {
-        // Removes all test databases from filesystem
-        if std::path::Path::new(path).exists() {
-            fs::remove_dir_all(path).expect("Failed to clean test db dir");
-        }
-    }
-
-    async fn test_store_block(store: Store) {
-        let (block_header, block_body) = create_block_for_testing();
-        let block_number = 6;
-        let hash = block_header.hash();
-
-        store
-            .add_block_header(hash, block_header.clone())
-            .await
-            .unwrap();
-        store
-            .add_block_body(hash, block_body.clone())
-            .await
-            .unwrap();
-        store
-            .forkchoice_update(None, block_number, hash, None, None)
-            .await
-            .unwrap();
-
-        let stored_header = store.get_block_header(block_number).unwrap().unwrap();
-        let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
-
-        // Ensure both headers have their hashes computed for comparison
-        let _ = stored_header.hash();
-        let _ = block_header.hash();
-        assert_eq!(stored_header, block_header);
-        assert_eq!(stored_body, block_body);
-    }
-
-    fn create_block_for_testing() -> (BlockHeader, BlockBody) {
-        let block_header = BlockHeader {
-            parent_hash: H256::from_str(
-                "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
-            )
-            .unwrap(),
-            ommers_hash: H256::from_str(
-                "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-            )
-            .unwrap(),
-            coinbase: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
-            state_root: H256::from_str(
-                "0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9",
-            )
-            .unwrap(),
-            transactions_root: H256::from_str(
-                "0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d",
-            )
-            .unwrap(),
-            receipts_root: H256::from_str(
-                "0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa",
-            )
-            .unwrap(),
-            logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
-            number: 1,
-            gas_limit: 0x016345785d8a0000,
-            gas_used: 0xa8de,
-            timestamp: 0x03e8,
-            extra_data: Bytes::new(),
-            prev_randao: H256::zero(),
-            nonce: 0x0000000000000000,
-            base_fee_per_gas: Some(0x07),
-            withdrawals_root: Some(
-                H256::from_str(
-                    "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-                )
-                .unwrap(),
-            ),
-            blob_gas_used: Some(0x00),
-            excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
-            ..Default::default()
-        };
-        let block_body = BlockBody {
-            transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
-            Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
-            ommers: Default::default(),
-            withdrawals: Default::default(),
-        };
-        (block_header, block_body)
-    }
-
-    async fn test_store_block_number(store: Store) {
-        let block_hash = H256::random();
-        let block_number = 6;
-
-        store
-            .add_block_number(block_hash, block_number)
-            .await
-            .unwrap();
-
-        let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
-
-        assert_eq!(stored_number, block_number);
-    }
-
-    async fn test_store_block_receipt(store: Store) {
-        let receipt = Receipt {
-            tx_type: TxType::EIP2930,
-            succeeded: true,
-            cumulative_gas_used: 1747,
-            logs: vec![],
-        };
-        let block_number = 6;
-        let index = 4;
-        let block_header = BlockHeader::default();
-
-        store
-            .add_receipt(block_header.hash(), index, receipt.clone())
-            .await
-            .unwrap();
-
-        store
-            .add_block_header(block_header.hash(), block_header.clone())
-            .await
-            .unwrap();
-
-        store
-            .forkchoice_update(None, block_number, block_header.hash(), None, None)
-            .await
-            .unwrap();
-
-        let stored_receipt = store
-            .get_receipt(block_number, index)
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(stored_receipt, receipt);
-    }
-
-    async fn test_store_account_code(store: Store) {
-        let code = Code::from_bytecode(Bytes::from("kiwi"));
-        let code_hash = code.hash;
-
-        store.add_account_code(code.clone()).await.unwrap();
-
-        let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
-
-        assert_eq!(stored_code, code);
-    }
-
-    async fn test_store_block_tags(store: Store) {
-        let earliest_block_number = 0;
-        let finalized_block_number = 7;
-        let safe_block_number = 6;
-        let latest_block_number = 8;
-        let pending_block_number = 9;
-
-        let (mut block_header, block_body) = create_block_for_testing();
-        block_header.number = latest_block_number;
-        let hash = block_header.hash();
-
-        store
-            .add_block_header(hash, block_header.clone())
-            .await
-            .unwrap();
-        store
-            .add_block_body(hash, block_body.clone())
-            .await
-            .unwrap();
-
-        store
-            .update_earliest_block_number(earliest_block_number)
-            .await
-            .unwrap();
-        store
-            .update_pending_block_number(pending_block_number)
-            .await
-            .unwrap();
-        store
-            .forkchoice_update(
-                None,
-                latest_block_number,
-                hash,
-                Some(safe_block_number),
-                Some(finalized_block_number),
-            )
-            .await
-            .unwrap();
-
-        let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
-        let stored_finalized_block_number =
-            store.get_finalized_block_number().await.unwrap().unwrap();
-        let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
-        let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
-        let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
-
-        assert_eq!(earliest_block_number, stored_earliest_block_number);
-        assert_eq!(finalized_block_number, stored_finalized_block_number);
-        assert_eq!(safe_block_number, stored_safe_block_number);
-        assert_eq!(latest_block_number, stored_latest_block_number);
-        assert_eq!(pending_block_number, stored_pending_block_number);
-    }
-
-    async fn test_chain_config_storage(mut store: Store) {
-        let chain_config = example_chain_config();
-        store.set_chain_config(&chain_config).await.unwrap();
-        let retrieved_chain_config = store.get_chain_config();
-        assert_eq!(chain_config, retrieved_chain_config);
-    }
-
-    fn example_chain_config() -> ChainConfig {
-        ChainConfig {
-            chain_id: 3151908_u64,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            merge_netsplit_block: Some(0),
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(1718232101),
-            terminal_total_difficulty: Some(58750000000000000000000),
-            terminal_total_difficulty_passed: true,
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
-            ..Default::default()
-        }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        let _ = path;
+        None
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-enum TrieUpdateWorkerError {}
-
-#[derive(Debug, Clone)]
-enum TrieUpdateWorkerInMessage {
-    TrieUpdates(TrieUpdate),
+#[protocol]
+trait TrieUpdateWorkerProtocol: Send + Sync {
+    fn trie_updates(&self, updates: TrieUpdate) -> Result<(), ActorError>;
 }
-
-#[derive(Debug, Clone)]
-enum TrieUpdateWorkerOutMessage {}
 
 #[derive(Debug)]
 struct TrieUpdateWorker {
     backend: Arc<dyn StorageBackend>,
     flatkeyvalue_control_tx: SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     trie_upd_rx: crossbeam::channel::Receiver<TrieUpdate>,
 }
 
@@ -3244,7 +3472,7 @@ impl TrieUpdateWorker {
     fn new(
         backend: Arc<dyn StorageBackend>,
         flatkeyvalue_control_tx: SyncSender<FKVGeneratorControlMessage>,
-        trie_cache: Arc<Mutex<Arc<TrieLayerCache>>>,
+        trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
         trie_upd_rx: crossbeam::channel::Receiver<TrieUpdate>,
     ) -> Self {
         Self {
@@ -3254,49 +3482,34 @@ impl TrieUpdateWorker {
             trie_upd_rx,
         }
     }
+}
 
-    fn apply_trie_updates(&self, trie_update: TrieUpdate) {
+#[actor(protocol = TrieUpdateWorkerProtocol)]
+impl TrieUpdateWorker {
+    #[started]
+    fn started(&mut self, ctx: &Context<Self>) {
+        let rx = self
+            .trie_upd_rx
+            .clone()
+            .into_iter()
+            .map(|val| trie_update_worker_protocol::TrieUpdates { updates: val });
+        spawn_listener(ctx.clone(), rx);
+    }
+
+    #[send_handler]
+    fn handle_trie_updates(
+        &mut self,
+        msg: trie_update_worker_protocol::TrieUpdates,
+        _ctx: &Context<Self>,
+    ) {
         // FIXME: what should we do on error?
         tracing::info!("Apply Trie Updates");
         let _ = apply_trie_updates(
             self.backend.as_ref(),
             &self.flatkeyvalue_control_tx,
             &self.trie_cache,
-            trie_update,
+            msg.updates,
         )
         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
-    }
-}
-
-impl GenServer for TrieUpdateWorker {
-    type CallMsg = Unused;
-    type CastMsg = TrieUpdateWorkerInMessage;
-    type OutMsg = TrieUpdateWorkerOutMessage;
-    type Error = TrieUpdateWorkerError;
-
-    fn init(
-        self,
-        handle: &spawned_concurrency::threads::GenServerHandle<Self>,
-    ) -> Result<Self, Self::Error> {
-        let handle = handle.clone();
-        let rx = self
-            .trie_upd_rx
-            .clone()
-            .into_iter()
-            .map(Self::CastMsg::TrieUpdates);
-
-        spawn_listener(handle, rx);
-        Ok(self)
-    }
-
-    fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &spawned_concurrency::threads::GenServerHandle<Self>,
-    ) -> spawned_concurrency::threads::CastResponse {
-        match message {
-            Self::CastMsg::TrieUpdates(trie_update) => self.apply_trie_updates(trie_update),
-        };
-        CastResponse::NoReply
     }
 }

@@ -9,14 +9,17 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
-use ethrex_blockchain::{BlockchainOptions, BlockchainType, L2Config, error::ChainError};
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
+use ethrex_blockchain::{
+    BlockchainOptions, BlockchainType, L2Config,
+    error::{ChainError, InvalidBlockError},
+};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::peer_table::TARGET_PEERS, sync::SyncMode, tx_broadcaster::BROADCAST_INTERVAL_MS,
-    types::Node,
+    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
+    tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::error::StoreError;
+use ethrex_storage::{error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -24,7 +27,10 @@ use crate::{
     initializers::{
         get_network, init_blockchain, init_store, init_tracing, load_store, regenerate_head_state,
     },
-    utils::{self, default_datadir, get_client_version, get_minimal_client_version, init_datadir},
+    utils::{
+        self, default_datadir, get_client_version, get_client_version_string,
+        get_minimal_client_version, init_datadir, is_memory_datadir,
+    },
 };
 
 pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
@@ -33,9 +39,25 @@ pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
 
+/// Computes the effective datadir by appending a network-specific suffix.
+/// In-memory datadirs are returned as-is. Dev mode uses a "dev" suffix.
+/// Public networks use their name as suffix (e.g. "mainnet", "sepolia").
+pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> PathBuf {
+    if is_memory_datadir(base) {
+        return base.to_path_buf();
+    }
+    if dev && cfg!(feature = "dev") {
+        base.join("dev")
+    } else if let Some(suffix) = network.datadir_suffix() {
+        base.join(suffix)
+    } else {
+        base.to_path_buf()
+    }
+}
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -49,21 +71,20 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
     )]
     pub network: Option<Network>,
-    #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
+    #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options", env = "ETHREX_BOOTNODES")]
     pub bootnodes: Vec<Node>,
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = default_datadir().into_os_string(),
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
+        help = "Base directory for the database. A network-specific subdirectory (e.g. mainnet, sepolia) is appended automatically for public networks.",
+        long_help = "Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
@@ -76,13 +97,14 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
-    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
         default_value = "0.0.0.0",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_METRICS_ADDR"
     )]
     pub metrics_addr: String,
     #[arg(
@@ -97,7 +119,8 @@ pub struct Options {
         long = "metrics",
         action = ArgAction::SetTrue,
         help = "Enable metrics collection and exposition",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_METRICS"
     )]
     pub metrics_enabled: bool,
     #[arg(
@@ -105,13 +128,15 @@ pub struct Options {
         action = ArgAction::SetTrue,
         help = "Used to create blocks without requiring a Consensus Client",
         long_help = "If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_DEV"
     )]
     pub dev: bool,
     #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "ETHREX_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Node options")]
@@ -121,15 +146,33 @@ pub struct Options {
         default_value_t = LogColor::Auto,
         help = "Output logs with ANSI color codes.",
         long_help = "Possible values: auto, always, never",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_LOG_COLOR"
     )]
     pub log_color: LogColor,
+    #[arg(
+        long = "no-migrate",
+        action = ArgAction::SetTrue,
+        help = "Do not migrate an existing database to the network-specific subdirectory.",
+        help_heading = "Node options",
+        env = "ETHREX_NO_MIGRATE"
+    )]
+    pub no_migrate: bool,
+    #[arg(
+        long = "log.dir",
+        value_name = "LOG_DIR",
+        help = "Directory to store log files.",
+        help_heading = "Node options",
+        env = "ETHREX_LOG_DIR"
+    )]
+    pub log_dir: Option<PathBuf>,
     #[arg(
         help = "Maximum size of the mempool in number of transactions",
         long = "mempool.maxsize",
         default_value_t = 10_000,
         value_name = "MEMPOOL_MAX_SIZE",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
     #[arg(
@@ -183,7 +226,8 @@ pub struct Options {
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the authenticated rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_ADDR"
     )]
     pub authrpc_addr: String,
     #[arg(
@@ -191,7 +235,8 @@ pub struct Options {
         default_value = "8551",
         value_name = "PORT",
         help = "Listening port for the authenticated rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_PORT"
     )]
     pub authrpc_port: String,
     #[arg(
@@ -199,16 +244,18 @@ pub struct Options {
         default_value = "jwt.hex",
         value_name = "JWTSECRET_PATH",
         help = "Receives the jwt secret used for authenticated rpc requests.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_JWTSECRET_PATH"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
+    #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options", env = "ETHREX_P2P_DISABLED")]
     pub p2p_disabled: bool,
     #[arg(
         long = "p2p.addr",
         value_name = "ADDRESS",
         help = "Listening address for the P2P protocol.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_ADDR"
     )]
     pub p2p_addr: Option<String>,
     #[arg(
@@ -216,7 +263,8 @@ pub struct Options {
         default_value = "30303",
         value_name = "PORT",
         help = "TCP port for the P2P protocol.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_PORT"
     )]
     pub p2p_port: String,
     #[arg(
@@ -224,31 +272,60 @@ pub struct Options {
         default_value = "30303",
         value_name = "PORT",
         help = "UDP port for P2P discovery.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_DISCOVERY_PORT"
     )]
     pub discovery_port: String,
+    #[arg(
+        long = "p2p.discv4",
+        default_value_t = true,
+        action = ArgAction::Set,
+        help = "Enable discv4 discovery.",
+        help_heading = "P2P options"
+    )]
+    pub discv4_enabled: bool,
+    #[arg(
+        long = "p2p.discv5",
+        default_value_t = true,
+        action = ArgAction::Set,
+        help = "Enable discv5 discovery.",
+        help_heading = "P2P options"
+    )]
+    pub discv5_enabled: bool,
     #[arg(
         long = "p2p.tx-broadcasting-interval",
         default_value_t = BROADCAST_INTERVAL_MS,
         value_name = "INTERVAL_MS",
         help = "Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_TX_BROADCASTING_INTERVAL"
     )]
     pub tx_broadcasting_time_interval: u64,
     #[arg(
-        long = "target.peers",
+        long = "p2p.target-peers",
         default_value_t = TARGET_PEERS,
         value_name = "MAX_PEERS",
         help = "Max amount of connected peers.",
-        help_heading = "P2P options"
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_TARGET_PEERS"
     )]
     pub target_peers: usize,
+    #[arg(
+        long = "p2p.lookup-interval",
+        default_value_t = INITIAL_LOOKUP_INTERVAL_MS,
+        value_name = "INITIAL_LOOKUP_INTERVAL",
+        help = "Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.",
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_LOOKUP_INTERVAL"
+    )]
+    pub lookup_interval: f64,
     #[arg(
         long = "builder.extra-data",
         default_value = get_minimal_client_version(),
         value_name = "EXTRA_DATA",
         help = "Block extra data message.",
-        help_heading = "Block building options"
+        help_heading = "Block building options",
+        env = "ETHREX_BUILDER_EXTRA_DATA"
     )]
     pub extra_data: String,
     #[arg(
@@ -256,9 +333,57 @@ pub struct Options {
         default_value_t = DEFAULT_BUILDER_GAS_CEIL,
         value_name = "GAS_LIMIT",
         help = "Target block gas limit.",
-        help_heading = "Block building options"
+        help_heading = "Block building options",
+        env = "ETHREX_BUILDER_GAS_LIMIT"
     )]
     pub gas_limit: u64,
+    #[arg(
+        long = "builder.max-blobs",
+        value_name = "MAX_BLOBS",
+        help = "EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.",
+        help_heading = "Block building options",
+        env = "ETHREX_BUILDER_MAX_BLOBS",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub max_blobs_per_block: Option<u32>,
+    #[arg(
+        long = "precompute-witnesses",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage",
+        help_heading = "Node options",
+        env = "ETHREX_PRECOMPUTE_WITNESSES"
+    )]
+    pub precompute_witnesses: bool,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.callback-url",
+        value_name = "URL",
+        help = "Callback URL for delivering generated proofs (EIP-8025).",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_CALLBACK_URL"
+    )]
+    pub proof_callback_url: Option<url::Url>,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.coordinator-addr",
+        default_value = "127.0.0.1",
+        value_name = "ADDRESS",
+        help = "Listening address for the proof coordinator TCP server.",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_COORDINATOR_ADDR"
+    )]
+    pub proof_coordinator_addr: String,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.coordinator-port",
+        default_value_t = 9100,
+        value_name = "PORT",
+        help = "Listening port for the proof coordinator TCP server.",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_COORDINATOR_PORT"
+    )]
+    pub proof_coordinator_port: u16,
 }
 
 impl Options {
@@ -275,6 +400,8 @@ impl Options {
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            discv4_enabled: true,
+            discv5_enabled: true,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -295,6 +422,8 @@ impl Options {
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
+            discv4_enabled: true,
+            discv5_enabled: true,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -311,6 +440,7 @@ impl Default for Options {
             ws_port: Default::default(),
             log_level: Level::INFO,
             log_color: Default::default(),
+            log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
@@ -318,6 +448,8 @@ impl Default for Options {
             p2p_addr: None,
             p2p_port: Default::default(),
             discovery_port: Default::default(),
+            discv4_enabled: true,
+            discv5_enabled: true,
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
@@ -330,8 +462,18 @@ impl Default for Options {
             mempool_max_size: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
+            lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            max_blobs_per_block: None,
+            #[cfg(feature = "eip-8025")]
+            proof_callback_url: None,
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator_addr: "127.0.0.1".to_string(),
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator_port: 9100,
+            precompute_witnesses: false,
+            no_migrate: false,
         }
     }
 }
@@ -412,6 +554,36 @@ pub enum Subcommand {
         )]
         genesis_path: PathBuf,
     },
+    #[command(name = "repl", about = "Interactive REPL for Ethereum JSON-RPC")]
+    Repl {
+        /// JSON-RPC endpoint URL
+        #[arg(short = 'e', long, default_value = "http://localhost:8545")]
+        endpoint: String,
+
+        /// Authenticated RPC endpoint URL (for engine namespace)
+        #[arg(long = "authrpc.endpoint", default_value = "http://localhost:8551")]
+        authrpc_endpoint: String,
+
+        /// Path to JWT secret file for authenticated RPC (hex-encoded)
+        #[arg(long = "authrpc.jwtsecret")]
+        authrpc_jwtsecret: Option<String>,
+
+        /// Path to command history file
+        #[arg(long, default_value = "~/.ethrex/history")]
+        history_file: String,
+
+        /// Execute a single command and exit
+        #[arg(short = 'x', long)]
+        execute: Option<String>,
+
+        /// Port to listen for EIP-8025 proof callbacks (GeneratedProof POSTs)
+        #[arg(long = "proof-callback-port", default_value = "9200")]
+        proof_callback_port: u16,
+
+        /// Timeout in seconds for the proof callback listener (proof generation can take minutes)
+        #[arg(long = "proof-callback-timeout", default_value = "300")]
+        proof_callback_timeout: u64,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -420,23 +592,50 @@ pub enum Subcommand {
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         // L2 has its own init_tracing because of the ethrex monitor
-        match self {
+        let _guard = match &self {
             #[cfg(feature = "l2")]
-            Self::L2(_) => {}
+            Self::L2(_) => None,
             _ => {
-                init_tracing(opts);
+                let (_, guard) = init_tracing(opts);
+                guard
             }
+        };
+
+        let network = get_network(opts);
+        let effective_datadir = compute_effective_datadir(&opts.datadir, &network, opts.dev);
+
+        // For subcommands that use the store, migrate from the old
+        // unsuffixed datadir layout if applicable.
+        match &self {
+            Subcommand::Import { .. }
+            | Subcommand::ImportBench { .. }
+            | Subcommand::Export { .. } => {
+                crate::initializers::migrate_datadir_if_needed(
+                    &opts.datadir,
+                    &effective_datadir,
+                    &network,
+                    opts.no_migrate,
+                );
+            }
+            _ => {}
         }
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
-                remove_db(&datadir, force);
+                let effective = compute_effective_datadir(&datadir, &network, opts.dev);
+                if effective != datadir && has_valid_db(&datadir) && !has_valid_db(&effective) {
+                    warn!(
+                        "Database found at old location {datadir:?} but removedb targets {effective:?}. \
+                         Run with --datadir {datadir:?} or migrate first.",
+                    );
+                }
+                remove_db(&effective, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&effective_datadir, opts.force);
                 }
 
-                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2(L2Config::default())
@@ -445,7 +644,7 @@ impl Subcommand {
                 };
                 import_blocks(
                     &path,
-                    &opts.datadir,
+                    &effective_datadir,
                     genesis,
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
@@ -457,11 +656,10 @@ impl Subcommand {
             }
             Subcommand::ImportBench { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&effective_datadir, opts.force);
                 }
                 info!("ethrex version: {}", get_client_version());
 
-                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2(L2Config::default())
@@ -470,7 +668,7 @@ impl Subcommand {
                 };
                 import_blocks_bench(
                     &path,
-                    &opts.datadir,
+                    &effective_datadir,
                     genesis,
                     BlockchainOptions {
                         r#type: blockchain_type,
@@ -481,12 +679,32 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                export_blocks(&path, &effective_datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
                 let state_root = genesis.compute_state_root();
                 println!("{state_root:#x}");
+            }
+            Subcommand::Repl {
+                endpoint,
+                authrpc_endpoint,
+                authrpc_jwtsecret,
+                history_file,
+                execute,
+                proof_callback_port,
+                proof_callback_timeout,
+            } => {
+                ethrex_repl::run(
+                    endpoint,
+                    authrpc_endpoint,
+                    authrpc_jwtsecret,
+                    history_file,
+                    execute,
+                    proof_callback_port,
+                    proof_callback_timeout,
+                )
+                .await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -630,6 +848,9 @@ pub async fn import_blocks(
                 continue;
             }
 
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
+                .map_err(InvalidBlockError::InvalidBody)?;
+
             if index + MIN_FULL_BLOCKS < size {
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
@@ -641,7 +862,7 @@ pub async fn import_blocks(
             } else {
                 // We need to have the state of the latest 128 blocks
                 blockchain
-                .add_block_pipeline(block)
+                .add_block_pipeline(block, None)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -654,7 +875,7 @@ pub async fn import_blocks(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -745,8 +966,11 @@ pub async fn import_blocks_bench(
                 continue;
             }
 
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
+                .map_err(InvalidBlockError::InvalidBody)?;
+
             blockchain
-                .add_block_pipeline(block)
+                .add_block_pipeline(block, None)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -766,7 +990,7 @@ pub async fn import_blocks_bench(
         if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
             store
                 .forkchoice_update(
-                    Some(numbers_and_hashes),
+                    numbers_and_hashes,
                     head_number,
                     head_hash,
                     Some(head_number),
@@ -802,6 +1026,7 @@ pub async fn export_blocks(
         Ok(store) => store,
     };
     let start = first_number.unwrap_or_default();
+
     // If we have no latest block then we don't have any blocks to export
     let latest_number = match store.get_latest_block_number().await {
         Ok(number) => number,
@@ -811,6 +1036,20 @@ pub async fn export_blocks(
         }
         Err(_) => panic!("Internal DB Error"),
     };
+
+    // Get the earliest available block number to detect pruned blocks
+    let earliest_number = match store.get_earliest_block_number().await {
+        Ok(number) => number,
+        Err(StoreError::MissingEarliestBlockNumber) => {
+            // No earliest block set means everything from genesis is available
+            0
+        }
+        Err(err) => {
+            error!("Failed to get earliest block number: {err}");
+            return;
+        }
+    };
+
     // Check that the requested range doesn't exceed our current chain length
     if last_number.is_some_and(|number| number > latest_number) {
         warn!(
@@ -819,34 +1058,73 @@ pub async fn export_blocks(
         return;
     }
     let end = last_number.unwrap_or(latest_number);
+
+    // Check if start is before earliest available block (pruned data)
+    let adjusted_start = if start < earliest_number {
+        warn!(
+            requested_start = start,
+            earliest_available = earliest_number,
+            "Requested start block has been pruned, adjusting to earliest available block"
+        );
+        earliest_number
+    } else {
+        start
+    };
+
     // Check that the requested range makes sense
-    if start > end {
-        warn!("Cannot export block range [{start}..{end}], please input a valid range");
+    if adjusted_start > end {
+        warn!("Cannot export block range [{adjusted_start}..{end}], please input a valid range");
         return;
     }
+
     // Fetch blocks from the store and export them to the file
     let mut file = File::create(path).expect("Failed to open file");
     let mut buffer = vec![];
     let mut last_output = Instant::now();
+    let mut exported_count: u64 = 0;
+
     // Denominator for percent completed; avoid division by zero
-    let denom = end.saturating_sub(start) + 1;
-    for n in start..=end {
-        let block = store
-            .get_block_by_number(n)
-            .await
-            .ok()
-            .flatten()
-            .expect("Failed to read block from DB");
+    let denom = end.saturating_sub(adjusted_start) + 1;
+    for n in adjusted_start..=end {
+        let block = match store.get_block_by_number(n).await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                error!(
+                    block_number = n,
+                    earliest_available = earliest_number,
+                    latest_available = latest_number,
+                    "Block is missing within the available range - this indicates database corruption or unexpected state"
+                );
+                return;
+            }
+            Err(err) => {
+                error!(block_number = n, error = %err, "Failed to read block from DB");
+                return;
+            }
+        };
         block.encode(&mut buffer);
-        // Exporting the whole chain can take a while, so we need to show some output in the meantime
-        if last_output.elapsed() > Duration::from_secs(5) {
-            let completed = n.saturating_sub(start) + 1;
-            let percent = (completed * 100) / denom;
-            info!(n, end, percent, "Exporting blocks");
-            last_output = Instant::now();
-        }
         file.write_all(&buffer).expect("Failed to write to file");
         buffer.clear();
+        exported_count += 1;
+
+        // Exporting the whole chain can take a while, so we need to show some output in the meantime
+        if last_output.elapsed() > Duration::from_secs(5) {
+            let percent = (exported_count * 100) / denom;
+            info!(
+                current_block = n,
+                end_block = end,
+                percent_complete = percent,
+                blocks_exported = exported_count,
+                "Exporting blocks"
+            );
+            last_output = Instant::now();
+        }
     }
-    info!(blocks = end.saturating_sub(start) + 1, path = %path, "Exported blocks to file");
+
+    info!(
+        blocks_exported = exported_count,
+        blocks_requested = end.saturating_sub(start) + 1,
+        path = %path,
+        "Exported blocks to file"
+    );
 }

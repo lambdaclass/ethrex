@@ -1,0 +1,10 @@
+{
+  "name": "ethrex-root",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Root npm deps for Hardhat Solidity imports",
+  "dependencies": {
+    "@openzeppelin/contracts": "5.4.0",
+    "@openzeppelin/contracts-upgradeable": "5.4.0"
+  }
+}

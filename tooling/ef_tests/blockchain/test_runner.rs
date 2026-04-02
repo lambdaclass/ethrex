@@ -9,24 +9,28 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(feature = "stateless")]
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError,
+        InvalidBlockHeaderError, block_access_list::BlockAccessList,
     },
 };
-use ethrex_prover_lib::backend::Backend;
+use ethrex_guest_program::input::ProgramInput;
+#[cfg(feature = "sp1")]
+use ethrex_prover::Sp1Backend;
+use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
-use guest_program::input::ProgramInput;
 use regex::Regex;
 
 pub fn parse_and_execute(
     path: &Path,
     skipped_tests: Option<&[&str]>,
-    stateless_backend: Option<Backend>,
+    stateless_backend: Option<BackendType>,
 ) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_tests(path);
@@ -62,13 +66,18 @@ pub fn parse_and_execute(
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
-    stateless_backend: Option<Backend>,
+    stateless_backend: Option<BackendType>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
-    let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
+    let decoded_block = match CoreBlock::decode(&genesis_rlp) {
+        Ok(block) => block,
+        Err(e) => return Err(format!("Failed to decode genesis RLP: {e}")),
+    };
     let genesis_block_header = CoreBlockHeader::from(test.genesis_block_header.clone());
-    assert_eq!(decoded_block.header, genesis_block_header);
+    if decoded_block.header != genesis_block_header {
+        return Err("Decoded genesis header does not match expected header".to_string());
+    }
 
     let store = build_store_for_test(test).await;
 
@@ -87,9 +96,31 @@ pub async fn run_ef_test(
 
     run(test_key, test, &blockchain, &store).await?;
 
+    // For Amsterdam tests, exercise the parallel BAL execution path as a correctness check.
+    // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
+    // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
+    // same final state is reached.
+    if test.network == Fork::Amsterdam {
+        run_two_pass_parallel(test_key, test).await?;
+    }
+
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
+        // If the fixture provides an executionWitness (zkevm format), use it directly
+        // instead of regenerating the witness from blockchain execution.
+        #[cfg(feature = "stateless")]
+        {
+            let has_fixture_witness = test.blocks.iter().any(|bf| {
+                bf.block()
+                    .and_then(|b| b.execution_witness.as_ref())
+                    .is_some()
+            });
+            if has_fixture_witness {
+                run_stateless_from_fixture(test, test_key, backend).await?;
+                return Ok(());
+            }
+        }
         re_run_stateless(blockchain, test, test_key, backend).await?;
     };
 
@@ -112,7 +143,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block);
+        let chain_result = blockchain.add_block_pipeline(block.clone(), None);
 
         match chain_result {
             Err(error) => {
@@ -145,6 +176,69 @@ async fn run(
 
     // Final post-state verification
     check_poststate_against_db(test_key, test, store).await;
+    Ok(())
+}
+
+/// Two-pass parallel execution check for Amsterdam tests.
+///
+/// Pass 1 (sequential): runs every block with `add_block_pipeline_bal` to collect the
+/// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
+/// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
+/// post-state of pass 2 must match the expected post-state.
+async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
+    // ---- Pass 1: sequential, collect BALs ----
+    let store1 = build_store_for_test(test).await;
+    let blockchain1 = Blockchain::new(store1.clone(), BlockchainOptions::default());
+
+    let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
+
+    for block_fixture in test.blocks.iter() {
+        // Skip fixtures that expect an exception — the normal run() already verified them.
+        if block_fixture.expect_exception.is_some() {
+            return Ok(());
+        }
+
+        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let hash = block.hash();
+
+        let produced_bal = blockchain1
+            .add_block_pipeline_bal(block, None)
+            .map_err(|e| format!("Two-pass pass-1 failed for test {test_key}: {e:?}"))?;
+
+        apply_fork_choice(&store1, hash, hash, hash)
+            .await
+            .map_err(|e| {
+                format!("Two-pass pass-1 fork choice failed for test {test_key}: {e:?}")
+            })?;
+
+        // If execution produced no BAL (non-Amsterdam block in a transition test), skip pass 2.
+        match produced_bal {
+            Some(bal) => bals.push(bal),
+            None => return Ok(()),
+        }
+    }
+
+    // ---- Pass 2: parallel (BAL-driven), verify post-state ----
+    let store2 = build_store_for_test(test).await;
+    let blockchain2 = Blockchain::new(store2.clone(), BlockchainOptions::default());
+
+    for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
+        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let hash = block.hash();
+
+        blockchain2
+            .add_block_pipeline(block, Some(bal))
+            .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
+
+        apply_fork_choice(&store2, hash, hash, hash)
+            .await
+            .map_err(|e| {
+                format!("Two-pass pass-2 fork choice failed for test {test_key}: {e:?}")
+            })?;
+    }
+
+    // Verify post-state matches expected
+    check_poststate_against_db(test_key, test, &store2).await;
     Ok(())
 }
 
@@ -288,7 +382,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
     serde_json::from_str(&s).expect("Unable to parse JSON")
 }
 
-/// Creats a new in-memory store and adds the genesis state
+/// Creates a new in-memory store and adds the genesis state.
 pub async fn build_store_for_test(test: &TestUnit) -> Store {
     let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
@@ -385,7 +479,7 @@ async fn re_run_stateless(
     blockchain: Blockchain,
     test: &TestUnit,
     test_key: &str,
-    backend: Backend,
+    backend_type: BackendType,
 ) -> Result<(), String> {
     let blocks = test
         .blocks
@@ -396,10 +490,11 @@ async fn re_run_stateless(
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
     let witness = blockchain.generate_witness_for_blocks(&blocks).await;
-    if test_should_fail && witness.is_err() {
-        // We can't generate witness for a test that should fail.
+    if test_should_fail {
+        // The normal run() already verified this test fails correctly.
+        // The stateless prover proves valid block execution, not invalid block rejection.
         return Ok(());
-    } else if !test_should_fail && let Err(err) = witness {
+    } else if let Err(err) = witness {
         return Err(format!(
             "Failed to create witness for a test that should not fail: {err}"
         ));
@@ -407,14 +502,15 @@ async fn re_run_stateless(
     // At this point witness is guaranteed to be Ok
     let execution_witness = witness.unwrap();
 
-    let program_input = ProgramInput {
-        blocks,
-        execution_witness,
-        elasticity_multiplier: ethrex_common::types::ELASTICITY_MULTIPLIER,
-        ..Default::default()
+    let program_input = ProgramInput::new(blocks, execution_witness);
+
+    let execute_result = match backend_type {
+        BackendType::Exec => ExecBackend::new().execute(program_input),
+        #[cfg(feature = "sp1")]
+        BackendType::SP1 => Sp1Backend::new().execute(program_input),
     };
 
-    if let Err(e) = ethrex_prover_lib::execute(backend, program_input) {
+    if let Err(e) = execute_result {
         if !test_should_fail {
             return Err(format!(
                 "Expected test: {test_key} to succeed but failed with {e}"
@@ -423,5 +519,64 @@ async fn re_run_stateless(
     } else if test_should_fail {
         return Err(format!("Expected test: {test_key} to fail but succeeded"));
     }
+    Ok(())
+}
+
+/// Run stateless execution using the execution witness provided directly in the
+/// zkevm fixture, instead of generating one from blockchain execution.
+///
+/// Each block in the fixture has its own `executionWitness` containing the state
+/// trie nodes, codes, and ancestor headers needed for that specific block.
+/// Following the spec, we execute each block
+/// independently with its own witness.
+#[cfg(feature = "stateless")]
+async fn run_stateless_from_fixture(
+    test: &TestUnit,
+    test_key: &str,
+    backend_type: BackendType,
+) -> Result<(), String> {
+    let chain_config = test.network.chain_config();
+
+    for block_fixture in test.blocks.iter() {
+        // Skip blocks that expect exceptions — those are already validated by the normal path.
+        if block_fixture.expect_exception.is_some() {
+            continue;
+        }
+
+        let Some(block_data) = block_fixture.block() else {
+            continue;
+        };
+
+        let Some(witness_json) = block_data.execution_witness.as_ref() else {
+            continue;
+        };
+
+        let block: CoreBlock = block_data.clone().into();
+        let block_number = block.header.number;
+
+        let rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
+            .map_err(|e| {
+                format!("Failed to parse executionWitness for block {block_number}: {e}")
+            })?;
+
+        let execution_witness = rpc_witness
+            .into_execution_witness(*chain_config, block_number)
+            .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+
+        let program_input = ProgramInput::new(vec![block], execution_witness);
+
+        let execute_result = match backend_type {
+            BackendType::Exec => ExecBackend::new().execute(program_input),
+            #[cfg(feature = "sp1")]
+            BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        };
+
+        if let Err(e) = execute_result {
+            return Err(format!(
+                "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
+            ));
+        }
+    }
+
     Ok(())
 }
