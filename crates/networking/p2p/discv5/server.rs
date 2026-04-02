@@ -44,9 +44,9 @@ use tracing::{error, info, trace, warn};
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
 const MAX_ENRS_PER_MESSAGE: usize = 3;
 /// Interval between revalidation checks (how often we run the revalidation loop).
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Nodes not validated within this interval are candidates for revalidation.
-const REVALIDATION_INTERVAL: Duration = Duration::from_secs(30);
+const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
@@ -314,6 +314,15 @@ impl DiscoveryServer {
         Discv5Message { packet, from }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
         // TODO retrieve session info
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            match packet.header.flag {
+                0x01 => METRICS_P2P.inc_discv5_incoming("WhoAreYou"),
+                0x02 => METRICS_P2P.inc_discv5_incoming("Handshake"),
+                _ => {} // Ordinary messages are tracked in handle_message
+            }
+        }
         match packet.header.flag {
             0x00 => self.handle_ordinary(packet, from).await,
             0x01 => self.handle_who_are_you(packet, from).await,
@@ -554,15 +563,13 @@ impl DiscoveryServer {
     }
 
     async fn do_revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        let contacts = self
+        if let Some(contact) = self
             .peer_table
-            .get_contacts_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
-            .await?;
-
-        for contact in contacts {
-            if let Err(e) = self.send_ping(&contact.node).await {
-                trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
-            }
+            .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
+            .await?
+            && let Err(e) = self.send_ping(&contact.node).await
+        {
+            trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
         }
         Ok(())
     }
@@ -795,6 +802,11 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing(message.metric_label());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message: message.clone(),
@@ -802,9 +814,10 @@ impl DiscoveryServer {
         let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
             Some(s) => s.outbound_key,
             None => {
-                warn!(
-                    "No session found for {:?} in send_ordinary, falling back to zeroed key",
-                    node.node_id()
+                trace!(
+                    protocol = "discv5",
+                    node = %node.node_id(),
+                    "No session found in send_ordinary, using zeroed key to trigger handshake"
                 );
                 [0; 16]
             }
@@ -836,7 +849,11 @@ impl DiscoveryServer {
         match self.peer_table.get_session_info(*node_id).await? {
             Some(s) => Ok(s.outbound_key),
             None => {
-                warn!("No session found for {node_id:?}, falling back to zeroed key");
+                trace!(
+                    protocol = "discv5",
+                    node = %node_id,
+                    "No session found in resolve_outbound_key, using zeroed key"
+                );
                 Ok([0; 16])
             }
         }
@@ -852,6 +869,11 @@ impl DiscoveryServer {
         addr: SocketAddr,
         encrypt_key: &[u8; 16],
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing(message.metric_label());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message,
@@ -875,6 +897,11 @@ impl DiscoveryServer {
         node: Node,
         record: Option<NodeRecord>,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing("Handshake");
+        }
         let handshake = Handshake {
             src_id: self.local_node.node_id(),
             id_signature: signature.serialize_compact().to_vec(),
@@ -885,9 +912,10 @@ impl DiscoveryServer {
         let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
             Some(s) => s.outbound_key,
             None => {
-                warn!(
-                    "No session found for {:?} in send_handshake, falling back to zeroed key",
-                    node.node_id()
+                trace!(
+                    protocol = "discv5",
+                    node = %node.node_id(),
+                    "No session found in send_handshake, using zeroed key"
                 );
                 [0; 16]
             }
@@ -914,6 +942,15 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing("WhoAreYou");
+        }
+        // Rate limit: prevent amplification attacks by limiting WHOAREYOU per (IP, node).
+        // Keyed by (IP, src_id) so distinct nodes behind the same IP are not blocked.
+        // Exception: if we already have a pending challenge for src_id (e.g. HandshakeResend),
+        // allow re-sending WHOAREYOU freely — this is a legitimate handshake retry, not an attack.
         let rate_key = (addr.ip(), src_id);
         let now = Instant::now();
 
@@ -1198,6 +1235,11 @@ impl DiscoveryServer {
         let sender_id = ordinary.src_id;
         if sender_id == self.local_node.node_id() {
             return Ok(());
+        }
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_incoming(ordinary.message.metric_label());
         }
         match ordinary.message {
             Message::Ping(ping_message) => {
