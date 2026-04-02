@@ -75,6 +75,9 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to flush buffered transaction hash requests into a single
+/// batched GetPooledTransactions message.
+const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -92,6 +95,7 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
     fn block_range_update(&self) -> Result<(), ActorError>;
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
     fn sweep_inflight_txs(&self) -> Result<(), ActorError>;
+    fn flush_pending_tx_requests(&self) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -203,6 +207,9 @@ pub struct Established {
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
     pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
+    /// Buffered transaction requests waiting to be flushed as a single batch.
+    /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
+    pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -234,6 +241,10 @@ impl Established {
                 .blockchain
                 .mempool
                 .clear_in_flight_txs(&requested_hashes);
+        }
+        // Also clear hashes that were buffered but not yet sent.
+        for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
+            let _ = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes);
         }
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
@@ -493,6 +504,18 @@ impl PeerConnectionServer {
     }
 
     #[send_handler]
+    async fn handle_flush_pending_tx_requests(
+        &mut self,
+        _msg: peer_connection_server_protocol::FlushPendingTxRequests,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            let result = flush_pending_tx_requests(established_state).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        }
+    }
+
+    #[send_handler]
     async fn handle_broadcast_message(
         &mut self,
         msg: peer_connection_server_protocol::BroadcastMessage,
@@ -668,6 +691,13 @@ where
         INFLIGHT_TX_SWEEP_INTERVAL,
         ctx.clone(),
         peer_connection_server_protocol::SweepInflightTxs,
+    );
+
+    // Periodic flush of buffered transaction requests.
+    send_interval(
+        TX_REQUEST_BATCH_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::FlushPendingTxRequests,
     );
 
     #[cfg(feature = "l2")]
@@ -1219,16 +1249,17 @@ async fn handle_incoming_message(
             }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            let hashes =
-                new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
-            if !hashes.is_empty() {
-                // hashes are already marked as in-flight by get_transactions_to_request
-                let request = GetPooledTransactions::new(random(), hashes.clone());
-                state.requested_pooled_txs.insert(
-                    request.id,
-                    (new_pooled_transaction_hashes, hashes, Instant::now()),
-                );
-                send(state, Message::GetPooledTransactions(request)).await?;
+            // Don't request transactions if we're not synced — we won't be building blocks soon.
+            if state.blockchain.is_synced() {
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+                if !hashes.is_empty() {
+                    // Buffer hashes for batched requesting instead of sending immediately.
+                    // The periodic flush_pending_tx_requests handler will send them.
+                    state
+                        .pending_tx_requests
+                        .push((new_pooled_transaction_hashes, hashes));
+                }
             }
         }
         Message::GetPooledTransactions(msg) => {
@@ -1420,4 +1451,34 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerCo
     } else {
         Ok(())
     }
+}
+
+/// Drains the pending transaction request buffer, merges all announcements,
+/// and sends a single batched GetPooledTransactions request.
+async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_tx_requests.is_empty() {
+        return Ok(());
+    }
+
+    let pending = std::mem::take(&mut state.pending_tx_requests);
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut merged_announcement: Option<NewPooledTransactionHashes> = None;
+
+    for (announcement, hashes) in pending {
+        all_hashes.extend_from_slice(&hashes);
+        match merged_announcement.as_mut() {
+            Some(merged) => merged.merge(announcement),
+            None => merged_announcement = Some(announcement),
+        }
+    }
+
+    if let Some(announcement) = merged_announcement {
+        let request = GetPooledTransactions::new(random(), all_hashes.clone());
+        state
+            .requested_pooled_txs
+            .insert(request.id, (announcement, all_hashes));
+        send(state, Message::GetPooledTransactions(request)).await?;
+    }
+
+    Ok(())
 }
