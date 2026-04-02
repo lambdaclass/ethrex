@@ -125,6 +125,16 @@ impl NewPooledTransactionHashes {
             .mempool
             .filter_unknown_and_mark_in_flight(&self.transaction_hashes)
     }
+
+    /// Merge another announcement into this one, combining types/sizes/hashes.
+    /// Used when batching multiple announcements into a single GetPooledTransactions request.
+    pub fn merge(&mut self, other: NewPooledTransactionHashes) {
+        let mut types = self.transaction_types.to_vec();
+        types.extend_from_slice(&other.transaction_types);
+        self.transaction_types = types.into();
+        self.transaction_sizes.extend(other.transaction_sizes);
+        self.transaction_hashes.extend(other.transaction_hashes);
+    }
 }
 
 impl RLPxMessage for NewPooledTransactionHashes {
