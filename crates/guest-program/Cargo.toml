@@ -74,6 +74,9 @@ ci = []
 # When this feature is enabled, the cycles used in the code inside the
 # report_cycles function will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []
+# When this feature is enabled, ZisK AIR-cost profiling scopes are emitted
+# inside report_cycles via ziskos::ziskos_profile_start/end.
+zisk-scopes = ["dep:ziskos"]
 
 [lib]
 path = "./src/lib.rs"

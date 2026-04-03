@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod l1;
 pub mod l2;
 pub mod methods;
+pub mod scopes;
 
 // Backward-compatible re-exports based on feature flag.
 // The prover backend uses `ethrex_guest_program::input::ProgramInput`, etc.
@@ -55,15 +56,26 @@ pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
 #[cfg(any(clippy, not(feature = "zisk-build-elf")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
-/// Report cycles used in a code block when running inside SP1 zkVM.
+/// Report cycles used in a code block when running inside a zkVM.
 ///
-/// When the feature "sp1-cycles" is enabled, it will print start and end cycle
-/// tracking messages that are compatible with SP1's cycle tracking system.
-pub fn report_cycles<T, E>(_label: &str, block: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+/// Each call is tagged with a compile-time scope ID (from the `scopes` module)
+/// that identifies the logical phase being measured.
+///
+/// When `sp1-cycles` is enabled, prints SP1-compatible cycle tracking messages.
+/// When `zisk-scopes` is enabled, emits ZisK AIR-cost profiling scope markers.
+/// When neither is enabled, executes the closure with no overhead.
+pub fn report_cycles<const SCOPE: u16, T, E>(
+    _label: &str,
+    block: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    #[cfg(feature = "zisk-scopes")]
+    ziskos::ziskos_profile_start::<SCOPE>();
     #[cfg(feature = "sp1-cycles")]
     println!("cycle-tracker-report-start: {_label}");
     let result = block();
     #[cfg(feature = "sp1-cycles")]
     println!("cycle-tracker-report-end: {_label}");
+    #[cfg(feature = "zisk-scopes")]
+    ziskos::ziskos_profile_end::<SCOPE>();
     result
 }

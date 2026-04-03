@@ -11,6 +11,7 @@ use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 
 use crate::common::ExecutionError;
 use crate::report_cycles;
+use crate::scopes;
 
 /// Result of executing a batch of blocks.
 pub struct BatchExecutionResult {
@@ -51,25 +52,21 @@ where
 {
     let chain_id = execution_witness.chain_config.chain_id;
 
-    let ethrex_guest_program_state: GuestProgramState =
-        report_cycles("ethrex_guest_program_state_initialization", || {
-            GuestProgramState::from_witness(execution_witness, crypto.as_ref())
-                .map_err(ExecutionError::GuestProgramState)
+    let mut wrapped_db =
+        report_cycles::<{ scopes::PRE_STATE_INIT }, _, _>("pre_state_init", || {
+            let state = GuestProgramState::from_witness(execution_witness, crypto.as_ref())
+                .map_err(ExecutionError::GuestProgramState)?;
+            Ok::<_, ExecutionError>(GuestProgramStateWrapper::new(state, crypto.clone()))
         })?;
-
-    let mut wrapped_db = GuestProgramStateWrapper::new(ethrex_guest_program_state, crypto.clone());
 
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         ExecutionError::Internal("No chain config in execution witness".to_string())
     })?;
 
     // Hashing is expensive in zkVMs - initialize block header hashes once
-    report_cycles("initialize_block_header_hashes", || {
-        wrapped_db.initialize_block_header_hashes(blocks)
-    })?;
-
-    // Validate execution witness' block hashes
-    report_cycles("get_first_invalid_block_hash", || {
+    // and validate execution witness' block hashes
+    report_cycles::<{ scopes::ANCESTOR_VALIDATION }, _, _>("ancestor_validation", || {
+        wrapped_db.initialize_block_header_hashes(blocks)?;
         if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
             return Err(ExecutionError::InvalidBlockHash(invalid_block_header));
         }
@@ -87,15 +84,18 @@ where
         )
         .map_err(ExecutionError::GuestProgramState)?;
 
-    let initial_state_hash = report_cycles("state_trie_root", || {
-        wrapped_db
-            .state_trie_root()
-            .map_err(ExecutionError::GuestProgramState)
-    })?;
-
-    if initial_state_hash != parent_block_header.state_root {
-        return Err(ExecutionError::InvalidInitialStateTrie);
-    }
+    let initial_state_hash = report_cycles::<{ scopes::PRE_STATE_VERIFICATION }, _, _>(
+        "pre_state_verification",
+        || {
+            let hash = wrapped_db
+                .state_trie_root()
+                .map_err(ExecutionError::GuestProgramState)?;
+            if hash != parent_block_header.state_root {
+                return Err(ExecutionError::InvalidInitialStateTrie);
+            }
+            Ok(hash)
+        },
+    )?;
 
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
@@ -103,87 +103,93 @@ where
     let mut non_privileged_count: usize = 0;
 
     for (i, block) in blocks.iter().enumerate() {
-        // Validate that the block header and body match (transactions root, withdrawals root)
-        report_cycles("validate_block_body", || {
-            validate_block_body(&block.header, &block.body, crypto.as_ref())
-                .map_err(ExecutionError::BlockBodyValidation)
-        })?;
-
-        // Validate the block header pre-execution
-        report_cycles("validate_block_pre_execution", || {
-            validate_block_pre_execution(
-                block,
-                parent_block_header,
-                &chain_config,
-                elasticity_multiplier,
-            )
-            .map_err(ExecutionError::BlockValidation)
-        })?;
+        // Validate block header/body match and pre-execution checks
+        report_cycles::<{ scopes::VALIDATE_BLOCK_CONSENSUS }, _, _>(
+            "validate_block_consensus",
+            || {
+                validate_block_body(&block.header, &block.body, crypto.as_ref())
+                    .map_err(ExecutionError::BlockBodyValidation)?;
+                validate_block_pre_execution(
+                    block,
+                    parent_block_header,
+                    &chain_config,
+                    elasticity_multiplier,
+                )
+                .map_err(ExecutionError::BlockValidation)
+            },
+        )?;
 
         // Create VM using the provided factory
-        let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
+        let mut vm =
+            report_cycles::<{ scopes::SETUP_EVM }, _, _>("setup_evm", || vm_factory(&wrapped_db, i))?;
 
         // Execute block
-        let (result, _bal) = report_cycles("execute_block", || {
-            vm.execute_block(block).map_err(ExecutionError::Evm)
-        })?;
+        let (result, _bal) =
+            report_cycles::<{ scopes::EXECUTE_BLOCK }, _, _>("execute_block", || {
+                vm.execute_block(block).map_err(ExecutionError::Evm)
+            })?;
 
         let receipts = result.receipts;
         let block_gas_used = result.block_gas_used;
 
-        let account_updates = report_cycles("get_state_transitions", || {
-            vm.get_state_transitions().map_err(ExecutionError::Evm)
-        })?;
+        let account_updates =
+            report_cycles::<{ scopes::GET_STATE_TRANSITIONS }, _, _>("get_state_transitions", || {
+                vm.get_state_transitions().map_err(ExecutionError::Evm)
+            })?;
 
         // Apply state transitions to the db (needed for both next block execution
         // and final state validation via state_trie_root())
-        report_cycles("apply_account_updates", || {
-            wrapped_db
-                .apply_account_updates(&account_updates)
-                .map_err(ExecutionError::GuestProgramState)
-        })?;
+        // and count non-privileged transactions
+        non_privileged_count += report_cycles::<{ scopes::APPLY_ACCOUNT_UPDATES }, _, _>(
+            "apply_account_updates",
+            || {
+                wrapped_db
+                    .apply_account_updates(&account_updates)
+                    .map_err(ExecutionError::GuestProgramState)?;
+                let count = block
+                    .body
+                    .transactions
+                    .iter()
+                    .filter(|tx| !tx.is_privileged())
+                    .count();
+                Ok::<_, ExecutionError>(count)
+            },
+        )?;
 
-        // Count non-privileged transactions
-        non_privileged_count += block
-            .body
-            .transactions
-            .iter()
-            .filter(|tx| !tx.is_privileged())
-            .count();
-
-        // Validate gas and receipts
-        report_cycles("validate_gas_and_receipts", || {
-            validate_gas_used(block_gas_used, &block.header).map_err(ExecutionError::GasValidation)
-        })?;
-
-        report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &receipts, crypto.as_ref())
-                .map_err(ExecutionError::ReceiptsRootValidation)
-        })?;
-
-        report_cycles("validate_requests_hash", || {
-            validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(ExecutionError::RequestsRootValidation)
-        })?;
+        // Validate gas, receipts root, and requests hash
+        report_cycles::<{ scopes::POST_VALIDATION_CHECKS }, _, _>(
+            "post_validation_checks",
+            || {
+                validate_gas_used(block_gas_used, &block.header)
+                    .map_err(ExecutionError::GasValidation)?;
+                validate_receipts_root(&block.header, &receipts, crypto.as_ref())
+                    .map_err(ExecutionError::ReceiptsRootValidation)?;
+                validate_requests_hash(&block.header, &chain_config, &result.requests)
+                    .map_err(ExecutionError::RequestsRootValidation)
+            },
+        )?;
 
         acc_receipts.push(receipts);
         parent_block_header = &block.header;
     }
 
-    // Validate final state
+    // Validate final state and compute last block hash
     let last_block = blocks.last().ok_or(ExecutionError::EmptyBatch)?;
 
-    let final_state_hash = report_cycles("get_final_state_root", || {
-        wrapped_db
-            .state_trie_root()
-            .map_err(ExecutionError::GuestProgramState)
-    })?;
-
-    if final_state_hash != last_block.header.state_root {
-        return Err(ExecutionError::InvalidFinalStateTrie);
-    }
-
-    let last_block_hash = last_block.header.compute_block_hash(crypto.as_ref());
+    let (final_state_hash, last_block_hash) =
+        report_cycles::<{ scopes::POST_STATE_ROOT_CALCULATION }, _, _>(
+            "post_state_root_calculation",
+            || {
+                let hash = wrapped_db
+                    .state_trie_root()
+                    .map_err(ExecutionError::GuestProgramState)?;
+                if hash != last_block.header.state_root {
+                    return Err(ExecutionError::InvalidFinalStateTrie);
+                }
+                let block_hash = last_block.header.compute_block_hash(crypto.as_ref());
+                Ok((hash, block_hash))
+            },
+        )?;
 
     Ok(BatchExecutionResult {
         receipts: acc_receipts,
