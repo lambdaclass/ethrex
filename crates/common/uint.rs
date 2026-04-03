@@ -292,7 +292,8 @@ impl U256 {
         }
     }
 
-    /// Returns the byte at the given index (0 = most significant byte, EVM convention).
+    /// Returns the byte at the given index (0 = least significant byte).
+    /// Both ethereum_types and ruint use LE byte indexing natively.
     #[inline]
     pub fn byte(&self, index: usize) -> u8 {
         #[cfg(feature = "uint-ethereum-types")]
@@ -301,7 +302,7 @@ impl U256 {
         }
         #[cfg(feature = "uint-ruint")]
         {
-            self.0.byte(31 - index)
+            self.0.byte(index)
         }
     }
 
@@ -450,6 +451,15 @@ impl U256 {
                 .map(Self)
                 .map_err(ParseU256Error::Ruint)
         }
+    }
+}
+
+impl core::str::FromStr for U256 {
+    type Err = ParseU256Error;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_str(s)
     }
 }
 
