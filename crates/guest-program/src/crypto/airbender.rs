@@ -159,7 +159,8 @@ impl Crypto for AirbenderCrypto {
     }
 
     fn blake2_compress(&self, rounds: u32, h: &mut [u64; 8], m: [u64; 16], t: [u64; 2], f: bool) {
-        crate::crypto::Crypto::blake2_compress(&ethrex_crypto::NativeCrypto, rounds, h, m, t, f)
+        #[allow(clippy::as_conversions)]
+        ethrex_crypto::blake2f::blake2b_f(rounds as usize, h, &m, &t, f)
     }
 
     fn secp256r1_verify(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
