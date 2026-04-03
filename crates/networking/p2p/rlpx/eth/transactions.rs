@@ -123,7 +123,7 @@ impl NewPooledTransactionHashes {
     ) -> Result<Vec<H256>, StoreError> {
         blockchain
             .mempool
-            .filter_unknown_transactions(&self.transaction_hashes)
+            .filter_unknown_and_mark_in_flight(&self.transaction_hashes)
     }
 }
 
