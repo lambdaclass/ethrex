@@ -38,7 +38,7 @@ impl OpcodeHandler for OpAddressHandler {
             .increase_consumed_gas(gas_cost::ADDRESS)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
             bytes[12..].copy_from_slice(&vm.current_call_frame.to.0);
             bytes.reverse();
@@ -83,7 +83,7 @@ impl OpcodeHandler for OpOriginHandler {
             .increase_consumed_gas(gas_cost::ORIGIN)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
             bytes[12..].copy_from_slice(&vm.env.origin.0);
             bytes.reverse();
@@ -117,7 +117,7 @@ impl OpcodeHandler for OpCallerHandler {
             .increase_consumed_gas(gas_cost::CALLER)?;
 
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
             let mut bytes: [u8; 32] = [0; 32];
             bytes[12..].copy_from_slice(&vm.current_call_frame.msg_sender.0);
             bytes.reverse();
@@ -384,7 +384,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
             vm.current_call_frame.stack.push_zero()?;
         } else {
             #[expect(unsafe_code, reason = "safe")]
-            vm.current_call_frame.stack.push(U256(unsafe {
+            vm.current_call_frame.stack.push(U256::from_limbs(unsafe {
                 let mut bytes = account_code_hash;
                 bytes.reverse();
                 mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)

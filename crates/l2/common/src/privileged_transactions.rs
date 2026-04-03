@@ -1,4 +1,5 @@
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
+use ethrex_common::U256;
 use ethrex_common::types::{PrivilegedL2Transaction, Transaction};
 use ethrex_common::utils::keccak;
 use serde::{Deserialize, Serialize};

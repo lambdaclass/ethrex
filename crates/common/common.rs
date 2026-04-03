@@ -1,4 +1,13 @@
-pub use ethereum_types::*;
+// Hash/address types from ethereum_types (not switched by uint backend)
+pub use ethereum_types::{
+    BigEndianHash, Bloom, BloomInput, FromStrRadixErr, H32, H128, H160, H256, H264, H512, H520,
+    Signature,
+};
+pub type Address = H160;
+
+// Switchable uint types
+mod uint;
+pub use uint::{ParseU256Error, U256, U512};
 pub mod constants;
 pub mod serde_utils;
 pub mod types;

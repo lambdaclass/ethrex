@@ -17,7 +17,7 @@ use ethrex_common::types::block_access_list::{
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
 use ethrex_common::{
-    Address, BigEndianHash, H256, U256,
+    Address, H256, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
         GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
@@ -366,7 +366,7 @@ impl LEVM {
 
             // Any remaining unread storage_reads are extraneous BAL entries.
             if let Some((addr, key)) = unread_storage_reads.iter().next() {
-                let slot = ethrex_common::BigEndianHash::into_uint(key);
+                let slot = ethrex_common::U256::from_h256(*key);
                 return Err(EvmError::Custom(format!(
                     "BAL validation failed: storage_read for account {addr:?} slot \
                      {slot} was never actually read during block execution"
@@ -1693,8 +1693,12 @@ impl LEVM {
         let slots: Vec<(Address, ethrex_common::H256)> = accounts
             .iter()
             .flat_map(|ac| {
-                ac.all_storage_slots()
-                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
+                ac.all_storage_slots().map(move |slot| {
+                    let mut bytes = [0u8; 32];
+                    let be = slot.to_big_endian();
+                    bytes.copy_from_slice(&be);
+                    (ac.address, ethrex_common::H256::from(bytes))
+                })
             })
             .collect();
         store
