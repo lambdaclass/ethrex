@@ -84,8 +84,9 @@ impl OpcodeHandler for OpCallHandler {
         let fork = vm.env.config.fork;
 
         // Compute gas_left after eip7702 consumption (without modifying gas_remaining yet).
-        #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
+        let gas_left = vm
+            .current_call_frame
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
@@ -210,8 +211,9 @@ impl OpcodeHandler for OpCallCodeHandler {
             0,
         );
 
-        #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
+        let gas_left = vm
+            .current_call_frame
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::callcode(
@@ -300,8 +302,9 @@ impl OpcodeHandler for OpDelegateCallHandler {
             0,
         );
 
-        #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
+        let gas_left = vm
+            .current_call_frame
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::delegatecall(
@@ -391,8 +394,9 @@ impl OpcodeHandler for OpStaticCallHandler {
             0,
         );
 
-        #[expect(clippy::as_conversions, reason = "safe")]
-        let gas_left = (vm.current_call_frame.gas_remaining.max(0) as u64)
+        let gas_left = vm
+            .current_call_frame
+            .gas_remaining
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
         let (gas_cost, gas_limit) = gas_cost::staticcall(
@@ -537,8 +541,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
         if vm.env.config.fork >= Fork::Amsterdam {
             let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
             // Phase 1: Check base cost is available (without charging)
-            #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
-            if vm.current_call_frame.gas_remaining < (base_cost as i64) {
+            if vm.current_call_frame.gas_remaining < base_cost {
                 return Err(ExceptionalHalt::OutOfGas.into());
             }
 
@@ -866,14 +869,14 @@ impl<'a> VM<'a> {
             .saturating_add(value_cost);
         let gas_remaining = self.current_call_frame.gas_remaining;
 
-        if gas_remaining >= i64::try_from(basic_cost).unwrap_or(i64::MAX) {
+        if gas_remaining >= basic_cost {
             recorder.record_touched_address(target);
 
             if is_delegation_7702 {
                 let delegation_check = basic_cost
                     .saturating_add(create_cost)
                     .saturating_add(eip7702_gas_consumed);
-                if gas_remaining >= i64::try_from(delegation_check).unwrap_or(i64::MAX) {
+                if gas_remaining >= delegation_check {
                     recorder.record_touched_address(code_address);
                 }
             }
@@ -951,16 +954,15 @@ impl<'a> VM<'a> {
             let call_frame = &mut self.current_call_frame;
 
             // Return gas left from subcontext
-            #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
             if ctx_result.is_success() {
-                call_frame.gas_remaining = (call_frame.gas_remaining.max(0) as u64)
+                call_frame.gas_remaining = call_frame
+                    .gas_remaining
                     .checked_add(
                         gas_limit
                             .checked_sub(ctx_result.gas_used)
                             .ok_or(InternalError::Underflow)?,
                     )
-                    .ok_or(InternalError::Overflow)?
-                    as i64;
+                    .ok_or(InternalError::Overflow)?;
             }
 
             // Store return data of sub-context
@@ -1105,7 +1107,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_remaining = parent_call_frame
             .gas_remaining
-            .checked_add(child_unused_gas as i64)
+            .checked_add(child_unused_gas)
             .ok_or(InternalError::Overflow)?;
 
         // Store return data of sub-context
@@ -1184,7 +1186,7 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::Underflow)?;
         parent_call_frame.gas_remaining = parent_call_frame
             .gas_remaining
-            .checked_add(unused_gas as i64)
+            .checked_add(unused_gas)
             .ok_or(InternalError::Overflow)?;
 
         // What to do, depending on TxResult
@@ -1248,14 +1250,13 @@ impl<'a> VM<'a> {
         self.current_call_frame.memory.load_range(offset, size)
     }
 
-    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
         let callframe = &mut self.current_call_frame;
 
         // Return gas_limit to callframe.
         callframe.gas_remaining = callframe
             .gas_remaining
-            .checked_add(gas_limit as i64)
+            .checked_add(gas_limit)
             .ok_or(InternalError::Overflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 

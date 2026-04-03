@@ -334,13 +334,23 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
 fn cost(memory_size: usize) -> Result<u64, VMError> {
     let memory_size = u64::try_from(memory_size).map_err(|_| InternalError::TypeConversion)?;
 
-    // memory size measured in 32 byte words
-    let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64);
+    // memory size measured in 32 byte words.
+    // With EIP-7825 gas limit of 2^24, words fits in u32 (max 524288).
+    // Compute entirely in u32 to avoid MULH on 32-bit RISC-V targets:
+    // u64 * u64 on rv32 generates a widening multiply with MULH for
+    // overflow detection, while u32 * u32 uses only MUL + MULHU.
+    // words^2 max = 524288^2 = 274,877,906,944 which fits in u64, so
+    // we widen to u64 only for the final result.
+    #[expect(clippy::as_conversions)]
+    let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
 
-    // Cost(words) ≈ floor(words^2 / q) + 3 * words
-    // For this to overflow memory size in words should be 2^32, which is impossible.
+    // On rv32, u64 * u64 emits MULH (signed multiply high) for overflow
+    // detection, which Airbender's ISA does not support. Keep multiplications
+    // in u32 and widen only the products.
     #[expect(clippy::arithmetic_side_effects)]
-    let gas_cost = words * words / MEMORY_EXPANSION_QUOTIENT + 3 * words;
+    let words_squared = words.wrapping_mul(words) as u64;
+    #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
+    let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * (words as u64);
 
     Ok(gas_cost)
 }

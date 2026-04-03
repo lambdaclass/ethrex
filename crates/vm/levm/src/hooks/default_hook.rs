@@ -156,11 +156,7 @@ impl Hook for DefaultHook {
             let floor = vm.get_min_gas_used()?;
             // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
             // = total_intrinsic_gas consumed so far, minus state portion
-            #[expect(
-                clippy::as_conversions,
-                reason = "gas_remaining is positive at collision"
-            )]
-            let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
+            let gas_remaining = vm.current_call_frame.gas_remaining;
             let total_intrinsic = gas_limit
                 .saturating_sub(vm.state_gas_reservoir)
                 .saturating_sub(gas_remaining);
