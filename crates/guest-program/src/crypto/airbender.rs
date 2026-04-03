@@ -59,7 +59,7 @@ impl Crypto for AirbenderCrypto {
         // Uncompressed SEC1 encoding: 04 || x (32 bytes) || y (32 bytes)
         let pubkey_bytes = recovered.to_encoded_point(false);
         // Ethereum address = keccak256(x || y)[12..], skip the 0x04 prefix
-        let hash = Keccak256::digest(&pubkey_bytes.as_bytes()[1..]);
+        let hash = ethrex_crypto::keccak::keccak_hash(&pubkey_bytes.as_bytes()[1..]);
         Ok(hash)
     }
 
@@ -78,7 +78,10 @@ impl Crypto for AirbenderCrypto {
     }
 
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
-        Keccak256::digest(input)
+        // Use the same keccak as the trie (tiny_keccak) to rule out
+        // delegation issues. The delegated Keccak256 from airbender-crypto
+        // uses CSR keccak_special5 which may produce wrong results.
+        ethrex_crypto::keccak::keccak_hash(input)
     }
 
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
