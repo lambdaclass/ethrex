@@ -49,6 +49,10 @@ openvm:
 airbender:
 	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features airbender-build-elf
 
+check-airbender-instructions:
+	@python3 ../../scripts/check_unsupported_riscv_instructions.py \
+		bin/airbender/target/riscv32im-risc0-zkvm-elf/release/ethrex-guest-airbender
+
 # L2 targets
 l2-sp1:
 	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features sp1-build-elf,l2
