@@ -42,6 +42,10 @@ use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
+use spawned_concurrency::{
+    ActorError, actor, protocol,
+    threads::{Actor, ActorRef, ActorStart, Context, Handler, spawn_listener},
+};
 use std::{
     collections::{BTreeMap, HashMap, hash_map::Entry},
     fmt::Debug,
@@ -172,7 +176,7 @@ pub struct Store {
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
+    trie_update_worker_tx: crossbeam::channel::Sender<TrieUpdate>,
     /// Cached latest canonical block header.
     ///
     /// Wrapped in Arc for cheap reads with infrequent writes.
@@ -195,6 +199,8 @@ pub struct Store {
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
     background_threads: Arc<ThreadList>,
+
+    update_worker: ActorRef<TrieUpdateWorker>,
 }
 
 #[derive(Debug, Default)]
@@ -1486,7 +1492,7 @@ impl Store {
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
-        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
+        let (trie_upd_tx, trie_upd_rx) = crossbeam::channel::bounded(0);
 
         let last_written = {
             let tx = backend.begin_read()?;
@@ -1499,19 +1505,35 @@ impl Store {
                 last_written
             }
         };
+        let trie_cache = Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold))));
+
+        /*
+            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this worker.
+            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
+            This background worker receives messages through a channel to apply new trie updates.
+        */
+        let update_worker = TrieUpdateWorker::new(
+            backend.clone(),
+            fkv_tx.clone(),
+            trie_cache.clone(),
+            trie_upd_rx,
+        )
+        .start();
+
         let mut background_threads = Vec::new();
         let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache,
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
+            update_worker,
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -1532,50 +1554,7 @@ impl Store {
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
         }));
-        let backend = store.backend.clone();
-        let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
-        let trie_cache = store.trie_cache.clone();
-        /*
-            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
-            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
 
-            This background thread receives messages through a channel to apply new trie updates and does three things:
-
-            - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
-            block production thread) so it can continue with block execution (block execution cannot proceed without the
-            diff layers updated, otherwise it would see wrong state when reading from the trie). This section is done in an RCU manner:
-            a shared pointer with the trie is kept behind a lock. This thread first acquires the lock, then copies the pointer and drops the lock;
-            afterwards it makes a deep copy of the trie layer and mutates it, then takes the lock again, replaces the pointer with the updated copy,
-            then drops the lock again.
-
-            - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
-            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue).
-            Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
-            again for FlatKeyValue generation to continue.
-
-            - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
-        */
-        background_threads.push(std::thread::spawn(move || {
-            let rx = trie_upd_rx;
-            loop {
-                match rx.recv() {
-                    Ok(trie_update) => {
-                        // FIXME: what should we do on error?
-                        let _ = apply_trie_updates(
-                            backend.as_ref(),
-                            &flatkeyvalue_control_tx,
-                            &trie_cache,
-                            trie_update,
-                        )
-                        .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
-                    }
-                    Err(err) => {
-                        debug!("Trie update sender disconnected: {err}");
-                        return;
-                    }
-                }
-            }
-        }));
         store.background_threads = Arc::new(ThreadList {
             list: background_threads,
         });
@@ -2991,6 +2970,7 @@ impl Store {
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
 
+#[derive(Debug, Clone)]
 struct TrieUpdate {
     result_sender: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
     parent_state_root: H256,
@@ -3000,8 +2980,24 @@ struct TrieUpdate {
     is_batch: bool,
 }
 
-// NOTE: we don't receive `Store` here to avoid cyclic dependencies
-// with the other end of `fkv_ctl`
+/*
+This function does three things:
+    - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
+    block production thread) so it can continue with block execution (block execution cannot proceed without the
+    diff layers updated, otherwise it would see wrong state when reading from the trie). This section is done in an RCU manner:
+    a shared pointer with the trie is kept behind a lock. This function first acquires the lock, then copies the pointer and drops the lock;
+    afterwards it makes a deep copy of the trie layer and mutates it, then takes the lock again, replaces the pointer with the updated copy,
+    then drops the lock again.
+
+    - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
+    need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue).
+    Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
+    again for FlatKeyValue generation to continue.
+
+    - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
+
+NOTE: we don't receive `Store` here to avoid cyclic dependencies with the other end of `fkv_ctl`
+*/
 fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
@@ -3456,5 +3452,64 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[protocol]
+trait TrieUpdateWorkerProtocol: Send + Sync {
+    fn trie_updates(&self, updates: TrieUpdate) -> Result<(), ActorError>;
+}
+
+#[derive(Debug)]
+struct TrieUpdateWorker {
+    backend: Arc<dyn StorageBackend>,
+    flatkeyvalue_control_tx: SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie_upd_rx: crossbeam::channel::Receiver<TrieUpdate>,
+}
+
+impl TrieUpdateWorker {
+    fn new(
+        backend: Arc<dyn StorageBackend>,
+        flatkeyvalue_control_tx: SyncSender<FKVGeneratorControlMessage>,
+        trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
+        trie_upd_rx: crossbeam::channel::Receiver<TrieUpdate>,
+    ) -> Self {
+        Self {
+            backend,
+            flatkeyvalue_control_tx,
+            trie_cache,
+            trie_upd_rx,
+        }
+    }
+}
+
+#[actor(protocol = TrieUpdateWorkerProtocol)]
+impl TrieUpdateWorker {
+    #[started]
+    fn started(&mut self, ctx: &Context<Self>) {
+        let rx = self
+            .trie_upd_rx
+            .clone()
+            .into_iter()
+            .map(|val| trie_update_worker_protocol::TrieUpdates { updates: val });
+        spawn_listener(ctx.clone(), rx);
+    }
+
+    #[send_handler]
+    fn handle_trie_updates(
+        &mut self,
+        msg: trie_update_worker_protocol::TrieUpdates,
+        _ctx: &Context<Self>,
+    ) {
+        // FIXME: what should we do on error?
+        tracing::info!("Apply Trie Updates");
+        let _ = apply_trie_updates(
+            self.backend.as_ref(),
+            &self.flatkeyvalue_control_tx,
+            &self.trie_cache,
+            msg.updates,
+        )
+        .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
     }
 }

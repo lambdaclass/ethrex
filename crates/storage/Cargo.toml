@@ -26,6 +26,9 @@ tokio = { workspace = true, features = ["rt"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru.workspace = true
+spawned-rt.workspace = true
+spawned-concurrency.workspace = true
+crossbeam.workspace = true
 
 [features]
 default = []
