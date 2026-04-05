@@ -1,23 +1,116 @@
-use ethrex_blockchain::{
-    Blockchain, BlockchainOptions,
-    fork_choice::apply_fork_choice,
-};
+use std::sync::Arc;
+
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     H256,
     constants::EMPTY_KECCACK_HASH,
-    types::{
-        Account as CoreAccount,
-        requests::compute_requests_hash,
+    types::{Account as CoreAccount, DEFAULT_BUILDER_GAS_CEIL},
+};
+use ethrex_rpc::{
+    ClientVersion, GasTipEstimator, NodeData, RpcApiContext,
+    RpcErr, RpcErrorMetadata, RpcHandler,
+    start_block_executor,
+    test_utils::{
+        dummy_peer_handler, dummy_sync_manager,
+        example_local_node_record, example_p2p_node,
     },
+};
+use ethrex_rpc::engine::fork_choice::{
+    ForkChoiceUpdatedV1, ForkChoiceUpdatedV2,
+    ForkChoiceUpdatedV3, ForkChoiceUpdatedV4,
+};
+use ethrex_rpc::engine::payload::{
+    NewPayloadV1Request, NewPayloadV2Request,
+    NewPayloadV3Request, NewPayloadV4Request,
+    NewPayloadV5Request,
+};
+use ethrex_rpc::types::fork_choice::ForkChoiceResponse;
+use ethrex_rpc::types::payload::{
+    PayloadStatus, PayloadValidationStatus,
 };
 use ethrex_storage::{EngineType, Store};
 use serde::Serialize;
+use tokio::sync::{Mutex as TokioMutex, OnceCell};
 
-use crate::types::{
-    EngineNewPayload, EngineTestUnit, FixtureExecutionPayload,
-    compute_raw_bal_hash, parse_beacon_root, parse_execution_requests,
-    parse_versioned_hashes,
-};
+use crate::types::{EngineNewPayload, EngineTestUnit};
+
+use bytes::Bytes;
+use ethrex_p2p::peer_handler::PeerHandler;
+use ethrex_p2p::sync_manager::SyncManager;
+
+/// Shared dummy infrastructure (SyncManager + PeerHandler) that is
+/// expensive to create.  Built once and reused across all tests so
+/// we don't exhaust OS thread limits.
+struct SharedTestInfra {
+    syncer: Arc<SyncManager>,
+    peer_handler: PeerHandler,
+}
+
+/// Lazily-initialised shared infrastructure.
+static SHARED_INFRA: OnceCell<SharedTestInfra> =
+    OnceCell::const_new();
+
+/// Returns a reference to the shared infra, initializing it on the
+/// first call (within the current async runtime).
+async fn shared_infra() -> &'static SharedTestInfra {
+    SHARED_INFRA
+        .get_or_init(|| async {
+            let dummy_store = Store::new(
+                "",
+                EngineType::InMemory,
+            )
+            .expect("Failed to create dummy store");
+            SharedTestInfra {
+                syncer: Arc::new(dummy_sync_manager().await),
+                peer_handler: dummy_peer_handler(
+                    dummy_store,
+                )
+                .await,
+            }
+        })
+        .await
+}
+
+/// Build a lightweight `RpcApiContext` for a single test, reusing the
+/// shared SyncManager and PeerHandler.
+#[allow(unexpected_cfgs)]
+async fn build_context(store: Store) -> RpcApiContext {
+    let blockchain =
+        Arc::new(Blockchain::default_with_store(store.clone()));
+    let block_worker_channel =
+        start_block_executor(blockchain.clone());
+    let infra = shared_infra().await;
+
+    RpcApiContext {
+        storage: store,
+        blockchain,
+        active_filters: Default::default(),
+        syncer: Some(infra.syncer.clone()),
+        peer_handler: Some(infra.peer_handler.clone()),
+        node_data: NodeData {
+            jwt_secret: Default::default(),
+            local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
+            client_version: ClientVersion::new(
+                "ethrex".to_string(),
+                "0.1.0".to_string(),
+                "test".to_string(),
+                "abcd1234".to_string(),
+                "x86_64".to_string(),
+                "1.70.0".to_string(),
+            ),
+            extra_data: Bytes::new(),
+        },
+        gas_tip_estimator: Arc::new(
+            TokioMutex::new(GasTipEstimator::new()),
+        ),
+        log_filter_handler: None,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        block_worker_channel,
+        #[cfg(feature = "eip-8025")]
+        proof_coordinator: None,
+    }
+}
 
 #[derive(Serialize)]
 pub struct TestResult {
@@ -34,8 +127,7 @@ pub async fn run_engine_test(
     test: &EngineTestUnit,
 ) -> Result<(), String> {
     let store = build_store(test).await;
-    let blockchain =
-        Blockchain::new(store.clone(), BlockchainOptions::default());
+    let context = build_context(store.clone()).await;
 
     // Track the current head hash for fork-choice updates.
     #[allow(unused_assignments)]
@@ -45,309 +137,228 @@ pub async fn run_engine_test(
         test.engine_new_payloads.iter().enumerate()
     {
         let expects_error = payload_entry.expects_error();
-        let expects_rpc_error = payload_entry.error_code.is_some();
+        let expected_rpc_code = payload_entry.error_code;
 
-        // ---- 1. Validate engine version-specific parameters ----
-        if let Err(rpc_err) =
-            validate_engine_params(payload_entry)
-        {
-            if expects_rpc_error {
-                // RPC-level error expected (e.g. -32602), skip this
-                // payload.
-                continue;
-            }
-            return Err(format!(
-                "payload[{i}]: unexpected RPC validation error: {rpc_err}"
-            ));
-        }
-        if expects_rpc_error {
-            return Err(format!(
-                "payload[{i}]: expected RPC error code {:?} but \
-                 validation passed",
-                payload_entry.error_code
-            ));
-        }
-
-        // ---- 2. Parse the execution payload ----
-        let payload_json = &payload_entry.params[0];
-        let fixture_payload: FixtureExecutionPayload =
-            serde_json::from_value(payload_json.clone()).map_err(
-                |e| {
-                    format!(
-                        "payload[{i}]: failed to parse \
-                         ExecutionPayload: {e}"
-                    )
-                },
-            )?;
-        let block_hash = fixture_payload.block_hash;
-
-        // ---- 3. Parse version-dependent extra params ----
         let version = payload_entry.new_payload_version;
+        let params = Some(payload_entry.params.clone());
 
-        let (versioned_hashes, beacon_root, requests_hash, bal_hash) =
-            parse_extra_params(payload_entry, payload_json, version)
-                .map_err(|e| {
-                    format!("payload[{i}]: {e}")
-                })?;
+        // ---- 1. Dispatch to the real RPC handler ----
+        //
+        // RpcHandler::parse() validates parameter count and
+        // deserializes the payload, and handle() runs the full
+        // engine pipeline: payload validation, block construction,
+        // block hash check, blob versioned hash check, execution
+        // requests validation, block execution, and storage.
+        let handler_result: Result<serde_json::Value, RpcErr> =
+            dispatch_new_payload(version, &params, &context).await;
 
-        // ---- 4. Convert payload to Block ----
-        // Transaction RLP decode failures are treated as INVALID
-        // (same as the real engine handler returning
-        // PayloadStatus::invalid_with_err).
-        let block = match fixture_payload
-            .into_block(beacon_root, requests_hash, bal_hash)
-        {
-            Ok(b) => b,
-            Err(decode_err) => {
+        // ---- 2. Check for RPC-level errors ----
+        match handler_result {
+            Err(rpc_err) => {
+                let meta: RpcErrorMetadata = rpc_err.into();
+                if let Some(expected_code) = expected_rpc_code {
+                    if meta.code == expected_code as i32 {
+                        // Expected RPC error, skip this payload.
+                        continue;
+                    }
+                    return Err(format!(
+                        "payload[{i}]: expected RPC error code \
+                         {expected_code}, got {} ({})",
+                        meta.code, meta.message
+                    ));
+                }
                 if expects_error {
+                    // The fixture expected an INVALID status but
+                    // we got an RPC error instead. Treat it as a
+                    // matching error.
                     continue;
                 }
                 return Err(format!(
-                    "payload[{i}]: {decode_err}"
+                    "payload[{i}]: unexpected RPC error: \
+                     code={}, msg={}",
+                    meta.code, meta.message
                 ));
             }
-        };
-
-        if let Some(ref expected_hashes) = versioned_hashes {
-            let actual_hashes: Vec<H256> = block
-                .body
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.blob_versioned_hashes())
-                .collect();
-            if *expected_hashes != actual_hashes {
-                if expects_error {
-                    continue;
-                }
+            Ok(ref _val) if expected_rpc_code.is_some() => {
                 return Err(format!(
-                    "payload[{i}]: blob versioned hashes mismatch"
+                    "payload[{i}]: expected RPC error code {:?} \
+                     but handler succeeded",
+                    expected_rpc_code
                 ));
             }
-        }
+            Ok(response_value) => {
+                // ---- 3. Inspect PayloadStatus ----
+                let status: PayloadStatus =
+                    serde_json::from_value(response_value.clone())
+                        .map_err(|e| {
+                            format!(
+                                "payload[{i}]: failed to \
+                                 deserialize PayloadStatus: {e} \
+                                 (raw: {response_value})"
+                            )
+                        })?;
 
-        // ---- 5. Validate block hash ----
-        let actual_hash = block.hash();
-        if block_hash != actual_hash {
-            if expects_error {
-                continue;
-            }
-            return Err(format!(
-                "payload[{i}]: block hash mismatch: \
-                 expected {block_hash:#x}, got {actual_hash:#x}"
-            ));
-        }
-
-        // ---- 6. Execute the block through the real pipeline ----
-        let chain_result =
-            blockchain.add_block_pipeline(block.clone(), None);
-
-        match chain_result {
-            Err(error) => {
-                if !expects_error {
-                    return Err(format!(
-                        "payload[{i}]: execution failed \
-                         unexpectedly: {error:?}"
-                    ));
+                match status.status {
+                    PayloadValidationStatus::Valid => {
+                        if expects_error {
+                            return Err(format!(
+                                "payload[{i}]: expected error \
+                                 ({:?}) but got VALID",
+                                payload_entry.validation_error
+                            ));
+                        }
+                    }
+                    PayloadValidationStatus::Invalid => {
+                        if !expects_error {
+                            return Err(format!(
+                                "payload[{i}]: got INVALID \
+                                 unexpectedly: {:?}",
+                                status.validation_error
+                            ));
+                        }
+                        // Expected error -- do NOT advance fork
+                        // choice, but continue processing
+                        // subsequent payloads.
+                        continue;
+                    }
+                    PayloadValidationStatus::Syncing
+                    | PayloadValidationStatus::Accepted => {
+                        // Syncing/Accepted in a test context is
+                        // unexpected; the dummy SyncManager runs
+                        // in Full mode so this should not happen.
+                        return Err(format!(
+                            "payload[{i}]: unexpected status {:?}",
+                            status.status
+                        ));
+                    }
                 }
-                // Expected error -- do NOT advance fork choice, but
-                // continue processing subsequent payloads.
-                continue;
-            }
-            Ok(()) => {
-                if expects_error {
-                    return Err(format!(
-                        "payload[{i}]: expected error \
-                         ({:?}) but execution succeeded",
-                        payload_entry.validation_error
-                    ));
-                }
             }
         }
 
-        // ---- 7. Apply fork choice (advance the canonical head) ----
-        head_hash = block_hash;
-        apply_fork_choice(
-            &store, head_hash, head_hash, head_hash,
+        // ---- 4. Apply fork choice (advance the canonical
+        //         head) via the real handler ----
+        head_hash = payload_entry
+            .block_hash_from_params()
+            .unwrap_or(head_hash);
+
+        let fcu_version = payload_entry.forkchoice_updated_version;
+        dispatch_fork_choice(
+            fcu_version,
+            head_hash,
+            &context,
         )
         .await
         .map_err(|e| {
-            format!(
-                "payload[{i}]: fork choice update \
-                 failed: {e:?}"
-            )
+            format!("payload[{i}]: fork choice update failed: {e}")
         })?;
     }
 
-    // ---- 8. Verify post-state ----
+    // ---- 5. Verify post-state ----
     verify_post_state(test_key, test, &store).await?;
 
     Ok(())
 }
 
-// ---- Engine parameter validation ----
-//
-// These mirror the checks in ethrex's RPC engine handlers
-// (validate_execution_payload_v1 .. v4, validate_execution_requests).
+// ---- RPC dispatch helpers ----
 
-fn validate_engine_params(
-    entry: &EngineNewPayload,
-) -> Result<(), String> {
-    let version = entry.new_payload_version;
-    let payload_json = &entry.params[0];
-
-    // Check param count matches version expectation.
+/// Dispatch to the version-appropriate `engine_newPayload` handler.
+async fn dispatch_new_payload(
+    version: u8,
+    params: &Option<Vec<serde_json::Value>>,
+    context: &RpcApiContext,
+) -> Result<serde_json::Value, RpcErr> {
     match version {
         1 => {
-            if entry.params.len() != 1 {
-                return Err(format!(
-                    "V1 expects 1 param, got {}",
-                    entry.params.len()
-                ));
-            }
+            let req = NewPayloadV1Request::parse(params)?;
+            req.handle(context.clone()).await
         }
         2 => {
-            if entry.params.len() != 1 {
-                return Err(format!(
-                    "V2 expects 1 param, got {}",
-                    entry.params.len()
-                ));
-            }
+            let req = NewPayloadV2Request::parse(params)?;
+            req.handle(context.clone()).await
         }
         3 => {
-            if entry.params.len() != 3 {
-                return Err(format!(
-                    "V3 expects 3 params, got {}",
-                    entry.params.len()
-                ));
-            }
+            let req = NewPayloadV3Request::parse(params)?;
+            req.handle(context.clone()).await
         }
-        4 | 5 => {
-            if entry.params.len() != 4 {
-                return Err(format!(
-                    "V{version} expects 4 params, got {}",
-                    entry.params.len()
-                ));
-            }
+        4 => {
+            let req = NewPayloadV4Request::parse(params)?;
+            req.handle(context.clone()).await
+        }
+        5 => {
+            let req = NewPayloadV5Request::parse(params)?;
+            req.handle(context.clone()).await
+        }
+        _ => Err(RpcErr::BadParams(format!(
+            "Unsupported newPayload version: {version}"
+        ))),
+    }
+}
+
+/// Dispatch to the version-appropriate `engine_forkchoiceUpdated`
+/// handler. We only pass the fork-choice state (no payload
+/// attributes) since the test runner does not build payloads.
+async fn dispatch_fork_choice(
+    version: u8,
+    head_hash: H256,
+    context: &RpcApiContext,
+) -> Result<(), String> {
+    let fcu_state = serde_json::json!({
+        "headBlockHash": head_hash,
+        "safeBlockHash": head_hash,
+        "finalizedBlockHash": head_hash,
+    });
+    let params = Some(vec![fcu_state]);
+
+    let result = match version {
+        1 => {
+            let req = ForkChoiceUpdatedV1::parse(&params)
+                .map_err(|e| format!("FCU parse: {e}"))?;
+            req.handle(context.clone())
+                .await
+                .map_err(|e| format!("FCU handle: {e}"))
+        }
+        2 => {
+            let req = ForkChoiceUpdatedV2::parse(&params)
+                .map_err(|e| format!("FCU parse: {e}"))?;
+            req.handle(context.clone())
+                .await
+                .map_err(|e| format!("FCU handle: {e}"))
+        }
+        3 => {
+            let req = ForkChoiceUpdatedV3::parse(&params)
+                .map_err(|e| format!("FCU parse: {e}"))?;
+            req.handle(context.clone())
+                .await
+                .map_err(|e| format!("FCU handle: {e}"))
+        }
+        4 => {
+            let req = ForkChoiceUpdatedV4::parse(&params)
+                .map_err(|e| format!("FCU parse: {e}"))?;
+            req.handle(context.clone())
+                .await
+                .map_err(|e| format!("FCU handle: {e}"))
         }
         _ => {
             return Err(format!(
-                "Unsupported newPayload version: {version}"
+                "Unsupported forkchoiceUpdated version: {version}"
             ));
         }
+    }?;
+
+    // Verify the FCU response indicates VALID (not SYNCING or
+    // INVALID).
+    let response: ForkChoiceResponse =
+        serde_json::from_value(result).map_err(|e| {
+            format!("Failed to parse ForkChoiceResponse: {e}")
+        })?;
+
+    match response.payload_status.status {
+        PayloadValidationStatus::Valid => Ok(()),
+        other => Err(format!(
+            "Fork choice returned {:?}: {:?}",
+            other, response.payload_status.validation_error
+        )),
     }
-
-    let has_withdrawals = payload_json.get("withdrawals").is_some()
-        && !payload_json["withdrawals"].is_null();
-    let has_blob_gas =
-        payload_json.get("blobGasUsed").is_some()
-            && !payload_json["blobGasUsed"].is_null();
-    let has_excess_blob_gas =
-        payload_json.get("excessBlobGas").is_some()
-            && !payload_json["excessBlobGas"].is_null();
-
-    match version {
-        1 => {
-            // V1: no withdrawals, no blob fields
-            if has_withdrawals {
-                return Err(
-                    "V1: withdrawals must not be present"
-                        .to_string(),
-                );
-            }
-            if has_blob_gas || has_excess_blob_gas {
-                return Err(
-                    "V1: blob gas fields must not be present"
-                        .to_string(),
-                );
-            }
-        }
-        2 => {
-            // V2: withdrawals required for Shanghai, no blob fields
-            if has_blob_gas || has_excess_blob_gas {
-                return Err(
-                    "V2: blob gas fields must not be present"
-                        .to_string(),
-                );
-            }
-        }
-        3 | 4 | 5 => {
-            // V3+: withdrawals required, blob gas required
-            if !has_withdrawals {
-                return Err(format!(
-                    "V{version}: withdrawals required"
-                ));
-            }
-            if !has_blob_gas || !has_excess_blob_gas {
-                return Err(format!(
-                    "V{version}: blob gas fields required"
-                ));
-            }
-        }
-        _ => {}
-    }
-
-    // V4/V5: validate execution requests ordering
-    if version >= 4 && entry.params.len() >= 4 {
-        if let Ok(requests) =
-            parse_execution_requests(&entry.params[3])
-        {
-            let mut last_type: i32 = -1;
-            for req in &requests {
-                if req.0.len() < 2 {
-                    return Err(
-                        "Empty request data".to_string()
-                    );
-                }
-                let req_type = req.0[0] as i32;
-                if last_type >= req_type {
-                    return Err(
-                        "Invalid requests order".to_string()
-                    );
-                }
-                last_type = req_type;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Parse the version-dependent extra parameters from the fixture.
-fn parse_extra_params(
-    entry: &EngineNewPayload,
-    payload_json: &serde_json::Value,
-    version: u8,
-) -> Result<
-    (
-        Option<Vec<H256>>,
-        Option<H256>,
-        Option<H256>,
-        Option<H256>,
-    ),
-    String,
-> {
-    let mut versioned_hashes = None;
-    let mut beacon_root = None;
-    let mut requests_hash = None;
-    let mut bal_hash = None;
-
-    if version >= 3 && entry.params.len() >= 3 {
-        versioned_hashes =
-            Some(parse_versioned_hashes(&entry.params[1])?);
-        beacon_root = Some(parse_beacon_root(&entry.params[2])?);
-    }
-
-    if version >= 4 && entry.params.len() >= 4 {
-        let requests =
-            parse_execution_requests(&entry.params[3])?;
-        requests_hash = Some(compute_requests_hash(&requests));
-    }
-
-    if version >= 5 {
-        bal_hash = compute_raw_bal_hash(payload_json);
-    }
-
-    Ok((versioned_hashes, beacon_root, requests_hash, bal_hash))
 }
 
 // ---- Store setup ----
@@ -469,5 +480,13 @@ impl EngineNewPayload {
         self.validation_error
             .as_ref()
             .is_some_and(|s| !s.is_empty())
+    }
+
+    /// Extract the block hash from params[0] of the fixture.
+    pub fn block_hash_from_params(&self) -> Option<H256> {
+        self.params.first().and_then(|p| {
+            p.get("blockHash")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+        })
     }
 }

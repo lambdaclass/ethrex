@@ -12,6 +12,8 @@ ef_tests-blockchain = { path = "../blockchain" }
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
+ethrex-p2p.workspace = true
+ethrex-rpc.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
