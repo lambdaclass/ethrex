@@ -31,6 +31,10 @@ struct Cli {
     /// Output results as JSON array to stdout.
     #[arg(long)]
     json: bool,
+
+    /// Emit EIP-3155 per-opcode traces to stderr.
+    #[arg(long)]
+    trace: bool,
 }
 
 /// Tests to ignore (same set as state_v2).
@@ -100,13 +104,14 @@ fn main() {
         .flat_map(|test| (0..test.test_cases.len()).map(move |i| (test, i)))
         .collect();
 
+    let trace = cli.trace;
     let results: Vec<TestResult> = pool.install(|| {
         work_items
             .into_par_iter()
             .map(|(test, case_idx)| {
                 let tc = &test.test_cases[case_idx];
                 let result =
-                    runner::run_test_case(&test.name, &test.env, &test.pre, tc);
+                    runner::run_test_case(&test.name, &test.env, &test.pre, tc, trace);
 
                 if result.pass {
                     passing.fetch_add(1, Ordering::Relaxed);

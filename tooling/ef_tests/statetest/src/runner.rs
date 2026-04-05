@@ -448,6 +448,7 @@ pub fn run_test_case(
     env: &Env,
     pre: &HashMap<Address, AccountState>,
     tc: &TestCase,
+    eip3155_trace: bool,
 ) -> TestResult {
     let label = test_name.to_string();
     let fork_str = format!("{:?}", tc.fork);
@@ -488,7 +489,10 @@ pub fn run_test_case(
     // Create and execute the VM.
     let tracer = LevmCallTracer::disabled();
     let mut vm = match VM::new(vm_env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto) {
-        Ok(vm) => vm,
+        Ok(mut vm) => {
+            vm.eip3155_trace = eip3155_trace;
+            vm
+        }
         Err(e) => {
             // VM::new can fail for invalid transactions.
             // If an exception was expected, that counts as a pass.
