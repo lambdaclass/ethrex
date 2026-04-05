@@ -7,7 +7,8 @@ use ethrex_common::{Address, H256, types::TxType};
 use ethrex_l2_common::prover::{ProverType, verifier_getter};
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_committed_batch, send_tx_bump_gas_exponential_backoff,
+    build_generic_tx, get_l2_gas_limit as sdk_get_l2_gas_limit, get_last_committed_batch,
+    send_tx_bump_gas_exponential_backoff,
 };
 use ethrex_rpc::{
     EthClient,
@@ -120,6 +121,16 @@ pub async fn get_needed_proof_types(
     }
 
     Ok(needed_proof_types)
+}
+
+pub async fn get_l2_gas_limit(
+    rpc_urls: Vec<Url>,
+    bridge_address: Address,
+) -> Result<u64, EthClientError> {
+    let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
+    let gas_limit = sdk_get_l2_gas_limit(&eth_client, bridge_address).await?;
+    info!("Fetched L2 gas limit from bridge contract: {gas_limit}");
+    Ok(gas_limit)
 }
 
 pub fn resolve_aligned_network(network: &str) -> Network {
