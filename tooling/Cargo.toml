@@ -3,6 +3,7 @@ members = [
   "archive_sync",
   "ef_tests/blocktest",
   "ef_tests/blockchain",
+  "ef_tests/enginetest",
   "ef_tests/state",
   "ef_tests/statetest",
   "ef_tests/state_v2",

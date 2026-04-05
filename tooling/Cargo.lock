@@ -2912,6 +2912,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ef_tests-enginetest"
+version = "4.0.0"
+dependencies = [
+ "bytes",
+ "clap 4.5.54",
+ "ef_tests-blockchain",
+ "ethrex-blockchain",
+ "ethrex-common 9.0.0",
+ "ethrex-crypto",
+ "ethrex-rlp 9.0.0",
+ "ethrex-storage 9.0.0",
+ "ethrex-vm",
+ "hex",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
