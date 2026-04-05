@@ -449,10 +449,7 @@ pub fn run_test_case(
     pre: &HashMap<Address, AccountState>,
     tc: &TestCase,
 ) -> TestResult {
-    let label = format!(
-        "{}[fork_{:?}-data_{}-gas_{}-value_{}]",
-        test_name, tc.fork, tc.vector.0, tc.vector.1, tc.vector.2
-    );
+    let label = test_name.to_string();
     let fork_str = format!("{:?}", tc.fork);
 
     // Build the in-memory database from pre-state.
