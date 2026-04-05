@@ -129,15 +129,13 @@ fn main() {
         let json_results: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
-                let mut obj = serde_json::json!({
+                serde_json::json!({
                     "name": r.name,
                     "pass": r.pass,
                     "fork": r.fork,
-                });
-                if let Some(ref e) = r.error {
-                    obj["error"] = serde_json::Value::String(e.clone());
-                }
-                obj
+                    "stateRoot": r.state_root,
+                    "error": r.error,
+                })
             })
             .collect();
         println!(
@@ -148,11 +146,8 @@ fn main() {
         // Print failures.
         for r in &results {
             if !r.pass {
-                eprintln!(
-                    "FAIL: {} -- {}",
-                    r.name,
-                    r.error.as_deref().unwrap_or("unknown")
-                );
+                let err_msg = if r.error.is_empty() { "unknown" } else { &r.error };
+                eprintln!("FAIL: {} -- {}", r.name, err_msg);
             }
         }
     }

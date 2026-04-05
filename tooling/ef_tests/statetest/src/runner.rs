@@ -32,7 +32,8 @@ pub struct TestResult {
     pub name: String,
     pub pass: bool,
     pub fork: String,
-    pub error: Option<String>,
+    pub state_root: String,
+    pub error: String,
 }
 
 // ---- Lightweight in-memory database ----
@@ -457,6 +458,8 @@ pub fn run_test_case(
     // Build the in-memory database from pre-state.
     let mut db = build_db(pre, &tc.fork);
 
+    let expected_root = format!("{:#x}", tc.post.hash);
+
     // Build the environment.
     let vm_env = match build_env(env, tc) {
         Ok(e) => e,
@@ -465,7 +468,8 @@ pub fn run_test_case(
                 name: label,
                 pass: false,
                 fork: fork_str,
-                error: Some(format!("env build error: {e}")),
+                state_root: expected_root,
+                error: format!("env build error: {e}"),
             };
         }
     };
@@ -478,7 +482,8 @@ pub fn run_test_case(
                 name: label,
                 pass: false,
                 fork: fork_str,
-                error: Some(format!("tx build error: {e}")),
+                state_root: expected_root,
+                error: format!("tx build error: {e}"),
             };
         }
     };
@@ -495,14 +500,16 @@ pub fn run_test_case(
                     name: label,
                     pass: true,
                     fork: fork_str,
-                    error: None,
+                    state_root: expected_root,
+                    error: String::new(),
                 };
             }
             return TestResult {
                 name: label,
                 pass: false,
                 fork: fork_str,
-                error: Some(format!("VM creation error: {e}")),
+                state_root: expected_root,
+                error: format!("VM creation error: {e}"),
             };
         }
     };
@@ -515,13 +522,15 @@ pub fn run_test_case(
             name: label,
             pass: true,
             fork: fork_str,
-            error: None,
+            state_root: expected_root,
+            error: String::new(),
         },
         Err(e) => TestResult {
             name: label,
             pass: false,
             fork: fork_str,
-            error: Some(e),
+            state_root: expected_root,
+            error: e,
         },
     }
 }
