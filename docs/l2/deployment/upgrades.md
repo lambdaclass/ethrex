@@ -93,13 +93,7 @@ From v11 onwards, the L2 block gas limit is stored in the `CommonBridge` contrac
 
 On existing deployments, `l2GasLimit` will default to `0` because `initialize()` has already run. This means `_sendToL2` will revert for any non-zero gas limit, **bricking the bridge** until the owner calls `setL2GasLimit()`.
 
-After upgrading (with the contract paused), call `setL2GasLimit` before unpausing:
-
-```
-setL2GasLimit(30000000)
-```
-
-The contract must not be unpaused until `l2GasLimit` is set to a valid value. Otherwise all deposits and privileged transactions will revert.
+After upgrading (with the contract paused), call `setL2GasLimit` before unpausing (see [Updating the gas limit](#updating-the-gas-limit) below). The contract must not be unpaused until `l2GasLimit` is set to a valid value. Otherwise all deposits and privileged transactions will revert.
 
 #### CLI flag removed
 
