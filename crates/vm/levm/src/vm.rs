@@ -567,6 +567,9 @@ impl<'a> VM<'a> {
         }
 
         self.substate.push_backup();
+        if matches!(self.vm_type, VMType::Polygon(_)) && self.env.gas_price.is_zero() {
+            eprintln!("PUSH_BACKUP_DEBUG has_parent_after_push={}", self.substate.parent.is_some());
+        }
 
         // Polygon: emit Bor LogTransfer for the initial tx value transfer.
         // Must be AFTER push_backup() so the log reverts with failed transactions.
@@ -741,7 +744,17 @@ impl<'a> VM<'a> {
         // Exception: Polygon always includes logs because the PolygonHook appends
         // a LogFeeTransfer log after finalization, even for failed transactions.
         let logs = if ctx_result.is_success() || matches!(self.vm_type, VMType::Polygon(_)) {
-            self.substate.extract_logs()
+            let extracted = self.substate.extract_logs();
+            if matches!(self.vm_type, VMType::Polygon(_)) && self.env.gas_price.is_zero() {
+                eprintln!(
+                    "SYSCALL_LOGS gas_price=0 success={} extracted={} substate_logs={} has_parent={}",
+                    ctx_result.is_success(),
+                    extracted.len(),
+                    self.substate.logs.len(),
+                    self.substate.parent.is_some(),
+                );
+            }
+            extracted
         } else {
             Vec::new()
         };

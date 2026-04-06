@@ -3492,13 +3492,31 @@ fn execute_polygon_system_calls(
                 MAX_SYSTEM_CALL_GAS,
             ) {
                 Ok(report) => {
-                    warn!(
-                        block_number,
-                        event_id = event.id,
-                        success = report.is_success(),
-                        log_count = report.logs.len(),
-                        "commitState result"
-                    );
+                    if block_number == 84977856 {
+                        warn!(
+                            block_number,
+                            event_id = event.id,
+                            success = report.is_success(),
+                            log_count = report.logs.len(),
+                            output_hex = hex::encode(&report.output[..report.output.len().min(64)]),
+                            "commitState detailed"
+                        );
+                        for (li, log) in report.logs.iter().enumerate() {
+                            warn!(
+                                log_idx = li,
+                                addr = ?log.address,
+                                topic_count = log.topics.len(),
+                                data_hex = hex::encode(&log.data),
+                                "commitState log"
+                            );
+                        }
+                        // Also dump the record RLP
+                        warn!(
+                            record_len = record_bytes.len(),
+                            record_hex = hex::encode(&record_bytes[..record_bytes.len().min(200)]),
+                            "commitState record"
+                        );
+                    }
                     // commitState reverts are non-fatal — collect logs only on success
                     if report.is_success() {
                         all_logs.extend(report.logs);
