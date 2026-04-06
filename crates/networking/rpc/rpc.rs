@@ -5,7 +5,12 @@ use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
+use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, WitnessBlockWorkerMessage};
+use crate::engine::rest::handle_new_payload_with_witness;
+#[cfg(feature = "eip-8025")]
+use crate::engine::proof::{
+    RequestProofsV1, VerifyExecutionProofV1, VerifyNewPayloadRequestHeaderV1,
+};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -219,6 +224,12 @@ pub struct RpcApiContext {
     /// The `engine` namespace is always served via the authenticated RPC port
     /// and is not gated here.
     pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
+    /// Optional channel for the witness block executor (REST endpoint).
+    pub witness_block_worker_channel: Option<UnboundedSender<WitnessBlockWorkerMessage>>,
+    /// EIP-8025 proof coordinator handle for sending proof requests.
+    #[cfg(feature = "eip-8025")]
+    pub proof_coordinator:
+        Option<ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle>,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -455,6 +466,31 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     block_worker_channel
 }
 
+/// Spawns a dedicated thread for block execution with witness generation.
+///
+/// This is the worker behind `POST /new-payload-with-witness`. It calls
+/// `add_block_pipeline_with_witness` which generates and returns an
+/// `RpcExecutionWitness` instead of persisting it.
+pub fn start_witness_block_executor(
+    blockchain: Arc<Blockchain>,
+) -> UnboundedSender<WitnessBlockWorkerMessage> {
+    let (tx, mut rx) = unbounded_channel::<WitnessBlockWorkerMessage>();
+    std::thread::Builder::new()
+        .name("witness_block_executor".to_string())
+        .spawn(move || {
+            while let Some((notify, block, bal)) = rx.blocking_recv() {
+                let _ = notify
+                    .send(
+                        blockchain
+                            .add_block_pipeline_with_witness(block, bal.as_ref()),
+                    )
+                    .inspect_err(|_| tracing::error!("failed to notify witness caller"));
+            }
+        })
+        .expect("Failed to spawn witness_block_executor thread");
+    tx
+}
+
 /// Starts the JSON-RPC API servers.
 ///
 /// This function initializes and runs up to three server endpoints:
@@ -517,6 +553,7 @@ pub async fn start_api(
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let block_worker_channel = start_block_executor(blockchain.clone());
+    let witness_block_worker_channel = start_witness_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,
         blockchain,
@@ -536,6 +573,9 @@ pub async fn start_api(
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
+        witness_block_worker_channel: Some(witness_block_worker_channel),
+        #[cfg(feature = "eip-8025")]
+        proof_coordinator,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -591,6 +631,10 @@ pub async fn start_api(
 
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
+        .route(
+            "/new-payload-with-witness",
+            post(handle_new_payload_with_witness),
+        )
         .with_state(service_context.clone())
         // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB

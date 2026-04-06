@@ -4338,6 +4338,8 @@ dependencies = [
  "hex-literal 0.4.1",
  "jemalloc_pprof",
  "jsonwebtoken",
+ "libssz",
+ "libssz-derive",
  "libssz-merkle",
  "libssz-types",
  "rand 0.8.5",

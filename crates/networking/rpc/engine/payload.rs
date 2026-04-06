@@ -1254,3 +1254,166 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 
     Ok(new_payload)
 }
+
+
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+use crate::types::payload::PayloadValidationStatus;
+
+/// Payload status extended with an optional witness for the REST endpoint.
+pub struct PayloadStatusWithWitness {
+    pub status: PayloadValidationStatus,
+    pub latest_valid_hash: Option<H256>,
+    pub validation_error: Option<String>,
+    pub witness: Option<RpcExecutionWitness>,
+}
+
+/// Public wrapper around `validate_execution_payload_v4` for use by the REST module.
+#[inline]
+pub fn validate_execution_payload_v4_public(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    validate_execution_payload_v4(payload)
+}
+
+/// Public wrapper around `validate_execution_requests` for use by the REST module.
+#[inline]
+pub fn validate_execution_requests_public(
+    execution_requests: &[EncodedRequests],
+) -> Result<(), RpcErr> {
+    validate_execution_requests(execution_requests)
+}
+
+/// Channel message type for the witness block executor.
+pub type WitnessBlockWorkerMessage = (
+    oneshot::Sender<Result<Option<RpcExecutionWitness>, ChainError>>,
+    Block,
+    Option<BlockAccessList>,
+);
+
+/// Submit a block for execution + witness generation via the witness worker.
+pub async fn add_block_with_witness(
+    ctx: &RpcApiContext,
+    block: Block,
+    bal: Option<BlockAccessList>,
+) -> Result<PayloadStatusWithWitness, RpcErr> {
+    let Some(syncer) = &ctx.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
+
+    let block_hash = block.hash();
+    let block_number = block.header.number;
+    let storage = &ctx.storage;
+
+    // Return VALID immediately if we already have this block.
+    if storage.get_block_header_by_hash(block_hash)?.is_some() {
+        return Ok(PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Valid,
+            latest_valid_hash: Some(block_hash),
+            validation_error: None,
+            witness: None,
+        });
+    }
+
+    // Check for previously invalidated ancestors.
+    if let Some(status) = validate_ancestors(&block, ctx).await? {
+        return Ok(PayloadStatusWithWitness {
+            status: status.status,
+            latest_valid_hash: status.latest_valid_hash,
+            validation_error: status.validation_error,
+            witness: None,
+        });
+    }
+
+    let latest_valid_hash = block.header.parent_hash;
+
+    if syncer.sync_mode() == ethrex_p2p::sync::SyncMode::Snap {
+        debug!("Snap sync in progress, skipping new payload validation");
+        return Ok(PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Syncing,
+            latest_valid_hash: None,
+            validation_error: None,
+            witness: None,
+        });
+    }
+
+    // Execute via the witness worker channel.
+    debug!(%block_hash, %block_number, "Executing payload with witness");
+
+    let (notify_send, notify_recv) = oneshot::channel();
+    ctx.witness_block_worker_channel
+        .as_ref()
+        .ok_or_else(|| RpcErr::Internal("witness block worker not available".to_string()))?
+        .send((notify_send, block, bal))
+        .map_err(|e| {
+            RpcErr::Internal(format!(
+                "failed to send witness block execution request to worker: {e}"
+            ))
+        })?;
+
+    let exec_result = notify_recv
+        .await
+        .map_err(|e| {
+            RpcErr::Internal(format!(
+                "failed to receive witness block execution result: {e}"
+            ))
+        })?;
+
+    match exec_result {
+        Err(ChainError::ParentNotFound) => {
+            syncer.sync_to_head(block_hash);
+            Ok(PayloadStatusWithWitness {
+                status: PayloadValidationStatus::Syncing,
+                latest_valid_hash: None,
+                validation_error: None,
+                witness: None,
+            })
+        }
+        Err(ChainError::ParentStateNotFound) => {
+            let e = "Failed to obtain parent state";
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Err(ChainError::InvalidBlock(error)) => {
+            warn!("Error executing block: {error}");
+            ctx.storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            Ok(PayloadStatusWithWitness {
+                status: PayloadValidationStatus::Invalid,
+                latest_valid_hash: Some(latest_valid_hash),
+                validation_error: Some(error.to_string()),
+                witness: None,
+            })
+        }
+        Err(ChainError::EvmError(error)) => {
+            warn!("Error executing block: {error}");
+            ctx.storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            Ok(PayloadStatusWithWitness {
+                status: PayloadValidationStatus::Invalid,
+                latest_valid_hash: Some(latest_valid_hash),
+                validation_error: Some(error.to_string()),
+                witness: None,
+            })
+        }
+        Err(ChainError::StoreError(error)) => {
+            warn!("Error storing block: {error}");
+            Err(RpcErr::Internal(error.to_string()))
+        }
+        Err(e) => {
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Ok(witness) => {
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
+            Ok(PayloadStatusWithWitness {
+                status: PayloadValidationStatus::Valid,
+                latest_valid_hash: Some(block_hash),
+                validation_error: None,
+                witness,
+            })
+        }
+    }
+}
+
