@@ -59,7 +59,7 @@ _blake2b_f:
     # Initialize local work vector.
     #
     lea     rax,    [rip + blake2b_iv]
-    movzx   r8d,    r8b     # Sanitize f: zero-extend to clear garbage upper bits (audit Issue R)
+    movzx   r8d,    r8b     # Sanitize f: zero-extend to clear garbage upper bits
     add     r8,     0x01
     shl     r8,     0x05
     vmovdqu ymm0,   [rsi + 0x00]
