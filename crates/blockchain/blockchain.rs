@@ -3492,6 +3492,13 @@ fn execute_polygon_system_calls(
                 MAX_SYSTEM_CALL_GAS,
             ) {
                 Ok(report) => {
+                    warn!(
+                        block_number,
+                        event_id = event.id,
+                        success = report.is_success(),
+                        log_count = report.logs.len(),
+                        "commitState result"
+                    );
                     // commitState reverts are non-fatal — collect logs only on success
                     if report.is_success() {
                         all_logs.extend(report.logs);
