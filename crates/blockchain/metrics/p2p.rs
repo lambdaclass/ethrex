@@ -10,6 +10,12 @@ pub struct MetricsP2P {
     peer_count: IntGauge,
     peer_clients: IntGaugeVec,
     disconnections: IntCounterVec,
+    incoming_messages: IntCounterVec,
+    outgoing_messages: IntCounterVec,
+    discv4_incoming_messages: IntCounterVec,
+    discv4_outgoing_messages: IntCounterVec,
+    discv5_incoming_messages: IntCounterVec,
+    discv5_outgoing_messages: IntCounterVec,
 }
 
 impl Default for MetricsP2P {
@@ -36,6 +42,54 @@ impl MetricsP2P {
                 &["reason", "client_name"],
             )
             .expect("Failed to create disconnections metric"),
+            incoming_messages: IntCounterVec::new(
+                Opts::new(
+                    "ethrex_p2p_incoming_messages",
+                    "Total number of incoming P2P messages by type",
+                ),
+                &["msg_type"],
+            )
+            .expect("Failed to create incoming_messages metric"),
+            outgoing_messages: IntCounterVec::new(
+                Opts::new(
+                    "ethrex_p2p_outgoing_messages",
+                    "Total number of outgoing P2P messages by type",
+                ),
+                &["msg_type"],
+            )
+            .expect("Failed to create outgoing_messages metric"),
+            discv4_incoming_messages: IntCounterVec::new(
+                Opts::new(
+                    "ethrex_discv4_incoming_messages",
+                    "Total number of incoming discv4 discovery messages by type",
+                ),
+                &["msg_type"],
+            )
+            .expect("Failed to create discv4_incoming_messages metric"),
+            discv4_outgoing_messages: IntCounterVec::new(
+                Opts::new(
+                    "ethrex_discv4_outgoing_messages",
+                    "Total number of outgoing discv4 discovery messages by type",
+                ),
+                &["msg_type"],
+            )
+            .expect("Failed to create discv4_outgoing_messages metric"),
+            discv5_incoming_messages: IntCounterVec::new(
+                Opts::new(
+                    "ethrex_discv5_incoming_messages",
+                    "Total number of incoming discv5 discovery messages by type",
+                ),
+                &["msg_type"],
+            )
+            .expect("Failed to create discv5_incoming_messages metric"),
+            discv5_outgoing_messages: IntCounterVec::new(
+                Opts::new(
+                    "ethrex_discv5_outgoing_messages",
+                    "Total number of outgoing discv5 discovery messages by type",
+                ),
+                &["msg_type"],
+            )
+            .expect("Failed to create discv5_outgoing_messages metric"),
         }
     }
 
@@ -67,6 +121,38 @@ impl MetricsP2P {
             .inc_by(0);
     }
 
+    pub fn inc_incoming_message(&self, msg_type: &str) {
+        self.incoming_messages.with_label_values(&[msg_type]).inc();
+    }
+
+    pub fn inc_outgoing_message(&self, msg_type: &str) {
+        self.outgoing_messages.with_label_values(&[msg_type]).inc();
+    }
+
+    pub fn inc_discv4_incoming(&self, msg_type: &str) {
+        self.discv4_incoming_messages
+            .with_label_values(&[msg_type])
+            .inc();
+    }
+
+    pub fn inc_discv4_outgoing(&self, msg_type: &str) {
+        self.discv4_outgoing_messages
+            .with_label_values(&[msg_type])
+            .inc();
+    }
+
+    pub fn inc_discv5_incoming(&self, msg_type: &str) {
+        self.discv5_incoming_messages
+            .with_label_values(&[msg_type])
+            .inc();
+    }
+
+    pub fn inc_discv5_outgoing(&self, msg_type: &str) {
+        self.discv5_outgoing_messages
+            .with_label_values(&[msg_type])
+            .inc();
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -75,6 +161,18 @@ impl MetricsP2P {
         r.register(Box::new(self.peer_clients.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.disconnections.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.incoming_messages.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.outgoing_messages.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.discv4_incoming_messages.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.discv4_outgoing_messages.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.discv5_incoming_messages.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.discv5_outgoing_messages.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
