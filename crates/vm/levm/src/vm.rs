@@ -717,12 +717,11 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        // Polygon: revert the substate backup on failure so that LogTransfer logs
-        // from the initial value transfer (emitted inside push_backup) are discarded.
-        // On success, commit the backup to preserve those logs.
-        // This must happen BEFORE the hook runs, because the PolygonHook appends
-        // LogFeeTransfer which should survive regardless of tx success/failure.
-        if matches!(self.vm_type, VMType::Polygon(_)) {
+        // Polygon: handle substate backup for LogTransfer revert semantics.
+        // On success: commit the backup to preserve LogTransfer logs from execution.
+        // On failure: revert so LogTransfer from value transfer is discarded (only LogFeeTransfer survives).
+        // Skip for system calls (gas_price == 0) which don't have LogTransfer/LogFeeTransfer.
+        if matches!(self.vm_type, VMType::Polygon(_)) && !self.env.gas_price.is_zero() {
             if ctx_result.is_success() {
                 self.substate.commit_backup();
             } else {
