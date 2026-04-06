@@ -74,7 +74,7 @@ pub struct BlockProducerHealth {
 }
 
 impl BlockProducer {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         config: &BlockProducerConfig,
         l1_rpc_url: Vec<Url>,

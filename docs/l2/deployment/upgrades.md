@@ -82,3 +82,25 @@ The `balance_diffs` table added a new `value_per_token` column of type `BLOB`:
 ALTER TABLE balance_diffs
 ADD COLUMN value_per_token BLOB;
 ```
+
+## From v10 to v11
+
+### CommonBridge: L2 gas limit stored on-chain
+
+From v11 onwards, the L2 block gas limit is stored in the `CommonBridge` contract as `l2GasLimit`. The sequencer fetches this value on startup instead of using a CLI flag.
+
+#### Upgrade requirement
+
+On existing deployments, `l2GasLimit` will default to `0` because `initialize()` has already run. This means `_sendToL2` will revert for any non-zero gas limit, **bricking the bridge** until the owner calls `setL2GasLimit()`.
+
+After upgrading (with the contract paused), call `setL2GasLimit` before unpausing:
+
+```
+setL2GasLimit(30000000)
+```
+
+The contract must not be unpaused until `l2GasLimit` is set to a valid value. Otherwise all deposits and privileged transactions will revert.
+
+#### CLI flag removed
+
+The `--block-producer.block-gas-limit` flag has been removed. The sequencer now reads the gas limit from the `CommonBridge` contract on startup. Update any scripts or deployment configurations that use this flag.

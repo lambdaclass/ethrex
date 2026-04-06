@@ -127,6 +127,10 @@ contract CommonBridge is
     /// must have a gasLimit at or below this value.
     uint256 public l2GasLimit;
 
+    /// @notice Minimum allowed value for l2GasLimit. Must be at least as large as the
+    /// highest hardcoded gas limit used by internal bridge functions.
+    uint256 public constant DEPOSIT_GAS_LIMIT = 21000 * 5;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -168,7 +172,10 @@ contract CommonBridge is
 
         CHAIN_ID = chainId;
 
-        require(_l2GasLimit > 0, "CommonBridge: l2GasLimit cannot be zero");
+        require(
+            _l2GasLimit >= DEPOSIT_GAS_LIMIT,
+            "CommonBridge: l2GasLimit below minimum"
+        );
         require(
             _l2GasLimit <= type(uint64).max,
             "CommonBridge: l2GasLimit exceeds uint64 max"
@@ -296,7 +303,7 @@ contract CommonBridge is
         );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
-            gasLimit: 21000 * 5,
+            gasLimit: DEPOSIT_GAS_LIMIT,
             value: msg.value,
             data: callData
         });
@@ -323,7 +330,7 @@ contract CommonBridge is
         );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
-            gasLimit: 21000 * 5,
+            gasLimit: DEPOSIT_GAS_LIMIT,
             value: 0,
             data: callData
         });
@@ -745,7 +752,10 @@ contract CommonBridge is
 
     /// @inheritdoc ICommonBridge
     function setL2GasLimit(uint256 newL2GasLimit) external onlyOwner {
-        require(newL2GasLimit > 0, "CommonBridge: l2GasLimit cannot be zero");
+        require(
+            newL2GasLimit >= DEPOSIT_GAS_LIMIT,
+            "CommonBridge: l2GasLimit below minimum"
+        );
         require(
             newL2GasLimit <= type(uint64).max,
             "CommonBridge: l2GasLimit exceeds uint64 max"

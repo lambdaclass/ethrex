@@ -129,6 +129,13 @@ pub async fn get_l2_gas_limit(
 ) -> Result<u64, EthClientError> {
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
     let gas_limit = sdk_get_l2_gas_limit(&eth_client, bridge_address).await?;
+    if gas_limit == 0 {
+        return Err(EthClientError::Custom(
+            "L2 gas limit fetched from bridge is 0 — is the contract initialized? \
+             See docs/l2/deployment/upgrades.md for upgrade instructions."
+                .to_string(),
+        ));
+    }
     info!("Fetched L2 gas limit from bridge contract: {gas_limit}");
     Ok(gas_limit)
 }
