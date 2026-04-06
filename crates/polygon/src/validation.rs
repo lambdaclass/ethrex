@@ -48,12 +48,12 @@ pub fn validate_bor_header(
     }
 
     // Reject blocks too far in the future (Bor bor.go:422-461)
-    // Allow 1 second of clock drift.
+    // Bor uses allowedFutureBlockTimeSeconds = 15 by default.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    if header.timestamp > now + 1 {
+    if header.timestamp > now + 15 {
         return Err(InvalidBlockHeaderError::PolygonFutureBlock {
             header_time: header.timestamp,
             now,
