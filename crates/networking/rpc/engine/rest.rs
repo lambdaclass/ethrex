@@ -22,12 +22,9 @@ use ethrex_common::H256;
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 
-use crate::utils::RpcErr;
+use crate::{engine::payload::validate_execution_payload_v3, utils::RpcErr};
 use crate::{authentication::authenticate, engine::payload::get_block_from_payload};
-use crate::{
-    engine::payload::{handle_new_payload_v3_with_witness, validate_execution_payload_v3},
-    rpc::RpcApiContext,
-};
+use crate::{engine::payload::handle_new_payload_v3_with_witness, rpc::RpcApiContext};
 use crate::{
     engine::payload::{handle_new_payload_v4_with_witness, validate_execution_payload_v4},
     types::payload::{ExecutionPayload, PayloadValidationStatus},
@@ -261,7 +258,7 @@ pub async fn handle_new_payload_with_witness_v4(
         )));
     }
     // We use v3 since the execution payload remains the same.
-    if let Err(e) = validate_execution_payload_v4(&exec_payload) {
+    if let Err(e) = validate_execution_payload_v3(&exec_payload) {
         return rpc_err_to_response(e);
     }
     let payload_result = handle_new_payload_v3_with_witness(
