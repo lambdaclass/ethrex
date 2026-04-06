@@ -22,12 +22,15 @@ use ethrex_common::H256;
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 
-use crate::types::payload::{ExecutionPayload, PayloadValidationStatus};
 use crate::utils::RpcErr;
 use crate::{authentication::authenticate, engine::payload::get_block_from_payload};
 use crate::{
     engine::payload::{handle_new_payload_v3_with_witness, validate_execution_payload_v3},
     rpc::RpcApiContext,
+};
+use crate::{
+    engine::payload::{handle_new_payload_v4_with_witness, validate_execution_payload_v4},
+    types::payload::{ExecutionPayload, PayloadValidationStatus},
 };
 
 use super::payload;
@@ -175,12 +178,8 @@ fn rpc_err_to_response(err: RpcErr) -> axum::response::Response {
     }
 }
 
-/// `POST /new-payload-with-witness`
-///
-/// Accepts JSON body: `[executionPayload, expectedBlobVersionedHashes, parentBeaconBlockRoot, executionRequests]`
-/// Returns SSZ-encoded `NewPayloadWithWitnessResponseV1`.
-pub async fn handle_new_payload_with_witness(
-    //TODO:DEVELOPERUCHE change to v4
+/// `POST /new-payload-with-witness-v4`
+pub async fn handle_new_payload_with_witness_v4(
     State(context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: axum::body::Bytes,
@@ -262,7 +261,7 @@ pub async fn handle_new_payload_with_witness(
         )));
     }
     // We use v3 since the execution payload remains the same.
-    if let Err(e) = validate_execution_payload_v3(&exec_payload) {
+    if let Err(e) = validate_execution_payload_v4(&exec_payload) {
         return rpc_err_to_response(e);
     }
     let payload_result = handle_new_payload_v3_with_witness(
@@ -271,6 +270,139 @@ pub async fn handle_new_payload_with_witness(
         block,
         expected_blob_versioned_hashes.clone(),
         None,
+    )
+    .await;
+
+    match payload_result {
+        Ok(payload_status) => {
+            let resp = SszNewPayloadWithWitnessResponse::from_status(
+                payload_status.status,
+                payload_status.latest_valid_hash,
+                payload_status.validation_error,
+                payload_status.witness,
+            );
+            ssz_response(resp)
+        }
+        Err(rpc_err) => rpc_err_to_response(rpc_err),
+    }
+}
+
+/// `POST /new-payload-with-witness-v5`
+pub async fn handle_new_payload_with_witness_v5(
+    State(context): State<RpcApiContext>,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    if let Err(_err) = authenticate(&context.node_data.jwt_secret, auth_header) {
+        return json_error_response(-32700, "JWT authentication failed");
+    }
+
+    let params: Vec<Value> = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return json_error_response(-32700, &format!("Parse error: {e}"));
+        }
+    };
+
+    if params.len() != 4 {
+        return json_error_response(-32602, &format!("Expected 4 params, got {}", params.len()));
+    }
+
+    // Extract the raw BAL hash from the JSON payload before deserialization.
+    // We hash the raw RLP bytes as-received to preserve the exact encoding
+    // (including any ordering) for accurate block hash validation.
+    let Ok(raw_bal_hash) = params[0]
+        .get("blockAccessList")
+        .map(|v| {
+            let hex_str = v
+                .as_str()
+                .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
+            let bytes = hex::decode(hex_str.trim_start_matches("0x"))
+                .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
+            Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
+        })
+        .transpose()
+    else {
+        return json_error_response(-32602, "Invalid blockAccessList");
+    };
+
+    let exec_payload: ExecutionPayload = match serde_json::from_value(params[0].clone()) {
+        Ok(p) => p,
+        Err(_) => {
+            return json_error_response(-32602, "Invalid executionPayload");
+        }
+    };
+
+    let expected_blob_versioned_hashes: Vec<H256> = match serde_json::from_value(params[1].clone())
+    {
+        Ok(h) => h,
+        Err(_) => {
+            return json_error_response(-32602, "Invalid expectedBlobVersionedHashes");
+        }
+    };
+
+    let parent_beacon_block_root: H256 = match serde_json::from_value(params[2].clone()) {
+        Ok(r) => r,
+        Err(_) => {
+            return json_error_response(-32602, "Invalid parentBeaconBlockRoot");
+        }
+    };
+
+    let execution_requests: Vec<EncodedRequests> = match serde_json::from_value(params[3].clone()) {
+        Ok(r) => r,
+        Err(_) => {
+            return json_error_response(-32602, "Invalid executionRequests");
+        }
+    };
+
+    if let Err(e) = validate_execution_payload_v4(&exec_payload) {
+        return rpc_err_to_response(e);
+    }
+
+    if let Err(e) = payload::validate_execution_requests(&execution_requests) {
+        return rpc_err_to_response(e);
+    }
+
+    let requests_hash = compute_requests_hash(&execution_requests);
+    // Use the hash computed from the raw RLP bytes as-received.
+    // This preserves the exact encoding (including any ordering) from the payload,
+    // so the block hash check correctly detects BAL corruption.
+    let block_access_list_hash = raw_bal_hash;
+
+    let block = match get_block_from_payload(
+        &exec_payload,
+        Some(parent_beacon_block_root),
+        Some(requests_hash),
+        block_access_list_hash,
+    ) {
+        Ok(block) => block,
+        Err(err) => {
+            let resp = SszNewPayloadWithWitnessResponse::from_status(
+                PayloadValidationStatus::Invalid,
+                None,
+                Some(err.to_string()),
+                None,
+            );
+            return ssz_response(resp);
+        }
+    };
+
+    let chain_config = context.storage.get_chain_config();
+
+    if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+        return rpc_err_to_response(RpcErr::UnsupportedFork(format!(
+            "{:?}",
+            chain_config.get_fork(block.header.timestamp)
+        )));
+    }
+
+    let bal = exec_payload.block_access_list.clone();
+    let payload_result = handle_new_payload_v4_with_witness(
+        &exec_payload,
+        context,
+        block,
+        expected_blob_versioned_hashes.clone(),
+        bal,
     )
     .await;
 

@@ -906,7 +906,7 @@ pub fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), R
 }
 
 #[inline]
-fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+pub fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // This method follows the same specification as `engine_newPayloadV4` additionally
     // rejects payload without block access list
 
@@ -1134,6 +1134,22 @@ async fn handle_new_payload_v4(
         return Ok(PayloadStatus::invalid_with_err(&err));
     }
     handle_new_payload_v3(payload, context, block, expected_blob_versioned_hashes, bal).await
+}
+
+pub async fn handle_new_payload_v4_with_witness(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+    bal: Option<BlockAccessList>,
+) -> Result<PayloadStatusWithWitness, RpcErr> {
+    if let Some(bal) = &bal
+        && let Err(err) = bal.validate_ordering()
+    {
+        return Ok(PayloadStatusWithWitness::invalid_with_err(&err));
+    }
+    handle_new_payload_v3_with_witness(payload, context, block, expected_blob_versioned_hashes, bal)
+        .await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
