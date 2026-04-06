@@ -153,12 +153,14 @@ impl LEVM {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
 
-            ::tracing::debug!(
-                "TX_GAS tx_index={} gas_used={} gas_spent={} cumulative={} logs={}",
+            eprintln!(
+                "TX_GAS block={} tx_index={} gas_used={} gas_spent={} cumulative={} block_gas={} logs={}",
+                block.header.number,
                 tx_idx,
                 report.gas_used,
                 report.gas_spent,
                 cumulative_gas_used,
+                block_gas_used,
                 report.logs.len()
             );
 
@@ -358,6 +360,17 @@ impl LEVM {
             // - gas_used (PRE-REFUND for Amsterdam+) for block accounting / header validation
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
+            if block.header.number == 84977442 {
+                ::tracing::warn!(
+                    tx_idx,
+                    tx_type = ?tx.tx_type(),
+                    gas_used = report.gas_used,
+                    gas_spent = report.gas_spent,
+                    cumulative_gas_used,
+                    block_gas_used,
+                    "TX_GAS"
+                );
+            }
 
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -810,9 +823,16 @@ impl LEVM {
         let mut cumulative_gas_used = 0_u64;
         let mut block_gas_used = 0_u64;
 
-        for (_, tx_type, report) in results {
+        for (tx_idx, tx_type, report) in results {
             cumulative_gas_used += report.gas_spent;
             block_gas_used += report.gas_used;
+            if block.header.number == 84977442 {
+                ::tracing::warn!(
+                    "TX_GAS block={} tx={} type={:?} gas_used={} gas_spent={} cum={} blk={}",
+                    block.header.number, tx_idx, tx_type,
+                    report.gas_used, report.gas_spent, cumulative_gas_used, block_gas_used
+                );
+            }
             let receipt = Receipt::new(
                 tx_type,
                 matches!(report.result, TxResult::Success),
