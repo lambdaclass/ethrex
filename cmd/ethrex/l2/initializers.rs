@@ -68,6 +68,7 @@ fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         l2_gas_limit,
+        l2_opts.sponsored_gas_limit,
     );
 
     tracker.spawn(rpc_api);
