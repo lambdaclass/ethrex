@@ -60,7 +60,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::TcpStream,
@@ -73,6 +73,8 @@ use tracing::{debug, error, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
+const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -89,6 +91,7 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
     fn send_ping(&self) -> Result<(), ActorError>;
     fn block_range_update(&self) -> Result<(), ActorError>;
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
+    fn sweep_inflight_txs(&self) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -197,9 +200,10 @@ pub struct Established {
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
-    /// Maps request ID to (original announcement, actually requested hashes).
+    /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
-    pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>)>,
+    pub(crate) requested_pooled_txs:
+        HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -226,7 +230,7 @@ pub struct Established {
 impl Established {
     async fn teardown(&mut self) {
         // Clear any in-flight transaction hashes so other connections can re-request them.
-        for (_, (_announced, requested_hashes)) in self.requested_pooled_txs.drain() {
+        for (_, (_announced, requested_hashes, _)) in self.requested_pooled_txs.drain() {
             let _ = self
                 .blockchain
                 .mempool
@@ -468,6 +472,28 @@ impl PeerConnectionServer {
     }
 
     #[send_handler]
+    async fn handle_sweep_inflight_txs(
+        &mut self,
+        _msg: peer_connection_server_protocol::SweepInflightTxs,
+        _ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut state) = self.state {
+            let now = Instant::now();
+            let stale_ids: Vec<u64> = state
+                .requested_pooled_txs
+                .iter()
+                .filter(|(_, (_, _, ts))| now.duration_since(*ts) > INFLIGHT_TX_TIMEOUT)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale_ids {
+                if let Some((_, hashes, _)) = state.requested_pooled_txs.remove(&id) {
+                    let _ = state.blockchain.mempool.clear_in_flight_txs(&hashes);
+                }
+            }
+        }
+    }
+
+    #[send_handler]
     async fn handle_broadcast_message(
         &mut self,
         msg: peer_connection_server_protocol::BroadcastMessage,
@@ -636,6 +662,13 @@ where
         BLOCK_RANGE_UPDATE_INTERVAL,
         ctx.clone(),
         peer_connection_server_protocol::BlockRangeUpdate,
+    );
+
+    // Periodic sweep of stale in-flight transaction requests.
+    send_interval(
+        INFLIGHT_TX_SWEEP_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::SweepInflightTxs,
     );
 
     #[cfg(feature = "l2")]
@@ -1182,9 +1215,10 @@ async fn handle_incoming_message(
             if !hashes.is_empty() {
                 // hashes are already marked as in-flight by get_transactions_to_request
                 let request = GetPooledTransactions::new(random(), hashes.clone());
-                state
-                    .requested_pooled_txs
-                    .insert(request.id, (new_pooled_transaction_hashes, hashes));
+                state.requested_pooled_txs.insert(
+                    request.id,
+                    (new_pooled_transaction_hashes, hashes, Instant::now()),
+                );
                 send(state, Message::GetPooledTransactions(request)).await?;
             }
         }
@@ -1196,7 +1230,7 @@ async fn handle_incoming_message(
             // Always clear in-flight tracking for this response, regardless of sync status,
             // so other connections can re-request these hashes if needed.
             let removed_request = state.requested_pooled_txs.remove(&msg.id);
-            if let Some((_, ref requested_hashes)) = removed_request {
+            if let Some((_, ref requested_hashes, _)) = removed_request {
                 state
                     .blockchain
                     .mempool
@@ -1222,7 +1256,7 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                if let Some((announced, _requested_hashes)) = removed_request {
+                if let Some((announced, _requested_hashes, _)) = removed_request {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(&announced, fork) {
                         warn!(
