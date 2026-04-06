@@ -3,11 +3,11 @@ pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
-pub mod rest;
 #[cfg(feature = "eip-8025")]
 pub mod proof;
 #[cfg(feature = "eip-8025")]
 pub mod proof_types;
+pub mod rest;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -48,9 +48,7 @@ pub const CAPABILITIES: [&str; 24] = [
 ];
 
 /// REST capabilities advertised via `engine_exchangeCapabilities`.
-pub const REST_CAPABILITIES: [&str; 1] = [
-    "rest_engine_newPayloadWithWitness",
-];
+pub const REST_CAPABILITIES: [&str; 1] = ["rest_engine_newPayloadWithWitness"];
 
 /// EIP-8025 proof capabilities, advertised only when the feature is enabled.
 #[cfg(feature = "eip-8025")]

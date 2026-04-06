@@ -1891,7 +1891,13 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
         compute_witness: bool,
-    ) -> Result<(Option<BlockAccessList>, Result<Option<RpcExecutionWitness>, ChainError>), ChainError> {
+    ) -> Result<
+        (
+            Option<BlockAccessList>,
+            Result<Option<RpcExecutionWitness>, ChainError>,
+        ),
+        ChainError,
+    > {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1899,35 +1905,36 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if (self.options.precompute_witnesses || compute_witness) && self.is_synced() {
-            // If witness pre-generation is enabled, we wrap the db with a logger
-            // to track state access (block hashes, storage keys, codes) during execution
-            // avoiding the need to re-execute the block later.
-            let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
-                self.storage.clone(),
-                parent_header.clone(),
-            )?);
+        let (mut vm, logger) =
+            if (self.options.precompute_witnesses || compute_witness) && self.is_synced() {
+                // If witness pre-generation is enabled, we wrap the db with a logger
+                // to track state access (block hashes, storage keys, codes) during execution
+                // avoiding the need to re-execute the block later.
+                let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+                    self.storage.clone(),
+                    parent_header.clone(),
+                )?);
 
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
+                let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
-                BlockchainType::L1 => {
-                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
-                }
-                BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
-                    logger.clone(),
-                    *l2_config.fee_config.read().map_err(|_| {
-                        EvmError::Custom("Fee config lock was poisoned".to_string())
-                    })?,
-                    Arc::new(NativeCrypto),
-                ),
+                let vm = match self.options.r#type.clone() {
+                    BlockchainType::L1 => {
+                        Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                    }
+                    BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
+                        logger.clone(),
+                        *l2_config.fee_config.read().map_err(|_| {
+                            EvmError::Custom("Fee config lock was poisoned".to_string())
+                        })?,
+                        Arc::new(NativeCrypto),
+                    ),
+                };
+                (vm, Some(logger))
+            } else {
+                let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+                let vm = self.new_evm(vm_db)?;
+                (vm, None)
             };
-            (vm, Some(logger))
-        } else {
-            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-            let vm = self.new_evm(vm_db)?;
-            (vm, None)
-        };
 
         let (
             res,

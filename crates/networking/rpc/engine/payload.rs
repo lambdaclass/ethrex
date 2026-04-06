@@ -890,7 +890,7 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+pub fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
@@ -966,6 +966,44 @@ async fn validate_ancestors(
     Ok(None)
 }
 
+// This function is used to make sure neither the current block nor its parent have been invalidated
+// similar to validate_ancestors but returns PayloadStatusWithWitness
+async fn validate_ancestors_with_witness(
+    block: &Block,
+    context: &RpcApiContext,
+) -> Result<Option<PayloadStatusWithWitness>, RpcErr> {
+    // Check if the block has already been invalidated
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_latest_valid_ancestor(block.hash())
+        .await?
+    {
+        return Ok(Some(PayloadStatusWithWitness::invalid_with(
+            latest_valid_hash,
+            "Header has been previously invalidated.".into(),
+        )));
+    }
+
+    // Check if the parent block has already been invalidated
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_latest_valid_ancestor(block.header.parent_hash)
+        .await?
+    {
+        // Invalidate child too
+        context
+            .storage
+            .set_latest_valid_ancestor(block.header.hash(), latest_valid_hash)
+            .await?;
+        return Ok(Some(PayloadStatusWithWitness::invalid_with(
+            latest_valid_hash,
+            "Parent header has been previously invalidated.".into(),
+        )));
+    }
+
+    Ok(None)
+}
+
 async fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     block: Block,
@@ -1000,7 +1038,42 @@ async fn handle_new_payload_v1_v2(
     Ok(payload_status)
 }
 
-async fn handle_new_payload_v3(
+async fn handle_new_payload_v1_v2_with_witness(
+    payload: &ExecutionPayload,
+    block: Block,
+    context: RpcApiContext,
+    bal: Option<BlockAccessList>,
+) -> Result<PayloadStatusWithWitness, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
+    // Validate block hash
+    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+        return Ok(PayloadStatusWithWitness::invalid_with_err(&error_msg));
+    }
+
+    // Check for invalid ancestors
+    if let Some(status) = validate_ancestors_with_witness(&block, &context).await? {
+        return Ok(status);
+    }
+
+    // We have validated ancestors, the parent is correct
+    let latest_valid_hash = block.header.parent_hash;
+
+    if syncer.sync_mode() == SyncMode::Snap {
+        debug!("Snap sync in progress, skipping new payload validation");
+        return Ok(PayloadStatusWithWitness::syncing());
+    }
+
+    // All checks passed, execute payload
+    let payload_status =
+        try_execute_payload_with_witness(block, &context, latest_valid_hash, bal).await?;
+    Ok(payload_status)
+}
+
+pub async fn handle_new_payload_v3(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
@@ -1024,6 +1097,30 @@ async fn handle_new_payload_v3(
     handle_new_payload_v1_v2(payload, block, context, bal).await
 }
 
+pub async fn handle_new_payload_v3_with_witness(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+    bal: Option<BlockAccessList>,
+) -> Result<PayloadStatusWithWitness, RpcErr> {
+    // V3 specific: validate blob hashes
+    let blob_versioned_hashes: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .flat_map(|tx| tx.blob_versioned_hashes())
+        .collect();
+
+    if expected_blob_versioned_hashes != blob_versioned_hashes {
+        return Ok(PayloadStatusWithWitness::invalid_with_err(
+            "Invalid blob_versioned_hashes",
+        ));
+    }
+
+    handle_new_payload_v1_v2_with_witness(payload, block, context, bal).await
+}
+
 async fn handle_new_payload_v4(
     payload: &ExecutionPayload,
     context: RpcApiContext,
@@ -1041,7 +1138,7 @@ async fn handle_new_payload_v4(
 
 // Elements of the list MUST be ordered by request_type in ascending order.
 // Elements with empty request_data MUST be excluded from the list.
-fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result<(), RpcErr> {
+pub fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result<(), RpcErr> {
     let mut last_type: i32 = -1;
     for requests in execution_requests {
         if requests.0.len() < 2 {
@@ -1056,7 +1153,7 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
     Ok(())
 }
 
-fn get_block_from_payload(
+pub fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
@@ -1178,6 +1275,89 @@ async fn try_execute_payload(
     }
 }
 
+async fn try_execute_payload_with_witness(
+    block: Block,
+    context: &RpcApiContext,
+    latest_valid_hash: H256,
+    bal: Option<BlockAccessList>,
+) -> Result<PayloadStatusWithWitness, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal(
+            "New payload requested but syncer is not initialized".to_string(),
+        ));
+    };
+    let block_hash = block.hash();
+    let block_number = block.header.number;
+    let storage = &context.storage;
+    // Return the valid message directly if we already have it.
+    // We check for header only as we do not download the block bodies before the pivot during snap sync
+    // https://github.com/lambdaclass/ethrex/issues/1766
+    if storage.get_block_header_by_hash(block_hash)?.is_some() {
+        return Ok(PayloadStatusWithWitness::valid_with_hash(block_hash));
+    }
+
+    // Execute and store the block
+    debug!(%block_hash, %block_number, "Executing payload");
+
+    match add_block_with_witness(context, block, bal).await {
+        Err(ChainError::ParentNotFound) => {
+            // Start sync
+            syncer.sync_to_head(block_hash);
+            Ok(PayloadStatusWithWitness::syncing())
+        }
+        // Under the current implementation this is not possible: we always calculate the state
+        // transition of any new payload as long as the parent is present. If we received the
+        // parent payload but it was stashed, then new payload would stash this one too, with a
+        // ParentNotFoundError.
+        Err(ChainError::ParentStateNotFound) => {
+            let e = "Failed to obtain parent state";
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Err(ChainError::InvalidBlock(error)) => {
+            warn!("Error executing block: {error}");
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            Ok(PayloadStatusWithWitness::invalid_with(
+                latest_valid_hash,
+                error.to_string(),
+            ))
+        }
+        Err(ChainError::EvmError(error)) => {
+            warn!("Error executing block: {error}");
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            Ok(PayloadStatusWithWitness::invalid_with(
+                latest_valid_hash,
+                error.to_string(),
+            ))
+        }
+        Err(ChainError::StoreError(error)) => {
+            warn!("Error storing block: {error}");
+            Err(RpcErr::Internal(error.to_string()))
+        }
+        Err(e) => {
+            error!("{e} for block {block_hash}");
+            Err(RpcErr::Internal(e.to_string()))
+        }
+        Ok(witness) => {
+            debug!("Block with hash {block_hash} executed and added to storage successfully");
+            let Some(witness) = witness else {
+                debug!("No witness found for block {block_hash}");
+                return Ok(PayloadStatusWithWitness::valid_with_hash(block_hash));
+            };
+
+            Ok(PayloadStatusWithWitness::valid_with_witness_and_hash(
+                witness, block_hash,
+            ))
+        }
+    }
+}
+
 fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr> {
     let params = params
         .as_ref()
@@ -1255,9 +1435,8 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
     Ok(new_payload)
 }
 
-
-use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use crate::types::payload::PayloadValidationStatus;
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 
 /// Payload status extended with an optional witness for the REST endpoint.
 pub struct PayloadStatusWithWitness {
@@ -1267,24 +1446,75 @@ pub struct PayloadStatusWithWitness {
     pub witness: Option<RpcExecutionWitness>,
 }
 
-/// Public wrapper around `validate_execution_payload_v4` for use by the REST module.
-#[inline]
-pub fn validate_execution_payload_v4_public(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    validate_execution_payload_v4(payload)
-}
+impl PayloadStatusWithWitness {
+    // Convenience methods to create payload status
 
-/// Public wrapper around `validate_execution_payload_v3` for use by the REST module.
-#[inline]
-pub fn validate_execution_payload_v3_public(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    validate_execution_payload_v3(payload)
-}
+    pub fn invalid_with(latest_valid_hash: H256, error: String) -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Invalid,
+            latest_valid_hash: Some(latest_valid_hash),
+            validation_error: Some(error),
+            witness: None,
+        }
+    }
 
-/// Public wrapper around `validate_execution_requests` for use by the REST module.
-#[inline]
-pub fn validate_execution_requests_public(
-    execution_requests: &[EncodedRequests],
-) -> Result<(), RpcErr> {
-    validate_execution_requests(execution_requests)
+    /// Creates a PayloadStatus with invalid status and error message
+    pub fn invalid_with_err(error: &str) -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Invalid,
+            latest_valid_hash: None,
+            validation_error: Some(error.to_string()),
+            witness: None,
+        }
+    }
+
+    /// Creates a PayloadStatus with invalid status and latest valid hash
+    pub fn invalid_with_hash(hash: BlockHash) -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Invalid,
+            latest_valid_hash: Some(hash),
+            validation_error: None,
+            witness: None,
+        }
+    }
+
+    /// Creates a PayloadStatus with syncing status and no other info
+    pub fn syncing() -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Syncing,
+            latest_valid_hash: None,
+            validation_error: None,
+            witness: None,
+        }
+    }
+
+    /// Creates a PayloadStatus with valid status and latest valid hash
+    pub fn valid_with_hash(hash: BlockHash) -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Valid,
+            latest_valid_hash: Some(hash),
+            validation_error: None,
+            witness: None,
+        }
+    }
+    /// Creates a PayloadStatus with valid status and latest valid hash
+    pub fn valid() -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Valid,
+            latest_valid_hash: None,
+            validation_error: None,
+            witness: None,
+        }
+    }
+
+    pub fn valid_with_witness_and_hash(witness: RpcExecutionWitness, hash: BlockHash) -> Self {
+        PayloadStatusWithWitness {
+            status: PayloadValidationStatus::Valid,
+            latest_valid_hash: Some(hash),
+            validation_error: None,
+            witness: Some(witness),
+        }
+    }
 }
 
 /// Channel message type for the witness block executor.
@@ -1299,127 +1529,18 @@ pub async fn add_block_with_witness(
     ctx: &RpcApiContext,
     block: Block,
     bal: Option<BlockAccessList>,
-) -> Result<PayloadStatusWithWitness, RpcErr> {
-    let Some(syncer) = &ctx.syncer else {
-        return Err(RpcErr::Internal(
-            "New payload requested but syncer is not initialized".to_string(),
-        ));
-    };
-
-    let block_hash = block.hash();
-    let block_number = block.header.number;
-    let storage = &ctx.storage;
-
-    // Return VALID immediately if we already have this block.
-    if storage.get_block_header_by_hash(block_hash)?.is_some() {
-        return Ok(PayloadStatusWithWitness {
-            status: PayloadValidationStatus::Valid,
-            latest_valid_hash: Some(block_hash),
-            validation_error: None,
-            witness: None,
-        });
-    }
-
-    // Check for previously invalidated ancestors.
-    if let Some(status) = validate_ancestors(&block, ctx).await? {
-        return Ok(PayloadStatusWithWitness {
-            status: status.status,
-            latest_valid_hash: status.latest_valid_hash,
-            validation_error: status.validation_error,
-            witness: None,
-        });
-    }
-
-    let latest_valid_hash = block.header.parent_hash;
-
-    if syncer.sync_mode() == ethrex_p2p::sync::SyncMode::Snap {
-        debug!("Snap sync in progress, skipping new payload validation");
-        return Ok(PayloadStatusWithWitness {
-            status: PayloadValidationStatus::Syncing,
-            latest_valid_hash: None,
-            validation_error: None,
-            witness: None,
-        });
-    }
-
-    // Execute via the witness worker channel.
-    debug!(%block_hash, %block_number, "Executing payload with witness");
-
+) -> Result<Option<RpcExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.witness_block_worker_channel
         .as_ref()
-        .ok_or_else(|| RpcErr::Internal("witness block worker not available".to_string()))?
+        .ok_or_else(|| ChainError::Custom("witness block worker not available".to_string()))?
         .send((notify_send, block, bal))
         .map_err(|e| {
-            RpcErr::Internal(format!(
-                "failed to send witness block execution request to worker: {e}"
+            ChainError::Custom(format!(
+                "failed to send block execution request to worker: {e}"
             ))
         })?;
-
-    let exec_result = notify_recv
+    notify_recv
         .await
-        .map_err(|e| {
-            RpcErr::Internal(format!(
-                "failed to receive witness block execution result: {e}"
-            ))
-        })?;
-
-    match exec_result {
-        Err(ChainError::ParentNotFound) => {
-            syncer.sync_to_head(block_hash);
-            Ok(PayloadStatusWithWitness {
-                status: PayloadValidationStatus::Syncing,
-                latest_valid_hash: None,
-                validation_error: None,
-                witness: None,
-            })
-        }
-        Err(ChainError::ParentStateNotFound) => {
-            let e = "Failed to obtain parent state";
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
-        }
-        Err(ChainError::InvalidBlock(error)) => {
-            warn!("Error executing block: {error}");
-            ctx.storage
-                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
-                .await?;
-            Ok(PayloadStatusWithWitness {
-                status: PayloadValidationStatus::Invalid,
-                latest_valid_hash: Some(latest_valid_hash),
-                validation_error: Some(error.to_string()),
-                witness: None,
-            })
-        }
-        Err(ChainError::EvmError(error)) => {
-            warn!("Error executing block: {error}");
-            ctx.storage
-                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
-                .await?;
-            Ok(PayloadStatusWithWitness {
-                status: PayloadValidationStatus::Invalid,
-                latest_valid_hash: Some(latest_valid_hash),
-                validation_error: Some(error.to_string()),
-                witness: None,
-            })
-        }
-        Err(ChainError::StoreError(error)) => {
-            warn!("Error storing block: {error}");
-            Err(RpcErr::Internal(error.to_string()))
-        }
-        Err(e) => {
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
-        }
-        Ok(witness) => {
-            debug!("Block with hash {block_hash} executed and added to storage successfully");
-            Ok(PayloadStatusWithWitness {
-                status: PayloadValidationStatus::Valid,
-                latest_valid_hash: Some(block_hash),
-                validation_error: None,
-                witness,
-            })
-        }
-    }
+        .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
 }
-

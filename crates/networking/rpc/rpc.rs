@@ -5,12 +5,14 @@ use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, WitnessBlockWorkerMessage};
-use crate::engine::rest::handle_new_payload_with_witness;
+use crate::engine::payload::{
+    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, WitnessBlockWorkerMessage,
+};
 #[cfg(feature = "eip-8025")]
 use crate::engine::proof::{
     RequestProofsV1, VerifyExecutionProofV1, VerifyNewPayloadRequestHeaderV1,
 };
+use crate::engine::rest::handle_new_payload_with_witness;
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -480,10 +482,7 @@ pub fn start_witness_block_executor(
         .spawn(move || {
             while let Some((notify, block, bal)) = rx.blocking_recv() {
                 let _ = notify
-                    .send(
-                        blockchain
-                            .add_block_pipeline_with_witness(block, bal.as_ref()),
-                    )
+                    .send(blockchain.add_block_pipeline_with_witness(block, bal.as_ref()))
                     .inspect_err(|_| tracing::error!("failed to notify witness caller"));
             }
         })

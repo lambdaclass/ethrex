@@ -22,13 +22,15 @@ use ethrex_common::H256;
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 
-use crate::authentication::authenticate;
-use crate::rpc::RpcApiContext;
 use crate::types::payload::{ExecutionPayload, PayloadValidationStatus};
 use crate::utils::RpcErr;
+use crate::{authentication::authenticate, engine::payload::get_block_from_payload};
+use crate::{
+    engine::payload::{handle_new_payload_v3_with_witness, validate_execution_payload_v3},
+    rpc::RpcApiContext,
+};
 
 use super::payload;
-
 
 /// `Union[None, ByteVector[32]]` for `latest_valid_hash`.
 #[derive(SszEncode)]
@@ -80,7 +82,6 @@ pub struct SszExecutionWitnessV1 {
     pub codes: Vec<Vec<u8>>,
     pub headers: Vec<Vec<u8>>,
 }
-
 
 impl SszNewPayloadWithWitnessResponse {
     /// Build from a validation status + optional witness.
@@ -168,20 +169,18 @@ fn rpc_err_to_response(err: RpcErr) -> axum::response::Response {
         RpcErr::BadParams(msg) | RpcErr::WrongParam(msg) | RpcErr::InvalidPayload(msg) => {
             json_error_response(-32602, msg)
         }
-        RpcErr::UnsupportedFork(msg) => {
-            json_error_response(-38005, msg)
-        }
+        RpcErr::UnsupportedFork(msg) => json_error_response(-38005, msg),
         RpcErr::Internal(msg) => json_error_response(-32603, msg),
         _ => json_error_response(-32603, &format!("{err:?}")),
     }
 }
-
 
 /// `POST /new-payload-with-witness`
 ///
 /// Accepts JSON body: `[executionPayload, expectedBlobVersionedHashes, parentBeaconBlockRoot, executionRequests]`
 /// Returns SSZ-encoded `NewPayloadWithWitnessResponseV1`.
 pub async fn handle_new_payload_with_witness(
+    //TODO:DEVELOPERUCHE change to v4
     State(context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: axum::body::Bytes,
@@ -198,10 +197,7 @@ pub async fn handle_new_payload_with_witness(
     };
 
     if params.len() != 4 {
-        return json_error_response(
-            -32602,
-            &format!("Expected 4 params, got {}", params.len()),
-        );
+        return json_error_response(-32602, &format!("Expected 4 params, got {}", params.len()));
     }
 
     let exec_payload: ExecutionPayload = match serde_json::from_value(params[0].clone()) {
@@ -226,115 +222,57 @@ pub async fn handle_new_payload_with_witness(
         }
     };
 
-    let execution_requests: Vec<EncodedRequests> = match serde_json::from_value(params[3].clone())
-    {
+    let execution_requests: Vec<EncodedRequests> = match serde_json::from_value(params[3].clone()) {
         Ok(r) => r,
         Err(_) => {
             return json_error_response(-32602, "Invalid executionRequests");
         }
     };
 
-    // Use V4 validation when blockAccessList is present (Amsterdam+), V3 otherwise (Prague/Electra).
-    if exec_payload.block_access_list.is_some() {
-        if let Err(e) = payload::validate_execution_payload_v4_public(&exec_payload) {
-            return rpc_err_to_response(e);
-        }
-    } else {
-        if let Err(e) = payload::validate_execution_payload_v3_public(&exec_payload) {
-            return rpc_err_to_response(e);
-        }
-    }
-
-    if let Err(e) = payload::validate_execution_requests_public(&execution_requests) {
+    if let Err(e) = payload::validate_execution_requests(&execution_requests) {
         return rpc_err_to_response(e);
     }
 
     let requests_hash = compute_requests_hash(&execution_requests);
 
-    let raw_bal_hash = params[0]
-        .get("blockAccessList")
-        .and_then(|v| v.as_str())
-        .and_then(|hex_str| hex::decode(hex_str.trim_start_matches("0x")).ok())
-        .map(|bytes| ethrex_common::utils::keccak(bytes));
-
-    let block = match exec_payload.clone().into_block(
+    let block = match get_block_from_payload(
+        &exec_payload,
         Some(parent_beacon_block_root),
         Some(requests_hash),
-        raw_bal_hash,
+        None,
     ) {
-        Ok(b) => b,
-        Err(e) => {
-            // Invalid block construction → return SSZ response with INVALID status.
+        Ok(block) => block,
+        Err(err) => {
             let resp = SszNewPayloadWithWitnessResponse::from_status(
                 PayloadValidationStatus::Invalid,
                 None,
-                Some(e.to_string()),
+                Some(err.to_string()),
                 None,
             );
             return ssz_response(resp);
         }
     };
 
-    // TODO:DEVELOPERUCHE this config for a* should come externally
-    // if !chain_config.is_amsterdam_activated(block.header.timestamp) {
-    //     return rpc_err_to_response(RpcErr::UnsupportedFork(format!(
-    //         "{:?}",
-    //         chain_config.get_fork(block.header.timestamp)
-    //     )));
-    // }
     let chain_config = context.storage.get_chain_config();
+
     if !chain_config.is_prague_activated(block.header.timestamp) {
         return rpc_err_to_response(RpcErr::UnsupportedFork(format!(
             "{:?}",
             chain_config.get_fork(block.header.timestamp)
         )));
     }
-
-    let bal = exec_payload.block_access_list.clone();
-    if let Some(ref b) = bal {
-        if let Err(err) = b.validate_ordering() {
-            let resp = SszNewPayloadWithWitnessResponse::from_status(
-                PayloadValidationStatus::Invalid,
-                None,
-                Some(err),
-                None,
-            );
-            return ssz_response(resp);
-        }
+    // We use v3 since the execution payload remains the same.
+    if let Err(e) = validate_execution_payload_v3(&exec_payload) {
+        return rpc_err_to_response(e);
     }
-
-    let block_hash = exec_payload.block_hash;
-    let actual_block_hash = block.hash();
-    if block_hash != actual_block_hash {
-        let resp = SszNewPayloadWithWitnessResponse::from_status(
-            PayloadValidationStatus::Invalid,
-            None,
-            Some(format!(
-                "Invalid block hash. Expected {actual_block_hash:#x}, got {block_hash:#x}"
-            )),
-            None,
-        );
-        return ssz_response(resp);
-    }
-
-    let blob_versioned_hashes: Vec<H256> = block
-        .body
-        .transactions
-        .iter()
-        .flat_map(|tx| tx.blob_versioned_hashes())
-        .collect();
-
-    if expected_blob_versioned_hashes != blob_versioned_hashes {
-        let resp = SszNewPayloadWithWitnessResponse::from_status(
-            PayloadValidationStatus::Invalid,
-            None,
-            Some("Invalid blob_versioned_hashes".to_string()),
-            None,
-        );
-        return ssz_response(resp);
-    }
-
-    let payload_result = payload::add_block_with_witness(&context, block, bal).await;
+    let payload_result = handle_new_payload_v3_with_witness(
+        &exec_payload,
+        context,
+        block,
+        expected_blob_versioned_hashes.clone(),
+        None,
+    )
+    .await;
 
     match payload_result {
         Ok(payload_status) => {
