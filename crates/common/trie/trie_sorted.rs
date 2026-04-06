@@ -108,9 +108,12 @@ fn add_current_to_parent_and_write_queue(
 ) -> Result<(), TrieGenerationError> {
     let prefix_len = current_node.path.count_prefix(&parent_element.path);
     let path_ref: &[u8] = current_node.path.as_ref();
-    let index = *path_ref.get(prefix_len)
+    let index = *path_ref
+        .get(prefix_len)
         .ok_or_else(|| TrieGenerationError::IndexNotFound(current_node.path.clone()))?;
-    let remaining = current_node.path.slice(prefix_len + 1, current_node.path.len());
+    let remaining = current_node
+        .path
+        .slice(prefix_len + 1, current_node.path.len());
     let top_path = parent_element.path.append_new(index);
     let (target_path, node): (Nibbles, Node) = match &current_node.element {
         CenterSideElement::Branch { node } => {
@@ -178,11 +181,6 @@ where
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
-    let mut total_buffer_wait = std::time::Duration::ZERO;
-    let mut flush_count: u64 = 0;
-    let mut total_inflight: u64 = 0;
-    let mut max_inflight: u64 = 0;
-    let t_trie_total = std::time::Instant::now();
     let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
         .expect("This channel shouldn't close");
@@ -207,15 +205,9 @@ where
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
             // We wait to get a new buffer to avoid writing too much
-            let inflight = BUFFER_COUNT - buffer_receiver.len() as u64;
-            total_inflight += inflight;
-            max_inflight = max_inflight.max(inflight);
-            let t_wait = std::time::Instant::now();
             nodes_to_write = buffer_receiver
                 .recv()
                 .expect("This channel shouldn't close");
-            total_buffer_wait += t_wait.elapsed();
-            flush_count += 1;
         }
 
         let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
@@ -278,7 +270,12 @@ where
 
     // We empty the stack, where each node is a child of the one in the stack, so we just keep
     // popping and adding to parent
-    add_current_to_parent_and_write_queue(&mut nodes_to_write, &current_node, &mut current_parent, &mut nodehash_buffer)?;
+    add_current_to_parent_and_write_queue(
+        &mut nodes_to_write,
+        &current_node,
+        &mut current_parent,
+        &mut nodehash_buffer,
+    )?;
     while let Some(mut parent_node) = trie_stack.pop() {
         add_current_to_parent_and_write_queue(
             &mut nodes_to_write,
@@ -352,22 +349,6 @@ where
     };
 
     let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
-    let elapsed = t_trie_total.elapsed();
-    if elapsed.as_secs() > 5 {
-        let avg_inflight = if flush_count > 0 { total_inflight as f64 / flush_count as f64 } else { 0.0 };
-        tracing::info!(
-            "[PROFILE] trie_from_sorted: total={:?}, buffer_wait={:?} ({:.1}%), flushes={}, cpu={:?} ({:.1}%), inflight_avg={:.1}/{}, inflight_max={}",
-            elapsed,
-            total_buffer_wait,
-            total_buffer_wait.as_secs_f64() / elapsed.as_secs_f64() * 100.0,
-            flush_count,
-            elapsed - total_buffer_wait,
-            (elapsed - total_buffer_wait).as_secs_f64() / elapsed.as_secs_f64() * 100.0,
-            avg_inflight,
-            BUFFER_COUNT,
-            max_inflight,
-        );
-    }
     Ok(hash)
 }
 
@@ -452,7 +433,12 @@ where
     }
 
     // Unwind the stack
-    add_current_to_parent_and_write_queue(&mut nodes_to_write, &current_node, &mut current_parent, &mut nodehash_buffer)?;
+    add_current_to_parent_and_write_queue(
+        &mut nodes_to_write,
+        &current_node,
+        &mut current_parent,
+        &mut nodehash_buffer,
+    )?;
     while let Some(mut parent_node) = trie_stack.pop() {
         add_current_to_parent_and_write_queue(
             &mut nodes_to_write,
@@ -500,59 +486,16 @@ where
     })
 }
 
-/// Builds a state trie in parallel by splitting the sorted key space into 16
-/// sub-tries (one per first nibble) and building them concurrently.
+/// Assembles a root trie node from 16 sub-trie results (one per first nibble).
 ///
-/// Each sub-trie is built using the same `trie_from_sorted_accounts` algorithm.
-/// The 16 sub-trie root hashes are then assembled into a root BranchNode.
-///
-/// `make_sub_iter` is called once per nibble (0..16) to produce a sorted iterator
-/// yielding only the accounts whose hash starts with that nibble.
-pub fn trie_from_sorted_parallel<F>(
+/// Handles three cases:
+/// - No valid sub-tries → empty trie hash
+/// - Exactly one valid sub-trie → collapses into extension/leaf at root
+/// - Multiple valid sub-tries → root BranchNode
+pub fn assemble_root_from_subtries(
     db: &dyn TrieDB,
-    make_sub_iter: F,
-) -> Result<H256, TrieGenerationError>
-where
-    F: Fn(u8) -> Box<dyn Iterator<Item = (H256, Vec<u8>)> + Send> + Sync,
-{
-    let thread_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(8);
-    let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
-
-    // 16 sub-trie threads are spawned (one per nibble). On machines with fewer
-    // than 16 cores, the OS schedules them across available cores — only
-    // `thread_count` run concurrently. The ThreadPool handles DB flush tasks.
-    let choices: [NodeRef; 16] = scope(|s| {
-        let pool = Arc::new(ThreadPool::new(thread_count, s));
-        let handles: Vec<_> = (0u8..16)
-            .map(|nibble| {
-                let pool = pool.clone();
-                let make_sub_iter = &make_sub_iter;
-                let (buf_tx, buf_rx) =
-                    bounded::<Vec<(Nibbles, Node)>>(buffers_per_subtrie);
-                for _ in 0..buffers_per_subtrie {
-                    let _ = buf_tx.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
-                }
-                s.spawn(move || {
-                    let mut iter = make_sub_iter(nibble);
-                    let child_ref = trie_from_sorted_subtrie(
-                        db, &mut iter, pool, buf_tx, buf_rx,
-                    )?;
-                    Ok(child_ref.map(|r| (nibble, r)))
-                })
-            })
-            .collect();
-
-        let mut choices = BranchNode::EMPTY_CHOICES;
-        for handle in handles {
-            if let Some((nibble, node_ref)) = handle.join().unwrap()? {
-                choices[nibble as usize] = node_ref;
-            }
-        }
-        Ok::<[NodeRef; 16], TrieGenerationError>(choices)
-    })?;
-
+    choices: [NodeRef; 16],
+) -> Result<H256, TrieGenerationError> {
     let valid_count = choices.iter().filter(|c| c.is_valid()).count();
     if valid_count == 0 {
         return Ok(*EMPTY_TRIE_HASH);
@@ -561,7 +504,7 @@ where
     let mut nodehash_buffer = Vec::with_capacity(512);
 
     if valid_count == 1 {
-        let (index, _child) = choices
+        let (index, _) = choices
             .iter()
             .enumerate()
             .find(|(_, c)| c.is_valid())
@@ -620,6 +563,59 @@ where
             .map_err(TrieGenerationError::FlushToDbError)?;
         Ok(hash)
     }
+}
+
+/// Builds a state trie in parallel by splitting the sorted key space into 16
+/// sub-tries (one per first nibble) and building them concurrently.
+///
+/// Each sub-trie is built using the same `trie_from_sorted_accounts` algorithm.
+/// The 16 sub-trie root hashes are then assembled into a root BranchNode.
+///
+/// `make_sub_iter` is called once per nibble (0..16) to produce a sorted iterator
+/// yielding only the accounts whose hash starts with that nibble.
+pub fn trie_from_sorted_parallel<F>(
+    db: &dyn TrieDB,
+    make_sub_iter: F,
+) -> Result<H256, TrieGenerationError>
+where
+    F: Fn(u8) -> Box<dyn Iterator<Item = (H256, Vec<u8>)> + Send> + Sync,
+{
+    let thread_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
+
+    // 16 sub-trie threads are spawned (one per nibble). On machines with fewer
+    // than 16 cores, the OS schedules them across available cores — only
+    // `thread_count` run concurrently. The ThreadPool handles DB flush tasks.
+    let choices: [NodeRef; 16] = scope(|s| {
+        let pool = Arc::new(ThreadPool::new(thread_count, s));
+        let handles: Vec<_> = (0u8..16)
+            .map(|nibble| {
+                let pool = pool.clone();
+                let make_sub_iter = &make_sub_iter;
+                let (buf_tx, buf_rx) = bounded::<Vec<(Nibbles, Node)>>(buffers_per_subtrie);
+                for _ in 0..buffers_per_subtrie {
+                    let _ = buf_tx.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
+                }
+                s.spawn(move || {
+                    let mut iter = make_sub_iter(nibble);
+                    let child_ref = trie_from_sorted_subtrie(db, &mut iter, pool, buf_tx, buf_rx)?;
+                    Ok(child_ref.map(|r| (nibble, r)))
+                })
+            })
+            .collect();
+
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        for handle in handles {
+            if let Some((nibble, node_ref)) = handle.join().unwrap()? {
+                choices[nibble as usize] = node_ref;
+            }
+        }
+        Ok::<[NodeRef; 16], TrieGenerationError>(choices)
+    })?;
+
+    assemble_root_from_subtries(db, choices)
 }
 
 #[cfg(test)]
@@ -821,10 +817,7 @@ mod test {
                 let nibble = (hash.0[0] >> 4) as usize;
                 buckets[nibble].push((*hash, state.encode_to_vec()));
             }
-            buckets
-                .into_iter()
-                .map(|b| Mutex::new(Some(b)))
-                .collect()
+            buckets.into_iter().map(|b| Mutex::new(Some(b))).collect()
         };
         let parallel_hash = trie_from_sorted_parallel(trie.db(), |nibble| {
             let data = bucket_slots[nibble as usize]
