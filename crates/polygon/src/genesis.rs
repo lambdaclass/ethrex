@@ -8,6 +8,7 @@ use ethrex_common::types::{
     Block, BlockBody, BlockHeader, ChainConfig, Genesis, GenesisAccount, compute_receipts_root,
     compute_transactions_root,
 };
+use ethrex_crypto::NativeCrypto;
 
 use crate::bor_config::BorConfig;
 
@@ -224,8 +225,8 @@ pub fn polygon_genesis_block(genesis: &Genesis) -> Block {
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: genesis.coinbase,
         state_root: genesis.compute_state_root(),
-        transactions_root: compute_transactions_root(&[]),
-        receipts_root: compute_receipts_root(&[]),
+        transactions_root: compute_transactions_root(&[], &NativeCrypto),
+        receipts_root: compute_receipts_root(&[], &NativeCrypto),
         logs_bloom: Bloom::zero(),
         difficulty: genesis.difficulty,
         number: 0,

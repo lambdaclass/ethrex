@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -25,7 +25,7 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(mut peer_table: PeerTable, node_record: NodeRecord) -> Self {
+    pub async fn new(peer_table: PeerTable, node_record: NodeRecord) -> Self {
         let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {

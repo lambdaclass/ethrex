@@ -93,15 +93,25 @@ curl -X GET http://localhost:5555/health | jq '.proof_sender'
 - Chain verification is blocked at the lost proof's batch number
 - Proofs for subsequent batches continue to generate and queue
 
-### Recovery Steps
+### Automatic Recovery
+
+The `--aligned.resubmission-timeout` flag (required in aligned mode) configures a time-based resubmission mechanism. If a proof has been sent to Aligned but on-chain verification has not advanced within the specified timeout (e.g. `86400` seconds = 24h), the L1ProofSender automatically resets its cursor and resends the proof. Look for the following log message:
+
+```
+ERROR Aligned verification timed out, attempting resubmission
+```
+
+If automatic resubmission resolves the issue, no manual intervention is needed. The steps below are for cases where manual investigation or intervention is required.
+
+### Manual Recovery Steps
 
 #### Step 1: Confirm the Proof is Lost
 
-**Check what batch the system thinks it sent:**
+**Check what batch the system thinks it sent to Aligned:**
 
 ```sql
--- Check the latest sent batch pointer (SQL storage)
-SELECT batch FROM latest_sent WHERE _id = 0;
+-- Check the latest batch sent to Aligned gateway (SQL storage)
+SELECT batch FROM latest_sent_to_aligned WHERE _id = 0;
 ```
 
 **Check if the proof exists locally:**
@@ -157,21 +167,21 @@ for receipt in receipts {
 }
 ```
 
-If the proof exists locally, `latest_sent` shows the batch was sent, but neither the gateway has a receipt nor Aligned has aggregated it after an extended period, the proof was likely lost.
+If the proof exists locally, `latest_sent_to_aligned` shows the batch was sent, but neither the gateway has a receipt nor Aligned has aggregated it after an extended period, the proof was likely lost.
 
-#### Step 2: Reset the Latest Sent Batch Pointer
+#### Step 2: Reset the Aligned Cursor
 
-The proof still exists in the database - the system just thinks it was already sent. Reset the `latest_sent` value to make the L1ProofSender resend it:
+The proof still exists in the database - the system just thinks it was already sent. Reset the `latest_sent_to_aligned` value to make the L1ProofSender resend it:
 
 ```sql
 -- Reset to the batch before the lost one (SQL storage)
--- This will cause L1ProofSender to resend batch N on the next iteration
-UPDATE latest_sent SET batch = <BATCH_NUMBER - 1> WHERE _id = 0;
+-- L1ProofSender will resend batch N on the next iteration
+UPDATE latest_sent_to_aligned SET batch = <BATCH_NUMBER - 1> WHERE _id = 0;
 ```
 
 For example, if batch 5 was lost:
 ```sql
-UPDATE latest_sent SET batch = 4 WHERE _id = 0;
+UPDATE latest_sent_to_aligned SET batch = 4 WHERE _id = 0;
 ```
 
 > **Note**: It's safe to resend a proof even if Aligned didn't actually lose it. Aligned treats each submission with a different nonce as a separate entry, so the SDK will return `Ok` and queue the proof again. If the original proof was already aggregated, the L1ProofVerifier will find it when checking the commitment (which is deterministic based on vk + public inputs). The only downside is paying an extra aggregation fee for the duplicate submission.
@@ -367,7 +377,7 @@ The response includes:
 | Scenario | Automatic Recovery | Manual Intervention |
 |----------|-------------------|---------------------|
 | Aligned temporary outage | Yes | None needed |
-| Proof lost before verification | No | Reset `latest_sent` pointer to trigger resend |
+| Proof lost before verification | Yes (via `--aligned.resubmission-timeout`) | Reset `latest_sent_to_aligned` pointer if automatic resubmission fails |
 | Aligned permanent shutdown | No | Switch to Standard mode |
 | Insufficient quota balance | No | Deposit funds |
 | Proof marked invalid | Yes | None needed |

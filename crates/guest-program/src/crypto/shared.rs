@@ -74,7 +74,11 @@ pub(crate) fn k256_recover_signer(sig: &[u8; 65], msg: &[u8; 32]) -> Result<Addr
 }
 
 // ── substrate-bn BN254 ───────────────────────────────────────────────────────
-
+//
+// These functions require the substrate-bn crate, which is only available when
+// sp1, risc0, or zisk is enabled. The openvm feature only provides k256 and
+// does not need BN254 via substrate-bn.
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 /// BN254 G1 point addition using substrate-bn (pure Rust, RISC-V compatible).
 /// Used by ZisK, which historically used substrate-bn for ecadd rather than ark-bn254.
 pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
@@ -117,14 +121,16 @@ pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], Cryp
     let result = g1_a + g1_b;
 
     let mut out = [0u8; 64];
-    #[allow(clippy::indexing_slicing)]
-    {
-        result.x().to_big_endian(&mut out[..32]);
-        result.y().to_big_endian(&mut out[32..]);
+    if let Some(affine) = AffineG1::from_jacobian(result) {
+        #[allow(clippy::indexing_slicing)]
+        affine.x().to_big_endian(&mut out[..32]);
+        #[allow(clippy::indexing_slicing)]
+        affine.y().to_big_endian(&mut out[32..]);
     }
     Ok(out)
 }
 
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 /// BN254 G1 scalar multiplication using substrate-bn (pure Rust, RISC-V compatible).
 /// Used by SP1 and ZisK where substrate-bn is patched for circuit acceleration.
 pub(crate) fn substrate_bn_g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
@@ -159,14 +165,16 @@ pub(crate) fn substrate_bn_g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64
     let result = g1 * s;
 
     let mut out = [0u8; 64];
-    #[allow(clippy::indexing_slicing)]
-    {
-        result.x().to_big_endian(&mut out[..32]);
-        result.y().to_big_endian(&mut out[32..]);
+    if let Some(affine) = AffineG1::from_jacobian(result) {
+        #[allow(clippy::indexing_slicing)]
+        affine.x().to_big_endian(&mut out[..32]);
+        #[allow(clippy::indexing_slicing)]
+        affine.y().to_big_endian(&mut out[32..]);
     }
     Ok(out)
 }
 
+#[cfg(any(feature = "sp1", feature = "risc0", feature = "zisk"))]
 /// BN254 pairing check using substrate-bn (pure Rust, RISC-V compatible).
 /// Used by SP1, RISC0, and ZisK where substrate-bn is patched for circuit acceleration.
 pub(crate) fn substrate_bn_pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {

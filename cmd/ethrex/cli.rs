@@ -19,7 +19,7 @@ use ethrex_p2p::{
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::error::StoreError;
+use ethrex_storage::{error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -29,7 +29,7 @@ use crate::{
     },
     utils::{
         self, default_datadir, get_client_version, get_client_version_string,
-        get_minimal_client_version, init_datadir,
+        get_minimal_client_version, init_datadir, is_memory_datadir,
     },
 };
 
@@ -38,6 +38,22 @@ pub const DB_ETHREX_DEV_L1: &str = "dev_ethrex_l1";
 #[cfg(feature = "l2")]
 pub const DB_ETHREX_DEV_L2: &str = "dev_ethrex_l2";
 use ethrex_config::networks::Network;
+
+/// Computes the effective datadir by appending a network-specific suffix.
+/// In-memory datadirs are returned as-is. Dev mode uses a "dev" suffix.
+/// Public networks use their name as suffix (e.g. "mainnet", "sepolia").
+pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> PathBuf {
+    if is_memory_datadir(base) {
+        return base.to_path_buf();
+    }
+    if dev && cfg!(feature = "dev") {
+        base.join("dev")
+    } else if let Some(suffix) = network.datadir_suffix() {
+        base.join(suffix)
+    } else {
+        base.to_path_buf()
+    }
+}
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -55,7 +71,7 @@ pub struct Options {
         long = "network",
         value_name = "NETWORK_OR_GENESIS_PATH",
         help = "Network name or path to a genesis JSON file.",
-        long_help = "Supported networks: polygon (chain ID 137, default), amoy (chain ID 80002). A path to a custom genesis file may also be provided.",
+        long_help = "Supported networks: mainnet, sepolia, hoodi, polygon (chain ID 137), amoy (chain ID 80002). A path to a custom genesis file may also be provided. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
@@ -66,10 +82,9 @@ pub struct Options {
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = default_datadir().into_os_string(),
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
+        help = "Base directory for the database. A network-specific subdirectory (e.g. mainnet, sepolia) is appended automatically for public networks.",
+        long_help = "Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.",
         help_heading = "Node options",
         env = "ETHREX_DATADIR"
     )]
@@ -145,6 +160,14 @@ pub struct Options {
         env = "ETHREX_LOG_COLOR"
     )]
     pub log_color: LogColor,
+    #[arg(
+        long = "no-migrate",
+        action = ArgAction::SetTrue,
+        help = "Do not migrate an existing database to the network-specific subdirectory.",
+        help_heading = "Node options",
+        env = "ETHREX_NO_MIGRATE"
+    )]
+    pub no_migrate: bool,
     #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
@@ -323,6 +346,35 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.callback-url",
+        value_name = "URL",
+        help = "Callback URL for delivering generated proofs (EIP-8025).",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_CALLBACK_URL"
+    )]
+    pub proof_callback_url: Option<url::Url>,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.coordinator-addr",
+        default_value = "127.0.0.1",
+        value_name = "ADDRESS",
+        help = "Listening address for the proof coordinator TCP server.",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_COORDINATOR_ADDR"
+    )]
+    pub proof_coordinator_addr: String,
+    #[cfg(feature = "eip-8025")]
+    #[arg(
+        long = "proof.coordinator-port",
+        default_value_t = 9100,
+        value_name = "PORT",
+        help = "Listening port for the proof coordinator TCP server.",
+        help_heading = "Proof options",
+        env = "ETHREX_PROOF_COORDINATOR_PORT"
+    )]
+    pub proof_coordinator_port: u16,
 }
 
 impl Options {
@@ -400,7 +452,14 @@ impl Default for Options {
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
+            #[cfg(feature = "eip-8025")]
+            proof_callback_url: None,
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator_addr: "127.0.0.1".to_string(),
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator_port: 9100,
             precompute_witnesses: false,
+            no_migrate: false,
         }
     }
 }
@@ -487,6 +546,14 @@ pub enum Subcommand {
         #[arg(short = 'e', long, default_value = "http://localhost:8545")]
         endpoint: String,
 
+        /// Authenticated RPC endpoint URL (for engine namespace)
+        #[arg(long = "authrpc.endpoint", default_value = "http://localhost:8551")]
+        authrpc_endpoint: String,
+
+        /// Path to JWT secret file for authenticated RPC (hex-encoded)
+        #[arg(long = "authrpc.jwtsecret")]
+        authrpc_jwtsecret: Option<String>,
+
         /// Path to command history file
         #[arg(long, default_value = "~/.ethrex/history")]
         history_file: String,
@@ -494,6 +561,14 @@ pub enum Subcommand {
         /// Execute a single command and exit
         #[arg(short = 'x', long)]
         execute: Option<String>,
+
+        /// Port to listen for EIP-8025 proof callbacks (GeneratedProof POSTs)
+        #[arg(long = "proof-callback-port", default_value = "9200")]
+        proof_callback_port: u16,
+
+        /// Timeout in seconds for the proof callback listener (proof generation can take minutes)
+        #[arg(long = "proof-callback-timeout", default_value = "300")]
+        proof_callback_timeout: u64,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -512,16 +587,41 @@ impl Subcommand {
             }
         };
 
+        let network = get_network(opts);
+        let effective_datadir = compute_effective_datadir(&opts.datadir, &network, opts.dev);
+
+        // For subcommands that use the store, migrate from the old
+        // unsuffixed datadir layout if applicable.
+        match &self {
+            Subcommand::Import { .. }
+            | Subcommand::ImportBench { .. }
+            | Subcommand::Export { .. } => {
+                crate::initializers::migrate_datadir_if_needed(
+                    &opts.datadir,
+                    &effective_datadir,
+                    &network,
+                    opts.no_migrate,
+                );
+            }
+            _ => {}
+        }
+
         match self {
             Subcommand::RemoveDB { datadir, force } => {
-                remove_db(&datadir, force);
+                let effective = compute_effective_datadir(&datadir, &network, opts.dev);
+                if effective != datadir && has_valid_db(&datadir) && !has_valid_db(&effective) {
+                    warn!(
+                        "Database found at old location {datadir:?} but removedb targets {effective:?}. \
+                         Run with --datadir {datadir:?} or migrate first.",
+                    );
+                }
+                remove_db(&effective, force);
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&effective_datadir, opts.force);
                 }
 
-                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2(L2Config::default())
@@ -530,7 +630,7 @@ impl Subcommand {
                 };
                 import_blocks(
                     &path,
-                    &opts.datadir,
+                    &effective_datadir,
                     genesis,
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
@@ -542,11 +642,10 @@ impl Subcommand {
             }
             Subcommand::ImportBench { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&opts.datadir.clone(), opts.force);
+                    remove_db(&effective_datadir, opts.force);
                 }
                 info!("ethrex version: {}", get_client_version());
 
-                let network = get_network(opts);
                 let genesis = network.get_genesis()?;
                 let blockchain_type = if l2 {
                     BlockchainType::L2(L2Config::default())
@@ -555,7 +654,7 @@ impl Subcommand {
                 };
                 import_blocks_bench(
                     &path,
-                    &opts.datadir,
+                    &effective_datadir,
                     genesis,
                     BlockchainOptions {
                         r#type: blockchain_type,
@@ -566,7 +665,7 @@ impl Subcommand {
                 .await?;
             }
             Subcommand::Export { path, first, last } => {
-                export_blocks(&path, &opts.datadir, first, last).await
+                export_blocks(&path, &effective_datadir, first, last).await
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
@@ -575,10 +674,23 @@ impl Subcommand {
             }
             Subcommand::Repl {
                 endpoint,
+                authrpc_endpoint,
+                authrpc_jwtsecret,
                 history_file,
                 execute,
+                proof_callback_port,
+                proof_callback_timeout,
             } => {
-                ethrex_repl::run(endpoint, history_file, execute).await;
+                ethrex_repl::run(
+                    endpoint,
+                    authrpc_endpoint,
+                    authrpc_jwtsecret,
+                    history_file,
+                    execute,
+                    proof_callback_port,
+                    proof_callback_timeout,
+                )
+                .await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
@@ -722,7 +834,7 @@ pub async fn import_blocks(
                 continue;
             }
 
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             if index + MIN_FULL_BLOCKS < size {
@@ -840,7 +952,7 @@ pub async fn import_blocks_bench(
                 continue;
             }
 
-            validate_block_body(&block.header, &block.body)
+            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
             blockchain

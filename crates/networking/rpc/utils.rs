@@ -56,6 +56,15 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    // EIP-8025 proof errors (-39001 .. -39004)
+    #[error("Invalid proof format: {0}")]
+    InvalidProofFormat(String),
+    #[error("Invalid header format: {0}")]
+    InvalidHeaderFormat(String),
+    #[error("Invalid payload: {0}")]
+    InvalidPayload(String),
+    #[error("Proof generation unavailable: {0}")]
+    ProofGenerationUnavailable(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -156,6 +165,27 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            // EIP-8025 proof error codes
+            RpcErr::InvalidProofFormat(context) => RpcErrorMetadata {
+                code: -39001,
+                data: None,
+                message: format!("Invalid proof format: {context}"),
+            },
+            RpcErr::InvalidHeaderFormat(context) => RpcErrorMetadata {
+                code: -39002,
+                data: None,
+                message: format!("Invalid header format: {context}"),
+            },
+            RpcErr::InvalidPayload(context) => RpcErrorMetadata {
+                code: -39003,
+                data: None,
+                message: format!("Invalid payload: {context}"),
+            },
+            RpcErr::ProofGenerationUnavailable(context) => RpcErrorMetadata {
+                code: -39004,
+                data: None,
+                message: format!("Proof generation unavailable: {context}"),
             },
         }
     }

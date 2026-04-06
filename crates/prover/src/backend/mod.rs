@@ -2,8 +2,8 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
+use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::input::ProgramInput;
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 use serde::{Deserialize, Serialize};
 
 pub mod error;
@@ -116,12 +116,12 @@ pub trait ProverBackend {
     /// Verify a proof.
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError>;
 
-    /// Convert backend-specific proof to unified BatchProof format.
-    fn to_batch_proof(
+    /// Convert backend-specific proof to unified ProverOutput format.
+    fn to_proof_bytes(
         &self,
         proof: Self::ProofOutput,
         format: ProofFormat,
-    ) -> Result<BatchProof, BackendError>;
+    ) -> Result<ProverOutput, BackendError>;
 
     /// Execute the program and measure the duration.
     ///

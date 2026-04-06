@@ -1,0 +1,38 @@
+name: no_std compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/common/**"
+      - "crates/vm/**"
+      - ".github/workflows/pr_nostd.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  no-std-check:
+    name: no_std build check (riscv64imac)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: riscv64imac-unknown-none-elf
+
+      - name: Check no_std crates
+        run: cargo check -p ethrex-rlp --no-default-features --target riscv64imac-unknown-none-elf

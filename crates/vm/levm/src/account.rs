@@ -35,6 +35,11 @@ pub struct LevmAccount {
     pub has_storage: bool,
     /// Current status of the account.
     pub status: AccountStatus,
+    /// Whether this account exists in the state trie.
+    /// Used for EIP-7702 auth refund: `account_exists` (EELS) differs from `!is_empty()`.
+    /// An account can exist but be empty (e.g., has non-empty storage root only).
+    /// Default is `false` (non-existent); set to `true` when loaded from DB with actual state.
+    pub exists: bool,
 }
 
 // This is used only in state_v2 runner, storage is already fully filled in the genesis account.
@@ -55,11 +60,13 @@ impl From<GenesisAccount> for LevmAccount {
             has_storage: !storage.is_empty(),
             storage,
             status: AccountStatus::Unmodified,
+            exists: true,
         }
     }
 }
 impl From<AccountState> for LevmAccount {
     fn from(state: AccountState) -> Self {
+        let is_default = state == AccountState::default();
         LevmAccount {
             info: AccountInfo {
                 code_hash: state.code_hash,
@@ -69,6 +76,11 @@ impl From<AccountState> for LevmAccount {
             storage: Default::default(),
             status: AccountStatus::Unmodified,
             has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+            // An account with all default fields was not found in the DB.
+            // Post-EIP-161, truly empty accounts are pruned from the trie,
+            // so default == non-existent. Accounts with non-empty storage root
+            // but empty balance/nonce/code DO exist (state != default).
+            exists: !is_default,
         }
     }
 }
@@ -85,6 +97,9 @@ impl LevmAccount {
         if self.status == AccountStatus::Destroyed {
             self.status = AccountStatus::DestroyedModified;
         }
+        // A modified account exists in the current state
+        // (even if it didn't exist in the trie before this tx).
+        self.exists = true;
     }
 
     pub fn has_nonce(&self) -> bool {
