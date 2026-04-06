@@ -417,18 +417,6 @@ impl Blockchain {
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
 
-        if matches!(self.options.r#type, BlockchainType::Polygon) {
-            let computed = ethrex_common::types::compute_receipts_root(&execution_result.receipts);
-            if computed != block.header.receipts_root {
-                for (i, r) in execution_result.receipts.iter().enumerate() {
-                    warn!(
-                        block = block.header.number, idx = i, tx_type = ?r.tx_type,
-                        ok = r.succeeded, cum = r.cumulative_gas_used, logs = r.logs.len(),
-                        "RECEIPT_DIAG"
-                    );
-                }
-            }
-        }
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         // Polygon doesn't implement EIP-7685 (execution requests)
         if !matches!(self.options.r#type, BlockchainType::Polygon) {
@@ -605,18 +593,6 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-                        if matches!(self.options.r#type, BlockchainType::Polygon) {
-                            let computed = ethrex_common::types::compute_receipts_root(&execution_result.receipts);
-                            if computed != block.header.receipts_root {
-                                for (i, r) in execution_result.receipts.iter().enumerate() {
-                                    warn!(
-                                        block = block.header.number, idx = i, tx_type = ?r.tx_type,
-                                        ok = r.succeeded, cum = r.cumulative_gas_used, logs = r.logs.len(),
-                                        "RECEIPT_DIAG"
-                                    );
-                                }
-                            }
-                        }
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         if !matches!(self.options.r#type, BlockchainType::Polygon) {
                             validate_requests_hash(
@@ -3492,31 +3468,6 @@ fn execute_polygon_system_calls(
                 MAX_SYSTEM_CALL_GAS,
             ) {
                 Ok(report) => {
-                    if block_number == 84977856 {
-                        warn!(
-                            block_number,
-                            event_id = event.id,
-                            success = report.is_success(),
-                            log_count = report.logs.len(),
-                            output_hex = hex::encode(&report.output[..report.output.len().min(64)]),
-                            "commitState detailed"
-                        );
-                        for (li, log) in report.logs.iter().enumerate() {
-                            warn!(
-                                log_idx = li,
-                                addr = ?log.address,
-                                topic_count = log.topics.len(),
-                                data_hex = hex::encode(&log.data),
-                                "commitState log"
-                            );
-                        }
-                        // Also dump the record RLP
-                        warn!(
-                            record_len = record_bytes.len(),
-                            record_hex = hex::encode(&record_bytes[..record_bytes.len().min(200)]),
-                            "commitState record"
-                        );
-                    }
                     // commitState reverts are non-fatal — collect logs only on success
                     if report.is_success() {
                         all_logs.extend(report.logs);

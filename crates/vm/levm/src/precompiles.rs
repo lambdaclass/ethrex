@@ -269,10 +269,10 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         }
         let addr = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
         return match addr {
-            1..=9 => true,                                   // Basic + Istanbul
-            0x0a => false,                                    // KZG: not available on Polygon
-            0x0b..=0x11 => fork >= Fork::Prague,              // BLS: active since Prague
-            0x100 => true,                                    // P256Verify: always active
+            1..=9 => true,                       // Basic + Istanbul
+            0x0a => false,                       // KZG: not available on Polygon
+            0x0b..=0x11 => fork >= Fork::Prague, // BLS: active since Prague
+            0x100 => true,                       // P256Verify: always active
             _ => false,
         };
     }
