@@ -1273,6 +1273,12 @@ pub fn validate_execution_payload_v4_public(payload: &ExecutionPayload) -> Resul
     validate_execution_payload_v4(payload)
 }
 
+/// Public wrapper around `validate_execution_payload_v3` for use by the REST module.
+#[inline]
+pub fn validate_execution_payload_v3_public(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    validate_execution_payload_v3(payload)
+}
+
 /// Public wrapper around `validate_execution_requests` for use by the REST module.
 #[inline]
 pub fn validate_execution_requests_public(

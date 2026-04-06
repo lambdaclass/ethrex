@@ -234,8 +234,15 @@ pub async fn handle_new_payload_with_witness(
         }
     };
 
-    if let Err(e) = payload::validate_execution_payload_v4_public(&exec_payload) {
-        return rpc_err_to_response(e);
+    // Use V4 validation when blockAccessList is present (Amsterdam+), V3 otherwise (Prague/Electra).
+    if exec_payload.block_access_list.is_some() {
+        if let Err(e) = payload::validate_execution_payload_v4_public(&exec_payload) {
+            return rpc_err_to_response(e);
+        }
+    } else {
+        if let Err(e) = payload::validate_execution_payload_v3_public(&exec_payload) {
+            return rpc_err_to_response(e);
+        }
     }
 
     if let Err(e) = payload::validate_execution_requests_public(&execution_requests) {
@@ -268,8 +275,15 @@ pub async fn handle_new_payload_with_witness(
         }
     };
 
+    // TODO:DEVELOPERUCHE this config for a* should come externally
+    // if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+    //     return rpc_err_to_response(RpcErr::UnsupportedFork(format!(
+    //         "{:?}",
+    //         chain_config.get_fork(block.header.timestamp)
+    //     )));
+    // }
     let chain_config = context.storage.get_chain_config();
-    if !chain_config.is_amsterdam_activated(block.header.timestamp) {
+    if !chain_config.is_prague_activated(block.header.timestamp) {
         return rpc_err_to_response(RpcErr::UnsupportedFork(format!(
             "{:?}",
             chain_config.get_fork(block.header.timestamp)
