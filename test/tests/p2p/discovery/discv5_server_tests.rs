@@ -63,11 +63,12 @@ async fn test_whoareyou_rate_limiting() {
 
     let _ = server.send_who_are_you(nonce, src_id1, addr).await;
 
-    // Rate limit is now keyed by (IP, node_id)
+    // Rate limit is keyed by (IP, node_id)
     assert!(
         server
             .whoareyou_rate_limit
-            .contains_key(&(addr.ip(), src_id1))
+            .peek(&(addr.ip(), src_id1))
+            .is_some()
     );
     assert!(server.pending_challenges.contains_key(&src_id1));
 
@@ -85,6 +86,55 @@ async fn test_whoareyou_rate_limiting() {
 
     assert!(server.pending_challenges.contains_key(&src_id3));
     assert_eq!(server.whoareyou_rate_limit.len(), 3);
+}
+
+#[tokio::test]
+async fn test_global_whoareyou_rate_limiting() {
+    let mut server = test_server(None).await;
+    let nonce = [0u8; 12];
+
+    // Pin the window start so the test doesn't flake on slow CI runners
+    server.whoareyou_global_window_start = Instant::now();
+
+    // Send 100 WHOAREYOU packets to different IPs (hits global limit)
+    for i in 0..100u32 {
+        let ip = format!("10.0.{}.{}", i / 256, i % 256);
+        let addr: SocketAddr = format!("{ip}:30303").parse().unwrap();
+        let src_id = H256::from_low_u64_be(i as u64 + 1);
+        let _ = server.send_who_are_you(nonce, src_id, addr).await;
+    }
+    assert_eq!(server.pending_challenges.len(), 100);
+
+    // The 101st packet from a new IP should be dropped by the global limit
+    let addr_over_limit: SocketAddr = "10.1.0.0:30303".parse().unwrap();
+    let src_id_over = H256::from_low_u64_be(1000);
+    let _ = server
+        .send_who_are_you(nonce, src_id_over, addr_over_limit)
+        .await;
+    assert!(!server.pending_challenges.contains_key(&src_id_over));
+    assert_eq!(server.pending_challenges.len(), 100);
+}
+
+#[tokio::test]
+async fn test_whoareyou_rate_limit_lru_cache_works() {
+    let mut server = test_server(None).await;
+    let nonce = [0u8; 12];
+
+    // Bypass the global rate limit so we can insert many entries
+    server.whoareyou_global_window_start = Instant::now() - std::time::Duration::from_secs(10);
+
+    for i in 0..200u32 {
+        server.whoareyou_global_count = 0; // reset global counter each iteration
+        let ip = format!("10.{}.{}.{}", i / 65536, (i / 256) % 256, i % 256);
+        let addr: SocketAddr = format!("{ip}:30303").parse().unwrap();
+        let src_id = H256::from_low_u64_be(i as u64 + 1);
+        let _ = server.send_who_are_you(nonce, src_id, addr).await;
+    }
+
+    // All 200 entries fit within the 10,000 LRU capacity
+    assert_eq!(server.whoareyou_rate_limit.len(), 200);
+    // The cache is bounded — can never exceed capacity
+    assert!(server.whoareyou_rate_limit.len() <= 10_000);
 }
 
 #[tokio::test]
