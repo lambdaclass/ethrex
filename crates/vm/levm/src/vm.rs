@@ -570,9 +570,8 @@ impl<'a> VM<'a> {
 
         // Polygon: emit Bor LogTransfer for the initial tx value transfer.
         // Must be AFTER push_backup() so the log reverts with failed transactions.
-        // In Bor, this log is emitted inside evm.Call() (inside the snapshot).
+        // Covers both CALL and CREATE tx types.
         if matches!(self.vm_type, VMType::Polygon(_))
-            && !self.current_call_frame.is_create
             && !self.current_call_frame.msg_value.is_zero()
         {
             let from = self.env.origin;
@@ -718,6 +717,19 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
+        // Polygon: revert the substate backup on failure so that LogTransfer logs
+        // from the initial value transfer (emitted inside push_backup) are discarded.
+        // On success, commit the backup to preserve those logs.
+        // This must happen BEFORE the hook runs, because the PolygonHook appends
+        // LogFeeTransfer which should survive regardless of tx success/failure.
+        if matches!(self.vm_type, VMType::Polygon(_)) {
+            if ctx_result.is_success() {
+                self.substate.commit_backup();
+            } else {
+                self.substate.revert_backup();
+            }
+        }
+
         for hook in self.hooks.clone() {
             hook.borrow_mut()
                 .finalize_execution(self, &mut ctx_result)?;

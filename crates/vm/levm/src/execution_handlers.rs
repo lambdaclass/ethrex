@@ -144,19 +144,8 @@ impl<'a> VM<'a> {
         self.increase_account_balance(new_contract_address, value)?;
 
         if !value.is_zero() {
-            // Polygon: Bor's evm.create() calls Transfer() which emits LogTransfer.
-            if matches!(self.vm_type, VMType::Polygon(_)) {
-                let sender_bal = self.db.get_account(self.env.origin)?.info.balance;
-                let recipient_bal = self.db.get_account(new_contract_address)?.info.balance;
-                let log = build_value_transfer_log(
-                    self.env.origin,
-                    new_contract_address,
-                    value,
-                    sender_bal,
-                    recipient_bal,
-                );
-                self.substate.add_log(log);
-            }
+            // NOTE: Polygon LogTransfer for CREATE tx value transfer is emitted in
+            // vm.rs AFTER push_backup(), so it reverts with failed CREATEs.
 
             // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
             // Origin is sender, new_contract_address is the recipient.
