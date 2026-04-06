@@ -491,12 +491,6 @@ Block producer options:
       --block-producer.l1-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
 
-      --block-producer.block-gas-limit <UINT64>
-          Maximum gas limit for the L2 blocks.
-
-          [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
-          [default: 30000000]
-
 Proposer options:
       --elasticity-multiplier <UINT64>
           [env: ETHREX_PROPOSER_ELASTICITY_MULTIPLIER=]

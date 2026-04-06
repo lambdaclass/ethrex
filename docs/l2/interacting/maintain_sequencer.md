@@ -20,4 +20,4 @@ cast send <BRIDGE_ADDRESS> "setL2GasLimit(uint256)" <NEW_GAS_LIMIT> \
   --rpc-url <L1_RPC_URL>
 ```
 
-After updating the on-chain value, restart the sequencer for it to take effect.
+After updating the on-chain value, restart the sequencer for it to take effect. Until the restart, the sequencer continues using the previous gas limit, which may cause a temporary mismatch with the on-chain value.

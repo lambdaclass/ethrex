@@ -90,9 +90,9 @@ ethrex l2 \
 > - Replace `L1_PROOF_SENDER_PRIVATE_KEY` and `L1_COMMITTER_PRIVATE_KEY` with the private keys for the `L1_PROOF_SENDER_ADDRESS` and `L1_COMMITTER_ADDRESS` from the deployment step.
 > - Replace `L1_RPC_URL` and `PATH_TO_L2_GENESIS_FILE` with the same values used in the deployment step.
 > - Tune throughput with the gas caps:
->   - `--block-producer.block-gas-limit` (env: `ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT`, default: `30000000`): Sets the gas limit per L2 block.
+>   - The L2 block gas limit is stored on-chain in the `CommonBridge` contract. The sequencer fetches this value on startup. See [Maintain Sequencer](../interacting/maintain_sequencer.md) for how to view and update it.
 >   - `--committer.batch-gas-limit` (env: `ETHREX_COMMITTER_BATCH_GAS_LIMIT`): Sets the gas limit per batch sent to L1—should be at or above the block gas limit.
-> 
+>
 >   You can use either the environment variables or the flags to configure these values.
 
 That's it! You now have a validium ethrex L2 up and running. However, one key component is still missing: state proving. The L2 state is considered final only after a batch execution ZK proof is successfully verified on-chain. Generating these proofs requires running a dedicated prover, which is covered in the Run an ethrex L2 Prover section.

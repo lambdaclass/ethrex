@@ -169,6 +169,10 @@ contract CommonBridge is
         CHAIN_ID = chainId;
 
         require(_l2GasLimit > 0, "CommonBridge: l2GasLimit cannot be zero");
+        require(
+            _l2GasLimit <= type(uint64).max,
+            "CommonBridge: l2GasLimit exceeds uint64 max"
+        );
         l2GasLimit = _l2GasLimit;
     }
 
@@ -277,10 +281,6 @@ contract CommonBridge is
     function sendToL2(
         SendValues calldata sendValues
     ) public override whenNotPaused {
-        require(
-            sendValues.gasLimit <= l2GasLimit,
-            "CommonBridge: gasLimit exceeds l2GasLimit"
-        );
         _burnGas(sendValues.gasLimit);
         _sendToL2(_getSenderAlias(), sendValues);
     }
@@ -746,6 +746,10 @@ contract CommonBridge is
     /// @inheritdoc ICommonBridge
     function setL2GasLimit(uint256 newL2GasLimit) external onlyOwner {
         require(newL2GasLimit > 0, "CommonBridge: l2GasLimit cannot be zero");
+        require(
+            newL2GasLimit <= type(uint64).max,
+            "CommonBridge: l2GasLimit exceeds uint64 max"
+        );
         l2GasLimit = newL2GasLimit;
         emit L2GasLimitUpdated(newL2GasLimit);
     }
