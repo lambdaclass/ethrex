@@ -417,6 +417,18 @@ impl Blockchain {
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
 
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let computed = ethrex_common::types::compute_receipts_root(&execution_result.receipts);
+            if computed != block.header.receipts_root {
+                for (i, r) in execution_result.receipts.iter().enumerate() {
+                    warn!(
+                        block = block.header.number, idx = i, tx_type = ?r.tx_type,
+                        ok = r.succeeded, cum = r.cumulative_gas_used, logs = r.logs.len(),
+                        "RECEIPT_DIAG"
+                    );
+                }
+            }
+        }
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         // Polygon doesn't implement EIP-7685 (execution requests)
         if !matches!(self.options.r#type, BlockchainType::Polygon) {
@@ -593,6 +605,18 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        if matches!(self.options.r#type, BlockchainType::Polygon) {
+                            let computed = ethrex_common::types::compute_receipts_root(&execution_result.receipts);
+                            if computed != block.header.receipts_root {
+                                for (i, r) in execution_result.receipts.iter().enumerate() {
+                                    warn!(
+                                        block = block.header.number, idx = i, tx_type = ?r.tx_type,
+                                        ok = r.succeeded, cum = r.cumulative_gas_used, logs = r.logs.len(),
+                                        "RECEIPT_DIAG"
+                                    );
+                                }
+                            }
+                        }
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         if !matches!(self.options.r#type, BlockchainType::Polygon) {
                             validate_requests_hash(
