@@ -3442,7 +3442,7 @@ fn execute_polygon_system_calls(
             ethrex_rlp::structs::Encoder::new(&mut record_bytes)
                 .encode_field(&event.id)
                 .encode_field(&event.contract)
-                .encode_field(&data_bytes)
+                .encode_field(&bytes::Bytes::from(data_bytes.clone()))
                 .encode_field(&event.tx_hash)
                 .encode_field(&event.log_index)
                 .encode_field(&event.bor_chain_id)
