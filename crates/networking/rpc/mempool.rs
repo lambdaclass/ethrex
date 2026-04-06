@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{types::TxKind, Address, U256};
+use ethrex_common::{types::TxKind, Address};
 use ethrex_crypto::NativeCrypto;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -105,10 +105,7 @@ pub fn inspect(context: RpcApiContext) -> Result<Value, RpcErr> {
     let mut pending: MempoolInspectEntry = HashMap::new();
     for tx in transactions {
         let sender = tx.sender(&NativeCrypto)?;
-        let gas_price = tx
-            .max_fee_per_gas()
-            .map(U256::from)
-            .unwrap_or_else(|| tx.gas_price());
+        let gas_price = tx.gas_price();
         let summary = match tx.to() {
             TxKind::Call(to) => format!(
                 "{to:#x}: {} wei + {} gas × {} wei",
