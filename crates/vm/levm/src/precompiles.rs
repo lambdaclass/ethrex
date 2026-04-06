@@ -265,13 +265,14 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         // Avoids iterator overhead — this is called on every CALL/DELEGATECALL opcode.
         // High bytes must be zero (addresses like 0x4200...000f are NOT precompiles).
         if address.0[..18] != [0u8; 18] {
-            return *address == P256VERIFY.address && fork >= Fork::Lisovo;
+            return false;
         }
         let addr = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
         return match addr {
             1..=9 => true,                                   // Basic + Istanbul
             0x0a => false,                                    // KZG: not available on Polygon
             0x0b..=0x11 => fork >= Fork::Prague,              // BLS: active since Prague
+            0x100 => true,                                    // P256Verify: always active
             _ => false,
         };
     }
