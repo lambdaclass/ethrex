@@ -593,6 +593,15 @@ impl Blockchain {
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        // Debug: dump receipt log counts before validation
+                        if matches!(self.options.r#type, BlockchainType::Polygon) {
+                            for (i, r) in execution_result.receipts.iter().enumerate() {
+                                eprintln!(
+                                    "RECEIPT_DEBUG block={} idx={} type={:?} succeeded={} cumgas={} logs={}",
+                                    block.header.number, i, r.tx_type, r.succeeded, r.cumulative_gas_used, r.logs.len()
+                                );
+                            }
+                        }
                         validate_receipts_root(&block.header, &execution_result.receipts)?;
                         if !matches!(self.options.r#type, BlockchainType::Polygon) {
                             validate_requests_hash(
