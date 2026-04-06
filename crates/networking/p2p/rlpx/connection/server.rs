@@ -995,6 +995,11 @@ pub(crate) async fn send(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
+    #[cfg(feature = "metrics")]
+    {
+        use ethrex_metrics::p2p::METRICS_P2P;
+        METRICS_P2P.inc_outgoing_message(message.metric_label());
+    }
     state.sink.send(message).await
 }
 
@@ -1020,6 +1025,11 @@ async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
+    #[cfg(feature = "metrics")]
+    {
+        use ethrex_metrics::p2p::METRICS_P2P;
+        METRICS_P2P.inc_incoming_message(message.metric_label());
+    }
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
     #[cfg(feature = "l2")]
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();
