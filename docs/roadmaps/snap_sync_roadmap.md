@@ -1,19 +1,22 @@
 # Snap Sync Module Roadmap
 
 **Author:** Pablo Deymonnaz
-**Date:** February 2026
+**Date:** February 2026 (updated April 2026)
 **Status:** Draft for Review
 
 ---
 
 ## Executive Summary
 
-This roadmap outlines a strategic plan to improve the ethrex snap sync module in two phases:
+This roadmap outlines a strategic plan to improve the ethrex snap sync module in three phases:
 
 1. **Phase 1: Performance Optimization** - Make snap sync as fast as possible
 2. **Phase 2: Code Quality & Maintainability** - Make the code clear, readable, and easier to understand
+3. **Phase 3: Pipeline Architecture** - Migrate to spawned actors for pipelined concurrent execution
 
 The snap sync module currently comprises ~4,900 lines across 11 files. Our goal is to achieve sync times competitive with geth while maintaining code quality standards.
+
+> **April 2026 update:** Spawned 0.5.0 has been [merged](#6295) — the actor framework blocker for Phase 3 is gone. Several new performance PRs (#6410, #6184, #6177, #6159, #6178) have been opened since the original roadmap. Phase 1 now includes trie building optimizations that represent the largest single improvement opportunity (-31% account insertion time). Phase 3 pipelining has been partially achieved without actors (#6184), validating the incremental approach.
 
 ---
 
@@ -70,13 +73,17 @@ The snap sync process consists of 6 sequential phases:
 
 ### Current Performance Bottlenecks
 
-Based on code analysis and profiling data:
+Based on code analysis and mainnet profiling data (PR #6410):
 
 | Bottleneck | Location | Impact | Priority |
 |------------|----------|--------|----------|
+| **Trie building in insertion** | `insert_accounts`, `insert_storage` | **75-91% of insertion time** (883s/1184s for accounts, 2357s/2587s for storage on mainnet) | **Critical** |
 | Sequential header download | `sync_cycle_snap()` | Blocks state download start | Critical |
+| Sequential phase pipeline | `snap_sync.rs` orchestration | Bytecodes/storage wait for all accounts to finish | High |
+| Redundant code hash pass | `insert_accounts` | Extra full iteration over temp DB | Medium |
 | Trie node batching | `heal_state_trie()`, `heal_storage_trie()` | Writes are batched but could use `put_batch_no_alloc` | Medium |
 | Busy-wait loops | Multiple locations | CPU waste (only when no peers available) | Medium |
+| SST file intermediate step | Account/storage download | Overlapping key ranges force RocksDB merge during ingestion | Medium |
 | Sync `std::fs` calls | Snapshot dumping | Already in `spawn_blocking`, but directory ops should use `tokio::fs` | Low |
 
 ### Existing Code Quality Issues
@@ -271,9 +278,9 @@ fn max_requests_for_peer(&self, peer_id: &H256) -> u32 {
 
 > Discarded — storage healing is already parallelized via `JoinSet` with up to `MAX_IN_FLIGHT_REQUESTS` (77) concurrent requests.
 
-### 1.9 Bytes for Trie Values — O(1) Clones (PR #6057 - In Progress)
+### 1.9 ~~Bytes for Trie Values — O(1) Clones~~ (Discarded)
 
-Use `Bytes` instead of `Vec<u8>` for trie values to enable O(1) reference-counted clones in cache lookups, avoiding expensive deep copies.
+> Discarded — PR #6057 closed without merging.
 
 ### 1.10 Snap Sync Benchmark Tool (PR #6108 - In Progress)
 
@@ -282,6 +289,86 @@ Python tool (`tooling/sync/sync_benchmark.py`) to analyze snap sync performance 
 ### 1.11 Per-Phase Timing Breakdown in Slack Notifications (✅ DONE — Merged in #6136)
 
 Surfaces per-phase completion timings (Block Headers, Account Ranges, Storage Ranges, Healing, etc.) directly in Slack notifications from the multisync monitoring script, so performance bottlenecks are visible at a glance.
+
+---
+
+### 1.12 Optimize Trie Building in Snap Sync Insertion (PR #6410 — In Progress)
+
+**Current State:** Trie building is 75-91% of insertion time (profiled on mainnet). Account insertion took ~20 minutes and storage insertion ~43 minutes — together 61% of total snap sync time. The trie build is entirely CPU-bound (0% I/O wait).
+
+**Changes:**
+1. **Eliminate redundant code hash iteration pass** — original code iterated all accounts twice (once for code hashes, once for trie). Merged into single pass.
+2. **Reuse `nodehash_buffer` across calls** — avoids ~700M allocations on mainnet.
+3. **Parallel state trie building across 16 nibble ranges** — splits state trie into 16 independent sub-tries built concurrently.
+
+**Benchmarks (mainnet, release profile, no validation):**
+
+| Phase | Before | After | Delta |
+|-------|--------|-------|-------|
+| Account Insertion | 1184s (19m 44s) | 818s (13m 40s) | **-31%** |
+| Storage Insertion | 2587s (43m 7s) | 2433s (40m 30s) | **-6%** |
+
+| Network | Before | After | Saved |
+|---------|--------|-------|-------|
+| Hoodi | ~25m | ~13m | ~12m |
+| Sepolia | ~90m | ~43m | ~47m |
+| Mainnet | ~1h 42m | ~1h 35m | ~7m |
+
+**Note:** This optimization is orthogonal to the concurrency model — it operates at the trie-building level, below the orchestration layer. No dependency on actor migration.
+
+**Status:** PR #6410 open, benchmarked on mainnet
+
+---
+
+### 1.13 Pipeline Bytecode Downloads & Background Storage Healing (PR #6184 — In Progress)
+
+**Current State:** Bytecodes wait for all healing; storage healing must reach 100% before finalization.
+
+**Changes:**
+1. **Concurrent bytecode downloads** — stream code hashes via `mpsc` channel to a concurrent download task running alongside healing. Content-addressed (hash = key), safe regardless of pivot changes.
+2. **Background storage healing with 99% threshold** — state healing runs to 100%, but storage healing finalizes at 99% and completes the remaining <1% in a background task after finalization.
+
+**Benchmarks (Hoodi):** -13% total sync time (489s vs 564s baseline).
+
+**Note:** Implements Phase 3 pipelining goals (3.3, 3.4) incrementally using `mpsc` channels, without requiring a full actor migration. Validates that the orchestration can be improved without restructuring to actors first.
+
+**Status:** PR #6184 open
+
+---
+
+### 1.14 Eliminate SST File Intermediate Step (PR #6177 — In Progress)
+
+Replace SST file writer + ingest flow with direct `WriteBatch` writes to temp RocksDB during download phase. Removes overlapping key range merge overhead. Also merges the two iterator passes in `insert_accounts` into a single pass.
+
+**Status:** PR #6177 open, needs mainnet testing
+
+---
+
+### 1.15 Optimize Insertion and Healing Write Paths (PR #6159 — In Progress)
+
+Addresses multiple hot-path bottlenecks found via profiling:
+- Single-element `Vec` alloc per key in `put_batch` (~20k allocs per flush)
+- `put_batch_no_alloc` actually allocates (encodes all nodes, collects into Vec)
+- BTreeMap overwrites in healing batch writes
+- Hardcoded 12 threads for trie building
+
+**Status:** PR #6159 open
+
+---
+
+### 1.16 Disable WAL and Improve Concurrency (PR #6178 — In Progress)
+
+Disable write-ahead log for snap sync temp DBs (crash recovery not needed) and tune RocksDB concurrency settings.
+
+**Status:** PR #6178 open
+
+---
+
+### 1.17 Fill All Peer Slots per Tick in Healing Dispatch (PR #6175 — In Progress)
+
+Current healing dispatch only fills one peer slot per loop iteration. Fill all available slots per tick to maximize network utilization.
+
+**Status:** PR #6175 open
 
 ---
 
@@ -438,7 +525,9 @@ impl ProgressReporter {
 
 ---
 
-### 2.5 State Machine Refactor
+### 2.5 State Machine Refactor (Consider deferring — subsumed by 3.1)
+
+> **Note:** This would be subsumed by the actor migration (3.1), where each actor naturally represents a phase with explicit state. Consider skipping this as a standalone item if 3.1 is planned soon.
 
 **Current State:** Snap sync phases are implicit in control flow.
 
@@ -592,7 +681,9 @@ Other `.expect()` calls (`snap/client.rs:630-631`) are on `JoinSet` results, not
 
 ---
 
-### 2.12 Use `JoinSet` Instead of Channels for Workers
+### 2.12 Use `JoinSet` Instead of Channels for Workers (Consider deferring — subsumed by 3.1)
+
+> **Note:** The actor migration (3.1) would replace both channels and JoinSets with actor messages. Consider skipping this intermediate step if 3.1 is planned soon.
 
 **Current State:** Both `request_account_range` (`snap/client.rs:138`) and `request_storage_ranges` (`snap/client.rs:587`) use `mpsc::channel` for worker communication. If a worker panics, the message is lost silently and the main loop may hang waiting for results.
 
@@ -689,7 +780,9 @@ Replace the sequential sync phase model with a pipelined actor architecture usin
 
 The rest of the p2p layer already uses `spawned_concurrency` actors (`ActorRef`, `#[protocol]`, `#[actor]`) for peer table, discovery, RLPx connections, and tx broadcasting. The snap sync module is the main holdout — it uses raw `tokio::spawn` + `mpsc::channel` for concurrency.
 
-Spawned is undergoing a major refactor (branch `feat/approach-b`, being tested on `worktree-spawned-migration`). The new API replaces `GenServer`/`GenServerHandle` with `Actor`/`ActorRef`, and uses `#[protocol]` trait macros to define message interfaces. Phase 3 should target the new Spawned API.
+**Update (April 2026):** The spawned 0.5.0 migration has been merged (PR #6295, March 31). All existing actors across ethrex now use the new `#[protocol]` + `#[actor]` macro API. The spawned framework blocker is resolved — Phase 3 can proceed whenever the team is ready.
+
+Additionally, PR #6184 has demonstrated that key pipelining goals (concurrent bytecodes, background storage healing) can be achieved incrementally with `mpsc` channels, without a full actor rewrite. This validates an incremental approach: land targeted optimizations first, then migrate to actors for cleaner architecture.
 
 ### Motivation
 
@@ -781,6 +874,8 @@ This requires `StorageActor` to handle dynamically growing task queues (new acco
 
 **Expected Impact:** Significant — storage is one of the longest phases and can start much earlier.
 
+**Note:** PR #6184 partially addresses this with background storage healing (99% threshold + background task), but doesn't pipeline the download phase itself. The actor-based approach would go further.
+
 **Effort:** Medium (2-3 weeks, depends on 3.1)
 
 ---
@@ -792,6 +887,8 @@ This requires `StorageActor` to handle dynamically growing task queues (new acco
 **Proposed Change:** `AccountActor` sends code hashes to `BytecodeActor` immediately as accounts arrive. `BytecodeActor` downloads bytecodes in parallel with storage downloads.
 
 **Expected Impact:** Removes bytecode download as a sequential bottleneck — it becomes fully overlapped with storage.
+
+**Note:** PR #6184 already implements concurrent bytecode downloads via `mpsc` channel (without actors). If #6184 merges first, the actor migration would formalize the existing pattern.
 
 **Effort:** Low (1-2 weeks, depends on 3.1)
 
@@ -863,59 +960,98 @@ This requires `StorageActor` to handle dynamically growing task queues (new acco
 | Breaking changes to peer protocol | Low | Medium | Hive test suite validation |
 | Increased complexity | Medium | Medium | Code review; documentation requirements |
 | Schedule overrun | Medium | Medium | Prioritize high-impact items; iterative delivery |
-| Spawned refactor not ready | Medium | High | 3.5 and 3.2 are independent; Phase 1/2 items provide value meanwhile |
+| ~~Spawned refactor not ready~~ | ~~Medium~~ | ~~High~~ | ✅ Resolved — spawned 0.5.0 merged in #6295 (March 31, 2026) |
 | Pipeline ordering bugs | Medium | High | Pipelining introduces data races if actors process out of order; needs careful invariant tracking |
 
 ---
 
 ## Timeline
 
-### Phase 1: Performance (12 weeks)
+### Recommended execution order (updated April 2026)
+
+The key insight from profiling is that **trie building dominates insertion time** (75-91%). The recommended priority is:
+
+1. **Land trie building optimizations first** (1.12, #6410) — largest single improvement, orthogonal to concurrency model
+2. **Land write path optimizations** (1.14, 1.15, 1.16) — compound on trie improvements
+3. **Land pipelining** (1.13, #6184) — concurrent bytecodes + background healing
+4. **Phase 2 quick wins** (2.8, 2.17, 2.15, 2.1, 2.4) — low-effort correctness/quality
+5. **Actor migration** (3.1) — clean architecture, now unblocked, subsumes 2.5/2.12
+6. **Remaining Phase 2/3 items** — documentation, testing, peer scoring
+
+### Phase 1: Performance
 
 ```
-Week 1-2:   1.1 Parallel Header Download (complete PR #6059)
-Week 2-3:   1.4 Reduce Busy-Wait Loops (Issue #6140)
-Week 3-4:   1.6 Async Disk I/O
-Week 4-6:   1.3 Optimize Trie Node Batching
-Week 6-8:   1.7 Peer Connection Optimization
-            1.9  Bytes for trie values (PR #6057)
-            1.10 Snap sync benchmark tool (PR #6108)
-            1.11 Per-phase timing breakdown (✅ DONE)
+Priority 1 (high impact, ready now):
+  1.12  Optimize trie building (PR #6410) — -31% account insertion
+  1.15  Optimize insertion/healing write paths (PR #6159)
+  1.14  Eliminate SST file intermediate step (PR #6177)
+  1.13  Pipeline bytecodes + background healing (PR #6184) — -13% total
+
+Priority 2 (medium impact):
+  1.16  Disable WAL and improve concurrency (PR #6178)
+  1.17  Fill all peer slots per tick in healing (PR #6175)
+  1.1   Parallel Header Download (PR #6059)
+  1.6   Async Disk I/O (PR #6113)
+  1.4   Reduce Busy-Wait Loops (Issue #6140)
+
+Lower priority / needs measurement:
+  1.3   Optimize Trie Node Batching
+  1.7   Peer Connection Optimization (PR #6117)
+  1.10  Snap sync benchmark tool (PR #6108)
+
+Done:
+  1.11  Per-phase timing breakdown (✅ Merged #6136)
+
+Discarded:
+  1.2   Parallel Account Range Requests
+  1.5   Memory-Bounded Structures
+  1.8   Parallel Storage Healing
+  1.9   Bytes for Trie Values (PR #6057 closed)
 ```
 
-### Phase 2: Code Quality (10 weeks)
+### Phase 2: Code Quality
 
 ```
-Week 1:     2.9  Fix snap protocol capability bug (✅ DONE)
-Week 1:     2.10 Add spawn_blocking to bytecodes handler (✅ DONE)
-Week 1:     2.11 Remove DumpError.contents dead field (✅ DONE)
-Week 1:     2.17 Use existing constants for magic numbers
-Week 1:     2.15 Guard write_set in account path
-Week 1:     2.8  Fix Correctness Bugs (Issue #6140)
-Week 1-2:   2.1  Extract Context Structs (Issue #6140)
-Week 1-2:   2.4  Extract Helper Functions (Issue #6140)
-Week 2-3:   2.13 Self-contained StorageTask with hashes
-Week 2-3:   2.3  Consolidate Error Handling (Merged — PR #5975)
-Week 3-4:   2.12 Use JoinSet for snap workers
-Week 3-5:   2.2  Comprehensive Documentation
-Week 4-5:   2.14 Move snap client methods off PeerHandler (✅ DONE)
-Week 5-7:   2.7  Configuration Externalization
-Week 7-10:  2.5  State Machine Refactor
-Week 8-12:  2.6  Test Coverage Improvement (parallel)
-Week 10-14: 2.16 Healing Code Unification
+Quick wins (do alongside Phase 1):
+  2.8   Fix Correctness Bugs (Issue #6140)
+  2.17  Use existing constants for magic numbers
+  2.15  Guard write_set in account path
+  2.1   Extract Context Structs (Issue #6140)
+  2.4   Extract Helper Functions (Issue #6140)
+  2.13  Self-contained StorageTask with hashes
+
+Defer until after actor migration (subsumed by 3.1):
+  2.5   State Machine Refactor
+  2.12  Use JoinSet for snap workers
+
+Independent (do when bandwidth available):
+  2.2   Comprehensive Documentation
+  2.6   Test Coverage Improvement
+  2.7   Configuration Externalization
+  2.16  Healing Code Unification
+
+Done:
+  2.3   Consolidate Error Handling (✅ Merged #5975)
+  2.9   Fix snap protocol capability bug (✅ Merged #5975)
+  2.10  Add spawn_blocking to bytecodes handler (✅ Merged #5975)
+  2.11  Remove DumpError.contents dead field (✅ Merged #5975)
+  2.14  Move snap client methods off PeerHandler (✅ Merged #5975)
 ```
 
-### Phase 3: Pipeline Architecture (10-14 weeks)
+### Phase 3: Pipeline Architecture
 
 ```
-Week 1-2:   3.5  Compute FKV on insertion (independent, can start early)
-Week 1-6:   3.1  Migrate snap sync to Spawned actors (blocked on Spawned refactor)
-Week 3-5:   3.2  Peer scoring (can start in parallel with 3.1)
-Week 7-9:   3.3  Pipelined account → storage download (depends on 3.1)
-Week 7-8:   3.4  Pipelined bytecode download (depends on 3.1)
+Unblocked (spawned 0.5.0 merged in #6295):
+  3.1   Migrate snap sync to Spawned actors
+  3.2   Peer scoring (independent of 3.1)
+  3.5   Compute FKV on insertion (independent of 3.1)
+
+After 3.1:
+  3.3   Pipelined account → storage download
+  3.4   Pipelined bytecode download (partially done by #6184)
 ```
 
-**Note:** Phase 3 depends on the Spawned `feat/approach-b` refactor landing. 3.5 and 3.2 can start independently.
+**Note:** Spawned 0.5.0 has landed (#6295, March 31). Phase 3 is no longer blocked. However, Phase 1 performance wins should land first since they're orthogonal to the concurrency model and provide immediate measurable impact.
 
 **Total Duration:** ~20+ weeks (all phases overlap)
 
@@ -928,7 +1064,7 @@ Week 7-8:   3.4  Pipelined bytecode download (depends on 3.1)
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | tokio | 1.x | Async runtime |
-| spawned-concurrency | `feat/approach-b` | Actor framework (Phase 3) |
+| spawned-concurrency | 0.5.0 (✅ merged in #6295) | Actor framework (Phase 3) |
 | rayon | 1.x | Parallel iterators |
 | tracing | 0.1.x | Logging/metrics |
 
@@ -1003,5 +1139,5 @@ Week 7-8:   3.4  Pipelined bytecode download (depends on 3.1)
 
 ---
 
-*Document Version: 1.1*
-*Last Updated: March 2026*
+*Document Version: 1.2*
+*Last Updated: April 2026*
