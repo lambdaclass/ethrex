@@ -202,8 +202,7 @@ pub struct Established {
     pub(crate) last_block_range_update_block: u64,
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
-    pub(crate) requested_pooled_txs:
-        HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
+    pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
