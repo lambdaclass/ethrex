@@ -96,17 +96,38 @@ interface ICommonBridge {
     /// @param l2Recipient the address on L2 that will receive the deposit.
     function deposit(address l2Recipient) external payable;
 
-    /// @notice Method to retrieve the versioned hash of the first `number`
-    /// pending privileged transactions.
-    /// @param number of pending privileged transaction to retrieve the versioned hash.
+    /// @notice Retrieve the versioned hash of `number` pending privileged
+    /// transactions, skipping `offset` entries from the front of the queue.
+    /// @dev Used by OnChainProposer to verify batches when previous committed
+    /// batches haven't been verified yet.
+    /// @param offset number of entries to skip from the front of the pending queue.
+    /// @param number the number of pending privileged transactions to hash.
+    function getPendingTransactionsVersionedHashWithOffset(
+        uint256 offset,
+        uint16 number
+    ) external view returns (bytes32);
+
+    /// @notice Retrieve the versioned hash of `number` pending L2 messages,
+    /// skipping `offset` entries from the front of the queue.
+    /// @dev Used by OnChainProposer to verify batches when previous committed
+    /// batches haven't been verified yet.
+    /// @param chainId the chain id of the L2 messages to retrieve.
+    /// @param offset number of entries to skip from the front of the pending queue.
+    /// @param number the number of pending L2 messages to hash.
+    function getPendingL2MessagesVersionedHashWithOffset(
+        uint256 chainId,
+        uint256 offset,
+        uint16 number
+    ) external view returns (bytes32);
+
+    /// @notice Convenience wrapper: equivalent to
+    /// `getPendingTransactionsVersionedHashWithOffset(0, number)`.
     function getPendingTransactionsVersionedHash(
         uint16 number
     ) external view returns (bytes32);
 
-    /// @notice Method to retrieve the versioned hash of the first `number`
-    /// pending L2 messages.
-    /// @param chainId the chain id of the L2 messages to retrieve.
-    /// @param number of pending L2 messages to retrieve the versioned hash.
+    /// @notice Convenience wrapper: equivalent to
+    /// `getPendingL2MessagesVersionedHashWithOffset(chainId, 0, number)`.
     function getPendingL2MessagesVersionedHash(
         uint256 chainId,
         uint16 number
