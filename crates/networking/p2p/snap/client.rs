@@ -98,6 +98,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    seconds_per_block: u64,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -249,13 +250,14 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, seconds_per_block) {
             info!("request_account_range became stale, updating pivot");
             *pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                seconds_per_block,
             )
             .await
             .expect("Should be able to update pivot")
@@ -534,6 +536,7 @@ pub async fn request_storage_ranges(
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
+    seconds_per_block: u64,
 ) -> Result<u64, SnapError> {
     METRICS
         .current_step
@@ -948,7 +951,7 @@ pub async fn request_storage_ranges(
             }
         }
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, seconds_per_block) {
             info!("request_storage_ranges became stale, breaking");
             break;
         }

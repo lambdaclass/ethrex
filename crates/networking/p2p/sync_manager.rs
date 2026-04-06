@@ -57,10 +57,13 @@ impl SyncManager {
         // For post-merge networks (terminal_total_difficulty_passed), any stored
         // block > 0 means the node has previously synced. For pre-merge networks,
         // use merge_netsplit_block as threshold to avoid false positives in hive tests.
+        // For Polygon (PoA), neither field is set — use chain_id to detect Polygon
+        // and treat any stored block > 0 as synced.
         if snap_enabled.load(Ordering::Relaxed) {
             let latest_block = store.get_latest_block_number().await.unwrap_or(0);
             let chain_config = store.get_chain_config();
-            let is_synced = if chain_config.terminal_total_difficulty_passed {
+            let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_config.chain_id);
+            let is_synced = if is_polygon || chain_config.terminal_total_difficulty_passed {
                 latest_block > 0
             } else if let Some(merge_block) = chain_config.merge_netsplit_block {
                 latest_block > merge_block
@@ -92,7 +95,11 @@ impl SyncManager {
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         // Skip if the auto-switch already transitioned to full sync (snap_enabled is now false)
-        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) {
+        // Skip on Polygon: snap sync needs a real target hash from a peer, which we don't
+        // have yet at startup. The Polygon sync bridge will trigger sync once a peer connects.
+        let chain_id = store.get_chain_config().chain_id;
+        let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
+        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) && !is_polygon {
             sync_manager.start_sync();
         }
         sync_manager
@@ -129,8 +136,8 @@ impl SyncManager {
         }
     }
 
-    /// Returns true is the syncer is active
-    fn is_active(&self) -> bool {
+    /// Returns true if the syncer is active (a sync cycle is in progress).
+    pub fn is_active(&self) -> bool {
         self.syncer.try_lock().is_err()
     }
 
@@ -156,11 +163,16 @@ impl SyncManager {
                     };
                     *sync_head
                 };
-                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start.
+                // On Polygon, skip this wait — forward sync doesn't need a target hash.
                 if sync_head.is_zero() {
-                    info!("Resuming sync after node restart, waiting for next FCU");
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
+                    let chain_id = store.get_chain_config().chain_id;
+                    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
+                    if !is_polygon {
+                        info!("Resuming sync after node restart, waiting for next FCU");
+                        sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
                 }
                 // Start the sync cycle
                 syncer.start_sync(sync_head, store.clone()).await;

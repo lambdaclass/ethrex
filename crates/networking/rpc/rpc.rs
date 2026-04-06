@@ -1,4 +1,8 @@
 use crate::authentication::authenticate;
+use crate::bor::{
+    BorGetAuthor, BorGetCurrentProposer, BorGetCurrentValidators, BorGetRootHash,
+    BorGetSignersAtHash, BorGetSnapshot,
+};
 use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
@@ -493,7 +497,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncManager,
+    syncer: Arc<SyncManager>,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -511,7 +515,7 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Some(Arc::new(syncer)),
+        syncer: Some(syncer),
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
@@ -718,6 +722,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
         Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context),
+        Ok(RpcNamespace::Bor) => map_bor_requests(req, context).await,
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
@@ -725,12 +730,17 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
     }
 }
 
-/// Handle requests from consensus client
+/// Handle requests from consensus client.
+///
+/// On Polygon PoS networks (chain_id 137 or 80002), the engine_ namespace is
+/// disabled since Bor uses its own consensus rather than a beacon chain CL.
 pub async fn map_authrpc_requests(
     req: &RpcRequest,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
+    let is_polygon = is_polygon_network(&context);
     match req.namespace() {
+        Ok(RpcNamespace::Engine) if is_polygon => Err(RpcErr::MethodNotFound(req.method.clone())),
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
@@ -918,6 +928,25 @@ pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<V
         "txpool_status" => mempool::status(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
+}
+
+/// Routes `bor_*` namespace requests to their handlers (Polygon PoS).
+pub async fn map_bor_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "bor_getAuthor" => BorGetAuthor::call(req, context).await,
+        "bor_getSnapshot" => BorGetSnapshot::call(req, context).await,
+        "bor_getSignersAtHash" => BorGetSignersAtHash::call(req, context).await,
+        "bor_getCurrentValidators" => BorGetCurrentValidators::call(req, context).await,
+        "bor_getCurrentProposer" => BorGetCurrentProposer::call(req, context).await,
+        "bor_getRootHash" => BorGetRootHash::call(req, context).await,
+        unknown_bor_method => Err(RpcErr::MethodNotFound(unknown_bor_method.to_owned())),
+    }
+}
+
+/// Returns true if the node is running on a Polygon PoS network (mainnet or Amoy testnet).
+fn is_polygon_network(context: &RpcApiContext) -> bool {
+    let chain_id = context.storage.get_chain_config().chain_id;
+    ethrex_polygon::genesis::is_polygon_chain(chain_id)
 }
 
 /// Formats a handler result into a JSON-RPC 2.0 response.

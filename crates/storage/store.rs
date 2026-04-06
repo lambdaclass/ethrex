@@ -988,6 +988,20 @@ impl Store {
         Ok(self.latest_block_header.get().number)
     }
 
+    /// Set the latest block number in the DB (for recovery after interrupted sync).
+    /// Roll back the latest block number (DB + in-memory cache) for recovery.
+    pub fn rollback_latest_block_number(&self, number: BlockNumber) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        let mut txn = self.backend.begin_write()?;
+        txn.put(CHAIN_DATA, &key, &number.to_le_bytes())?;
+        txn.commit()?;
+        // Also update the in-memory cache
+        if let Some(header) = self.load_block_header(number)? {
+            self.latest_block_header.update(header);
+        }
+        Ok(())
+    }
+
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,
@@ -1420,6 +1434,15 @@ impl Store {
 
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
+            // Store canonical block hash mapping (number → hash).
+            // On L1 this is done via fork_choice_updated, but for Polygon
+            // (no Engine API) we must do it here so BLOCKHASH lookups work.
+            tx.put(
+                CANONICAL_BLOCK_HASHES,
+                &block_number.to_le_bytes(),
+                &hash_key,
+            )?;
+
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 // Key: tx_hash + block_hash
@@ -1652,6 +1675,17 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_header = self.latest_block_header.get();
 
+        // Polygon uses Bor-specific forks for fork_id computation
+        if let Some(bor_config) =
+            ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        {
+            return Ok(ethrex_polygon::fork_id::polygon_fork_id(
+                genesis_header.hash(),
+                bor_config,
+                block_header.number,
+            ));
+        }
+
         Ok(ForkId::new(
             chain_config,
             genesis_header,
@@ -1705,6 +1739,10 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        let state_root = header.state_root;
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1712,6 +1750,7 @@ impl Store {
         Ok(Some(self.apply_account_updates_from_trie_batch(
             &mut state_trie,
             account_updates,
+            state_root,
         )?))
     }
 
@@ -1719,10 +1758,12 @@ impl Store {
         &self,
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
+        state_root: H256,
     ) -> Result<AccountUpdatesList, StoreError> {
+        // Establish baseline hash so collect_changes_since_last_hash can detect modifications
+        let _baseline = state_trie.hash_no_commit(&NativeCrypto);
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit(&NativeCrypto);
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1765,10 +1806,8 @@ impl Store {
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
-            state_trie.insert(
-                hashed_address.as_bytes().to_vec(),
-                account_state.encode_to_vec(),
-            )?;
+            let encoded_account = account_state.encode_to_vec();
+            state_trie.insert(hashed_address.as_bytes().to_vec(), encoded_account)?;
         }
         let (state_trie_hash, state_updates) =
             state_trie.collect_changes_since_last_hash(&NativeCrypto);
@@ -1788,12 +1827,13 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
         mut storage_tries: StorageTries,
+        state_root: H256,
     ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
+        // Establish baseline hash so collect_changes_since_last_hash can detect modifications
+        let _baseline = state_trie.hash_no_commit(&NativeCrypto);
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
-
-        let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -2226,12 +2266,23 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        let genesis_block = genesis.get_block();
+        self.add_initial_state_with_block(genesis, genesis_block)
+            .await
+    }
+
+    /// Like `add_initial_state`, but uses a caller-provided genesis block.
+    ///
+    /// This is needed for Polygon networks where the genesis block format
+    /// differs from standard Ethereum (no post-merge header fields).
+    pub async fn add_initial_state_with_block(
+        &mut self,
+        genesis: Genesis,
+        genesis_block: Block,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
-        // Obtain genesis block
-        let genesis_block = genesis.get_block();
         let genesis_block_number = genesis_block.header.number;
-
         let genesis_hash = genesis_block.hash();
 
         // Set chain config

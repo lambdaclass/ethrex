@@ -57,7 +57,7 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex — Polygon PoS execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -69,9 +69,9 @@ pub struct CLI {
 pub struct Options {
     #[arg(
         long = "network",
-        value_name = "GENESIS_FILE_PATH",
-        help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.",
+        value_name = "NETWORK_OR_GENESIS_PATH",
+        help = "Network name or path to a genesis JSON file.",
+        long_help = "Supported networks: mainnet, sepolia, hoodi, polygon (chain ID 137), amoy (chain ID 80002). A path to a custom genesis file may also be provided. If not specified, defaults to mainnet.",
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),
@@ -126,12 +126,22 @@ pub struct Options {
     #[arg(
         long = "dev",
         action = ArgAction::SetTrue,
-        help = "Used to create blocks without requiring a Consensus Client",
-        long_help = "If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.",
+        help = "Single-node dev mode: no Heimdall, no P2P, pre-funded account, auto-mine.",
+        long_help = "Runs a local development node without connecting to Heimdall or the P2P network. Uses a local devnet genesis with pre-funded accounts and auto-mines blocks.",
         help_heading = "Node options",
         env = "ETHREX_DEV"
     )]
     pub dev: bool,
+    #[arg(
+        long = "bor.heimdall",
+        default_value = "http://localhost:1317",
+        value_name = "URL",
+        help = "Heimdall REST API endpoint URL.",
+        long_help = "URL of the Heimdall REST server used to fetch state sync events and span data. Ignored in --dev mode.",
+        help_heading = "Bor options",
+        env = "ETHREX_BOR_HEIMDALL"
+    )]
+    pub bor_heimdall: String,
     #[arg(
         long = "log.level",
         default_value_t = Level::INFO,
@@ -221,32 +231,13 @@ pub struct Options {
         env = "ETHREX_WS_PORT"
     )]
     pub ws_port: String,
-    #[arg(
-        long = "authrpc.addr",
-        default_value = "127.0.0.1",
-        value_name = "ADDRESS",
-        help = "Listening address for the authenticated rpc server.",
-        help_heading = "RPC options",
-        env = "ETHREX_AUTHRPC_ADDR"
-    )]
+    // Engine API / CL fields — not exposed as CLI flags (Polygon uses Bor, not a beacon chain).
+    // Kept as struct fields with defaults so the RPC server initializes without changes.
+    #[arg(long = "authrpc.addr", default_value = "127.0.0.1", hide = true)]
     pub authrpc_addr: String,
-    #[arg(
-        long = "authrpc.port",
-        default_value = "8551",
-        value_name = "PORT",
-        help = "Listening port for the authenticated rpc server.",
-        help_heading = "RPC options",
-        env = "ETHREX_AUTHRPC_PORT"
-    )]
+    #[arg(long = "authrpc.port", default_value = "8551", hide = true)]
     pub authrpc_port: String,
-    #[arg(
-        long = "authrpc.jwtsecret",
-        default_value = "jwt.hex",
-        value_name = "JWTSECRET_PATH",
-        help = "Receives the jwt secret used for authenticated rpc requests.",
-        help_heading = "RPC options",
-        env = "ETHREX_AUTHRPC_JWTSECRET_PATH"
-    )]
+    #[arg(long = "authrpc.jwtsecret", default_value = "jwt.hex", hide = true)]
     pub authrpc_jwtsecret: String,
     #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options", env = "ETHREX_P2P_DISABLED")]
     pub p2p_disabled: bool,
@@ -394,10 +385,7 @@ impl Options {
             dev: true,
             http_addr: "0.0.0.0".to_string(),
             http_port: "8545".to_string(),
-            authrpc_port: "8551".to_string(),
             metrics_port: "9090".to_string(),
-            authrpc_addr: "localhost".to_string(),
-            authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             discv4_enabled: true,
@@ -417,9 +405,6 @@ impl Options {
             dev: true,
             http_addr: "0.0.0.0".into(),
             http_port: "1729".into(),
-            authrpc_addr: "localhost".into(),
-            authrpc_port: "8551".into(),
-            authrpc_jwtsecret: "jwt.hex".into(),
             p2p_port: "30303".into(),
             discovery_port: "30303".into(),
             discv4_enabled: true,
@@ -441,9 +426,10 @@ impl Default for Options {
             log_level: Level::INFO,
             log_color: Default::default(),
             log_dir: None,
-            authrpc_addr: Default::default(),
-            authrpc_port: Default::default(),
-            authrpc_jwtsecret: Default::default(),
+            bor_heimdall: "http://localhost:1317".to_string(),
+            authrpc_addr: "127.0.0.1".to_string(),
+            authrpc_port: "8551".to_string(),
+            authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_disabled: Default::default(),
             p2p_addr: None,
             p2p_port: Default::default(),
@@ -786,8 +772,8 @@ pub async fn import_blocks(
     const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
-    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    let store = init_store(datadir, genesis, false).await?;
+    let blockchain = init_blockchain(store.clone(), blockchain_opts, None);
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -904,8 +890,8 @@ pub async fn import_blocks_bench(
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
-    let store = init_store(datadir, genesis).await?;
-    let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    let store = init_store(datadir, genesis, false).await?;
+    let blockchain = init_blockchain(store.clone(), blockchain_opts, None);
     regenerate_head_state(&store, &blockchain).await.unwrap();
     let path_metadata = metadata(path).expect("Failed to read path");
 

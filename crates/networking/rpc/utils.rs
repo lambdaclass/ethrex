@@ -233,6 +233,8 @@ pub enum RpcNamespace {
     Net,
     /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
+    /// Bor namespace for Polygon PoS specific methods.
+    Bor,
 }
 
 /// JSON-RPC request identifier.
@@ -301,6 +303,7 @@ pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNam
         "net" => Ok(RpcNamespace::Net),
         // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
         "txpool" => Ok(RpcNamespace::Mempool),
+        "bor" => Ok(RpcNamespace::Bor),
         _ => Err(RpcErr::MethodNotFound(method)),
     }
 }

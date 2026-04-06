@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use bytes::{Bytes, BytesMut};
-use ethrex_common::{H256, H512, types::ForkId};
+use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -49,6 +49,8 @@ pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+/// How often to re-ping bootnodes until we have peers.
+const BOOTNODE_REPING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryServerError {
@@ -76,6 +78,7 @@ pub trait Discv4ServerProtocol: Send + Sync {
     fn enr_lookup(&self) -> Result<(), ActorError>;
     fn prune(&self) -> Result<(), ActorError>;
     fn change_find_node_message(&self) -> Result<(), ActorError>;
+    fn reping_bootnodes(&self) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
 }
 
@@ -90,6 +93,8 @@ pub struct DiscoveryServer {
     /// The last `FindNode` message sent, cached due to message
     /// signatures being expensive.
     find_node_message: BytesMut,
+    /// Bootnodes to periodically re-ping for discovery bootstrap.
+    bootnodes: Vec<Node>,
     initial_lookup_interval: f64,
     /// Tracks pending FindNode requests by node_id -> sent_at.
     /// Used to reject unsolicited Neighbors responses.
@@ -115,7 +120,7 @@ impl DiscoveryServer {
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
+        if let Ok(fork_id) = backend::get_fork_id(&storage).await {
             local_node_record
                 .set_fork_id(fork_id, &signer)
                 .expect("Failed to set fork_id on local node record");
@@ -130,6 +135,7 @@ impl DiscoveryServer {
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            bootnodes: bootnodes.clone(),
             pending_find_node: HashMap::new(),
         };
 
@@ -144,6 +150,10 @@ impl DiscoveryServer {
             local_node.node_id(),
             DiscoveryProtocol::Discv4,
         )?;
+
+        // Mark bootnodes in the peer table so they're exempt from permanent discard.
+        let bootnode_ids: Vec<H256> = bootnodes.iter().map(|n| n.node_id()).collect();
+        peer_table.mark_bootnodes(bootnode_ids)?;
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await?;
@@ -164,6 +174,11 @@ impl DiscoveryServer {
             CHANGE_FIND_NODE_MESSAGE_INTERVAL,
             ctx.clone(),
             discv4_server_protocol::ChangeFindNodeMessage,
+        );
+        send_interval(
+            BOOTNODE_REPING_INTERVAL,
+            ctx.clone(),
+            discv4_server_protocol::RepingBootnodes,
         );
         let _ = ctx.send(discv4_server_protocol::Lookup);
         let _ = ctx.send(discv4_server_protocol::EnrLookup);
@@ -242,6 +257,18 @@ impl DiscoveryServer {
     }
 
     #[send_handler]
+    async fn handle_reping_bootnodes(
+        &mut self,
+        _msg: discv4_server_protocol::RepingBootnodes,
+        _ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .do_reping_bootnodes()
+            .await
+            .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error re-pinging bootnodes"));
+    }
+
+    #[send_handler]
     async fn handle_shutdown(
         &mut self,
         _msg: discv4_server_protocol::Shutdown,
@@ -289,7 +316,7 @@ impl DiscoveryServer {
                 });
             }
             Message::Pong(pong_message) => {
-                trace!(protocol = "discv4", received = "Pong", msg = ?pong_message, from = %format!("{:#x}", sender_public_key));
+                debug!(protocol = "discv4", received = "Pong", from_addr = %from, from_key = %format!("{:#x}", sender_public_key));
 
                 let node_id = node_id(&sender_public_key);
 
@@ -307,7 +334,7 @@ impl DiscoveryServer {
                     .await?;
             }
             Message::Neighbors(neighbors_message) => {
-                trace!(protocol = "discv4", received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
+                debug!(protocol = "discv4", received = "Neighbors", count = neighbors_message.nodes.len(), from_addr = %from, from_key = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(neighbors_message.expiration) {
                     trace!(protocol = "discv4", "Neighbors expired, skipping");
@@ -360,12 +387,46 @@ impl DiscoveryServer {
         Ok(())
     }
 
+    /// Re-ping all bootnodes that haven't responded yet.
+    /// Runs every 30s to ensure we maintain contact with discovery seeds.
+    async fn do_reping_bootnodes(&mut self) -> Result<(), DiscoveryServerError> {
+        for bootnode in self.bootnodes.clone() {
+            let node_id = bootnode.node_id();
+            // Only re-ping if the contact has a pending (unanswered) ping or was never validated.
+            if let Some(contact) = self.peer_table.get_contact(node_id).await? {
+                if !contact.was_validated() {
+                    debug!(
+                        protocol = "discv4",
+                        addr = %bootnode.udp_addr(),
+                        "Re-pinging bootnode (not yet validated)"
+                    );
+                    self.send_ping(&bootnode).await?;
+                }
+            } else {
+                // Contact was somehow removed — re-add and ping.
+                debug!(
+                    protocol = "discv4",
+                    addr = %bootnode.udp_addr(),
+                    "Re-adding missing bootnode contact"
+                );
+                self.peer_table.new_contacts(
+                    vec![bootnode.clone()],
+                    self.local_node.node_id(),
+                    DiscoveryProtocol::Discv4,
+                )?;
+                self.send_ping(&bootnode).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn do_lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self
             .peer_table
             .get_contact_for_lookup(DiscoveryProtocol::Discv4)
             .await?
         {
+            debug!(protocol = "discv4", sent = "FindNode", addr = %contact.node.udp_addr());
             if let Err(e) = self
                 .udp_socket
                 .send_to(&self.find_node_message, &contact.node.udp_addr())
@@ -434,7 +495,7 @@ impl DiscoveryServer {
         let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         let ping_hash = self.send_else_dispose(ping, node).await?;
-        trace!(protocol = "discv4", sent = "Ping", to = %format!("{:#x}", node.public_key));
+        debug!(protocol = "discv4", sent = "Ping", addr = %node.udp_addr(), to = %format!("{:#x}", node.public_key));
         METRICS.record_ping_sent().await;
         let ping_id = Bytes::copy_from_slice(ping_hash.as_bytes());
         self.peer_table.record_ping_sent(node.node_id(), ping_id)?;
@@ -683,23 +744,9 @@ impl DiscoveryServer {
             return Ok(());
         };
 
-        let chain_config = self.store.get_chain_config();
-        let genesis_header = self
-            .store
-            .get_block_header(0)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-        let latest_block_number = self.store.get_latest_block_number().await?;
-        let latest_block_header = self
-            .store
-            .get_block_header(latest_block_number)?
-            .ok_or(DiscoveryServerError::InvalidContact)?;
-
-        let local_fork_id = ForkId::new(
-            chain_config,
-            genesis_header.clone(),
-            latest_block_header.timestamp,
-            latest_block_number,
-        );
+        let local_fork_id = backend::get_fork_id(&self.store)
+            .await
+            .map_err(|_| DiscoveryServerError::InvalidContact)?;
 
         if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
             self.peer_table.set_is_fork_id_valid(node_id, false)?;

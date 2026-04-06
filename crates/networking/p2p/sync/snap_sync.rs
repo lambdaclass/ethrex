@@ -30,7 +30,7 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     constants::{
         BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        SNAP_LIMIT, seconds_per_block_for_chain,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
@@ -260,6 +260,8 @@ pub async fn snap_sync(
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
     // - Execute blocks after the pivot (like in full-sync)
+    let seconds_per_block = seconds_per_block_for_chain(store.get_chain_config().chain_id);
+
     let pivot_hash = block_sync_state
         .block_hashes
         .last()
@@ -268,12 +270,13 @@ pub async fn snap_sync(
         .get_block_header_by_hash(*pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
-    while block_is_stale(&pivot_header) {
+    while block_is_stale(&pivot_header, seconds_per_block) {
         pivot_header = update_pivot(
             pivot_header.number,
             pivot_header.timestamp,
             peers,
             block_sync_state,
+            seconds_per_block,
         )
         .await?;
     }
@@ -311,6 +314,7 @@ pub async fn snap_sync(
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,
             block_sync_state,
+            seconds_per_block,
         )
         .await?;
         info!("Finish downloading account ranges from peers");
@@ -348,12 +352,13 @@ pub async fn snap_sync(
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
-            while block_is_stale(&pivot_header) {
+            while block_is_stale(&pivot_header, seconds_per_block) {
                 pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
                     peers,
                     block_sync_state,
+                    seconds_per_block,
                 )
                 .await?;
             }
@@ -363,7 +368,7 @@ pub async fn snap_sync(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
-                calculate_staleness_timestamp(pivot_header.timestamp),
+                calculate_staleness_timestamp(pivot_header.timestamp, seconds_per_block),
                 &mut state_leafs_healed,
                 &mut storage_accounts,
                 &mut code_hash_collector,
@@ -378,7 +383,7 @@ pub async fn snap_sync(
                 storage_accounts.accounts_with_storage_root.len()
             );
             storage_range_request_attempts += 1;
-            if storage_range_request_attempts < 5 {
+            if storage_range_request_attempts < 100 {
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
@@ -386,6 +391,7 @@ pub async fn snap_sync(
                     chunk_index,
                     &mut pivot_header,
                     store.clone(),
+                    seconds_per_block,
                 )
                 .await?;
             } else {
@@ -421,7 +427,7 @@ pub async fn snap_sync(
                 // because we don't know if the storage root is still valid
                 storage_accounts.healed_accounts.len(),
             );
-            if !block_is_stale(&pivot_header) {
+            if !block_is_stale(&pivot_header, seconds_per_block) {
                 break;
             }
             info!("We stopped because of staleness, restarting loop");
@@ -455,12 +461,13 @@ pub async fn snap_sync(
     let mut healing_done = false;
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
-        if block_is_stale(&pivot_header) {
+        if block_is_stale(&pivot_header, seconds_per_block) {
             pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                seconds_per_block,
             )
             .await?;
         }
@@ -468,7 +475,7 @@ pub async fn snap_sync(
             pivot_header.state_root,
             store.clone(),
             peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, seconds_per_block),
             &mut global_state_leafs_healed,
             &mut storage_accounts,
             &mut code_hash_collector,
@@ -483,7 +490,7 @@ pub async fn snap_sync(
             peers,
             store.clone(),
             HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, seconds_per_block),
             &mut global_storage_leafs_healed,
         )
         .await?;
@@ -635,6 +642,7 @@ pub async fn update_pivot(
     block_timestamp: u64,
     peers: &mut PeerHandler,
     block_sync_state: &mut SnapBlockSyncState,
+    seconds_per_block: u64,
 ) -> Result<BlockHeader, SyncError> {
     const MAX_RETRIES_PER_PEER: u64 = 3;
     const MAX_TOTAL_FAILURES: u64 = 15;
@@ -643,7 +651,7 @@ pub async fn update_pivot(
 
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
-        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+        + ((current_unix_time().saturating_sub(block_timestamp) / seconds_per_block) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
@@ -735,12 +743,12 @@ pub async fn update_pivot(
     }
 }
 
-pub fn block_is_stale(block_header: &BlockHeader) -> bool {
-    calculate_staleness_timestamp(block_header.timestamp) < current_unix_time()
+pub fn block_is_stale(block_header: &BlockHeader, seconds_per_block: u64) -> bool {
+    calculate_staleness_timestamp(block_header.timestamp, seconds_per_block) < current_unix_time()
 }
 
-pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+pub fn calculate_staleness_timestamp(timestamp: u64, seconds_per_block: u64) -> u64 {
+    timestamp + (SNAP_LIMIT as u64 * seconds_per_block)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
@@ -1152,24 +1160,29 @@ async fn insert_storages(
         .into_iter()
         .map(|res| res.path())
         .collect();
-    db.ingest_external_file(file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    let total_files = file_paths.len();
+    info!("Ingesting {total_files} SST files into temp RocksDB in batches...");
+    // Ingest in batches with move_files=true so RocksDB moves (not copies) the SST
+    // files into its own directory, freeing disk as we go.
+    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
+    ingest_opts.set_move_files(true);
+    for (batch_idx, batch) in file_paths.chunks(500).enumerate() {
+        db.ingest_external_file_opts(&ingest_opts, batch.to_vec())
+            .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+        info!(
+            "Ingested batch {}/{} ({} files)",
+            batch_idx + 1,
+            total_files.div_ceil(500),
+            batch.len()
+        );
+    }
+    let total_accounts = accounts_with_storage.len();
+    info!("SST ingestion complete. Starting trie construction for {total_accounts} accounts...");
     let snapshot = db.snapshot();
-
-    let account_with_storage_and_tries = accounts_with_storage
-        .into_iter()
-        .map(|account_hash| {
-            (
-                account_hash,
-                store
-                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
-                    .expect("Should be able to open trie"),
-            )
-        })
-        .collect::<Vec<(H256, Trie)>>();
 
     let (sender, receiver) = unbounded::<()>();
     let mut counter = 0;
+    let mut accounts_processed = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
         .unwrap_or(8);
@@ -1179,29 +1192,52 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
-    scope(|scope| {
-        let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
-        for (account_hash, trie) in account_with_storage_and_tries.iter() {
-            let sender = sender.clone();
-            let buffer_sender = buffer_sender.clone();
-            let buffer_receiver = buffer_receiver.clone();
-            if counter >= thread_count - 1 {
-                let _ = receiver.recv();
-                counter -= 1;
-            }
-            counter += 1;
-            let pool_clone = pool.clone();
-            let mut iter = snapshot.raw_iterator();
-            let task = Box::new(move || {
-                let mut buffer: [u8; 64] = [0_u8; 64];
-                buffer[..32].copy_from_slice(&account_hash.0);
-                iter.seek(buffer);
-                let iter = RocksDBIterator {
-                    iter,
-                    limit: *account_hash,
-                };
+    // Process accounts in batches to avoid allocating all 65M tries at once (OOM on mainnet).
+    let batch_size = 100_000;
+    let account_vec: Vec<H256> = accounts_with_storage.into_iter().collect();
+    for batch in account_vec.chunks(batch_size) {
+        let batch_tries: Vec<(H256, Trie)> = batch
+            .iter()
+            .map(|account_hash| {
+                (
+                    *account_hash,
+                    store
+                        .open_direct_storage_trie(*account_hash, *EMPTY_TRIE_HASH)
+                        .expect("Should be able to open trie"),
+                )
+            })
+            .collect();
 
-                let _ = trie_from_sorted_accounts(
+        scope(|scope| {
+            let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
+            for (account_hash, trie) in batch_tries.iter() {
+                let sender = sender.clone();
+                let buffer_sender = buffer_sender.clone();
+                let buffer_receiver = buffer_receiver.clone();
+                if counter >= thread_count - 1 {
+                    let _ = receiver.recv();
+                    counter -= 1;
+                    accounts_processed += 1;
+                    if accounts_processed % 10000 == 0 {
+                        info!(
+                            "Storage trie insertion: {accounts_processed}/{total_accounts} accounts"
+                        );
+                    }
+                }
+                counter += 1;
+                let pool_clone = pool.clone();
+                let mut iter = snapshot.raw_iterator();
+                let account_hash = *account_hash;
+                let task = Box::new(move || {
+                    let mut buffer: [u8; 64] = [0_u8; 64];
+                    buffer[..32].copy_from_slice(&account_hash.0);
+                    iter.seek(buffer);
+                    let iter = RocksDBIterator {
+                        iter,
+                        limit: account_hash,
+                    };
+
+                    let _ = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
                     pool_clone,
@@ -1214,11 +1250,13 @@ async fn insert_storages(
                     );
                 })
                 .map_err(SyncError::TrieGenerationError);
-                let _ = sender.send(());
-            });
-            pool.execute(task);
-        }
-    });
+                    let _ = sender.send(());
+                });
+                pool.execute(task);
+            }
+        });
+        // batch_tries dropped here, freeing memory before next batch
+    }
 
     // close db before removing directory
     drop(snapshot);

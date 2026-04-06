@@ -23,6 +23,9 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
+use ethrex_polygon::consensus::engine::BorEngine;
+use ethrex_polygon::genesis::{bor_config_for_chain, polygon_genesis_block};
+use ethrex_polygon::heimdall::{HeimdallPoller, HeimdallPollerState};
 use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -37,6 +40,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::RwLock;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 #[cfg(not(feature = "l2"))]
 use tracing::error;
@@ -143,9 +147,20 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 }
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
-pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
+pub async fn init_store(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    is_polygon: bool,
+) -> Result<Store, StoreError> {
     let mut store = open_store(datadir.as_ref())?;
-    store.add_initial_state(genesis).await?;
+    if is_polygon {
+        let genesis_block = polygon_genesis_block(&genesis);
+        store
+            .add_initial_state_with_block(genesis, genesis_block)
+            .await?;
+    } else {
+        store.add_initial_state(genesis).await?;
+    }
     Ok(store)
 }
 
@@ -169,9 +184,13 @@ pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     }
 }
 
-pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
+pub fn init_blockchain(
+    store: Store,
+    blockchain_opts: BlockchainOptions,
+    bor_engine: Option<Arc<BorEngine>>,
+) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts).into()
+    Blockchain::new(store, blockchain_opts, bor_engine).into()
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -201,15 +220,82 @@ pub async fn init_rpc_api(
     };
 
     // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        syncmode,
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-        datadir.to_path_buf(),
-    )
-    .await;
+    let syncer = Arc::new(
+        SyncManager::new(
+            peer_handler.clone(),
+            syncmode,
+            cancel_token,
+            blockchain.clone(),
+            store.clone(),
+            datadir.to_path_buf(),
+        )
+        .await,
+    );
+
+    // Polygon sync bridge: polls blockchain.polygon_sync_head (set by P2P
+    // after status exchange or NewBlock gap detection) and triggers the sync
+    // manager. Polygon has no Engine API, so this replaces the FCU-based sync
+    // trigger. The loop runs for the lifetime of the node: after the initial
+    // snap sync completes it triggers full sync to fill the gap from the pivot
+    // to the chain tip, and continues to handle future peer head updates.
+    //
+    // The bridge keeps `pending_head` locally so that if sync fails (e.g. stale
+    // hash), it can re-trigger without waiting for a new peer status exchange.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
+    if is_polygon {
+        let syncer_clone = syncer.clone();
+        let blockchain_clone = blockchain.clone();
+        let store_clone = store.clone();
+        tracker.spawn(async move {
+            // On Polygon post-snap, we already know we're behind — start forward sync
+            // immediately without waiting for a peer status hash (which would be stale anyway).
+            let mut pending_head: Option<ethrex_common::H256> = None;
+            if matches!(syncer_clone.sync_mode(), SyncMode::Full) {
+                let latest = store_clone.get_latest_block_number().await.unwrap_or(0);
+                if latest > 0 {
+                    tracing::info!(
+                        latest,
+                        "Polygon bridge: post-snap full sync mode, triggering immediate forward sync"
+                    );
+                    // Use a sentinel hash — Polygon full sync ignores it and syncs by number
+                    pending_head = Some(ethrex_common::H256::from_low_u64_be(1));
+                }
+            }
+            loop {
+                // Check for a new head from P2P (status exchange or NewBlock gap)
+                if let Some(new_head) = blockchain_clone.take_polygon_sync_head() {
+                    pending_head = Some(new_head);
+                }
+
+                // If we have a target and the syncer is idle, trigger sync
+                if let Some(head) = pending_head.take() {
+                    if !syncer_clone.is_active() {
+                        tracing::info!(?head, "Polygon sync bridge: triggering sync");
+                        syncer_clone.sync_to_head(head);
+                    } else {
+                        pending_head = Some(head);
+                    }
+                } else if !syncer_clone.is_active()
+                    && blockchain_clone.secs_since_last_block() > 4
+                {
+                    // Fallback: trigger sync only if no block has been processed
+                    // in >10 seconds (NewBlock via P2P stopped working or we fell behind).
+                    // When blocks are flowing via NewBlock, the bridge stays dormant.
+                    let latest = store_clone.get_latest_block_number().await.unwrap_or(0);
+                    if latest > 0 {
+                        tracing::info!(
+                            "Polygon sync bridge: no blocks for >4s, triggering fallback sync"
+                        );
+                        syncer_clone
+                            .sync_to_head(ethrex_common::H256::from_low_u64_be(1));
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        });
+    }
 
     let ws_socket_opts = if opts.ws_enabled {
         Some(get_ws_socket_addr(opts))
@@ -309,7 +395,7 @@ pub fn get_network(opts: &Options) -> Network {
     let default = if opts.dev {
         Network::LocalDevnet
     } else {
-        Network::mainnet()
+        Network::polygon()
     };
     opts.network.clone().unwrap_or(default)
 }
@@ -455,11 +541,12 @@ pub async fn init_l1(
     }
 
     let genesis = network.get_genesis()?;
+    let chain_id = genesis.config.chain_id;
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store = match init_store(&datadir, genesis, network.is_polygon()).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
@@ -477,18 +564,58 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
+    let blockchain_type = if network.is_polygon() {
+        BlockchainType::Polygon
+    } else {
+        BlockchainType::L1
+    };
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    // Shared Heimdall poller state — populated by background poller,
+    // consumed by BorEngine during system call execution to avoid blocking I/O.
+    let heimdall_state = Arc::new(RwLock::new(HeimdallPollerState::default()));
+
+    // Create BorEngine for Polygon chains.
+    let bor_engine = if network.is_polygon() {
+        bor_config_for_chain(chain_id).map(|config| {
+            let mut engine =
+                BorEngine::new(config.clone(), &opts.bor_heimdall, cancel_token.clone());
+            engine.set_poller_state(heimdall_state.clone());
+            Arc::new(engine)
+        })
+    } else {
+        None
+    };
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
-            r#type: BlockchainType::L1,
+            r#type: blockchain_type,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },
+        bor_engine,
     );
 
     regenerate_head_state(&store, &blockchain).await?;
+
+    // Bootstrap BorEngine snapshot so verify_header works from the first block.
+    if let Some(engine) = blockchain.bor_engine.as_ref() {
+        let latest = store.get_latest_block_number().await?;
+        if let Some(header) = store.get_block_header(latest)? {
+            match engine.bootstrap_snapshot(latest, header.hash()).await {
+                Ok(snap) => info!(
+                    block = latest,
+                    validators = snap.validator_set.len(),
+                    "Bootstrapped BorEngine snapshot"
+                ),
+                Err(e) => warn!("Failed to bootstrap BorEngine snapshot: {e}"),
+            }
+        }
+    }
 
     let signer = get_signer(&datadir);
 
@@ -500,8 +627,6 @@ pub async fn init_l1(
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-
-    let cancel_token = tokio_util::sync::CancellationToken::new();
 
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
@@ -564,6 +689,27 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+    }
+
+    // Spawn the Heimdall poller for Polygon networks (not in dev mode).
+    if network.is_polygon() && !opts.dev {
+        if let Some(bor_config) = bor_config_for_chain(chain_id) {
+            let poller = HeimdallPoller::new(
+                &opts.bor_heimdall,
+                bor_config.clone(),
+                heimdall_state.clone(),
+                cancel_token.clone(),
+            );
+            info!(
+                heimdall_url = %opts.bor_heimdall,
+                "Starting Heimdall poller for chain {chain_id}"
+            );
+            tracker.spawn(async move {
+                poller.spawn().await.ok();
+            });
+        } else {
+            warn!("No BorConfig found for chain ID {chain_id}, Heimdall poller not started");
+        }
     }
 
     if opts.dev {
@@ -752,9 +898,25 @@ pub async fn regenerate_head_state(
         debug!("Need to regenerate state for block {parent_number}");
 
         let Some(parent_header) = store.get_block_header(parent_number)? else {
-            return Err(eyre::eyre!(
-                "Parent header for block {parent_number} not found"
-            ));
+            // Parent header missing — likely from an interrupted batch sync.
+            // Skip to the next known block by walking back further.
+            warn!("Parent header for block {parent_number} not found, continuing search...");
+            if parent_number == 0 {
+                return Err(eyre::eyre!("Cannot find any block with known state"));
+            }
+            // Try to find the next available header below
+            let mut search = parent_number.saturating_sub(1);
+            loop {
+                if let Some(h) = store.get_block_header(search)? {
+                    current_last_header = h;
+                    break;
+                }
+                if search == 0 {
+                    return Err(eyre::eyre!("Cannot find any block header in DB"));
+                }
+                search = search.saturating_sub(1);
+            }
+            continue;
         };
 
         current_last_header = parent_header;
@@ -769,14 +931,19 @@ pub async fn regenerate_head_state(
 
     info!("Regenerating state from block {last_state_number} to {head_block_number}");
 
-    // Re-apply blocks from the last known state root to the head block
+    // Re-apply blocks from the last known state root to the head block.
+    // Stop early if a block is missing (can happen after interrupted batch sync).
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
-            .get_block_by_number(i)
-            .await?
-            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+        let Some(block) = store.get_block_by_number(i).await? else {
+            warn!(
+                "Block {i} not found during state regeneration, rolling back head to block {}",
+                i - 1
+            );
+            store.rollback_latest_block_number(i - 1)?;
+            break;
+        };
 
         blockchain.add_block_pipeline(block, None)?;
     }

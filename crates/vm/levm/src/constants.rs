@@ -30,7 +30,13 @@ pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
+/// Polygon PoS maximum transaction gas limit (2^25 = 33,554,432).
+pub const POLYGON_MAX_TX_GAS: u64 = 1 << 25;
+/// Polygon PoS allows 32KB contract code (not 24KB like Ethereum mainnet).
+pub const POLYGON_MAX_CODE_SIZE: u64 = 0x8000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
+/// Polygon PoS init code max size (2 * POLYGON_MAX_CODE_SIZE).
+pub const POLYGON_INIT_CODE_MAX_SIZE: usize = 65536;
 // EIP-7954 (Amsterdam): increased limits
 pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x8000;
 #[allow(clippy::as_conversions)]

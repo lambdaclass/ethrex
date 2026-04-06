@@ -245,8 +245,18 @@ impl PeerHandler {
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
         let mut logged_no_free_peers_count = 0;
+        let mut last_progress = SystemTime::now();
+        const MAX_STALL_SECS: u64 = 60;
 
         loop {
+            // Stall detection: break if no progress for MAX_STALL_SECS
+            if last_progress.elapsed().unwrap_or_default() > Duration::from_secs(MAX_STALL_SECS) {
+                warn!(
+                    "Header download stalled for {MAX_STALL_SECS}s with {downloaded_count}/{block_count} headers, aborting round"
+                );
+                break;
+            }
+
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
@@ -265,6 +275,7 @@ impl PeerHandler {
                     continue; // Retry with the next peer
                 }
 
+                last_progress = SystemTime::now();
                 downloaded_count += headers.len() as u64;
 
                 METRICS.downloaded_headers.inc_by(headers.len() as u64);
@@ -456,6 +467,83 @@ impl PeerHandler {
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
                 Ok(None)
+            }
+        }
+    }
+
+    /// Requests block headers starting from a block number.
+    /// Returns headers in the specified order (OldToNew = forward, NewToOld = backward).
+    /// Returns `None` if no peers are available, the peer returns empty, or the response is invalid.
+    pub async fn request_block_headers_from_number(
+        &mut self,
+        start: u64,
+        limit: u64,
+        order: BlockRequestOrder,
+    ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(start),
+            limit,
+            skip: 0,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
+        });
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => {
+                warn!("request_block_headers_from_number: no peers available");
+                Ok(None)
+            }
+            Some((peer_id, mut connection)) => {
+                match PeerHandler::make_request(
+                    &mut self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await
+                {
+                    Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                        id: _,
+                        block_headers,
+                    })) => {
+                        if block_headers.is_empty() {
+                            warn!(
+                                start,
+                                %peer_id,
+                                "request_block_headers_from_number: peer returned empty response"
+                            );
+                            return Ok(None);
+                        }
+                        if !are_block_headers_chained(&block_headers, &order) {
+                            warn!(
+                                start,
+                                count = block_headers.len(),
+                                %peer_id,
+                                "request_block_headers_from_number: headers not properly chained"
+                            );
+                            return Ok(None);
+                        }
+                        Ok(Some(block_headers))
+                    }
+                    Ok(_other) => {
+                        warn!(
+                            start,
+                            %peer_id,
+                            "request_block_headers_from_number: unexpected message type from peer"
+                        );
+                        Ok(None)
+                    }
+                    Err(e) => {
+                        warn!(
+                            start,
+                            %peer_id,
+                            error = %e,
+                            "request_block_headers_from_number: request failed"
+                        );
+                        Ok(None)
+                    }
+                }
             }
         }
     }

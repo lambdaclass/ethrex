@@ -455,7 +455,7 @@ impl Command {
                         r#type: blockchain_type,
                         ..Default::default()
                     };
-                    let blockchain = Blockchain::new(store.clone(), opts);
+                    let blockchain = Blockchain::new(store.clone(), opts, None);
 
                     for (i, block) in blocks.iter().enumerate() {
                         // Update blockchain with the block's fee config
@@ -702,7 +702,7 @@ async fn delete_blocks_from_batch(
     let genesis = network.get_genesis()?;
 
     let mut block_to_delete = last_kept_block + 1;
-    let store = init_store(datadir, genesis).await?;
+    let store = init_store(datadir, genesis, false).await?;
 
     while store
         .get_canonical_block_hash(block_to_delete)

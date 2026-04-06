@@ -82,6 +82,7 @@ pub use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
+use ethrex_polygon::consensus::engine::BorEngine;
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -103,7 +104,7 @@ use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
 use std::time::{Duration, Instant};
@@ -147,7 +148,7 @@ type BlockExecutionPipelineResult = (
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-/// Specifies whether the blockchain operates as L1 (mainnet/testnet) or L2 (rollup).
+/// Specifies whether the blockchain operates as L1 (mainnet/testnet), L2 (rollup), or Polygon PoS.
 #[derive(Debug, Clone, Default)]
 pub enum BlockchainType {
     /// Standard Ethereum L1 blockchain.
@@ -155,6 +156,8 @@ pub enum BlockchainType {
     L1,
     /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
+    /// Polygon PoS blockchain with deferred fee distribution.
+    Polygon,
 }
 
 /// Configuration for L2 rollup operation.
@@ -203,6 +206,19 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Polygon sync target: set by P2P after status exchange with a Polygon peer.
+    /// The sync bridge task reads this to trigger the sync manager.
+    polygon_sync_head: std::sync::Mutex<Option<H256>>,
+    /// In-memory buffer for Polygon NewBlock blocks whose parent hasn't arrived yet.
+    /// Keyed by parent_hash so we can chain-follow after processing a block.
+    /// Multiple children of the same parent (forks) are stored as a Vec.
+    polygon_pending_blocks: std::sync::Mutex<HashMap<H256, Vec<Block>>>,
+    /// Set of block hashes currently being executed by spawned tasks.
+    /// Prevents duplicate execution when multiple peers announce the same block.
+    polygon_in_flight_blocks: std::sync::Mutex<HashSet<H256>>,
+    /// Epoch-seconds timestamp of the last successfully processed block.
+    /// Used by the bridge fallback to avoid re-triggering when P2P NewBlock is flowing.
+    last_block_processed_at: AtomicU64,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -210,6 +226,9 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Bor consensus engine for Polygon chains.
+    /// Present only when `options.type == BlockchainType::Polygon`.
+    pub bor_engine: Option<Arc<BorEngine>>,
 }
 
 /// Configuration options for the blockchain.
@@ -319,13 +338,22 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+    pub fn new(
+        store: Store,
+        blockchain_opts: BlockchainOptions,
+        bor_engine: Option<Arc<BorEngine>>,
+    ) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
+            polygon_sync_head: std::sync::Mutex::new(None),
+            polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
+            polygon_in_flight_blocks: std::sync::Mutex::new(HashSet::new()),
+            last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            bor_engine,
         }
     }
 
@@ -334,8 +362,13 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            polygon_sync_head: std::sync::Mutex::new(None),
+            polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
+            polygon_in_flight_blocks: std::sync::Mutex::new(HashSet::new()),
+            last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            bor_engine: None,
         }
     }
 
@@ -354,18 +387,70 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        let bor_signer = if matches!(self.options.r#type, BlockchainType::Polygon) {
+            Some(self.verify_bor_header(&block.header, &parent_header)?)
+        } else {
+            validate_block_pre_execution(
+                block,
+                &parent_header,
+                &chain_config,
+                ELASTICITY_MULTIPLIER,
+            )?;
+            None
+        };
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let (execution_result, bal) = vm.execute_block(block)?;
+        // For Polygon, resolve the BorConfig addresses for this block number
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            vm.set_polygon_fee_config(polygon_fee_config_for_block(
+                &block.header,
+                chain_config.chain_id,
+                bor_signer,
+            ));
+        }
+
+        let (mut execution_result, bal) = vm.execute_block(block)?;
+
+        // For Polygon: execute Bor system calls (commitState) and create state sync receipt.
+        // Must happen BEFORE get_state_transitions() so system call state changes are captured,
+        // and BEFORE validate_receipts_root() since the receipt list is incomplete without it.
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let cumulative_gas = execution_result
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            let rt_handle = tokio::runtime::Handle::current();
+            if let Some(receipt) = execute_polygon_system_calls(
+                block,
+                &parent_header,
+                &chain_config,
+                &mut vm,
+                cumulative_gas,
+                self.bor_engine.as_deref(),
+                &rt_handle,
+            )? {
+                execution_result.receipts.push(receipt);
+            }
+
+            // Apply contract code upgrades (changeContractCodeIfNeeded).
+            // This runs AFTER system calls but BEFORE state root computation,
+            // matching Bor's Finalize order.
+            apply_polygon_block_alloc(block.header.number, &chain_config, &mut vm)?;
+        }
+
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
+
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        // Polygon doesn't implement EIP-7685 (execution requests)
+        if !matches!(self.options.r#type, BlockchainType::Polygon) {
+            validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        }
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
@@ -423,7 +508,16 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config();
 
         // Validate the block pre-execution
-        validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let _signer = self.verify_bor_header(&block.header, parent_header)?;
+        } else {
+            validate_block_pre_execution(
+                block,
+                parent_header,
+                &chain_config,
+                ELASTICITY_MULTIPLIER,
+            )?;
+        }
         validate_block_body(&block.header, &block.body, &NativeCrypto)
             .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
@@ -443,6 +537,9 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        // Capture tokio runtime handle before entering thread::scope —
+        // scoped OS threads don't inherit the tokio context.
+        let rt_handle = tokio::runtime::Handle::current();
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
@@ -483,9 +580,47 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        // Clone sender for polygon system calls after pipeline
+                        let polygon_tx = if matches!(self.options.r#type, BlockchainType::Polygon) {
+                            Some(tx.clone())
+                        } else {
+                            None
+                        };
                         let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
                         cancelled_ref.store(true, Ordering::Relaxed);
-                        let (execution_result, produced_bal) = result?;
+                        let (mut execution_result, produced_bal) = result?;
+
+                        // Polygon: execute Bor system calls and block alloc after pipeline
+                        if let Some(polygon_tx) = polygon_tx {
+                            let cumulative_gas = execution_result
+                                .receipts
+                                .last()
+                                .map(|r| r.cumulative_gas_used)
+                                .unwrap_or(0);
+                            if let Some(receipt) = execute_polygon_system_calls(
+                                block,
+                                parent_header,
+                                &chain_config,
+                                vm,
+                                cumulative_gas,
+                                self.bor_engine.as_deref(),
+                                &rt_handle,
+                            )? {
+                                execution_result.receipts.push(receipt);
+                            }
+
+                            apply_polygon_block_alloc(block.header.number, &chain_config, vm)?;
+
+                            // Flush system call state transitions to merkleizer
+                            let transitions =
+                                vm.db.get_state_transitions_tx().map_err(EvmError::from)?;
+                            if !transitions.is_empty() {
+                                polygon_tx.send(transitions).map_err(|e| {
+                                    ChainError::Custom(format!("send polygon transitions: {e}"))
+                                })?;
+                                queue_length_ref.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
 
                         // Validate execution went alright
                         validate_gas_used(execution_result.block_gas_used, &block.header)?;
@@ -494,11 +629,13 @@ impl Blockchain {
                             &execution_result.receipts,
                             &NativeCrypto,
                         )?;
-                        validate_requests_hash(
-                            &block.header,
-                            &chain_config,
-                            &execution_result.requests,
-                        )?;
+                        if !matches!(self.options.r#type, BlockchainType::Polygon) {
+                            validate_requests_hash(
+                                &block.header,
+                                &chain_config,
+                                &execution_result.requests,
+                            )?;
+                        }
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -1130,12 +1267,48 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        let (execution_result, bal) = vm.execute_block(block)?;
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let _signer = self.verify_bor_header(&block.header, parent_header)?;
+        } else {
+            validate_block_pre_execution(
+                block,
+                parent_header,
+                chain_config,
+                ELASTICITY_MULTIPLIER,
+            )?;
+        }
+        let (mut execution_result, bal) = vm.execute_block(block)?;
+
+        // For Polygon: execute Bor system calls and create state sync receipt.
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            let rt_handle = tokio::runtime::Handle::current();
+            let cumulative_gas = execution_result
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            if let Some(receipt) = execute_polygon_system_calls(
+                block,
+                parent_header,
+                chain_config,
+                vm,
+                cumulative_gas,
+                self.bor_engine.as_deref(),
+                &rt_handle,
+            )? {
+                execution_result.receipts.push(receipt);
+            }
+
+            // Apply contract code upgrades (changeContractCodeIfNeeded).
+            apply_polygon_block_alloc(block.header.number, chain_config, vm)?;
+        }
+
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
-        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        if !matches!(self.options.r#type, BlockchainType::Polygon) {
+            validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        }
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
@@ -1169,6 +1342,12 @@ impl Blockchain {
             .header;
 
         // Get state at previous block
+        let first_parent_header = self
+            .storage
+            .get_block_header_by_hash(first_block_header.parent_hash)
+            .map_err(ChainError::StoreError)?
+            .ok_or(ChainError::ParentNotFound)?;
+        let initial_state_root = first_parent_header.state_root;
         let trie = self
             .storage
             .state_trie(first_block_header.parent_hash)
@@ -1207,6 +1386,7 @@ impl Blockchain {
                 .get_block_header_by_hash(parent_hash)
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
+            let parent_state_root = parent_header.state_root;
 
             // This assumes that the user has the necessary state stored already,
             // so if the user only has the state previous to the first block, it
@@ -1234,6 +1414,12 @@ impl Blockchain {
                         ))?,
                     };
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
+                }
+                BlockchainType::Polygon => {
+                    let chain_config = self.storage.get_chain_config();
+                    let fee_config =
+                        polygon_fee_config_for_block(&block.header, chain_config.chain_id, None);
+                    Evm::new_from_db_for_polygon(logger.clone(), fee_config, Arc::new(NativeCrypto))
                 }
             };
 
@@ -1338,6 +1524,7 @@ impl Blockchain {
                     trie,
                     &account_updates,
                     used_storage_tries,
+                    parent_state_root,
                 )?;
 
             // We cannot ensure that the users of this function have the necessary
@@ -1492,6 +1679,7 @@ impl Blockchain {
         logger: &DatabaseLogger,
     ) -> Result<ExecutionWitness, ChainError> {
         // Get state at previous block
+        let initial_state_root = parent_header.state_root;
         let trie = self
             .storage
             .state_trie(parent_header.hash())
@@ -1600,6 +1788,7 @@ impl Blockchain {
                 trie,
                 &account_updates,
                 used_storage_tries,
+                parent_header.state_root,
             )?;
 
         for (address, (witness, _storage_trie)) in storage_tries_after_update {
@@ -1781,6 +1970,9 @@ impl Blockchain {
                 stored,
             );
         }
+        if result.is_ok() {
+            self.touch_last_block_time();
+        }
         result
     }
 
@@ -1825,6 +2017,8 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
+        let chain_config = self.storage.get_chain_config();
+
         let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
@@ -1836,7 +2030,7 @@ impl Blockchain {
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
+            let mut vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => {
                     Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
                 }
@@ -1847,11 +2041,30 @@ impl Blockchain {
                     })?,
                     Arc::new(NativeCrypto),
                 ),
+                BlockchainType::Polygon => Evm::new_from_db_for_polygon(
+                    logger.clone(),
+                    ethrex_common::types::PolygonFeeConfig::default(),
+                    Arc::new(NativeCrypto),
+                ),
             };
+            if matches!(self.options.r#type, BlockchainType::Polygon) {
+                vm.set_polygon_fee_config(polygon_fee_config_for_block(
+                    &block.header,
+                    chain_config.chain_id,
+                    None,
+                ));
+            }
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
-            let vm = self.new_evm(vm_db)?;
+            let mut vm = self.new_evm(vm_db)?;
+            if matches!(self.options.r#type, BlockchainType::Polygon) {
+                vm.set_polygon_fee_config(polygon_fee_config_for_block(
+                    &block.header,
+                    chain_config.chain_id,
+                    None,
+                ));
+            }
             (vm, None)
         };
 
@@ -1908,6 +2121,10 @@ impl Blockchain {
                 warmer_duration,
                 instants,
             );
+        }
+
+        if result.is_ok() {
+            self.touch_last_block_time();
         }
 
         Ok((produced_bal, result))
@@ -2299,6 +2516,11 @@ impl Blockchain {
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+        // Polygon: reject blob transactions entirely
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            return Err(MempoolError::BlobTxNotSupported);
+        }
+
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
@@ -2407,6 +2629,28 @@ impl Blockchain {
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(None);
+        }
+
+        // Polygon-specific transaction pool rules
+        if matches!(self.options.r#type, BlockchainType::Polygon) {
+            // Reject blob transactions (type 3) — Polygon has no blob support
+            if matches!(tx, Transaction::EIP4844Transaction(_)) {
+                return Err(MempoolError::BlobTxNotSupported);
+            }
+            // Accept only types 0 (Legacy), 1 (AccessList), 2 (DynamicFee), 4 (SetCode/EIP-7702)
+            let tx_type = tx.tx_type() as u8;
+            if !matches!(tx_type, 0 | 1 | 2 | 4) {
+                return Err(MempoolError::UnsupportedTxType(tx_type));
+            }
+            // Enforce 25 Gwei minimum gas price
+            let min_gas_price: U256 = U256::from(25_000_000_000u64); // 25 Gwei
+            let effective_gas_price = tx
+                .max_fee_per_gas()
+                .map(U256::from)
+                .unwrap_or_else(|| tx.gas_price());
+            if effective_gas_price < min_gas_price {
+                return Err(MempoolError::TxGasPriceBelowMinimum);
+            }
         }
 
         let header_no = self.storage.get_latest_block_number().await?;
@@ -2520,6 +2764,82 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
+    /// Sets a sync target for Polygon chains (called by P2P after status exchange).
+    pub fn set_polygon_sync_head(&self, head: H256) {
+        if let Ok(mut target) = self.polygon_sync_head.lock() {
+            *target = Some(head);
+        }
+    }
+
+    /// Takes the Polygon sync target (returns and clears it).
+    pub fn take_polygon_sync_head(&self) -> Option<H256> {
+        self.polygon_sync_head.lock().ok()?.take()
+    }
+
+    /// Buffers a Polygon NewBlock whose parent hasn't been processed yet.
+    /// Capped at 512 total buffered blocks to prevent unbounded memory growth.
+    pub fn buffer_polygon_pending_block(&self, block: Block) {
+        if let Ok(mut pending) = self.polygon_pending_blocks.lock() {
+            let total: usize = pending.values().map(|v| v.len()).sum();
+            if total >= 512 {
+                return;
+            }
+            pending
+                .entry(block.header.parent_hash)
+                .or_default()
+                .push(block);
+        }
+    }
+
+    /// Takes one buffered pending block whose parent matches the given hash.
+    /// If multiple children exist for the same parent (forks), returns one at a time.
+    pub fn take_polygon_pending_block(&self, parent_hash: H256) -> Option<Block> {
+        let mut pending = self.polygon_pending_blocks.lock().ok()?;
+        let blocks = pending.get_mut(&parent_hash)?;
+        let block = blocks.pop();
+        if blocks.is_empty() {
+            pending.remove(&parent_hash);
+        }
+        block
+    }
+
+    /// Mark a block hash as currently being processed. Returns false if already in-flight.
+    pub fn mark_polygon_in_flight(&self, hash: H256) -> bool {
+        self.polygon_in_flight_blocks
+            .lock()
+            .map(|mut set| set.insert(hash))
+            .unwrap_or(false)
+    }
+
+    /// Remove a block hash from the in-flight set after processing completes.
+    pub fn clear_polygon_in_flight(&self, hash: &H256) {
+        if let Ok(mut set) = self.polygon_in_flight_blocks.lock() {
+            set.remove(hash);
+        }
+    }
+
+    /// Record that a block was just successfully processed.
+    fn touch_last_block_time(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_block_processed_at.store(now, Ordering::Relaxed);
+    }
+
+    /// Seconds since the last block was successfully processed, or `u64::MAX` if never.
+    pub fn secs_since_last_block(&self) -> u64 {
+        let last = self.last_block_processed_at.load(Ordering::Relaxed);
+        if last == 0 {
+            return u64::MAX;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(last)
+    }
+
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
@@ -2553,6 +2873,12 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
+            // StateSyncTransactions are consensus-only (never in mempool/P2P)
+            Transaction::StateSyncTransaction(_) => {
+                return Err(StoreError::Custom(
+                    "StateSyncTransactions are not supported in P2P".to_string(),
+                ));
+            }
         };
 
         Ok(result)
@@ -2571,6 +2897,51 @@ impl Blockchain {
             .get_block_header(latest_block_number)?
             .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
         Ok(chain_config.fork(latest_block.timestamp))
+    }
+
+    /// Verify a Bor header using the BorEngine if available, otherwise fall back
+    /// to structural validation only.
+    ///
+    /// When a BorEngine is present (normal Polygon operation), this performs full
+    /// consensus validation: structural checks, seal recovery, signer authorization
+    /// against the validator snapshot, and difficulty validation.
+    ///
+    /// Without a BorEngine (e.g. tests), falls back to `validate_bor_header` which
+    /// only checks structural fields.
+    /// Returns the recovered signer address on success (reusable as cached author).
+    fn verify_bor_header(
+        &self,
+        header: &BlockHeader,
+        parent_header: &BlockHeader,
+    ) -> Result<Address, ChainError> {
+        if let Some(engine) = &self.bor_engine {
+            let parent_hash = parent_header.compute_block_hash(&NativeCrypto);
+            let mut snapshot = match engine.take_snapshot(&parent_hash) {
+                Some(snap) => snap,
+                None => {
+                    info!(
+                        block = header.number,
+                        parent = parent_header.number,
+                        "No snapshot for parent block, bootstrapping from Heimdall"
+                    );
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(engine.bootstrap_snapshot(parent_header.number, parent_hash))
+                    })?
+                }
+            };
+            let signer = engine.verify_header(header, parent_header, &mut snapshot)?;
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(engine.update_snapshot_at_span_boundary(header.number, &mut snapshot))
+            })?;
+            engine.put_snapshot(snapshot);
+            Ok(signer)
+        } else {
+            Err(ChainError::Custom(
+                "BorEngine not configured — cannot verify Polygon block seal".to_string(),
+            ))
+        }
     }
 }
 
@@ -3055,8 +3426,480 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
+        BlockchainType::Polygon => {
+            // PolygonFeeConfig is resolved per-block in execute_block, not here.
+            // We create the EVM with a default config; the blockchain layer
+            // updates vm_type before block execution.
+            Evm::new_for_polygon(
+                vm_db,
+                ethrex_common::types::PolygonFeeConfig::default(),
+                Arc::new(NativeCrypto),
+            )
+        }
     };
     Ok(evm)
+}
+
+/// Execute Polygon Bor system calls (commitSpan + commitState) and create the state sync receipt.
+///
+/// In Bor, after all regular transactions are executed, system calls are run at sprint
+/// boundaries to sync state from Heimdall (L1→L2 bridge). The execution order follows
+/// Bor's `Finalize`:
+///   1. `commitSpan` — at span boundaries (first block of last sprint in current span),
+///      commits the next span's validator/producer sets to the ValidatorSet contract (0x1000).
+///   2. `commitState` — at sprint-start blocks, commits state sync events from Heimdall
+///      to the StateReceiver contract (0x1001).
+///
+/// Resolve the PolygonFeeConfig for a block.
+/// If `cached_author` is provided (from a prior `verify_header` call), reuses it
+/// to avoid a redundant ecrecover (~3μs per call).
+fn polygon_fee_config_for_block(
+    header: &BlockHeader,
+    chain_id: u64,
+    cached_author: Option<Address>,
+) -> ethrex_common::types::PolygonFeeConfig {
+    let author = cached_author.unwrap_or_else(|| {
+        ethrex_polygon::consensus::seal::recover_signer(header).unwrap_or(header.coinbase)
+    });
+    ethrex_polygon::genesis::bor_config_for_chain(chain_id)
+        .map(|bor_config| ethrex_common::types::PolygonFeeConfig {
+            burnt_contract: bor_config.get_burnt_contract(header.number),
+            coinbase: bor_config.get_coinbase(header.number),
+            author,
+        })
+        .unwrap_or_default()
+}
+
+/// Logs from both calls are collected into a single "state sync receipt" (type 0x7F)
+/// appended after all regular receipts.
+///
+/// Returns `Some(receipt)` if system calls produced logs, `None` otherwise.
+fn execute_polygon_system_calls(
+    block: &Block,
+    _parent_header: &BlockHeader,
+    chain_config: &ChainConfig,
+    vm: &mut Evm,
+    cumulative_gas_used: u64,
+    bor_engine: Option<&BorEngine>,
+    rt_handle: &tokio::runtime::Handle,
+) -> Result<Option<Receipt>, ChainError> {
+    use ethrex_common::types::{Log, TxType};
+    use ethrex_polygon::consensus::engine::encode_validator_bytes;
+    use ethrex_polygon::system_calls::{
+        MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, VALIDATOR_CONTRACT,
+        encode_commit_span, encode_commit_state,
+    };
+
+    let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        .ok_or_else(|| {
+            ChainError::Custom(format!(
+                "No BorConfig for chain_id {}",
+                chain_config.chain_id
+            ))
+        })?;
+    let block_number = block.header.number;
+
+    // Find the StateSyncTransaction in the block body (if any).
+    // In Bor, this is the last transaction and contains the state sync event data.
+    let state_sync_txs: Vec<_> = block
+        .body
+        .transactions
+        .iter()
+        .filter_map(|tx| match tx {
+            Transaction::StateSyncTransaction(st) => Some(st),
+            _ => None,
+        })
+        .collect();
+
+    let state_sync_data: Vec<_> = state_sync_txs
+        .iter()
+        .flat_map(|st| &st.state_sync_data)
+        .collect();
+
+    // Use BorEngine's span-aware check if available, fall back to formula.
+    let need_span_commit = match bor_engine {
+        Some(engine) => engine.need_to_commit_span(block_number),
+        None => bor_config.need_to_commit_span(block_number),
+    };
+
+    // No state sync data and no span commit → no receipt needed
+    if state_sync_data.is_empty() && !need_span_commit {
+        return Ok(None);
+    }
+
+    debug!(
+        block_number,
+        event_count = state_sync_data.len(),
+        need_span_commit,
+        "Executing Polygon system calls"
+    );
+
+    let mut all_logs: Vec<Log> = Vec::new();
+
+    // 1. commitSpan at span boundaries (BEFORE commitState, matching Bor's Finalize order)
+    // Post-Rio: Bor stopped calling commitSpan — validators are read from Heimdall directly.
+    // The ValidatorSet contract (0x1000) is frozen; skip commitSpan for post-Rio blocks.
+    let is_rio = bor_config.is_rio_active(block_number);
+    if need_span_commit && !is_rio {
+        if let Some(engine) = bor_engine {
+            let current_span_id = engine
+                .current_span_id()
+                .unwrap_or_else(|| bor_config.span_id_at(block_number));
+            let next_span_id = current_span_id + 1;
+
+            // Try pre-fetched span from poller cache, fall back to direct Heimdall fetch.
+            let next_span = rt_handle
+                .block_on(async {
+                    if let Some(span) = engine.take_cached_next_span(next_span_id).await {
+                        debug!(next_span_id, "Using pre-fetched span from poller cache");
+                        Ok(span)
+                    } else {
+                        engine.heimdall.fetch_span(next_span_id).await
+                    }
+                })
+                .map_err(|e| {
+                    ChainError::Custom(format!(
+                        "Failed to fetch span {next_span_id} from Heimdall: {e}"
+                    ))
+                })?;
+
+            let validator_bytes = encode_validator_bytes(&next_span.validators);
+            let producer_bytes = encode_validator_bytes(&next_span.selected_producers);
+            let calldata = encode_commit_span(
+                next_span.id,
+                next_span.start_block,
+                next_span.end_block,
+                &validator_bytes,
+                &producer_bytes,
+            );
+
+            debug!(
+                block_number,
+                span_id = next_span.id,
+                start = next_span.start_block,
+                end = next_span.end_block,
+                validators = next_span.validators.len(),
+                producers = next_span.selected_producers.len(),
+                "Executing commitSpan system call"
+            );
+
+            match vm.execute_polygon_system_call(
+                &block.header,
+                VALIDATOR_CONTRACT,
+                SYSTEM_ADDRESS,
+                bytes::Bytes::from(calldata),
+                MAX_SYSTEM_CALL_GAS,
+            ) {
+                Ok(report) => {
+                    if report.is_success() {
+                        all_logs.extend(report.logs);
+                        // Update stored span — the committed span becomes current.
+                        engine.set_current_span(next_span);
+                    } else {
+                        // commitSpan reverts are fatal for pre-Rio
+                        return Err(ChainError::Custom(format!(
+                            "commitSpan reverted at block {block_number} for span {}",
+                            next_span.id
+                        )));
+                    }
+                }
+                Err(e) => {
+                    return Err(ChainError::Custom(format!(
+                        "commitSpan system call failed at block {block_number}: {e}"
+                    )));
+                }
+            }
+        } else {
+            warn!(
+                block_number,
+                "commitSpan needed but no BorEngine available — span commit skipped"
+            );
+        }
+    }
+
+    // 2. commitState for each state sync event
+    // Fetch complete EventRecords from Heimdall (has log_index + bor_chain_id
+    // that the block body's StateSyncData lacks).
+    if !state_sync_data.is_empty() {
+        let delay = bor_config.get_state_sync_delay(block_number);
+        let sync_time = block.header.timestamp - delay;
+
+        // Read lastStateId() from the StateReceiver contract (0x1001).
+        // Bor uses this to determine from_id = lastStateId + 1, NOT the block body.
+        // Selector: 0x5407ca67 = keccak256("lastStateId()")
+        let last_state_id_selector = bytes::Bytes::from_static(&[0x54, 0x07, 0xca, 0x67]);
+        let last_state_id = match vm.execute_polygon_system_call(
+            &block.header,
+            STATE_RECEIVER_CONTRACT,
+            SYSTEM_ADDRESS,
+            last_state_id_selector,
+            MAX_SYSTEM_CALL_GAS,
+        ) {
+            Ok(report) if report.is_success() && report.output.len() >= 32 => {
+                let bytes: [u8; 8] = report.output[24..32].try_into().expect("slice is 8 bytes");
+                u64::from_be_bytes(bytes)
+            }
+            Ok(report) => {
+                warn!(
+                    block_number,
+                    success = report.is_success(),
+                    output_len = report.output.len(),
+                    "lastStateId() call unexpected result — falling back to block body"
+                );
+                state_sync_data[0].id.saturating_sub(1)
+            }
+            Err(e) => {
+                warn!(block_number, error = %e, "lastStateId() call failed — falling back to block body");
+                state_sync_data[0].id.saturating_sub(1)
+            }
+        };
+        let from_id = last_state_id + 1;
+
+        debug!(
+            block_number,
+            body_event_count = state_sync_data.len(),
+            last_state_id,
+            from_id,
+            sync_time,
+            "Fetching state sync events from Heimdall"
+        );
+
+        let events = if let Some(engine) = bor_engine {
+            // Try pre-fetched events from poller cache, fall back to direct fetch.
+            rt_handle
+                .block_on(async {
+                    if let Some(cached) = engine.take_cached_state_sync_events(from_id).await {
+                        debug!(
+                            block_number,
+                            cached_count = cached.len(),
+                            "Using pre-fetched state sync events from poller cache"
+                        );
+                        Ok(cached)
+                    } else {
+                        engine
+                            .heimdall
+                            .fetch_state_sync_events(from_id, sync_time, 50)
+                            .await
+                    }
+                })
+                .map_err(|e| {
+                    ChainError::Custom(format!(
+                        "Failed to fetch state sync events from Heimdall: {e}"
+                    ))
+                })?
+        } else {
+            warn!(
+                block_number,
+                "No BorEngine available for state sync — skipping commitState"
+            );
+            Vec::new()
+        };
+
+        debug!(
+            block_number,
+            heimdall_event_count = events.len(),
+            body_event_count = state_sync_data.len(),
+            "State sync events fetched"
+        );
+
+        // Validate events before processing: sequential IDs and matching chain ID.
+        let local_chain_id = chain_config.chain_id.to_string();
+        let events: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .filter(|(i, event)| {
+                // Check that IDs are sequential: event[i].id == from_id + i.
+                let expected_id = from_id + *i as u64;
+                if event.id != expected_id {
+                    warn!(
+                        block_number,
+                        event_id = event.id,
+                        expected_id,
+                        "Skipping state sync event: non-sequential ID"
+                    );
+                    return false;
+                }
+                // Check that bor_chain_id matches the local chain.
+                if event.bor_chain_id != local_chain_id {
+                    warn!(
+                        block_number,
+                        event_id = event.id,
+                        event_chain_id = %event.bor_chain_id,
+                        local_chain_id = %local_chain_id,
+                        "Skipping state sync event: chain ID mismatch"
+                    );
+                    return false;
+                }
+                true
+            })
+            .map(|(_, event)| event)
+            .collect();
+
+        for (idx, event) in events.iter().enumerate() {
+            // Decode event data: Heimdall may return hex (0x-prefixed or plain)
+            // or base64-encoded bytes depending on the API version.
+            let raw = event.data.strip_prefix("0x").unwrap_or(&event.data);
+            let data_bytes = if let Ok(bytes) = hex::decode(raw) {
+                bytes
+            } else if let Ok(bytes) =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw)
+            {
+                bytes
+            } else {
+                // Last resort: treat the string as raw UTF-8 bytes
+                event.data.as_bytes().to_vec()
+            };
+
+            // RLP-encode the full EventRecord matching Bor's format:
+            // [id, contract, data, tx_hash, log_index, chain_id_string]
+            let mut record_bytes = Vec::new();
+            ethrex_rlp::structs::Encoder::new(&mut record_bytes)
+                .encode_field(&event.id)
+                .encode_field(&event.contract)
+                .encode_field(&bytes::Bytes::from(data_bytes.clone()))
+                .encode_field(&event.tx_hash)
+                .encode_field(&event.log_index)
+                .encode_field(&event.bor_chain_id)
+                .finish();
+
+            let calldata = encode_commit_state(sync_time, &record_bytes);
+
+            // Debug logging for first event to compare bytes
+            if idx == 0 {
+                let data_hex: String = data_bytes
+                    .iter()
+                    .take(40)
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let rlp_hex: String = record_bytes
+                    .iter()
+                    .take(100)
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let calldata_hex: String = calldata
+                    .iter()
+                    .take(100)
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let raw_preview: String = event.data.chars().take(100).collect();
+                debug!(
+                    block_number,
+                    event_id = event.id,
+                    log_index = event.log_index,
+                    bor_chain_id = %event.bor_chain_id,
+                    data_raw_preview = %raw_preview,
+                    data_decoded_hex = %data_hex,
+                    data_decoded_len = data_bytes.len(),
+                    rlp_hex = %rlp_hex,
+                    rlp_len = record_bytes.len(),
+                    calldata_hex = %calldata_hex,
+                    calldata_len = calldata.len(),
+                    "commitState debug: first event bytes"
+                );
+            }
+
+            match vm.execute_polygon_system_call(
+                &block.header,
+                STATE_RECEIVER_CONTRACT,
+                SYSTEM_ADDRESS,
+                bytes::Bytes::from(calldata),
+                MAX_SYSTEM_CALL_GAS,
+            ) {
+                Ok(report) => {
+                    // commitState reverts are non-fatal — collect logs only on success
+                    if report.is_success() {
+                        all_logs.extend(report.logs);
+                    }
+                }
+                Err(e) => {
+                    // Non-fatal: log and continue to next event
+                    warn!(
+                        event_id = event.id,
+                        error = %e,
+                        "Polygon commitState system call failed (non-fatal)"
+                    );
+                }
+            }
+        }
+    }
+
+    // If no logs were produced by any system call, no receipt needed
+    if all_logs.is_empty() {
+        return Ok(None);
+    }
+
+    debug!(
+        block_number,
+        log_count = all_logs.len(),
+        cumulative_gas_used,
+        "Created state sync receipt"
+    );
+
+    // The state sync receipt's cumulative_gas_used equals the last regular receipt's value.
+    // System calls don't contribute to gas accounting in Bor.
+    let receipt = Receipt::new(TxType::StateSync, true, cumulative_gas_used, all_logs);
+
+    Ok(Some(receipt))
+}
+
+/// Apply Polygon block alloc updates (`changeContractCodeIfNeeded`).
+///
+/// At specific fork block numbers, Bor deploys or updates system contract code
+/// and optionally sets initial balances. These are direct state modifications that
+/// run AFTER system calls but BEFORE state root computation.
+///
+/// Matches Bor's `changeContractCodeIfNeeded(headerNumber, state)`:
+///   - For each address in the alloc: `state.SetCode(addr, account.Code)`
+///   - If the account's balance is zero: `state.SetBalance(addr, account.Balance)`
+fn apply_polygon_block_alloc(
+    block_number: u64,
+    chain_config: &ChainConfig,
+    vm: &mut Evm,
+) -> Result<(), ChainError> {
+    use ethrex_common::types::Code;
+
+    let bor_config = match ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id) {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+
+    let alloc_updates = match bor_config.block_alloc.get(&block_number) {
+        Some(updates) => updates,
+        None => return Ok(()),
+    };
+
+    debug!(
+        block_number,
+        account_count = alloc_updates.len(),
+        "Applying Polygon block alloc updates"
+    );
+
+    for (address, genesis_account) in alloc_updates {
+        // Set contract code (replicates Bor's state.SetCode(addr, account.Code))
+        if !genesis_account.code.is_empty() {
+            let code = Code::from_bytecode(genesis_account.code.clone(), &NativeCrypto);
+            let acc = vm.db.get_account_mut(*address).map_err(|e| {
+                ChainError::Custom(format!(
+                    "Failed to get account {address:?} at block {block_number}: {e}"
+                ))
+            })?;
+            acc.info.code_hash = code.hash;
+            vm.db.codes.entry(code.hash).or_insert(code);
+        }
+
+        // Set balance only if the account's current balance is zero
+        // (replicates Bor's: if state.GetBalance(addr) == 0 { state.SetBalance(...) })
+        let account = vm.db.get_account_mut(*address).map_err(|e| {
+            ChainError::Custom(format!(
+                "Failed to get account {address:?} at block {block_number}: {e}"
+            ))
+        })?;
+        if account.info.balance.is_zero() {
+            account.info.balance = genesis_account.balance;
+        }
+    }
+
+    Ok(())
 }
 
 /// Performs post-execution checks
@@ -3068,6 +3911,12 @@ pub fn validate_state_root(
     if new_state_root == block_header.state_root {
         Ok(())
     } else {
+        warn!(
+            block_number = block_header.number,
+            expected = ?block_header.state_root,
+            computed = ?new_state_root,
+            "State root mismatch"
+        );
         Err(ChainError::InvalidBlock(
             InvalidBlockError::StateRootMismatch,
         ))

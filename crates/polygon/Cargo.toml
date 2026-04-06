@@ -1,0 +1,25 @@
+[package]
+name = "ethrex-polygon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-common = { workspace = true, default-features = false }
+ethrex-rlp.workspace = true
+ethrex-crypto = { workspace = true, features = ["secp256k1"] }
+
+serde.workspace = true
+serde_json.workspace = true
+ethereum-types.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+lru.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+crc32fast.workspace = true
+tokio = { workspace = true, features = ["time", "macros", "rt"] }
+tokio-util.workspace = true

@@ -121,9 +121,16 @@ impl NewPooledTransactionHashes {
         &self,
         blockchain: &Blockchain,
     ) -> Result<Vec<H256>, StoreError> {
-        blockchain
-            .mempool
-            .filter_unknown_transactions(&self.transaction_hashes)
+        // Filter out StateSyncTx (type 0x7F) — they must never be requested via gossip.
+        // They are only valid inside Polygon block bodies.
+        let filtered: Vec<H256> = self
+            .transaction_hashes
+            .iter()
+            .zip(self.transaction_types.iter())
+            .filter(|(_, tx_type)| **tx_type != 0x7f)
+            .map(|(hash, _)| *hash)
+            .collect();
+        blockchain.mempool.filter_unknown_transactions(&filtered)
     }
 }
 

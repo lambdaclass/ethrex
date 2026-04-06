@@ -3,7 +3,7 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
     gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE},
     utils::create_eth_transfer_log,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
@@ -142,11 +142,16 @@ impl<'a> VM<'a> {
         let value = self.current_call_frame.msg_value;
         self.increase_account_balance(new_contract_address, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
-        // Origin is sender, new_contract_address is the recipient.
-        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
-            let log = create_eth_transfer_log(self.env.origin, new_contract_address, value);
-            self.substate.add_log(log);
+        if !value.is_zero() {
+            // NOTE: Polygon LogTransfer for CREATE tx value transfer is emitted in
+            // vm.rs AFTER push_backup(), so it reverts with failed CREATEs.
+
+            // EIP-7708: Emit transfer log for nonzero-value contract creation transactions.
+            // Origin is sender, new_contract_address is the recipient.
+            if self.env.config.fork >= Fork::Amsterdam {
+                let log = create_eth_transfer_log(self.env.origin, new_contract_address, value);
+                self.substate.add_log(log);
+            }
         }
 
         self.increment_account_nonce(new_contract_address)?;
@@ -169,11 +174,21 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 
+        // 2. If the code_length > MAX_CODE_SIZE
+        // Polygon uses a larger max code size (32KB vs 24KB).
         // EIP-8037 (Amsterdam+): Per EELS process_create_message (bal@v5.4.0):
         // 1. Size check first (reject oversized before any gas charges)
         // 2. Keccak hash cost (regular gas)
         // 3. State gas for code deposit
-        if fork >= Fork::Amsterdam {
+        if matches!(self.vm_type, VMType::Polygon(_)) {
+            if code_length > POLYGON_MAX_CODE_SIZE {
+                return Err(ExceptionalHalt::ContractOutputTooBig.into());
+            }
+            let regular = code_length
+                .checked_mul(CODE_DEPOSIT_COST)
+                .ok_or(InternalError::Overflow)?;
+            self.current_call_frame.increase_consumed_gas(regular)?;
+        } else if fork >= Fork::Amsterdam {
             // Size check BEFORE gas charges
             if code_length > AMSTERDAM_MAX_CODE_SIZE {
                 return Err(ExceptionalHalt::ContractOutputTooBig.into());
