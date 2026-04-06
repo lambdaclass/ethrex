@@ -7,7 +7,7 @@ The L2 block gas limit is stored on-chain in the `CommonBridge` contract. The se
 ### Viewing the current gas limit
 
 ```shell
-cast call <BRIDGE_ADDRESS> "l2GasLimit()" --rpc-url <L1_RPC_URL>
+rex call <BRIDGE_ADDRESS> "l2GasLimit()" --rpc-url <L1_RPC_URL>
 ```
 
 ### Updating the gas limit
@@ -15,7 +15,7 @@ cast call <BRIDGE_ADDRESS> "l2GasLimit()" --rpc-url <L1_RPC_URL>
 Only the bridge owner can update the gas limit:
 
 ```shell
-cast send <BRIDGE_ADDRESS> "setL2GasLimit(uint256)" <NEW_GAS_LIMIT> \
+rex send <BRIDGE_ADDRESS> "setL2GasLimit(uint256)" <NEW_GAS_LIMIT> \
   --private-key <OWNER_PRIVATE_KEY> \
   --rpc-url <L1_RPC_URL>
 ```
