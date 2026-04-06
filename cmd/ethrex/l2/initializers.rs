@@ -68,6 +68,7 @@ fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        l2_opts.sponsored_gas_limit,
     );
 
     tracker.spawn(rpc_api);
