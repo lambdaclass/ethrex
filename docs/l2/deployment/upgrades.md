@@ -104,3 +104,21 @@ The contract must not be unpaused until `l2GasLimit` is set to a valid value. Ot
 #### CLI flag removed
 
 The `--block-producer.block-gas-limit` flag has been removed. The sequencer now reads the gas limit from the `CommonBridge` contract on startup. Update any scripts or deployment configurations that use this flag.
+
+#### Viewing the current gas limit
+
+```shell
+rex call <BRIDGE_ADDRESS> "l2GasLimit()" --rpc-url <L1_RPC_URL>
+```
+
+#### Updating the gas limit
+
+Only the bridge owner can update the gas limit:
+
+```shell
+rex send <BRIDGE_ADDRESS> "setL2GasLimit(uint256)" <NEW_GAS_LIMIT> \
+  --private-key <OWNER_PRIVATE_KEY> \
+  --rpc-url <L1_RPC_URL>
+```
+
+After updating the on-chain value, restart the sequencer for it to take effect. Until the restart, the sequencer continues using the previous gas limit, which may cause a temporary mismatch with the on-chain value.

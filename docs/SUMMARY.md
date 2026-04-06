@@ -73,7 +73,6 @@
   - [Blockscout for ethrex L2](./l2/interacting/blockscout.md)
   - [L2 Hub](./l2/interacting/l2_hub.md)
   - [Shared Bridge](./l2/interacting/shared_bridge.md)
-  - [Maintain the sequencer](./l2/interacting/maintain_sequencer.md)
 - [Fundamentals](./l2/fundamentals/README.md)
   - [State diffs](./l2/fundamentals/state_diffs.md)
   - [Block vs StateDiff](./l2/fundamentals/block_vs_state_diff_measurements.md)
