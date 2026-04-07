@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use aligned_sdk::{
     blockchain::{
@@ -10,7 +11,7 @@ use aligned_sdk::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::{
     calldata::Value,
-    prover::{BatchProof, ProverType},
+    prover::{ProverOutput, ProverType},
 };
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
@@ -33,7 +34,10 @@ use crate::{
 use super::{
     configs::AlignedConfig,
     errors::SequencerError,
-    utils::{ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, send_verify_tx, sleep_random},
+    utils::{
+        ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR, remove_batch_checkpoint, send_verify_tx,
+        sleep_random,
+    },
 };
 
 const ALIGNED_VERIFY_FUNCTION_SIGNATURE: &str =
@@ -43,6 +47,7 @@ pub async fn start_l1_proof_verifier(
     cfg: SequencerConfig,
     rollup_store: StoreRollup,
     needed_proof_types: Vec<ProverType>,
+    checkpoints_dir: PathBuf,
 ) -> Result<(), SequencerError> {
     let l1_proof_verifier = L1ProofVerifier::new(
         cfg.proof_coordinator,
@@ -51,6 +56,7 @@ pub async fn start_l1_proof_verifier(
         &cfg.aligned,
         rollup_store,
         needed_proof_types,
+        checkpoints_dir,
     )
     .await?;
     l1_proof_verifier.run().await;
@@ -68,6 +74,7 @@ struct L1ProofVerifier {
     rollup_store: StoreRollup,
     needed_proof_types: Vec<ProverType>,
     from_block: Option<u64>,
+    checkpoints_dir: PathBuf,
 }
 
 impl L1ProofVerifier {
@@ -78,6 +85,7 @@ impl L1ProofVerifier {
         aligned_cfg: &AlignedConfig,
         rollup_store: StoreRollup,
         needed_proof_types: Vec<ProverType>,
+        checkpoints_dir: PathBuf,
     ) -> Result<Self, ProofVerifierError> {
         let eth_client = EthClient::new_with_config(
             eth_cfg.rpc_url.clone(),
@@ -101,6 +109,7 @@ impl L1ProofVerifier {
             rollup_store,
             needed_proof_types,
             from_block: aligned_cfg.from_block,
+            checkpoints_dir,
         })
     }
 
@@ -116,8 +125,23 @@ impl L1ProofVerifier {
     }
 
     async fn main_logic(&self) -> Result<(), ProofVerifierError> {
-        let first_batch_to_verify =
-            1 + get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+        let last_verified =
+            get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address).await?;
+
+        // Sync DB cursor if on-chain verification advanced past it (e.g. node
+        // crashed after the verify tx landed but before writing the cursor).
+        let (db_batch, _) = self.rollup_store.get_latest_verified_batch_proof().await?;
+        if db_batch < last_verified {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ProofVerifierError::InternalError(e.to_string()))?
+                .as_secs();
+            self.rollup_store
+                .set_latest_verified_batch_proof(last_verified, now)
+                .await?;
+        }
+
+        let first_batch_to_verify = last_verified + 1;
 
         match self
             .verify_proofs_aggregation(first_batch_to_verify)
@@ -163,7 +187,13 @@ impl L1ProofVerifier {
             let mut current_batch_public_inputs = None;
 
             for (prover_type, proof) in proofs_for_batch {
-                let public_inputs = proof.public_values();
+                let public_inputs = proof
+                    .public_values()
+                    .ok_or(ProofVerifierError::MissingPublicValues {
+                        batch_number,
+                        prover_type,
+                    })?
+                    .to_vec();
 
                 // check all proofs have the same public inputs
                 if let Some(ref existing_pi) = current_batch_public_inputs {
@@ -258,6 +288,8 @@ impl L1ProofVerifier {
             && data.starts_with(ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR)
         {
             warn!("Deleting invalid ALIGNED proof");
+            // Delete the invalid proofs. The sender will detect the stale
+            // verified_at timestamp and reset its own aligned cursor.
             for batch_number in first_batch_number..=last_batch_number {
                 for proof_type in &self.needed_proof_types {
                     self.rollup_store
@@ -268,11 +300,27 @@ impl L1ProofVerifier {
         }
         let verify_tx_hash = send_verify_tx_result?;
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| ProofVerifierError::InternalError(e.to_string()))?
+            .as_secs();
+
         // store the verify transaction hash for each batch that was aggregated.
         for batch_number in first_batch_number..=last_batch_number {
             self.rollup_store
                 .store_verify_tx_by_batch(batch_number, verify_tx_hash)
                 .await?;
+        }
+
+        // Advance verified cursor now that on-chain verification succeeded.
+        // Only the verifier writes this cursor; the sender reads it for timeout detection.
+        self.rollup_store
+            .set_latest_verified_batch_proof(last_batch_number, now)
+            .await?;
+
+        // Clean up checkpoint directories for verified batches
+        for bn in first_batch_number..=last_batch_number {
+            remove_batch_checkpoint(&self.checkpoints_dir, bn);
         }
 
         Ok(Some(verify_tx_hash))
@@ -342,7 +390,7 @@ impl L1ProofVerifier {
     async fn get_proofs_for_batch(
         &self,
         batch_number: u64,
-    ) -> Result<HashMap<ProverType, BatchProof>, ProofVerifierError> {
+    ) -> Result<HashMap<ProverType, ProverOutput>, ProofVerifierError> {
         let mut proofs_for_batch = HashMap::new();
         for prover_type in &self.needed_proof_types {
             if let Some(proof) = self

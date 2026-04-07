@@ -7,6 +7,7 @@ use ethrex_common::types::{
     compute_transactions_root,
 };
 use ethrex_common::{H256, U256};
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -43,8 +44,8 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let (mut db, initial_block_hash, store, _genesis) =
         load_initial_state(test, &test_case.fork).await;
-    let mut vm =
-        VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
+    let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
+        .map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
 
     let (receipts, gas_used) = match execution_result {
@@ -69,7 +70,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     // 2. Set up Block Body and Block Header
 
     let transactions = vec![tx.clone()];
-    let computed_tx_root = compute_transactions_root(&transactions);
+    let computed_tx_root = compute_transactions_root(&transactions, &ethrex_crypto::NativeCrypto);
     let body = BlockBody {
         transactions,
         ..Default::default()
@@ -120,7 +121,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         coinbase: test.env.current_coinbase,
         state_root: test_case.post.hash,
         transactions_root: computed_tx_root,
-        receipts_root: compute_receipts_root(&receipts),
+        receipts_root: compute_receipts_root(&receipts, &ethrex_crypto::NativeCrypto),
         logs_bloom: Default::default(),
         difficulty: U256::zero(),
         number: 1, // In Ethereum state tests, the block being constructed is always the first block after genesis, which has block number 1.

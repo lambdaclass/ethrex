@@ -13,7 +13,7 @@ use crate::deserialize::deserialize_block_expected_exception;
 use crate::fork::Fork;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct TestUnit {
     #[serde(default, rename = "_info")]
     pub info: Info,
@@ -313,6 +313,21 @@ pub struct Block {
     #[serde(default)]
     pub uncle_headers: Vec<Header>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// Execution witness from zkevm fixtures (standard format: state/codes/headers).
+    #[serde(default, rename = "executionWitness")]
+    pub execution_witness: Option<serde_json::Value>,
+    /// Reference-encoded stateless input bytes from zkevm fixtures.
+    #[serde(default, rename = "statelessInputBytes")]
+    pub stateless_input_bytes: Option<String>,
+    /// Expected stateless output bytes from zkevm fixtures.
+    #[serde(default, rename = "statelessOutputBytes")]
+    pub stateless_output_bytes: Option<String>,
+    /// Block access list from zkevm fixtures.
+    #[serde(default, rename = "blockAccessList")]
+    pub block_access_list_data: Option<serde_json::Value>,
+    /// Transaction receipts from zkevm fixtures.
+    #[serde(default, rename = "receipts")]
+    pub receipts: Option<serde_json::Value>,
 }
 
 impl BlockWithRLP {
@@ -574,11 +589,11 @@ impl From<Account> for ethrexAccount {
     fn from(val: Account) -> Self {
         ethrexAccount {
             info: AccountInfo {
-                code_hash: code_hash(&val.code),
+                code_hash: code_hash(&val.code, &ethrex_crypto::NativeCrypto),
                 balance: val.balance,
                 nonce: val.nonce.as_u64(),
             },
-            code: Code::from_bytecode(val.code),
+            code: Code::from_bytecode(val.code, &ethrex_crypto::NativeCrypto),
             storage: val
                 .storage
                 .into_iter()

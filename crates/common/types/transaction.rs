@@ -1,10 +1,34 @@
-use std::{cmp::min, fmt::Display};
+use std::{
+    cmp::min,
+    fmt::Display,
+    num::NonZeroUsize,
+    sync::{LazyLock, Mutex},
+};
 
-use crate::{errors::EcdsaError, utils::keccak};
+use crate::utils::keccak;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, Signature, U256};
-use hex_literal::hex;
+use ethereum_types::{Address, H256, U256};
+use ethrex_crypto::{Crypto, CryptoError};
+use lru::LruCache;
 pub use mempool::MempoolTransaction;
+
+const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
+
+/// Global cache mapping transaction hash → recovered sender address.
+/// Keyed by tx hash (unique per transaction), so each entry is safe to reuse.
+/// Not suitable for EIP-7702 authorization tuples where the same message hash
+/// can correspond to different signers (the message excludes the signature).
+/// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
+///
+/// Lock with `.unwrap_or_else(|e| e.into_inner())` — a poisoned mutex just means
+/// a thread panicked mid-update; the LruCache invariants are maintained by the
+/// std Mutex (data is still accessible), and a missing entry only costs one
+/// redundant recovery, so it's safe to keep using.
+pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
+    Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
+    ))
+});
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
@@ -1083,7 +1107,7 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, EcdsaError> {
+    pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
         let sender_cache = match self {
             Transaction::LegacyTransaction(tx) => &tx.sender_cache,
             Transaction::EIP2930Transaction(tx) => &tx.sender_cache,
@@ -1094,12 +1118,30 @@ impl Transaction {
             Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
         };
         sender_cache
-            .get_or_try_init(|| self.compute_sender())
+            .get_or_try_init(|| {
+                let tx_hash = self.hash();
+                // Fast path: check process-level signer cache
+                let mut cache = GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Some(&addr) = cache.get(&tx_hash) {
+                    return Ok(addr);
+                }
+                drop(cache);
+                // Slow path: actual secp256k1 recovery
+                let sender = self.compute_sender(crypto)?;
+                // Store in global cache for future lookups (LRU evicts oldest on overflow)
+                GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .put(tx_hash, sender);
+                Ok(sender)
+            })
             .copied()
     }
 
-    fn compute_sender(&self) -> Result<Address, EcdsaError> {
-        match self {
+    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
                 let signature_y_parity = match self.chain_id() {
                     Some(chain_id) => tx.v.as_u64().saturating_sub(35 + chain_id * 2) != 0,
@@ -1131,7 +1173,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.s.to_big_endian());
                 sig[64] = signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1149,7 +1191,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1168,7 +1210,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1189,7 +1231,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1209,9 +1251,9 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
-            Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
+            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1230,9 +1272,11 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
-        }
+        };
+        let msg = keccak(&buf).to_fixed_bytes();
+        crypto.recover_signer(&sig, &msg)
     }
 
     pub fn gas_limit(&self) -> u64 {
@@ -1457,96 +1501,6 @@ impl Transaction {
             _ => true,
         }
     }
-}
-
-pub fn recover_address_from_message(
-    signature: Signature,
-    message: &Bytes,
-) -> Result<Address, EcdsaError> {
-    // Hash message
-    let payload = keccak(message);
-    recover_address(signature, payload).map_err(EcdsaError::from)
-}
-
-// Half the secp256k1 curve order (n/2), i.e. the upper bound for a valid `s` value per EIP-2.
-const SECP256K1_N_HALF: [u8; 32] =
-    hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
-
-fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
-    signature_bytes[32..64] > SECP256K1_N_HALF[..]
-}
-
-#[cfg(all(
-    not(feature = "zisk"),
-    not(feature = "risc0"),
-    not(feature = "sp1"),
-    feature = "secp256k1"
-))]
-pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
-    // Create signature
-    let signature_bytes = signature.to_fixed_bytes();
-    // EIP-2: reject high-s signatures (s > secp256k1n/2).
-    if signature_has_high_s(&signature_bytes) {
-        return Err(secp256k1::Error::InvalidSignature);
-    }
-    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-        &signature_bytes[..64],
-        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
-    )?;
-    // Recover public key
-    let public = secp256k1::SECP256K1.recover_ecdsa(
-        &secp256k1::Message::from_digest(payload.to_fixed_bytes()),
-        &signature,
-    )?;
-    // Hash public key to obtain address
-    let hash = ethrex_crypto::keccak::keccak_hash(&public.serialize_uncompressed()[1..]);
-    Ok(Address::from_slice(&hash[12..]))
-}
-
-#[cfg(any(
-    feature = "zisk",
-    feature = "risc0",
-    feature = "sp1",
-    not(feature = "secp256k1")
-))]
-pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
-    use sha2::Digest;
-    use sha3::Keccak256;
-
-    // Create signature
-    let signature_bytes = signature.to_fixed_bytes();
-    // EIP-2: signatures must use "low-s" (s <= secp256k1n/2).
-    // Standard k256 rejects high-s signatures by default but it's best to leave this for 3 reasons:
-    // 1. Make it more explicit
-    // 2. Sometimes it can happen that the zkVM patch can have a different behavior than the original crate (shouldn't happen, but has happened). So we put this just in case.
-    // 3. Fail fast
-    if signature_has_high_s(&signature_bytes) {
-        return Err(k256::ecdsa::Error::from_source("High-s signature"));
-    }
-
-    let signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
-
-    let recovery_id_byte = signature_bytes[64];
-    let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
-        k256::ecdsa::Error::from_source("Failed to parse recovery id"),
-    )?;
-
-    // Recover public key
-    let public = k256::ecdsa::VerifyingKey::recover_from_prehash(
-        payload.as_bytes(),
-        &signature,
-        recovery_id,
-    )?;
-
-    let uncompressed = public.to_encoded_point(false);
-
-    let mut uncompressed = uncompressed.to_bytes();
-
-    let xy = &mut uncompressed[1..65];
-
-    let hash = Keccak256::digest(xy);
-
-    Ok(Address::from_slice(&hash[12..]))
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
@@ -3145,7 +3099,7 @@ mod tests {
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
             hex!("8151d548273f6683169524b66ca9fe338b9ce42bc3540046c828fd939ae23bcb");
-        let result = compute_transactions_root(&body.transactions);
+        let result = compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto);
 
         assert_eq!(result, expected_root.into());
     }
@@ -3196,7 +3150,7 @@ mod tests {
         let logs = vec![];
         let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
 
-        let result = compute_receipts_root(&[receipt]);
+        let result = compute_receipts_root(&[receipt], &ethrex_crypto::NativeCrypto);
         let expected_root =
             hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
         assert_eq!(result, expected_root.into());
@@ -3641,7 +3595,10 @@ mod tests {
 
     #[test]
     fn recover_address_rejects_high_s_signatures() {
+        use ethrex_crypto::NativeCrypto;
         use k256::ecdsa::SigningKey;
+
+        let crypto = NativeCrypto;
 
         // 1. Setup: Create a signer and a message
         // A random private key for testing
@@ -3651,17 +3608,15 @@ mod tests {
         // The message we want to sign
         let msg = b"Test message for high-s signature rejection";
         // Calculate the Keccak256 hash of the message (the payload)
-        let payload = keccak(msg);
+        let payload = keccak(msg).to_fixed_bytes();
 
         // 2. Generate a valid low-s signature
         // k256's sign_prehash_recoverable produces canonical low-s signatures by default.
-        // We use the pre-calculated hash (payload).
         let (signature, recovery_id) = signing_key
-            .sign_prehash_recoverable(payload.as_bytes())
+            .sign_prehash_recoverable(&payload)
             .expect("Signing failed");
 
-        // 3. Construct the signature bytes expected by recover_address
-        // Format: [r (32 bytes), s (32 bytes), v (1 byte)]
+        // 3. Construct the signature bytes (r||s||v, 65 bytes)
         let mut sig_bytes = [0u8; 65];
         sig_bytes[..64].copy_from_slice(&signature.to_bytes());
         sig_bytes[64] = recovery_id.to_byte();
@@ -3672,7 +3627,8 @@ mod tests {
         let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed_pub.as_bytes()[1..]);
         let expected_address = Address::from_slice(&pub_hash[12..]);
 
-        let recovered = recover_address(Signature::from_slice(&sig_bytes), payload)
+        let recovered = crypto
+            .recover_signer(&sig_bytes, &payload)
             .expect("Valid low-s signature should recover successfully");
         assert_eq!(recovered, expected_address, "Recovered address mismatch");
 
@@ -3702,7 +3658,7 @@ mod tests {
         // 6. Verify that the high-s signature is rejected
         // EIP-2 requires rejecting s > N/2 to prevent malleability
         assert!(
-            recover_address(Signature::from_slice(&sig_high_bytes), payload).is_err(),
+            crypto.recover_signer(&sig_high_bytes, &payload).is_err(),
             "High-s signature should be rejected (EIP-2 compliance)"
         );
     }

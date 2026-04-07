@@ -45,6 +45,8 @@ jobs:
               - "fixtures/contracts/**"
               - "crates/blockchain/dev/**"
               - "crates/vm/levm/**"
+              - "crates/common/types/block_execution_witness.rs"
+              - "crates/networking/rpc/debug/execution_witness.rs"
               - ".github/workflows/pr-main_l2.yaml"
               - "cmd/ethrex/l2/**"
             non_docs:
@@ -482,7 +484,7 @@ jobs:
         run: |
           sudo chmod -R a+rw crates/l2
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec &
+          RUST_LOG=info,ethrex_l2_prover=debug make init-prover-exec &
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" &
           docker logs --follow ethrex_l1 | grep -E "INFO|WARN|ERROR" &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1

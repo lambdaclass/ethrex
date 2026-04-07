@@ -2,8 +2,24 @@
 
 ## Perf
 
+### 2026-03-26
+
+- Eliminate stack-frame spill in Stack::push for zero-upper-limb values [#6390](https://github.com/lambdaclass/ethrex/pull/6390)
+- Use const-generic big-endian conversion in PUSH opcodes [#6390](https://github.com/lambdaclass/ethrex/pull/6390)
+
+### 2026-03-05
+
+- Doubly pipelined merkleization with self-coordinating shard workers [#6278](https://github.com/lambdaclass/ethrex/pull/6278)
+- Switch hot EVM and mempool HashMaps to FxHashMap for faster hashing [#6303](https://github.com/lambdaclass/ethrex/pull/6303)
+
+### 2026-03-02
+
+- SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+- Use FxHashMap in call frame backup [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+
 ### 2026-02-27
 
+- Use nested storage originals, FxHashMap call frame backup, and sstore-specific storage access helper [#6265](https://github.com/lambdaclass/ethrex/pull/6265)
 - Refactor LEVM opcode handlers to avoid expensive matches [#4791](https://github.com/lambdaclass/ethrex/pull/4791)
 
 ### 2026-02-25

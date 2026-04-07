@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
-use ethrex_l2_common::prover::{BatchProof, ProofFormat, ProverType};
 
 use crate::backend::{BackendError, ProverBackend};
 
@@ -120,7 +120,19 @@ impl ProverBackend for ZiskBackend {
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
         let input_bytes =
             rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
-        std::fs::write(INPUT_PATH, input_bytes.as_slice()).map_err(BackendError::serialization)?;
+
+        // ZisK v0.16.1 expects input in ZiskStdin format:
+        // [8-byte LE length][data][zero-padding to 8-byte alignment]
+        let data_len = input_bytes.len();
+        let total_len = 8 + data_len;
+        let padding = (8 - (total_len % 8)) % 8;
+
+        let mut buf = Vec::with_capacity(total_len + padding);
+        buf.extend_from_slice(&data_len.to_le_bytes());
+        buf.extend_from_slice(&input_bytes);
+        buf.extend(std::iter::repeat(0u8).take(padding));
+
+        std::fs::write(INPUT_PATH, &buf).map_err(BackendError::serialization)?;
         Ok(())
     }
 
@@ -184,13 +196,13 @@ impl ProverBackend for ZiskBackend {
         ))
     }
 
-    fn to_batch_proof(
+    fn to_proof_bytes(
         &self,
         _proof: Self::ProofOutput,
         _format: ProofFormat,
-    ) -> Result<BatchProof, BackendError> {
+    ) -> Result<ProverOutput, BackendError> {
         Err(BackendError::not_implemented(
-            "to_batch_proof is not implemented for ZisK backend",
+            "to_proof_bytes is not implemented for ZisK backend",
         ))
     }
 }

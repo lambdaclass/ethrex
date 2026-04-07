@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use ethrex_crypto::Crypto;
 use ethrex_l2_common::messages::get_balance_diffs;
 use ethrex_vm::{Evm, GuestProgramStateWrapper};
 
@@ -12,7 +15,10 @@ use crate::l2::output::ProgramOutput;
 ///
 /// This validates and executes a batch of L2 blocks, verifying state transitions,
 /// message passing, and blob data without access to the full blockchain state.
-pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2ExecutionError> {
+pub fn execution_program(
+    input: ProgramInput,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, L2ExecutionError> {
     let ProgramInput {
         blocks,
         execution_witness,
@@ -41,8 +47,10 @@ pub fn execution_program(input: ProgramInput) -> Result<ProgramOutput, L2Executi
                     "FeeConfig not provided for L2 execution".to_string(),
                 )
             })?;
-            Evm::new_for_l2(db.clone(), fee_config).map_err(crate::common::ExecutionError::Evm)
+            Evm::new_for_l2(db.clone(), fee_config, crypto.clone())
+                .map_err(crate::common::ExecutionError::Evm)
         },
+        crypto.clone(),
     )?;
 
     // Extract and process messages

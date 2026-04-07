@@ -25,6 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
+use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     constants::{
@@ -136,11 +137,16 @@ pub async fn sync_cycle_snap(
             .await?
         else {
             if attempts > MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Sync failed to find target block header, aborting");
+                warn!(
+                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                );
                 return Ok(());
             }
             attempts += 1;
-            tokio::time::sleep(Duration::from_millis(1.1_f64.powf(attempts as f64) as u64)).await;
+            warn!(
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+            );
+            tokio::time::sleep(Duration::from_secs(5)).await;
             continue;
         };
 
@@ -630,6 +636,11 @@ pub async fn update_pivot(
     peers: &mut PeerHandler,
     block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
+    const MAX_RETRIES_PER_PEER: u64 = 3;
+    const MAX_TOTAL_FAILURES: u64 = 15;
+    const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+    const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
         + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
@@ -638,21 +649,58 @@ pub async fn update_pivot(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
         block_number, block_timestamp, new_pivot_block_number
     );
+
+    let mut consecutive_failures: u64 = 0;
+    let mut total_failures: u64 = 0;
+    let mut last_failed_peer: Option<H256> = None;
+
     loop {
+        if total_failures >= MAX_TOTAL_FAILURES {
+            return Err(SyncError::PeerHandler(
+                crate::peer_handler::PeerHandlerError::BlockHeaders,
+            ));
+        }
+
+        // Exponential backoff: 1s, 2s, 4s, ... capped at 30s
+        if consecutive_failures > 0 {
+            let delay = INITIAL_RETRY_DELAY
+                .saturating_mul(1 << consecutive_failures.saturating_sub(1).min(4));
+            let delay = delay.min(MAX_RETRY_DELAY);
+            debug!(
+                "update_pivot: backing off for {}s after {consecutive_failures} consecutive failures",
+                delay.as_secs()
+            );
+            tokio::time::sleep(delay).await;
+        }
+
         let Some((peer_id, mut connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
             .await?
         else {
-            // When we come here, we may be waiting for requests to timeout.
-            // Because we're waiting for a timeout, we sleep so the rest of the code
-            // can get to them
             debug!("We tried to get peers during update_pivot, but we found no free peers");
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            consecutive_failures = consecutive_failures.saturating_add(1);
+            total_failures = total_failures.saturating_add(1);
             continue;
         };
 
-        let peer_score = peers.peer_table.get_score(&peer_id).await?;
+        // If we keep failing with the same peer, skip it and wait for a different one.
+        // Keep incrementing so the backoff continues to grow.
+        if last_failed_peer == Some(peer_id) && consecutive_failures >= MAX_RETRIES_PER_PEER {
+            debug!(
+                "update_pivot: peer {peer_id} failed {consecutive_failures} times in a row, waiting for a different peer"
+            );
+            consecutive_failures = consecutive_failures.saturating_add(1);
+            total_failures = total_failures.saturating_add(1);
+            continue;
+        }
+
+        // New peer: reset consecutive failures to give it a fresh start.
+        if last_failed_peer != Some(peer_id) {
+            consecutive_failures = 0;
+        }
+
+        let peer_score = peers.peer_table.get_score(peer_id).await?;
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
@@ -661,17 +709,19 @@ pub async fn update_pivot(
             .await
             .map_err(SyncError::PeerHandler)?
         else {
-            // Penalize peer
-            peers.peer_table.record_failure(&peer_id).await?;
-            let peer_score = peers.peer_table.get_score(&peer_id).await?;
+            peers.peer_table.record_failure(peer_id)?;
+            let peer_score = peers.peer_table.get_score(peer_id).await?;
             warn!(
                 "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
             );
+            last_failed_peer = Some(peer_id);
+            consecutive_failures = consecutive_failures.saturating_add(1);
+            total_failures = total_failures.saturating_add(1);
             continue;
         };
 
         // Reward peer
-        peers.peer_table.record_success(&peer_id).await?;
+        peers.peer_table.record_success(peer_id)?;
         info!("Succesfully updated pivot");
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
@@ -818,7 +868,9 @@ fn compute_storage_roots(
 
     let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     let trie_hash = match storage_trie.db().get(Nibbles::default())? {
-        Some(noderlp) => Node::decode(&noderlp)?.compute_hash().finalize(),
+        Some(noderlp) => Node::decode(&noderlp)?
+            .compute_hash(&ethrex_crypto::NativeCrypto)
+            .finalize(&ethrex_crypto::NativeCrypto),
         None => *EMPTY_TRIE_HASH,
     };
     let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
@@ -832,7 +884,7 @@ fn compute_storage_roots(
         METRICS.storage_leaves_inserted.inc();
     }
 
-    let (_, changes) = storage_trie.collect_changes_since_last_hash();
+    let (_, changes) = storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
 
     Ok((account_hash, changes))
 }
@@ -888,7 +940,7 @@ async fn insert_accounts(
                     trie.insert(account_hash.0.to_vec(), account.encode_to_vec())?;
                 }
                 info!("Comitting to disk");
-                let current_state_root = trie.hash()?;
+                let current_state_root = trie.hash(&ethrex_crypto::NativeCrypto)?;
                 Ok(current_state_root)
             })
             .await?;

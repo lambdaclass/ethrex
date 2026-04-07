@@ -9,6 +9,8 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(feature = "stateless")]
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
@@ -18,8 +20,8 @@ use ethrex_common::{
 };
 use ethrex_guest_program::input::ProgramInput;
 #[cfg(feature = "sp1")]
-use ethrex_prover_lib::Sp1Backend;
-use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
+use ethrex_prover::Sp1Backend;
+use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
@@ -105,6 +107,20 @@ pub async fn run_ef_test(
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
+        // If the fixture provides an executionWitness (zkevm format), use it directly
+        // instead of regenerating the witness from blockchain execution.
+        #[cfg(feature = "stateless")]
+        {
+            let has_fixture_witness = test.blocks.iter().any(|bf| {
+                bf.block()
+                    .and_then(|b| b.execution_witness.as_ref())
+                    .is_some()
+            });
+            if has_fixture_witness {
+                run_stateless_from_fixture(test, test_key, backend).await?;
+                return Ok(());
+            }
+        }
         re_run_stateless(blockchain, test, test_key, backend).await?;
     };
 
@@ -127,7 +143,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block_pipeline(block, None);
+        let chain_result = blockchain.add_block_pipeline(block.clone(), None);
 
         match chain_result {
             Err(error) => {
@@ -366,7 +382,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
     serde_json::from_str(&s).expect("Unable to parse JSON")
 }
 
-/// Creats a new in-memory store and adds the genesis state
+/// Creates a new in-memory store and adds the genesis state.
 pub async fn build_store_for_test(test: &TestUnit) -> Store {
     let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
@@ -503,5 +519,64 @@ async fn re_run_stateless(
     } else if test_should_fail {
         return Err(format!("Expected test: {test_key} to fail but succeeded"));
     }
+    Ok(())
+}
+
+/// Run stateless execution using the execution witness provided directly in the
+/// zkevm fixture, instead of generating one from blockchain execution.
+///
+/// Each block in the fixture has its own `executionWitness` containing the state
+/// trie nodes, codes, and ancestor headers needed for that specific block.
+/// Following the spec, we execute each block
+/// independently with its own witness.
+#[cfg(feature = "stateless")]
+async fn run_stateless_from_fixture(
+    test: &TestUnit,
+    test_key: &str,
+    backend_type: BackendType,
+) -> Result<(), String> {
+    let chain_config = test.network.chain_config();
+
+    for block_fixture in test.blocks.iter() {
+        // Skip blocks that expect exceptions — those are already validated by the normal path.
+        if block_fixture.expect_exception.is_some() {
+            continue;
+        }
+
+        let Some(block_data) = block_fixture.block() else {
+            continue;
+        };
+
+        let Some(witness_json) = block_data.execution_witness.as_ref() else {
+            continue;
+        };
+
+        let block: CoreBlock = block_data.clone().into();
+        let block_number = block.header.number;
+
+        let rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
+            .map_err(|e| {
+                format!("Failed to parse executionWitness for block {block_number}: {e}")
+            })?;
+
+        let execution_witness = rpc_witness
+            .into_execution_witness(*chain_config, block_number)
+            .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+
+        let program_input = ProgramInput::new(vec![block], execution_witness);
+
+        let execute_result = match backend_type {
+            BackendType::Exec => ExecBackend::new().execute(program_input),
+            #[cfg(feature = "sp1")]
+            BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        };
+
+        if let Err(e) = execute_result {
+            return Err(format!(
+                "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
+            ));
+        }
+    }
+
     Ok(())
 }

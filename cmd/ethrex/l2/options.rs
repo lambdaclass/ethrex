@@ -10,8 +10,8 @@ use ethrex_l2::{
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
+use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -24,6 +24,7 @@ use std::{
 use tracing::Level;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+pub const DEFAULT_SPONSORED_GAS_LIMIT: u64 = 500_000;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -43,6 +44,15 @@ pub struct Options {
     //TODO: make optional when the the sponsored feature is complete
     #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: SecretKey,
+    #[arg(
+        long = "sponsored-gas-limit",
+        default_value_t = DEFAULT_SPONSORED_GAS_LIMIT,
+        value_name = "GAS_LIMIT",
+        env = "ETHREX_SPONSORED_GAS_LIMIT",
+        help = "Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.",
+        help_heading = "L2 options"
+    )]
+    pub sponsored_gas_limit: u64,
 }
 
 impl Default for Options {
@@ -55,6 +65,7 @@ impl Default for Options {
                 "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
             )
             .unwrap(),
+            sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
         }
     }
 }
@@ -233,6 +244,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 from_block: opts.aligned_opts.from_block,
+                resubmission_timeout_secs: opts.aligned_opts.resubmission_timeout_secs.unwrap_or(0),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -880,6 +892,15 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub from_block: Option<u64>,
+    #[arg(
+        long = "aligned.resubmission-timeout",
+        required_if_eq("aligned", "true"),
+        value_name = "SECONDS",
+        env = "ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS",
+        help = "Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).",
+        help_heading = "Aligned options"
+    )]
+    pub resubmission_timeout_secs: Option<u64>,
 }
 
 impl Default for AlignedOptions {
@@ -890,6 +911,7 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             from_block: None,
+            resubmission_timeout_secs: None,
         }
     }
 }

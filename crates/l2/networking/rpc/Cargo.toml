@@ -10,6 +10,7 @@ license.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
+ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p = { workspace = true, features = ["l2"] }
@@ -38,6 +39,7 @@ url.workspace = true
 path = "./lib.rs"
 
 [features]
+eip-8025 = ["ethrex-rpc/eip-8025"]
 
 [lints.clippy]
 unwrap_used = "deny"

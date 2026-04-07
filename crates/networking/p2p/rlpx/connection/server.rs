@@ -9,15 +9,18 @@ use crate::{
     backend,
     metrics::METRICS,
     network::P2PContext,
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         Message,
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
             blocks::{BlockBodies, BlockHeaders},
-            receipts::{GetReceipts, Receipts68, Receipts69},
-            status::{StatusMessage68, StatusMessage69},
+            receipts::{
+                GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
+                SOFT_RESPONSE_LIMIT,
+            },
+            status::{StatusMessage68, StatusMessage69, StatusMessage70},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
@@ -32,36 +35,36 @@ use crate::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
     },
-    tx_broadcaster::{InMessage, TxBroadcaster, send_tx_hashes},
+    tx_broadcaster::{TxBroadcaster, TxBroadcasterProtocol as _, send_tx_hashes},
     types::Node,
 };
 use ethrex_blockchain::Blockchain;
+use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
-use ethrex_common::types::{MempoolTransaction, P2PTransaction};
+use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
-    messages::Unused,
-    tasks::{
-        CastResponse, GenServer, GenServerHandle,
-        InitResult::{self, NoSuccess, Success},
-        send_interval, spawn_listener,
-    },
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval, spawn_listener},
 };
 use spawned_rt::tasks::BroadcastStream;
 use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, broadcast, oneshot},
+    sync::{broadcast, oneshot},
     task::{self, Id},
 };
 use tokio_stream::StreamExt;
@@ -70,12 +73,41 @@ use tracing::{debug, error, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
+const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
+const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
+#[protocol]
+pub trait PeerConnectionServerProtocol: Send + Sync {
+    fn incoming_message(&self, message: Message) -> Result<(), ActorError>;
+    fn outgoing_message(&self, message: Message) -> Result<(), ActorError>;
+    fn outgoing_request(
+        &self,
+        message: Message,
+        sender: Arc<oneshot::Sender<Message>>,
+    ) -> Result<(), ActorError>;
+    fn request_timeout(&self, id: u64) -> Result<(), ActorError>;
+    fn send_ping(&self) -> Result<(), ActorError>;
+    fn block_range_update(&self) -> Result<(), ActorError>;
+    fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
+    fn sweep_inflight_txs(&self) -> Result<(), ActorError>;
+}
+
+#[cfg(feature = "l2")]
+#[derive(Clone)]
+pub struct L2Message {
+    pub msg: L2Cast,
+}
+
+#[cfg(feature = "l2")]
+impl spawned_concurrency::message::Message for L2Message {
+    type Result = ();
+}
+
 #[derive(Clone, Debug)]
 pub struct PeerConnection {
-    handle: GenServerHandle<PeerConnectionServer>,
+    handle: ActorRef<PeerConnectionServer>,
 }
 
 impl PeerConnection {
@@ -108,8 +140,7 @@ impl PeerConnection {
 
     pub async fn outgoing_message(&mut self, message: Message) -> Result<(), PeerConnectionError> {
         self.handle
-            .cast(CastMessage::OutgoingMessage(message))
-            .await
+            .outgoing_message(message)
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
     }
 
@@ -124,8 +155,7 @@ impl PeerConnection {
         let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
 
         self.handle
-            .cast(CastMessage::OutgoingRequest(message, Arc::new(oneshot_tx)))
-            .await
+            .outgoing_request(message, Arc::new(oneshot_tx))
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
 
         // Wait for the response or timeout. This blocks the calling task (and not the ConnectionServer task)
@@ -135,8 +165,7 @@ impl PeerConnection {
             Err(_timeout) => {
                 // Notify timeout on request id
                 self.handle
-                    .cast(CastMessage::RequestTimeout { id })
-                    .await
+                    .request_timeout(id)
                     .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
                 // Return timeout error
                 Err(PeerConnectionError::Timeout)
@@ -171,7 +200,9 @@ pub struct Established {
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
-    pub(crate) requested_pooled_txs: HashMap<u64, NewPooledTransactionHashes>,
+    /// Maps request ID to (original announcement, actually requested hashes, request time).
+    /// The announcement is kept for response validation; the hashes track in-flight state.
+    pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -187,7 +218,7 @@ pub struct Established {
     pub(crate) peer_table: PeerTable,
     #[cfg(feature = "l2")]
     pub(crate) l2_state: L2ConnState,
-    pub(crate) tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    pub(crate) tx_broadcaster: ActorRef<TxBroadcaster>,
     pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
     // We store the disconnection reason to handle it in the teardown
     pub(crate) disconnect_reason: Option<DisconnectReason>,
@@ -197,6 +228,13 @@ pub struct Established {
 
 impl Established {
     async fn teardown(&mut self) {
+        // Clear any in-flight transaction hashes so other connections can re-request them.
+        for (_, (_announced, requested_hashes, _)) in self.requested_pooled_txs.drain() {
+            let _ = self
+                .blockchain
+                .mempool
+                .clear_in_flight_txs(&requested_hashes);
+        }
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
         let _ = self
@@ -215,68 +253,35 @@ pub enum ConnectionState {
     Established(Box<Established>),
 }
 
-#[derive(Clone, Debug)]
-#[allow(private_interfaces)]
-pub enum CastMessage {
-    /// Received a message from the remote peer
-    IncomingMessage(Message),
-    /// We send information to the remote peer
-    OutgoingMessage(Message),
-    /// We request information from the remote peer
-    OutgoingRequest(Message, Arc<oneshot::Sender<Message>>),
-    /// Received a notification of a request that timeouted.
-    RequestTimeout { id: u64 },
-    /// Periodic message to send ping to remote peer
-    SendPing,
-    /// Periodic message to send block range update to remote peer
-    BlockRangeUpdate,
-    /// Received a message to broadcast. Used only for L2, we have to move this logic to tx_broadcaster.
-    BroadcastMessage(task::Id, Arc<Message>),
-    /// L2 message
-    #[cfg(feature = "l2")]
-    L2(L2Cast),
-}
-
-pub enum OutMessage {
-    InitResponse {
-        node: Node,
-        framed: Arc<Mutex<Framed<TcpStream, RLPxCodec>>>,
-    },
-    Done,
-    Error,
-}
-
 #[derive(Debug)]
 pub struct PeerConnectionServer {
     state: ConnectionState,
 }
 
-impl GenServer for PeerConnectionServer {
-    type CallMsg = Unused;
-    type CastMsg = CastMessage;
-    type OutMsg = Unused;
-    type Error = PeerConnectionError;
-
-    async fn init(
-        mut self,
-        handle: &GenServerHandle<Self>,
-    ) -> Result<InitResult<Self>, Self::Error> {
+#[actor(protocol = PeerConnectionServerProtocol)]
+impl PeerConnectionServer {
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
         // Set a default eth version that we can update after we negotiate peer capabilities
         // This eth version will only be used to encode & decode the initial `Hello` messages.
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
-        match handshake::perform(self.state, eth_version.clone()).await {
+        // Take ownership of the state, replacing with HandshakeFailed as placeholder
+        let state = std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed);
+        match handshake::perform(state, eth_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
                 if let Err(reason) =
-                    initialize_connection(handle, &mut established_state, stream, eth_version).await
+                    initialize_connection(ctx, &mut established_state, stream, eth_version).await
                 {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
                         | PeerConnectionError::HandshakeError(_) => {
-                            established_state
+                            if let Err(e) = established_state
                                 .peer_table
-                                .set_unwanted(&established_state.node.node_id())
-                                .await?;
+                                .set_unwanted(established_state.node.node_id())
+                            {
+                                debug!("Failed to set peer as unwanted: {e}");
+                            }
                         }
                         _ => {}
                     }
@@ -290,7 +295,7 @@ impl GenServer for PeerConnectionServer {
                     METRICS.record_new_rlpx_conn_failure(reason).await;
 
                     self.state = ConnectionState::Established(Box::new(established_state));
-                    Ok(NoSuccess(self))
+                    ctx.stop();
                 } else {
                     METRICS
                         .record_new_rlpx_conn_established(
@@ -304,7 +309,6 @@ impl GenServer for PeerConnectionServer {
                     established_state.is_validated = true;
                     // New state
                     self.state = ConnectionState::Established(Box::new(established_state));
-                    Ok(Success(self))
                 }
             }
             Err(err) => {
@@ -312,170 +316,14 @@ impl GenServer for PeerConnectionServer {
                 // No connection was established so no need to perform any other action
                 debug!("Failed Handshake on RLPx connection {err}");
                 self.state = ConnectionState::HandshakeFailed;
-                Ok(NoSuccess(self))
+                ctx.stop();
             }
         }
     }
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        if let ConnectionState::Established(ref mut established_state) = self.state {
-            #[cfg(feature = "l2")]
-            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
-            let result = match message {
-                Self::CastMsg::IncomingMessage(message) => {
-                    trace!(
-                        peer=%established_state.node,
-                        %message,
-                        "Received incoming message",
-                    );
-                    handle_incoming_message(established_state, message).await
-                }
-                Self::CastMsg::OutgoingMessage(message) => {
-                    trace!(
-                        peer=%established_state.node,
-                        %message,
-                        "Received outgoing request",
-                    );
-                    handle_outgoing_message(established_state, message).await
-                }
-                Self::CastMsg::OutgoingRequest(message, sender) => {
-                    trace!(
-                        peer=%established_state.node,
-                        %message,
-                        "Received outgoing request",
-                    );
-                    handle_outgoing_request(
-                        established_state,
-                        message,
-                        Arc::<oneshot::Sender<Message>>::into_inner(sender)
-                            .expect("Could not obtain sender channel"),
-                    )
-                    .await
-                }
-                Self::CastMsg::RequestTimeout { id } => {
-                    // Discard the request from current requests
-                    if let Some((msg_type, _)) = established_state.current_requests.remove(&id) {
-                        // This log should be debug, because we should see if the timeout is something
-                        // we don't expect to constantly happen, so in dev mode we should see it
-                        debug!(
-                            peer=%established_state.node,
-                            %msg_type,
-                            %id,
-                            "Request timedout",
-                        );
-                    }
-                    Ok(())
-                }
-                Self::CastMsg::SendPing => {
-                    send(established_state, Message::Ping(PingMessage {})).await
-                }
-                Self::CastMsg::BroadcastMessage(id, msg) => {
-                    trace!(
-                        peer=%established_state.node,
-                        message=%msg,
-                        "Received broadcasted message",
-                    );
-                    handle_broadcast(established_state, (id, msg)).await
-                }
-                Self::CastMsg::BlockRangeUpdate => {
-                    trace!(
-                        peer=%established_state.node,
-                        "Block Range Update"
-                    );
-                    handle_block_range_update(established_state).await
-                }
-                #[cfg(feature = "l2")]
-                Self::CastMsg::L2(msg) if peer_supports_l2 => {
-                    trace!(
-                        peer=%established_state.node,
-                        message=?msg,
-                        "Handling cast for L2 msg"
-                    );
-                    match msg {
-                        L2Cast::BatchBroadcast => {
-                            let res = l2_connection::send_sealed_batch(established_state).await;
-                            res.and(
-                                l2_connection::process_batches_on_queue(established_state).await,
-                            )
-                        }
-                        L2Cast::BlockBroadcast => {
-                            let res = l2_connection::send_new_block(established_state).await;
-                            res.and(l2_connection::process_blocks_on_queue(established_state).await)
-                        }
-                    }
-                }
-                #[cfg(feature = "l2")]
-                _ => Err(PeerConnectionError::MessageNotHandled(
-                    "Unknown message or capability not handled".to_string(),
-                )),
-            };
-
-            if let Err(e) = result {
-                match e {
-                    PeerConnectionError::Disconnected
-                    | PeerConnectionError::DisconnectReceived(_)
-                    | PeerConnectionError::DisconnectSent(_)
-                    | PeerConnectionError::HandshakeError(_)
-                    | PeerConnectionError::NoMatchingCapabilities
-                    | PeerConnectionError::InvalidPeerId
-                    | PeerConnectionError::InvalidMessageLength
-                    | PeerConnectionError::StateError(_)
-                    | PeerConnectionError::InvalidRecoveryId => {
-                        trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
-                        return CastResponse::Stop;
-                    }
-                    PeerConnectionError::IoError(e)
-                        if e.kind() == std::io::ErrorKind::BrokenPipe =>
-                    {
-                        // TODO: we need to check if this message is ocurring commonly due to a problem
-                        // with our concurrency model
-                        debug!(peer=%established_state.node, "Broken pipe with peer, disconnected");
-                        return CastResponse::Stop;
-                    }
-                    PeerConnectionError::StoreError(StoreError::Trie(
-                        TrieError::InconsistentTree(_),
-                    )) => {
-                        if established_state.blockchain.is_synced() {
-                            // If we're responding with inconsistent trie while synced, our trie may be broken
-                            // If this error is non sporadic we should investigate
-                            error!(
-                                peer=%established_state.node,
-                                error=%e,
-                                "Error handling cast message",
-                            );
-                        } else {
-                            // If we're not synced, we expect to have inconsistent trie errors
-                            trace!(
-                                peer=%established_state.node,
-                                error=%e,
-                                "Error handling cast message",
-                            );
-                        }
-                    }
-                    _ => {
-                        // We should check why we're failling to handle the cast message
-                        debug!(
-                            peer=%established_state.node,
-                            capabilities=?established_state.capabilities,
-                            error=%e,
-                            "Error handling cast message",
-                        );
-                    }
-                }
-            }
-        } else {
-            // Received a Cast message but connection is not ready. Log an error but keep the connection alive.
-            error!("Connection not yet established");
-        }
-        CastResponse::NoReply
-    }
-
-    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
-        match self.state {
+    #[stopped]
+    async fn stopped(&mut self, _ctx: &Context<Self>) {
+        match std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed) {
             ConnectionState::Established(mut established_state) => {
                 trace!(peer=%established_state.node, "Closing connection with established peer");
                 if established_state.is_validated {
@@ -494,22 +342,272 @@ impl GenServer for PeerConnectionServer {
                         )
                         .await;
                 }
-                established_state
+                if let Err(e) = established_state
                     .peer_table
                     .remove_peer(established_state.node.node_id())
-                    .await?;
+                {
+                    debug!("Failed to remove peer from table: {e}");
+                }
                 established_state.teardown().await;
             }
             _ => {
                 // Nothing to do if the connection was not established
             }
         };
-        Ok(())
+    }
+
+    #[send_handler]
+    async fn handle_incoming_message(
+        &mut self,
+        msg: peer_connection_server_protocol::IncomingMessage,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            trace!(
+                peer=%established_state.node,
+                message=%msg.message,
+                "Received incoming message",
+            );
+            let result = handle_incoming_message(established_state, msg.message).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[send_handler]
+    async fn handle_outgoing_message(
+        &mut self,
+        msg: peer_connection_server_protocol::OutgoingMessage,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            trace!(
+                peer=%established_state.node,
+                message=%msg.message,
+                "Received outgoing request",
+            );
+            let result = handle_outgoing_message(established_state, msg.message).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[send_handler]
+    async fn handle_outgoing_request(
+        &mut self,
+        msg: peer_connection_server_protocol::OutgoingRequest,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            trace!(
+                peer=%established_state.node,
+                message=%msg.message,
+                "Received outgoing request",
+            );
+            let Some(sender) = Arc::<oneshot::Sender<Message>>::into_inner(msg.sender) else {
+                warn!("Could not obtain sender channel: Arc has multiple references");
+                return;
+            };
+            let result = handle_outgoing_request(established_state, msg.message, sender).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[send_handler]
+    async fn handle_request_timeout(
+        &mut self,
+        msg: peer_connection_server_protocol::RequestTimeout,
+        _ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            // Discard the request from current requests
+            if let Some((msg_type, _)) = established_state.current_requests.remove(&msg.id) {
+                debug!(
+                    peer=%established_state.node,
+                    %msg_type,
+                    id=%msg.id,
+                    "Request timedout",
+                );
+            }
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[send_handler]
+    async fn handle_send_ping(
+        &mut self,
+        _msg: peer_connection_server_protocol::SendPing,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            let result = send(established_state, Message::Ping(PingMessage {})).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[send_handler]
+    async fn handle_block_range_update(
+        &mut self,
+        _msg: peer_connection_server_protocol::BlockRangeUpdate,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            trace!(
+                peer=%established_state.node,
+                "Block Range Update"
+            );
+            let result = handle_block_range_update(established_state).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[send_handler]
+    async fn handle_sweep_inflight_txs(
+        &mut self,
+        _msg: peer_connection_server_protocol::SweepInflightTxs,
+        _ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut state) = self.state {
+            let now = Instant::now();
+            let stale_ids: Vec<u64> = state
+                .requested_pooled_txs
+                .iter()
+                .filter(|(_, (_, _, ts))| now.duration_since(*ts) > INFLIGHT_TX_TIMEOUT)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale_ids {
+                if let Some((_, hashes, _)) = state.requested_pooled_txs.remove(&id) {
+                    let _ = state.blockchain.mempool.clear_in_flight_txs(&hashes);
+                }
+            }
+        }
+    }
+
+    #[send_handler]
+    async fn handle_broadcast_message(
+        &mut self,
+        msg: peer_connection_server_protocol::BroadcastMessage,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            trace!(
+                peer=%established_state.node,
+                message=%msg.msg,
+                "Received broadcasted message",
+            );
+            let result = handle_broadcast(established_state, (msg.task_id, msg.msg)).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    #[cfg(feature = "l2")]
+    #[send_handler]
+    async fn handle_l2_message(&mut self, msg: L2Message, ctx: &Context<Self>) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            let peer_supports_l2 = established_state.l2_state.connection_state().is_ok();
+            let result = if peer_supports_l2 {
+                trace!(
+                    peer=%established_state.node,
+                    message=?msg.msg,
+                    "Handling cast for L2 msg"
+                );
+                match msg.msg {
+                    L2Cast::BatchBroadcast => {
+                        let res = l2_connection::send_sealed_batch(established_state).await;
+                        res.and(l2_connection::process_batches_on_queue(established_state).await)
+                    }
+                    L2Cast::BlockBroadcast => {
+                        let res = l2_connection::send_new_block(established_state).await;
+                        res.and(l2_connection::process_blocks_on_queue(established_state).await)
+                    }
+                }
+            } else {
+                Err(PeerConnectionError::MessageNotHandled(
+                    "Unknown message or capability not handled".to_string(),
+                ))
+            };
+            Self::process_cast_error(&self.state, result, ctx);
+        } else {
+            debug!("Connection not yet established");
+        }
+    }
+
+    fn process_cast_error(
+        state: &ConnectionState,
+        result: Result<(), PeerConnectionError>,
+        ctx: &Context<Self>,
+    ) {
+        if let Err(e) = result
+            && let ConnectionState::Established(established_state) = state
+        {
+            match e {
+                PeerConnectionError::Disconnected
+                | PeerConnectionError::DisconnectReceived(_)
+                | PeerConnectionError::DisconnectSent(_)
+                | PeerConnectionError::HandshakeError(_)
+                | PeerConnectionError::NoMatchingCapabilities
+                | PeerConnectionError::InvalidPeerId
+                | PeerConnectionError::InvalidMessageLength
+                | PeerConnectionError::StateError(_)
+                | PeerConnectionError::InvalidRecoveryId => {
+                    trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
+                    ctx.stop();
+                }
+                PeerConnectionError::IoError(ref io_e)
+                    if io_e.kind() == std::io::ErrorKind::BrokenPipe =>
+                {
+                    // TODO: we need to check if this message is ocurring commonly due to a problem
+                    // with our concurrency model
+                    debug!(peer=%established_state.node, "Broken pipe with peer, disconnected");
+                    ctx.stop();
+                }
+                PeerConnectionError::StoreError(StoreError::Trie(TrieError::InconsistentTree(
+                    _,
+                ))) => {
+                    if established_state.blockchain.is_synced() {
+                        // If we're responding with inconsistent trie while synced, our trie may be broken
+                        // If this error is non sporadic we should investigate
+                        error!(
+                            peer=%established_state.node,
+                            error=%e,
+                            "Error handling cast message",
+                        );
+                    } else {
+                        // If we're not synced, we expect to have inconsistent trie errors
+                        trace!(
+                            peer=%established_state.node,
+                            error=%e,
+                            "Error handling cast message",
+                        );
+                    }
+                }
+                _ => {
+                    // We should check why we're failling to handle the cast message
+                    debug!(
+                        peer=%established_state.node,
+                        capabilities=?established_state.capabilities,
+                        error=%e,
+                        "Error handling cast message",
+                    );
+                }
+            }
+        }
     }
 }
 
 async fn initialize_connection<S>(
-    handle: &GenServerHandle<PeerConnectionServer>,
+    ctx: &Context<PeerConnectionServer>,
     state: &mut Established,
     mut stream: S,
     eth_version: Arc<RwLock<EthCapVersion>>,
@@ -527,6 +625,7 @@ where
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
+        Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
         _ => EthCapVersion::default(),
     };
     *eth_version
@@ -536,17 +635,14 @@ where
     init_capabilities(state, &mut stream).await?;
 
     let mut connection = PeerConnection {
-        handle: handle.clone(),
+        handle: ctx.actor_ref(),
     };
 
-    state
-        .peer_table
-        .new_connected_peer(
-            state.node.clone(),
-            connection.clone(),
-            state.capabilities.clone(),
-        )
-        .await?;
+    state.peer_table.new_connected_peer(
+        state.node.clone(),
+        connection.clone(),
+        state.capabilities.clone(),
+    )?;
 
     trace!(peer=%state.node, "Peer connection initialized.");
 
@@ -554,13 +650,24 @@ where
     send_all_pooled_tx_hashes(state, &mut connection).await?;
 
     // Periodic Pings repeated events.
-    send_interval(PING_INTERVAL, handle.clone(), CastMessage::SendPing);
+    send_interval(
+        PING_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::SendPing,
+    );
 
     // Periodic block range update.
     send_interval(
         BLOCK_RANGE_UPDATE_INTERVAL,
-        handle.clone(),
-        CastMessage::BlockRangeUpdate,
+        ctx.clone(),
+        peer_connection_server_protocol::BlockRangeUpdate,
+    );
+
+    // Periodic sweep of stale in-flight transaction requests.
+    send_interval(
+        INFLIGHT_TX_SWEEP_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::SweepInflightTxs,
     );
 
     #[cfg(feature = "l2")]
@@ -568,20 +675,24 @@ where
     if state.l2_state.connection_state().is_ok() {
         send_interval(
             PERIODIC_BLOCK_BROADCAST_INTERVAL,
-            handle.clone(),
-            CastMessage::L2(L2Cast::BlockBroadcast),
+            ctx.clone(),
+            L2Message {
+                msg: L2Cast::BlockBroadcast,
+            },
         );
         send_interval(
             PERIODIC_BATCH_BROADCAST_INTERVAL,
-            handle.clone(),
-            CastMessage::L2(L2Cast::BatchBroadcast),
+            ctx.clone(),
+            L2Message {
+                msg: L2Cast::BatchBroadcast,
+            },
         );
     }
 
     spawn_listener(
-        handle.clone(),
+        ctx.clone(),
         stream.filter_map(|result| match result {
-            Ok(msg) => Some(CastMessage::IncomingMessage(msg)),
+            Ok(msg) => Some(peer_connection_server_protocol::IncomingMessage { message: msg }),
             Err(e) => {
                 debug!(error=?e, "Error receiving RLPx message");
                 // Skipping invalid data
@@ -594,11 +705,11 @@ where
         let stream: BroadcastStream<(Id, Arc<Message>)> =
             BroadcastStream::new(state.connection_broadcast_send.subscribe());
         let message_stream = stream.filter_map(|result| {
-            result
-                .ok()
-                .map(|(id, msg)| CastMessage::BroadcastMessage(id, msg))
+            result.ok().map(
+                |(id, msg)| peer_connection_server_protocol::BroadcastMessage { task_id: id, msg },
+            )
         });
-        spawn_listener(handle.clone(), message_stream);
+        spawn_listener(ctx.clone(), message_stream);
     }
 
     Ok(())
@@ -619,11 +730,10 @@ async fn send_all_pooled_tx_hashes(
     if !txs.is_empty() {
         state
             .tx_broadcaster
-            .cast(InMessage::AddTxs(
+            .add_txs(
                 txs.iter().map(|tx| tx.hash()).collect(),
                 state.node.node_id(),
-            ))
-            .await
+            )
             .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
         send_tx_hashes(
             txs,
@@ -676,6 +786,7 @@ where
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
             69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -698,6 +809,10 @@ where
             }
             Message::Status69(msg_data) => {
                 trace!(peer=%state.node, "Received Status(69)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status70(msg_data) => {
+                trace!(peer=%state.node, "Received Status(70)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -879,6 +994,11 @@ pub(crate) async fn send(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
+    #[cfg(feature = "metrics")]
+    {
+        use ethrex_metrics::p2p::METRICS_P2P;
+        METRICS_P2P.inc_outgoing_message(message.metric_label());
+    }
     state.sink.send(message).await
 }
 
@@ -904,6 +1024,11 @@ async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
+    #[cfg(feature = "metrics")]
+    {
+        use ethrex_metrics::p2p::METRICS_P2P;
+        METRICS_P2P.inc_incoming_message(message.metric_label());
+    }
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
     #[cfg(feature = "l2")]
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();
@@ -934,6 +1059,11 @@ async fn handle_incoming_message(
             };
         }
         Message::Status69(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth).await?
+            };
+        }
+        Message::Status70(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
@@ -979,8 +1109,7 @@ async fn handle_incoming_message(
                 // happens on a periodic timer that queries the mempool directly.
                 state
                     .tx_broadcaster
-                    .cast(InMessage::AddTxs(tx_hashes, state.node.node_id()))
-                    .await
+                    .add_txs(tx_hashes, state.node.node_id())
                     .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
             }
         }
@@ -998,23 +1127,76 @@ async fn handle_incoming_message(
             };
             send(state, Message::BlockBodies(response)).await?;
         }
-        Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
-            if let Some(eth) = &state.negotiated_eth_capability {
-                let mut receipts = Vec::new();
-                for hash in block_hashes.iter() {
-                    receipts.push(state.storage.get_receipts_for_block(hash).await?);
-                }
-                let response = match eth.version {
-                    68 => Message::Receipts68(Receipts68::new(id, receipts)),
-                    69 => Message::Receipts69(Receipts69::new(id, receipts)),
-                    ver => {
-                        return Err(PeerConnectionError::InternalError(format!(
-                            "Invalid eth version {ver}"
-                        )));
-                    }
-                };
-                send(state, response).await?;
+        Message::GetReceipts68(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
+            let mut receipts = Vec::new();
+            for hash in block_hashes.iter() {
+                receipts.push(state.storage.get_receipts_for_block(hash).await?);
             }
+            send(state, Message::Receipts68(Receipts68::new(id, receipts))).await?;
+        }
+        Message::GetReceipts69(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
+            let mut receipts = Vec::new();
+            for hash in block_hashes.iter() {
+                receipts.push(state.storage.get_receipts_for_block(hash).await?);
+            }
+            send(state, Message::Receipts69(Receipts69::new(id, receipts))).await?;
+        }
+        // EIP-7975: eth/70 partial receipt requests
+        Message::GetReceipts70(GetReceipts70 {
+            id,
+            first_block_receipt_index,
+            block_hashes,
+        }) if peer_supports_eth => {
+            let block_hashes = &block_hashes[..block_hashes.len().min(256)];
+            let mut all_receipts: Vec<Vec<Receipt>> = Vec::new();
+            let mut total_size: usize = 0;
+            let mut last_block_incomplete = false;
+
+            for (i, hash) in block_hashes.iter().enumerate() {
+                let start_index = if i == 0 { first_block_receipt_index } else { 0 };
+                let block_receipts = state
+                    .storage
+                    .get_receipts_for_block_from_index(hash, start_index)
+                    .await?;
+
+                let mut block_receipt_list = Vec::new();
+                let mut hit_limit = false;
+                for receipt in block_receipts {
+                    let receipt_size = receipt.length();
+                    if total_size + receipt_size > SOFT_RESPONSE_LIMIT
+                        && (!block_receipt_list.is_empty() || !all_receipts.is_empty())
+                    {
+                        hit_limit = true;
+                        // Only mark incomplete when the current block actually
+                        // has a partial receipt list. When the limit is hit
+                        // before any receipt from this block fits, the previous
+                        // block is complete — setting the flag would cause the
+                        // peer to re-request an already-complete block.
+                        if !block_receipt_list.is_empty() {
+                            last_block_incomplete = true;
+                        }
+                        break;
+                    }
+                    total_size += receipt_size;
+                    block_receipt_list.push(receipt);
+                }
+
+                // Don't push an empty list when the limit was hit before any
+                // receipt from this block could be included — an empty trailing
+                // list would mislead the peer into thinking the block has no
+                // transactions.
+                if !block_receipt_list.is_empty() || !hit_limit {
+                    all_receipts.push(block_receipt_list);
+                }
+
+                if hit_limit {
+                    break;
+                }
+            }
+
+            let response =
+                Message::Receipts70(Receipts70::new(id, last_block_incomplete, all_receipts));
+            send(state, response).await?;
         }
         Message::BlockRangeUpdate(update) => {
             trace!(
@@ -1039,17 +1221,30 @@ async fn handle_incoming_message(
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             let hashes =
                 new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
-            let request = GetPooledTransactions::new(random(), hashes);
-            state
-                .requested_pooled_txs
-                .insert(request.id, new_pooled_transaction_hashes);
-            send(state, Message::GetPooledTransactions(request)).await?;
+            if !hashes.is_empty() {
+                // hashes are already marked as in-flight by get_transactions_to_request
+                let request = GetPooledTransactions::new(random(), hashes.clone());
+                state.requested_pooled_txs.insert(
+                    request.id,
+                    (new_pooled_transaction_hashes, hashes, Instant::now()),
+                );
+                send(state, Message::GetPooledTransactions(request)).await?;
+            }
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
             send(state, Message::PooledTransactions(response)).await?;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
+            // Always clear in-flight tracking for this response, regardless of sync status,
+            // so other connections can re-request these hashes if needed.
+            let removed_request = state.requested_pooled_txs.remove(&msg.id);
+            if let Some((_, ref requested_hashes, _)) = removed_request {
+                state
+                    .blockchain
+                    .mempool
+                    .clear_in_flight_txs(requested_hashes)?;
+            }
             // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
             for tx in &msg.pooled_transactions {
                 if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
@@ -1070,9 +1265,9 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                if let Some(requested) = state.requested_pooled_txs.get(&msg.id) {
+                if let Some((announced, _requested_hashes, _)) = removed_request {
                     let fork = state.blockchain.current_fork().await?;
-                    if let Err(error) = msg.validate_requested(requested, fork) {
+                    if let Err(error) = msg.validate_requested(&announced, fork) {
                         warn!(
                             peer=%state.node,
                             reason=%error,
@@ -1083,8 +1278,6 @@ async fn handle_incoming_message(
                         return Err(PeerConnectionError::DisconnectSent(
                             DisconnectReason::SubprotocolError,
                         ));
-                    } else {
-                        state.requested_pooled_txs.remove(&msg.id);
                     }
                 }
                 #[cfg(feature = "l2")]
@@ -1146,7 +1339,8 @@ async fn handle_incoming_message(
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
-        | message @ Message::Receipts69(_) => {
+        | message @ Message::Receipts69(_)
+        | message @ Message::Receipts70(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))

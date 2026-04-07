@@ -4,7 +4,7 @@ use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
-use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_common::prover::{ProverType, verifier_getter};
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
     build_generic_tx, get_last_committed_batch, send_tx_bump_gas_exponential_backoff,
@@ -91,7 +91,7 @@ pub async fn get_needed_proof_types(
 
     let mut needed_proof_types = vec![];
     for prover_type in ProverType::all() {
-        let Some(getter) = prover_type.verifier_getter() else {
+        let Some(getter) = verifier_getter(prover_type) else {
             continue;
         };
         let calldata = keccak(getter)[..4].to_vec();
@@ -203,4 +203,18 @@ pub fn get_git_commit_hash() -> String {
 
 pub fn batch_checkpoint_name(batch_number: u64) -> String {
     format!("checkpoint_batch_{batch_number}")
+}
+
+/// Removes the checkpoint directory for the previous batch (`checkpoint_batch_{batch_number - 1}`).
+/// No-op when `batch_number` is 0.
+pub fn remove_batch_checkpoint(checkpoints_dir: &std::path::Path, batch_number: u64) {
+    let Some(prev) = batch_number.checked_sub(1) else {
+        return;
+    };
+    let cp = checkpoints_dir.join(batch_checkpoint_name(prev));
+    if cp.exists() {
+        let _ = std::fs::remove_dir_all(&cp).inspect_err(|e| {
+            tracing::error!("Failed to remove checkpoint {cp:?}: {e}");
+        });
+    }
 }
