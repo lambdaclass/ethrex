@@ -1967,11 +1967,13 @@ impl Blockchain {
 
             if compute_witness {
                 // Convert to RPC format for returning over the wire.
+                let block_hash = block.hash();
+                self.storage
+                    .store_witness(block_hash, block_number, witness.clone())?;
+
                 let rpc_witness = RpcExecutionWitness::try_from(witness)
                     .map_err(|e| ChainError::Custom(format!("witness conversion failed: {e}")))?;
                 produced_witness = Some(rpc_witness);
-
-                //TODO:DEVELOPERUCHE: After seeing some data, Might persist to DB for later retrieval via debug_executionWitness.
             } else {
                 // Persist to DB for later retrieval via debug_executionWitness.
                 let block_hash = block.hash();
