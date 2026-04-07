@@ -513,9 +513,7 @@ pub fn assemble_root_from_subtries(
         let child_rlp = db
             .get(child_path.clone())
             .map_err(TrieGenerationError::FlushToDbError)?
-            .ok_or(TrieGenerationError::FlushToDbError(
-                TrieError::InvalidInput,
-            ))?;
+            .ok_or(TrieGenerationError::FlushToDbError(TrieError::InvalidInput))?;
         let mut child_node = Node::decode(&child_rlp)
             .map_err(|e| TrieGenerationError::FlushToDbError(TrieError::RLPDecode(e)))?;
 
@@ -581,12 +579,12 @@ pub fn assemble_root_from_subtries(
 ///
 /// `make_sub_iter` is called once per nibble (0..16) to produce a sorted iterator
 /// yielding only the accounts whose hash starts with that nibble.
-pub fn trie_from_sorted_parallel<F>(
-    db: &dyn TrieDB,
+pub fn trie_from_sorted_parallel<'env, F>(
+    db: &'env dyn TrieDB,
     make_sub_iter: F,
 ) -> Result<H256, TrieGenerationError>
 where
-    F: Fn(u8) -> Box<dyn Iterator<Item = (H256, Vec<u8>)> + Send> + Sync,
+    F: Fn(u8) -> Box<dyn Iterator<Item = (H256, Vec<u8>)> + Send + 'env> + Sync + 'env,
 {
     let thread_count = std::thread::available_parallelism()
         .map(|n| n.get())

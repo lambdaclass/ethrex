@@ -1035,6 +1035,7 @@ struct NibbleIterator<'a> {
     storage_accounts: Vec<(H256, H256)>,
     code_hash_file_index: &'a std::sync::atomic::AtomicU64,
     code_hashes_dir: &'a std::path::Path,
+    collected_storage_accounts: &'a std::sync::Mutex<Vec<Vec<(H256, H256)>>>,
 }
 
 #[cfg(feature = "rocksdb")]
@@ -1061,9 +1062,14 @@ impl NibbleIterator<'_> {
 #[cfg(feature = "rocksdb")]
 impl Drop for NibbleIterator<'_> {
     fn drop(&mut self) {
-        // Flush any remaining code hashes that haven't reached the buffer threshold.
-        // This handles both normal completion and early-exit error paths.
         self.flush_code_hashes();
+        let storage = std::mem::take(&mut self.storage_accounts);
+        if !storage.is_empty() {
+            self.collected_storage_accounts
+                .lock()
+                .expect("storage accounts mutex poisoned")
+                .push(storage);
+        }
     }
 }
 
@@ -1113,17 +1119,8 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     use crate::utils::{get_code_hashes_snapshots_dir, get_rocksdb_temp_accounts_dir};
-    use crossbeam::channel::bounded as crossbeam_bounded;
-    use ethrex_trie::{
-        Nibbles, Node, NodeRef, ThreadPool,
-        node::BranchNode,
-        trie_sorted::{
-            BUFFER_COUNT, SIZE_TO_WRITE_DB, TrieGenerationError, assemble_root_from_subtries,
-            trie_from_sorted_subtrie,
-        },
-    };
+    use ethrex_trie::trie_sorted::trie_from_sorted_parallel;
     use std::sync::Mutex;
-    use std::thread::scope as thread_scope;
 
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
@@ -1142,86 +1139,34 @@ async fn insert_accounts(
 
     // Build state trie in parallel (16 sub-tries by first nibble).
     // Each sub-trie uses a streaming RocksDB iterator (no bulk memory).
-    // Side effects (code hashes, storage accounts) are collected per-thread.
+    // Side effects (code hashes, storage accounts) are collected per-thread
+    // via NibbleIterator's Drop impl.
     let snapshot = db.snapshot();
-    let trie_db = trie.db();
-    let thread_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(8);
-    let buffers_per_subtrie = (BUFFER_COUNT as usize / 4).max(4);
-    let per_thread_storage_accounts: Mutex<Vec<Vec<(H256, H256)>>> = Mutex::new(Vec::new());
-    // Code hashes are flushed incrementally to disk from each thread to avoid
-    // accumulating ~2 GB in memory on mainnet. A shared atomic counter assigns
-    // unique file indices across threads.
+    let collected_storage_accounts: Mutex<Vec<Vec<(H256, H256)>>> = Mutex::new(Vec::new());
     let code_hash_file_index =
         std::sync::atomic::AtomicU64::new(code_hash_collector.next_file_index());
     let code_hashes_dir = get_code_hashes_snapshots_dir(datadir);
 
-    let choices: [NodeRef; 16] = thread_scope(|s| {
-        let pool = Arc::new(ThreadPool::new(thread_count, s));
-        let handles: Vec<_> = (0u8..16)
-            .map(|nibble| {
-                let pool = pool.clone();
-                let (buf_tx, buf_rx) =
-                    crossbeam_bounded::<Vec<(Nibbles, Node)>>(buffers_per_subtrie);
-                for _ in 0..buffers_per_subtrie {
-                    let _ = buf_tx.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
-                }
-                let per_thread_storage_accounts = &per_thread_storage_accounts;
-                let snapshot = &snapshot;
-                let code_hash_file_index = &code_hash_file_index;
-                let code_hashes_dir = &code_hashes_dir;
-                s.spawn(move || {
-                    let mut raw_iter = snapshot.raw_iterator();
-                    let mut start_key = [0u8; 32];
-                    start_key[0] = nibble << 4;
-                    raw_iter.seek(start_key);
+    let compute_state_root = trie_from_sorted_parallel(trie.db(), |nibble| {
+        let mut raw_iter = snapshot.raw_iterator();
+        let mut start_key = [0u8; 32];
+        start_key[0] = nibble << 4;
+        raw_iter.seek(start_key);
 
-                    let mut nibble_iter = NibbleIterator {
-                        iter: raw_iter,
-                        nibble,
-                        code_hashes: Vec::new(),
-                        storage_accounts: Vec::new(),
-                        code_hash_file_index,
-                        code_hashes_dir,
-                    };
-
-                    let child_ref =
-                        trie_from_sorted_subtrie(trie_db, &mut nibble_iter, pool, buf_tx, buf_rx)?;
-
-                    let storage = std::mem::take(&mut nibble_iter.storage_accounts);
-                    if !storage.is_empty() {
-                        per_thread_storage_accounts
-                            .lock()
-                            .expect("storage accounts mutex poisoned")
-                            .push(storage);
-                    }
-
-                    Ok::<Option<(u8, NodeRef)>, ethrex_trie::trie_sorted::TrieGenerationError>(
-                        child_ref.map(|r| (nibble, r)),
-                    )
-                })
-            })
-            .collect();
-
-        let mut choices = BranchNode::EMPTY_CHOICES;
-        for handle in handles {
-            if let Some((nibble, node_ref)) = handle
-                .join()
-                .map_err(|_| TrieGenerationError::ThreadJoinError())??
-            {
-                choices[nibble as usize] = node_ref;
-            }
-        }
-        Ok::<[NodeRef; 16], ethrex_trie::trie_sorted::TrieGenerationError>(choices)
+        Box::new(NibbleIterator {
+            iter: raw_iter,
+            nibble,
+            code_hashes: Vec::new(),
+            storage_accounts: Vec::new(),
+            code_hash_file_index: &code_hash_file_index,
+            code_hashes_dir: &code_hashes_dir,
+            collected_storage_accounts: &collected_storage_accounts,
+        })
     })
     .map_err(SyncError::TrieGenerationError)?;
 
-    let compute_state_root =
-        assemble_root_from_subtries(trie_db, choices).map_err(SyncError::TrieGenerationError)?;
-
-    // Merge per-thread storage accounts (code hashes already flushed to disk by each thread)
-    for (account_hash, storage_root) in per_thread_storage_accounts
+    // Merge per-thread storage accounts (code hashes already flushed to disk by Drop)
+    for (account_hash, storage_root) in collected_storage_accounts
         .into_inner()
         .expect("storage accounts mutex poisoned")
         .into_iter()
