@@ -314,7 +314,7 @@ impl Mempool {
     /// Filters hashes to those not already in the mempool or in-flight, and
     /// atomically marks the returned hashes as in-flight under a single write
     /// lock so that concurrent peer handlers cannot request the same hashes.
-    pub fn filter_unknown_and_mark_in_flight(
+    pub fn reserve_unknown_hashes(
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
@@ -323,7 +323,7 @@ impl Mempool {
         let unknown: Vec<H256> = possible_hashes
             .iter()
             .filter(|hash| {
-                !inner.transaction_pool.contains_key(hash) && !inner.in_flight_txs.contains(hash)
+                !inner.in_flight_txs.contains(hash) && !inner.transaction_pool.contains_key(hash)
             })
             .copied()
             .collect();

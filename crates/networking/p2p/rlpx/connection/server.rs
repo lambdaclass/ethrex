@@ -60,7 +60,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     net::TcpStream,
@@ -76,6 +76,8 @@ const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 /// How often to flush buffered transaction hash requests into a single
 /// batched GetPooledTransactions message.
 const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
+const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
+const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -93,6 +95,7 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
     fn block_range_update(&self) -> Result<(), ActorError>;
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
     fn flush_pending_tx_requests(&self) -> Result<(), ActorError>;
+    fn sweep_inflight_txs(&self) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -201,9 +204,9 @@ pub struct Established {
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
-    /// Maps request ID to (original announcement, actually requested hashes).
+    /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
-    pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>)>,
+    pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
     /// Buffered transaction requests waiting to be flushed as a single batch.
     /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
     pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
@@ -233,7 +236,7 @@ pub struct Established {
 impl Established {
     async fn teardown(&mut self) {
         // Clear any in-flight transaction hashes so other connections can re-request them.
-        for (_, (_announced, requested_hashes)) in self.requested_pooled_txs.drain() {
+        for (_, (_announced, requested_hashes, _)) in self.requested_pooled_txs.drain() {
             let _ = self
                 .blockchain
                 .mempool
@@ -491,6 +494,28 @@ impl PeerConnectionServer {
     }
 
     #[send_handler]
+    async fn handle_sweep_inflight_txs(
+        &mut self,
+        _msg: peer_connection_server_protocol::SweepInflightTxs,
+        _ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut state) = self.state {
+            let now = Instant::now();
+            let stale_ids: Vec<u64> = state
+                .requested_pooled_txs
+                .iter()
+                .filter(|(_, (_, _, ts))| now.duration_since(*ts) > INFLIGHT_TX_TIMEOUT)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale_ids {
+                if let Some((_, hashes, _)) = state.requested_pooled_txs.remove(&id) {
+                    let _ = state.blockchain.mempool.clear_in_flight_txs(&hashes);
+                }
+            }
+        }
+    }
+
+    #[send_handler]
     async fn handle_broadcast_message(
         &mut self,
         msg: peer_connection_server_protocol::BroadcastMessage,
@@ -666,6 +691,13 @@ where
         TX_REQUEST_BATCH_INTERVAL,
         ctx.clone(),
         peer_connection_server_protocol::FlushPendingTxRequests,
+    );
+
+    // Periodic sweep of stale in-flight transaction requests.
+    send_interval(
+        INFLIGHT_TX_SWEEP_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::SweepInflightTxs,
     );
 
     #[cfg(feature = "l2")]
@@ -992,6 +1024,11 @@ pub(crate) async fn send(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
+    #[cfg(feature = "metrics")]
+    {
+        use ethrex_metrics::p2p::METRICS_P2P;
+        METRICS_P2P.inc_outgoing_message(message.metric_label());
+    }
     state.sink.send(message).await
 }
 
@@ -1017,6 +1054,11 @@ async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
 ) -> Result<(), PeerConnectionError> {
+    #[cfg(feature = "metrics")]
+    {
+        use ethrex_metrics::p2p::METRICS_P2P;
+        METRICS_P2P.inc_incoming_message(message.metric_label());
+    }
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
     #[cfg(feature = "l2")]
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();
@@ -1228,7 +1270,7 @@ async fn handle_incoming_message(
             // Always clear in-flight tracking for this response, regardless of sync status,
             // so other connections can re-request these hashes if needed.
             let removed_request = state.requested_pooled_txs.remove(&msg.id);
-            if let Some((_, ref requested_hashes)) = removed_request {
+            if let Some((_, ref requested_hashes, _)) = removed_request {
                 state
                     .blockchain
                     .mempool
@@ -1254,7 +1296,7 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                if let Some((announced, _requested_hashes)) = removed_request {
+                if let Some((announced, _requested_hashes, _)) = removed_request {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(&announced, fork) {
                         warn!(
@@ -1449,7 +1491,7 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
         let request = GetPooledTransactions::new(random(), chunk.to_vec());
         state
             .requested_pooled_txs
-            .insert(request.id, (announcement, chunk.to_vec()));
+            .insert(request.id, (announcement, chunk.to_vec(), Instant::now()));
         send(state, Message::GetPooledTransactions(request)).await?;
     }
 

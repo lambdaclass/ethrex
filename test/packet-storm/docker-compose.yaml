@@ -1,0 +1,1597 @@
+## Auto-generated: 50 ethrex nodes for packet-storm reproduction.
+## Re-generate with: python3 generate.py 50
+
+services:
+  node1:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8545"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE1}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node1.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.10
+    healthcheck:
+      test: ["CMD", "pidof", "ethrex"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node2:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8546"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE2}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node2.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.11
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node3:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8547"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE3}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node3.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.12
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node4:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8548"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE4}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node4.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.13
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node5:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8549"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE5}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node5.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.14
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node6:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8550"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE6}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node6.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.15
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node7:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8551"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE7}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node7.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.16
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node8:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8552"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE8}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node8.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.17
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node9:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8553"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE9}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node9.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.18
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node10:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8554"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE10}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node10.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.19
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node11:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8555"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE11}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node11.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.20
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node12:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8556"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE12}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node12.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.21
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node13:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8557"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE13}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node13.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.22
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node14:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8558"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE14}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node14.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.23
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node15:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8559"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE15}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node15.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.24
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node16:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8560"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE16}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node16.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.25
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node17:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8561"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE17}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node17.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.26
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node18:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8562"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE18}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node18.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.27
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node19:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8563"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE19}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node19.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.28
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node20:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8564"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE20}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node20.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.29
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node21:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8565"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE21}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node21.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.30
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node22:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8566"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE22}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node22.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.31
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node23:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8567"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE23}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node23.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.32
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node24:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8568"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE24}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node24.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.33
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node25:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8569"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE25}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node25.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.34
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node26:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8570"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE26}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node26.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.35
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node27:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8571"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE27}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node27.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.36
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node28:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8572"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE28}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node28.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.37
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node29:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8573"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE29}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node29.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.38
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node30:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8574"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE30}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node30.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.39
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node31:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8575"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE31}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node31.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.40
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node32:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8576"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE32}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node32.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.41
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node33:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8577"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE33}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node33.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.42
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node34:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8578"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE34}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node34.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.43
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node35:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8579"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE35}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node35.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.44
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node36:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8580"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE36}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node36.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.45
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node37:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8581"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE37}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node37.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.46
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node38:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8582"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE38}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node38.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.47
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node39:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8583"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE39}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node39.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.48
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node40:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8584"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE40}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node40.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.49
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node41:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8585"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE41}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node41.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.50
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node42:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8586"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE42}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node42.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.51
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node43:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8587"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE43}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node43.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.52
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node44:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8588"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE44}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node44.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.53
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node45:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8589"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE45}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node45.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.54
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node46:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8590"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE46}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node46.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.55
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node47:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8591"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE47}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node47.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.56
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node48:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8592"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE48}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node48.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.57
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node49:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8593"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE49}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node49.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.58
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  node50:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command:
+      - --network
+      - /genesis.json
+      - --p2p.addr
+      - "0.0.0.0"
+      - --p2p.port
+      - "30303"
+      - --discovery.port
+      - "30303"
+      - --http.port
+      - "8594"
+      - --datadir
+      - /data
+      - --bootnodes
+      - "${BOOTNODES_FOR_NODE50}"
+    volumes:
+      - ./genesis.json:/genesis.json:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./nodekeys/node50.key:/node.key:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.59
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  monitor:
+    image: nicolaka/netshoot:latest
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: "service:node1"
+    volumes:
+      - ./monitor.sh:/monitor.sh:ro
+    entrypoint: ["sleep", "infinity"]
+    depends_on:
+      node1:
+        condition: service_healthy
+    restart: on-failure
+  flooder:
+    profiles: ["flood"]
+    image: ubuntu:24.04
+    entrypoint: ["/flooder"]
+    command: ["10.55.0.10", "30303", "200"]
+    volumes:
+      - ../../target/release/packet-storm-flooder:/flooder:ro
+    networks:
+      discovery-net:
+        ipv4_address: 10.55.0.253
+    depends_on:
+      node1:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+networks:
+  discovery-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.55.0.0/24
