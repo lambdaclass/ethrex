@@ -375,7 +375,14 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
             let bind: IpAddr = opts
                 .p2p_addr
                 .as_deref()
-                .map(|a| a.parse().expect("Failed to parse p2p address"))
+                .map(|a| {
+                    let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
+                    assert!(
+                        addr.is_ipv4() == external.is_ipv4(),
+                        "--p2p.addr and --nat.extip must use the same address family (both IPv4 or both IPv6)"
+                    );
+                    addr
+                })
                 .unwrap_or_else(|| {
                     if external.is_ipv6() {
                         IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
