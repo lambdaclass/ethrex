@@ -45,9 +45,11 @@ pub async fn sync_cycle_full(
     }
 
     info!(
-        "Pending blocks collected: {}, requesting headers from sync_head {:?}",
+        "Pending blocks collected: {}, requesting headers from sync_head {:?}, pending range: {:?}..{:?}",
         pending_blocks.len(),
-        sync_head
+        sync_head,
+        pending_blocks.first().map(|b| b.header.number),
+        pending_blocks.last().map(|b| b.header.number),
     );
 
     // Request all block headers between the sync head and our local chain
