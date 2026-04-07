@@ -342,12 +342,13 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
     // words^2 max = 524288^2 = 274,877,906,944 which fits in u64, so
     // we widen to u64 only for the final result.
     #[expect(clippy::as_conversions)]
+    #[expect(clippy::as_conversions)]
     let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
 
     // On rv32, u64 * u64 emits MULH (signed multiply high) for overflow
     // detection, which Airbender's ISA does not support. Keep multiplications
     // in u32 and widen only the products.
-    #[expect(clippy::arithmetic_side_effects)]
+    #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
     let words_squared = words.wrapping_mul(words) as u64;
     #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
     let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * (words as u64);

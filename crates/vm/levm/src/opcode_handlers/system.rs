@@ -1082,7 +1082,6 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: CallFrame,
@@ -1161,7 +1160,6 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
     pub fn handle_return_create(
         &mut self,
         executed_call_frame: CallFrame,
