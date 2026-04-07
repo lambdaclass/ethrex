@@ -1047,8 +1047,23 @@ impl NibbleIterator<'_> {
             let file_idx = self.code_hash_file_index.fetch_add(1, Ordering::Relaxed);
             let file_name = get_code_hashes_snapshot_file(self.code_hashes_dir, file_idx);
             let hashes: Vec<H256> = std::mem::take(&mut self.code_hashes);
-            let _ = dump_to_file(&file_name, hashes.encode_to_vec());
+            if let Err(e) = dump_to_file(&file_name, hashes.encode_to_vec()) {
+                tracing::error!(
+                    "Failed to write code hashes file (nibble {}): {:?}",
+                    self.nibble,
+                    e
+                );
+            }
         }
+    }
+}
+
+#[cfg(feature = "rocksdb")]
+impl Drop for NibbleIterator<'_> {
+    fn drop(&mut self) {
+        // Flush any remaining code hashes that haven't reached the buffer threshold.
+        // This handles both normal completion and early-exit error paths.
+        self.flush_code_hashes();
     }
 }
 
@@ -1174,11 +1189,12 @@ async fn insert_accounts(
                     let child_ref =
                         trie_from_sorted_subtrie(trie_db, &mut nibble_iter, pool, buf_tx, buf_rx)?;
 
-                    if !nibble_iter.storage_accounts.is_empty() {
+                    let storage = std::mem::take(&mut nibble_iter.storage_accounts);
+                    if !storage.is_empty() {
                         per_thread_storage_accounts
                             .lock()
                             .expect("storage accounts mutex poisoned")
-                            .push(nibble_iter.storage_accounts);
+                            .push(storage);
                     }
 
                     Ok::<Option<(u8, NodeRef)>, ethrex_trie::trie_sorted::TrieGenerationError>(

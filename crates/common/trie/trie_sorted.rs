@@ -374,7 +374,7 @@ where
     };
     let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
-        .expect("This channel shouldn't close");
+        .map_err(|_| TrieGenerationError::ThreadJoinError())?;
     let mut trie_stack: Vec<StackElement> = Vec::with_capacity(64);
     let mut nodehash_buffer = Vec::with_capacity(512);
     let mut current_parent = StackElement::default();
@@ -389,7 +389,7 @@ where
             }));
             nodes_to_write = buffer_receiver
                 .recv()
-                .expect("This channel shouldn't close");
+                .map_err(|_| TrieGenerationError::ThreadJoinError())?;
         }
 
         let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
@@ -451,7 +451,7 @@ where
 
     // Don't finalize the root — just flush and return the single child's NodeRef.
     // current_parent is at path [] with exactly one valid child (the sub-trie nibble).
-    let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+    flush_nodes_to_write(nodes_to_write, db, buffer_sender)?;
 
     let child_ref = current_parent
         .element
@@ -513,7 +513,9 @@ pub fn assemble_root_from_subtries(
         let child_rlp = db
             .get(child_path.clone())
             .map_err(TrieGenerationError::FlushToDbError)?
-            .expect("Sub-trie wrote this node");
+            .ok_or(TrieGenerationError::FlushToDbError(
+                TrieError::InvalidInput,
+            ))?;
         let mut child_node = Node::decode(&child_rlp)
             .map_err(|e| TrieGenerationError::FlushToDbError(TrieError::RLPDecode(e)))?;
 
