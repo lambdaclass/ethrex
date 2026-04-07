@@ -50,9 +50,15 @@ impl ZiskBackend {
             // Atomic write: write to a temporary file in the same directory, then
             // rename into place. rename() is atomic on POSIX filesystems, so we
             // never leave a half-written ELF file behind if the process crashes.
-            let tmp_path = format!("{ELF_PATH}.tmp");
-            std::fs::write(&tmp_path, ZKVM_ZISK_PROGRAM_ELF).map_err(BackendError::execution)?;
-            std::fs::rename(&tmp_path, ELF_PATH).map_err(BackendError::execution)?;
+            let tmp_path = format!("{ELF_PATH}.{}.tmp", std::process::id());
+            std::fs::write(&tmp_path, ZKVM_ZISK_PROGRAM_ELF).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                BackendError::execution(e)
+            })?;
+            std::fs::rename(&tmp_path, ELF_PATH).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                BackendError::execution(e)
+            })?;
         }
 
         Ok(())
