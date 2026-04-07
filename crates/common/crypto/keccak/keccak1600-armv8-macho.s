@@ -484,6 +484,8 @@ _SHA3_squeeze:
 	mov	x21,x2
 	mov	x22,x3
 
+	cbz	x21,Lsqueeze_done	// early exit for zero-length output
+
 Loop_squeeze:
 	ldr	x4,[x0],#8
 	cmp	x21,#8
@@ -797,6 +799,8 @@ SHA3_squeeze_cext:
 	add	x29,sp,#0
 	mov	x9,x0
 	mov	x10,x3
+
+	cbz	x2,Lsqueeze_done_ce	// early exit for zero-length output
 
 Loop_squeeze_ce:
 	ldr	x4,[x9],#8

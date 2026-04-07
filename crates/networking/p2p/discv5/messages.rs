@@ -492,6 +492,19 @@ pub enum Message {
 }
 
 impl Message {
+    /// Returns a short, stable label suitable for use as a Prometheus metric label value.
+    pub fn metric_label(&self) -> &'static str {
+        match self {
+            Message::Ping(_) => "Ping",
+            Message::Pong(_) => "Pong",
+            Message::FindNode(_) => "FindNode",
+            Message::Nodes(_) => "Nodes",
+            Message::TalkReq(_) => "TalkReq",
+            Message::TalkRes(_) => "TalkRes",
+            Message::Ticket(_) => "Ticket",
+        }
+    }
+
     fn msg_type(&self) -> u8 {
         match self {
             Message::Ping(_) => 0x01,
