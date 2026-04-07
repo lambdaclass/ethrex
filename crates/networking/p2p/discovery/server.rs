@@ -275,7 +275,7 @@ impl DiscoveryServer {
         msg: discovery_server_protocol::RawPacket,
         _ctx: &Context<Self>,
     ) {
-        self.route_packet(&msg.data, msg.from);
+        self.route_packet(&msg.data, msg.from).await;
     }
 
     #[send_handler]
@@ -375,22 +375,24 @@ impl DiscoveryServer {
 
     // --- Shared logic ---
 
-    fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
+    async fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
         if is_discv4_packet(data) {
-            self.route_to_discv4(data, from);
+            self.route_to_discv4(data, from).await;
         } else {
-            self.route_to_discv5(data, from);
+            self.route_to_discv5(data, from).await;
         }
     }
 
-    fn route_to_discv4(&mut self, data: &[u8], from: SocketAddr) {
+    async fn route_to_discv4(&mut self, data: &[u8], from: SocketAddr) {
         if self.discv4.is_none() {
             return;
         }
         match Discv4Packet::decode(data) {
             Ok(packet) => {
                 let msg = Discv4Message::from(packet, from);
-                self.discv4_process_message(msg);
+                let _ = self.discv4_process_message(msg).await.inspect_err(
+                    |e| error!(protocol = "discv4", err=?e, "Error handling discovery message"),
+                );
             }
             Err(e) => {
                 debug!(error=?e, "Failed to decode discv4 packet");
@@ -398,14 +400,16 @@ impl DiscoveryServer {
         }
     }
 
-    fn route_to_discv5(&mut self, data: &[u8], from: SocketAddr) {
+    async fn route_to_discv5(&mut self, data: &[u8], from: SocketAddr) {
         if self.discv5.is_none() {
             return;
         }
         match Discv5Packet::decode(&self.local_node.node_id(), data) {
             Ok(packet) => {
                 let msg = Discv5Message::from(packet, from);
-                self.discv5_handle_packet(msg);
+                let _ = self.discv5_handle_packet(msg).await.inspect_err(
+                    |e| trace!(protocol = "discv5", err=%e, "Error handling discovery message"),
+                );
             }
             Err(e) => {
                 debug!(error=?e, "Failed to decode discv5 packet");
@@ -421,13 +425,31 @@ impl DiscoveryServer {
                 .pending_find_node
                 .retain(|_, sent_at| sent_at.elapsed() < expiration);
         }
-        if let Some(discv5) = &mut self.discv5 {
-            discv5.cleanup_stale_entries();
+        let winning_ip = self
+            .discv5
+            .as_mut()
+            .and_then(|discv5| discv5.cleanup_stale_entries());
+        if let Some(winning_ip) = winning_ip
+            && winning_ip != self.local_node.ip
+        {
+            use crate::discv5::server::update_local_ip;
+            info!(
+                protocol = "discv5",
+                old_ip = %self.local_node.ip,
+                new_ip = %winning_ip,
+                "External IP detected via PONG voting, updating local ENR"
+            );
+            update_local_ip(
+                &mut self.local_node,
+                &mut self.local_node_record,
+                &self.signer,
+                winning_ip,
+            );
         }
         Ok(())
     }
 
-    pub(crate) async fn get_lookup_interval(&mut self) -> Duration {
+    pub(crate) async fn get_lookup_interval(&self) -> Duration {
         let peer_completion = self
             .peer_table
             .target_peers_completion()

@@ -23,14 +23,7 @@ use super::server::{DiscoveryServer, DiscoveryServerError};
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 
 impl DiscoveryServer {
-    pub(crate) fn discv4_process_message(&mut self, msg: Discv4Message) {
-        let _ = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.discv4_process_message_inner(msg))
-        })
-        .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"));
-    }
-
-    async fn discv4_process_message_inner(
+    pub(crate) async fn discv4_process_message(
         &mut self,
         Discv4Message {
             from,

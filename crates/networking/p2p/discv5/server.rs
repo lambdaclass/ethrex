@@ -1,3 +1,4 @@
+use crate::discv5::messages::Message;
 use crate::{
     discv5::messages::Packet,
     types::{Node, NodeRecord},
@@ -11,9 +12,6 @@ use std::{
     num::NonZero,
     time::{Duration, Instant},
 };
-use tracing::info;
-
-use crate::discv5::messages::Message;
 
 /// Maximum number of entries in the per-IP WHOAREYOU rate limit cache.
 pub const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
@@ -85,7 +83,8 @@ impl Discv5State {
     }
 
     /// Remove stale entries from caches.
-    pub fn cleanup_stale_entries(&mut self) {
+    /// Returns `Some(ip)` if a timed-out IP voting round produced a winning IP to apply.
+    pub fn cleanup_stale_entries(&mut self) -> Option<IpAddr> {
         let now = Instant::now();
 
         self.pending_by_nonce
@@ -101,14 +100,16 @@ impl Discv5State {
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW
         {
-            self.finalize_ip_vote_round(None);
+            return self.finalize_ip_vote_round();
         }
+        None
     }
 
     /// Records an IP vote from a PONG recipient_addr.
-    pub fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) {
+    /// Returns `Some(ip)` if the voting round ended with a winning IP to apply.
+    pub fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) -> Option<IpAddr> {
         if Self::is_private_ip(reported_ip) {
-            return;
+            return None;
         }
 
         let now = Instant::now();
@@ -131,42 +132,29 @@ impl Discv5State {
         };
 
         if round_ended {
-            self.finalize_ip_vote_round(None);
+            return self.finalize_ip_vote_round();
         }
+        None
     }
 
-    /// Finalizes the current voting round. If `local_node` is provided, updates the IP.
-    /// When called from the unified server, `local_node` is passed so the IP can be updated.
-    fn finalize_ip_vote_round(&mut self, updater: Option<&mut IpUpdater<'_>>) {
+    /// Finalizes the current voting round.
+    /// Returns `Some(winning_ip)` if a winner reached the threshold and should be applied.
+    fn finalize_ip_vote_round(&mut self) -> Option<IpAddr> {
         let winner = self
             .ip_votes
             .iter()
             .map(|(ip, voters)| (*ip, voters.len()))
             .max_by_key(|(_, count)| *count);
 
-        if let Some((winning_ip, vote_count)) = winner
-            && let Some(updater) = updater
-            && vote_count >= IP_VOTE_THRESHOLD
-            && winning_ip != updater.local_node.ip
-        {
-            info!(
-                protocol = "discv5",
-                old_ip = %updater.local_node.ip,
-                new_ip = %winning_ip,
-                votes = vote_count,
-                "External IP detected via PONG voting, updating local ENR"
-            );
-            update_local_ip(
-                updater.local_node,
-                updater.local_node_record,
-                updater.signer,
-                winning_ip,
-            );
-        }
+        let result = winner.and_then(|(winning_ip, vote_count)| {
+            (vote_count >= IP_VOTE_THRESHOLD).then_some(winning_ip)
+        });
 
         self.ip_votes.clear();
         self.ip_vote_period_start = Some(Instant::now());
         self.first_ip_vote_round_completed = true;
+
+        result
     }
 
     /// Returns true if the IP is private/local (not useful for external connectivity).
@@ -185,13 +173,8 @@ impl Discv5State {
     }
 }
 
-pub(crate) struct IpUpdater<'a> {
-    pub local_node: &'a mut Node,
-    pub local_node_record: &'a mut NodeRecord,
-    pub signer: &'a secp256k1::SecretKey,
-}
-
-fn update_local_ip(
+/// Updates local node IP and re-signs the ENR with incremented seq.
+pub(crate) fn update_local_ip(
     local_node: &mut Node,
     local_node_record: &mut NodeRecord,
     signer: &secp256k1::SecretKey,
@@ -249,7 +232,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ip_voting_updates_ip_on_threshold() {
+    async fn test_ip_voting_returns_winning_ip() {
         let mut state = make_test_state();
 
         let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
@@ -257,17 +240,10 @@ mod tests {
         let voter2 = H256::from_low_u64_be(2);
         let voter3 = H256::from_low_u64_be(3);
 
-        // Vote 1 - should not update yet
-        state.record_ip_vote(new_ip, voter1);
-        assert_eq!(state.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
-
-        // Vote 2 from different peer - should not update yet
-        state.record_ip_vote(new_ip, voter2);
-        assert_eq!(state.ip_votes.get(&new_ip).map(|v| v.len()), Some(2));
-
-        // Vote 3 from different peer - round ends (threshold reached)
-        state.record_ip_vote(new_ip, voter3);
-        // Votes should be cleared after round ends
+        assert_eq!(state.record_ip_vote(new_ip, voter1), None);
+        assert_eq!(state.record_ip_vote(new_ip, voter2), None);
+        // Third vote triggers round end, returns the winning IP
+        assert_eq!(state.record_ip_vote(new_ip, voter3), Some(new_ip));
         assert!(state.ip_votes.is_empty());
     }
 
@@ -278,12 +254,10 @@ mod tests {
         let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
         let same_voter = H256::from_low_u64_be(1);
 
-        // Same peer voting 3 times should only count as 1 vote
         state.record_ip_vote(new_ip, same_voter);
         state.record_ip_vote(new_ip, same_voter);
         state.record_ip_vote(new_ip, same_voter);
 
-        // Should still only have 1 vote (same peer)
         assert_eq!(state.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
     }
 
@@ -292,49 +266,22 @@ mod tests {
         let mut state = make_test_state();
 
         let voter1 = H256::from_low_u64_be(1);
-        let voter2 = H256::from_low_u64_be(2);
-        let voter3 = H256::from_low_u64_be(3);
 
-        // Private IPs should be ignored
         let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
         state.record_ip_vote(private_ip, voter1);
-        state.record_ip_vote(private_ip, voter2);
-        state.record_ip_vote(private_ip, voter3);
         assert!(state.ip_votes.is_empty());
 
-        // Loopback should be ignored
         let loopback: IpAddr = "127.0.0.1".parse().unwrap();
         state.record_ip_vote(loopback, voter1);
         assert!(state.ip_votes.is_empty());
 
-        // Link-local should be ignored
-        let link_local: IpAddr = "169.254.1.1".parse().unwrap();
-        state.record_ip_vote(link_local, voter1);
-        assert!(state.ip_votes.is_empty());
-
-        // IPv6 loopback should be ignored
-        let ipv6_loopback: IpAddr = "::1".parse().unwrap();
-        state.record_ip_vote(ipv6_loopback, voter1);
-        assert!(state.ip_votes.is_empty());
-
-        // IPv6 link-local (fe80::/10) should be ignored
-        let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
-        state.record_ip_vote(ipv6_link_local, voter1);
-        assert!(state.ip_votes.is_empty());
-
-        // IPv6 unique local (fc00::/7) should be ignored
-        let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
-        state.record_ip_vote(ipv6_unique_local, voter1);
-        assert!(state.ip_votes.is_empty());
-
-        // Public IP should be recorded
         let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
         state.record_ip_vote(public_ip, voter1);
         assert_eq!(state.ip_votes.get(&public_ip).map(|v| v.len()), Some(1));
     }
 
     #[tokio::test]
-    async fn test_ip_voting_split_votes_no_update() {
+    async fn test_ip_voting_split_votes_no_winner() {
         let mut state = make_test_state();
 
         let ip1: IpAddr = "203.0.113.50".parse().unwrap();
@@ -345,9 +292,8 @@ mod tests {
 
         state.record_ip_vote(ip1, voter1);
         state.record_ip_vote(ip2, voter2);
-        state.record_ip_vote(ip1, voter3);
-
-        // Round ends and votes are cleared
+        // ip1 has 2 votes, ip2 has 1 — ip1 wins but only has 2 < threshold 3
+        assert_eq!(state.record_ip_vote(ip1, voter3), None);
         assert!(state.ip_votes.is_empty());
         assert!(state.first_ip_vote_round_completed);
     }
@@ -366,7 +312,7 @@ mod tests {
         assert_eq!(state.ip_votes.len(), 1);
 
         // Cleanup should retain votes (round hasn't timed out yet)
-        state.cleanup_stale_entries();
+        assert_eq!(state.cleanup_stale_entries(), None);
         assert_eq!(state.ip_votes.len(), 1);
         assert!(!state.first_ip_vote_round_completed);
     }

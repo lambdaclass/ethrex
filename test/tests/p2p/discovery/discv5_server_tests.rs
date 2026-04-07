@@ -268,24 +268,15 @@ async fn test_ip_voting_updates_ip_on_threshold() {
     let voter2 = H256::from_low_u64_be(2);
     let voter3 = H256::from_low_u64_be(3);
 
-    discv5(&mut server).record_ip_vote(new_ip, voter1);
+    assert_eq!(discv5(&mut server).record_ip_vote(new_ip, voter1), None);
     assert_eq!(server.local_node.ip, original_ip);
-    assert_eq!(
-        discv5(&mut server).ip_votes.get(&new_ip).map(|v| v.len()),
-        Some(1)
-    );
 
-    discv5(&mut server).record_ip_vote(new_ip, voter2);
+    assert_eq!(discv5(&mut server).record_ip_vote(new_ip, voter2), None);
     assert_eq!(server.local_node.ip, original_ip);
-    assert_eq!(
-        discv5(&mut server).ip_votes.get(&new_ip).map(|v| v.len()),
-        Some(2)
-    );
 
-    // Vote 3 triggers round end (threshold reached). IP vote alone doesn't update
-    // the node; the server's prune/periodic handler would do that. Here we just
-    // check the round ended.
-    discv5(&mut server).record_ip_vote(new_ip, voter3);
+    // Vote 3 triggers round end and returns the winning IP
+    let result = discv5(&mut server).record_ip_vote(new_ip, voter3);
+    assert_eq!(result, Some(new_ip));
     assert!(discv5(&mut server).ip_votes.is_empty());
 }
 

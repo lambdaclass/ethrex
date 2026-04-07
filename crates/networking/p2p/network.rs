@@ -117,9 +117,6 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    let mut config = config;
-    config.initial_lookup_interval = context.initial_lookup_interval;
-
     DiscoveryServer::spawn(
         context.storage.clone(),
         context.local_node.clone(),
@@ -127,7 +124,10 @@ pub async fn start_network(
         udp_socket,
         context.table.clone(),
         bootnodes,
-        config,
+        DiscoveryConfig {
+            initial_lookup_interval: context.initial_lookup_interval,
+            ..config
+        },
     )
     .await
     .inspect_err(|e| {

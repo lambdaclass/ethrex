@@ -38,14 +38,7 @@ const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
 const GLOBAL_WHOAREYOU_RATE_LIMIT: u32 = 100;
 
 impl DiscoveryServer {
-    pub(crate) fn discv5_handle_packet(&mut self, msg: Discv5Message) {
-        let _ = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.discv5_handle_packet_inner(msg))
-        })
-        .inspect_err(|e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"));
-    }
-
-    async fn discv5_handle_packet_inner(
+    pub(crate) async fn discv5_handle_packet(
         &mut self,
         Discv5Message { packet, from }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
@@ -146,7 +139,7 @@ impl DiscoveryServer {
             &packet.header.authdata,
         );
 
-        let ephemeral_key = SecretKey::new(&mut rand::thread_rng());
+        let ephemeral_key = SecretKey::new(&mut OsRng);
         let ephemeral_pubkey = ephemeral_key.public_key(secp256k1::SECP256K1).serialize();
 
         let Some(dest_pubkey) = compress_pubkey(node.public_key) else {
@@ -382,7 +375,23 @@ impl DiscoveryServer {
         }
 
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-        discv5.record_ip_vote(pong_message.recipient_addr.ip(), sender_id);
+        if let Some(winning_ip) = discv5.record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
+            && winning_ip != self.local_node.ip
+        {
+            use crate::discv5::server::update_local_ip;
+            tracing::info!(
+                protocol = "discv5",
+                old_ip = %self.local_node.ip,
+                new_ip = %winning_ip,
+                "External IP detected via PONG voting, updating local ENR"
+            );
+            update_local_ip(
+                &mut self.local_node,
+                &mut self.local_node_record,
+                &self.signer,
+                winning_ip,
+            );
+        }
 
         Ok(())
     }
