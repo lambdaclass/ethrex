@@ -1,9 +1,9 @@
-use crate::H256;
+use crate::{H160, H256};
 use hex_literal::hex;
 
 /// SYSTEM_ADDRESS used for system contract calls and BAL filtering.
 /// 0xfffffffffffffffffffffffffffffffffffffffe
-pub const SYSTEM_ADDRESS: crate::H160 = crate::H160([
+pub const SYSTEM_ADDRESS: H160 = H160([
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFE,
 ]);
