@@ -2199,7 +2199,7 @@ pub fn extract_all_requests_levm(
 pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
     if !tx.gas_price.is_zero() {
         // Legacy gas field was specified, use it
-        tx.gas_price.into()
+        tx.gas_price
     } else {
         // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
         min(

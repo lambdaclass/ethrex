@@ -3318,7 +3318,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::from(hex::decode("010203040506").unwrap()),
-            gas_price: 7,
+            gas_price: U256::from(7),
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
@@ -3373,7 +3373,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::from(hex::decode("010203040506").unwrap()),
-            gas_price: 7,
+            gas_price: U256::from(7),
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
@@ -3577,7 +3577,7 @@ mod tests {
         let generic_tx: GenericTransaction = legacy_tx.into();
         assert_eq!(generic_tx.r#type, TxType::Legacy);
         assert_eq!(generic_tx.nonce, Some(1));
-        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas_price, U256::from(20_000_000_000u64));
         assert_eq!(generic_tx.gas, Some(21000));
         assert_eq!(generic_tx.max_priority_fee_per_gas, None);
         assert_eq!(generic_tx.max_fee_per_gas, None);
@@ -3617,7 +3617,7 @@ mod tests {
         let generic_tx: GenericTransaction = eip2930_tx.into();
         assert_eq!(generic_tx.r#type, TxType::EIP2930);
         assert_eq!(generic_tx.nonce, Some(1));
-        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas_price, U256::from(20_000_000_000u64));
         assert_eq!(generic_tx.gas, Some(21000));
         assert_eq!(generic_tx.max_priority_fee_per_gas, None);
         assert_eq!(generic_tx.max_fee_per_gas, None);
