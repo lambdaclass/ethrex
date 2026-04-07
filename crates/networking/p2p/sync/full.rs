@@ -44,6 +44,12 @@ pub async fn sync_cycle_full(
         pending_blocks.insert(0, block);
     }
 
+    info!(
+        "Pending blocks collected: {}, requesting headers from sync_head {:?}",
+        pending_blocks.len(),
+        sync_head
+    );
+
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
