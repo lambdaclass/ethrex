@@ -37,7 +37,6 @@ hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["string"] }
-clap_complete.workspace = true
 eyre.workspace = true
 directories = "5.0.1"
 serde.workspace = true

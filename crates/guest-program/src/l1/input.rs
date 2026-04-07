@@ -39,7 +39,7 @@ pub fn encode_eip8025(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
 ) -> Result<Vec<u8>, ProgramInputEncodeError> {
-    use ssz::SszEncode;
+    use libssz::SszEncode;
 
     let ssz_bytes = new_payload_request.to_ssz();
     let ssz_len = ssz_bytes.len() as u32;
@@ -68,7 +68,7 @@ pub fn decode_eip8025(
     ),
     ProgramInputDecodeError,
 > {
-    use ssz::SszDecode;
+    use libssz::SszDecode;
 
     if bytes.len() < 4 {
         return Err(ProgramInputDecodeError::TooShort);
@@ -109,7 +109,7 @@ impl core::fmt::Display for ProgramInputEncodeError {
 #[derive(Debug)]
 pub enum ProgramInputDecodeError {
     TooShort,
-    Ssz(ssz::DecodeError),
+    Ssz(libssz::DecodeError),
     Rkyv(String),
 }
 
