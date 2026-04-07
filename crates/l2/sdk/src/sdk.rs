@@ -1032,7 +1032,7 @@ pub async fn build_generic_tx(
         authorization_list: overrides.authorization_list,
         ..Default::default()
     };
-    tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
+    tx.gas_price = U256::from(tx.max_fee_per_gas.unwrap_or_default());
     if let Some(blobs_bundle) = &overrides.blobs_bundle {
         tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
         add_blobs_to_generic_tx(&mut tx, blobs_bundle);

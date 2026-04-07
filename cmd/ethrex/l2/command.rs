@@ -333,7 +333,10 @@ impl Command {
                         // Get parent beacon block root hash from block
                         let block = eth_client
                             .get_block_by_number(
-                                BlockIdentifier::Number(current_block.as_u64()),
+                                BlockIdentifier::Number(
+                                    u64::try_from(current_block)
+                                        .map_err(|_| eyre::eyre!("block number overflows u64"))?,
+                                ),
                                 false,
                             )
                             .await?;
