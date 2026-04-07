@@ -521,17 +521,21 @@ pub fn assemble_root_from_subtries(
             Node::Branch(_) => {
                 let ext: Node = ExtensionNode {
                     prefix: child_path,
-                    child: NodeHash::from_encoded(&child_rlp).into(),
+                    child: NodeHash::from_encoded(&child_rlp, &NativeCrypto).into(),
                 }
                 .into();
-                let hash = ext.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).finalize(&NativeCrypto);
+                let hash = ext
+                    .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+                    .finalize(&NativeCrypto);
                 db.put_batch(vec![(Nibbles::default(), ext.encode_to_vec())])
                     .map_err(TrieGenerationError::FlushToDbError)?;
                 Ok(hash)
             }
             Node::Extension(ext) => {
                 ext.prefix.prepend(index as u8);
-                let hash = ext.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).finalize(&NativeCrypto);
+                let hash = ext
+                    .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+                    .finalize(&NativeCrypto);
                 db.put_batch(vec![
                     (child_path, vec![]),
                     (Nibbles::default(), child_node.encode_to_vec()),
@@ -541,7 +545,9 @@ pub fn assemble_root_from_subtries(
             }
             Node::Leaf(leaf) => {
                 leaf.partial.prepend(index as u8);
-                let hash = leaf.compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto).finalize(&NativeCrypto);
+                let hash = leaf
+                    .compute_hash_no_alloc(&mut nodehash_buffer, &NativeCrypto)
+                    .finalize(&NativeCrypto);
                 db.put_batch(vec![
                     (child_path, vec![]),
                     (Nibbles::default(), child_node.encode_to_vec()),
