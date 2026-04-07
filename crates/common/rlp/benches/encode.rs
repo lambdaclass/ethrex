@@ -41,7 +41,7 @@ fn random_block_header(rng: &mut impl Rng) -> BlockHeader {
         state_root: H256(rng.random()),
         transactions_root: H256(rng.random()),
         receipts_root: H256(rng.random()),
-        logs_bloom: Bloom::default(),
+        logs_bloom: Bloom(rng.random()),
         difficulty: U256::from(rng.random::<u64>()),
         number: rng.random(),
         gas_limit: rng.random(),
@@ -593,11 +593,7 @@ fn bench_encode_trie(c: &mut Criterion) {
                 (0..1000)
                     .map(|_| {
                         let nibbles = Nibbles::from_raw(
-                            &rand::distr::Uniform::<u8>::new(0, 16)
-                                .unwrap()
-                                .sample_iter(&mut rng)
-                                .take(10)
-                                .collect::<Vec<_>>(),
+                            &(0..10).map(|_| rng.random::<u8>()).collect::<Vec<_>>(),
                             true,
                         );
                         let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
@@ -621,11 +617,7 @@ fn bench_encode_trie(c: &mut Criterion) {
                 (0..1000)
                     .map(|_| {
                         let nibbles = Nibbles::from_raw(
-                            &rand::distr::Uniform::<u8>::new(0, 16)
-                                .unwrap()
-                                .sample_iter(&mut rng)
-                                .take(6)
-                                .collect::<Vec<_>>(),
+                            &(0..6).map(|_| rng.random::<u8>()).collect::<Vec<_>>(),
                             false,
                         );
                         let child = NodeRef::Hash(NodeHash::Hashed(H256(rng.random())));
