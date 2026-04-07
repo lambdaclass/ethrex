@@ -35,9 +35,21 @@ pub async fn sync_cycle_full(
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
+    let canonical_head_number = store.get_latest_block_number().await?;
+    let original_sync_head = sync_head;
     while let Some(block) = store.get_pending_block(sync_head).await? {
         if store.is_canonical_sync(block.hash())? {
             // Ignore canonical blocks still in pending
+            break;
+        }
+        if block.header.number <= canonical_head_number {
+            // Stale pending block behind the canonical head, discard the whole chain
+            warn!(
+                "Discarding stale pending blocks: block {} is behind canonical head {}, resetting sync_head",
+                block.header.number, canonical_head_number
+            );
+            pending_blocks.clear();
+            sync_head = original_sync_head;
             break;
         }
         sync_head = block.header.parent_hash;
