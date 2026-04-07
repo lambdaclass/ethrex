@@ -770,7 +770,7 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
         let mut iter = store
             .iter_accounts(state_root)
             .expect("couldn't iterate accounts")
-            .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH);
+            .filter(|(_, account_state)| account_state.storage_root != EMPTY_TRIE_HASH);
 
         const CHUNK_SIZE: usize = 4096;
         let mut result: Result<(), ethrex_trie::TrieError> = Ok(());
@@ -866,12 +866,12 @@ fn compute_storage_roots(
 ) -> Result<StorageRoots, SyncError> {
     use ethrex_trie::{Nibbles, Node};
 
-    let storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let storage_trie = store.open_direct_storage_trie(account_hash, EMPTY_TRIE_HASH)?;
     let trie_hash = match storage_trie.db().get(Nibbles::default())? {
         Some(noderlp) => Node::decode(&noderlp)?
             .compute_hash(&ethrex_crypto::NativeCrypto)
             .finalize(&ethrex_crypto::NativeCrypto),
-        None => *EMPTY_TRIE_HASH,
+        None => EMPTY_TRIE_HASH,
     };
     let mut storage_trie = store.open_direct_storage_trie(account_hash, trie_hash)?;
 
@@ -897,7 +897,7 @@ async fn insert_accounts(
     _: &Path,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    let mut computed_state_root = *EMPTY_TRIE_HASH;
+    let mut computed_state_root = EMPTY_TRIE_HASH;
     for entry in std::fs::read_dir(account_state_snapshots_dir)
         .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
     {
@@ -913,7 +913,7 @@ async fn insert_accounts(
 
         storage_accounts.accounts_with_storage_root.extend(
             account_states_snapshot.iter().filter_map(|(hash, state)| {
-                (state.storage_root != *EMPTY_TRIE_HASH)
+                (state.storage_root != EMPTY_TRIE_HASH)
                     .then_some((*hash, (Some(state.storage_root), Vec::new())))
             }),
         );
@@ -1035,7 +1035,7 @@ async fn insert_accounts(
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1069,7 +1069,7 @@ async fn insert_accounts(
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
+                if account_state.storage_root != EMPTY_TRIE_HASH {
                     storage_accounts.accounts_with_storage_root.insert(
                         H256::from_slice(k),
                         (Some(account_state.storage_root), Vec::new()),
@@ -1162,7 +1162,7 @@ async fn insert_storages(
             (
                 account_hash,
                 store
-                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .open_direct_storage_trie(account_hash, EMPTY_TRIE_HASH)
                     .expect("Should be able to open trie"),
             )
         })

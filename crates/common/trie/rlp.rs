@@ -1,4 +1,11 @@
-use std::array;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
+use core::array;
 
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation

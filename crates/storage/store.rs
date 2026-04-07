@@ -1737,7 +1737,7 @@ impl Store {
                 None => AccountState::default(),
             };
             if update.removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
+                account_state.storage_root = EMPTY_TRIE_HASH;
             }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
@@ -1813,7 +1813,7 @@ impl Store {
             };
 
             if update.removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
+                account_state.storage_root = EMPTY_TRIE_HASH;
             }
 
             if let Some(info) = &update.info {
@@ -1883,7 +1883,7 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut storage_trie_nodes = vec![];
-        let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_state_trie = self.open_direct_state_trie(EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             let h256_hashed_address = H256::from_slice(&hashed_address);
@@ -1895,7 +1895,7 @@ impl Store {
 
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie =
-                self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
+                self.open_direct_storage_trie(h256_hashed_address, EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -2321,7 +2321,7 @@ impl Store {
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         } else {
             let state_trie = self.open_state_trie_shared(
                 state_root,
@@ -2374,7 +2374,7 @@ impl Store {
         // so open_storage_trie_shared falls through to the FKV path.
         let storage_root =
             if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
-                *EMPTY_TRIE_HASH
+                EMPTY_TRIE_HASH
             } else {
                 storage_root
             };
@@ -2702,7 +2702,7 @@ impl Store {
 
     /// Creates a new state trie with an empty state root, for testing purposes only
     pub fn new_state_trie_for_test(&self) -> Result<Trie, StoreError> {
-        self.open_state_trie(*EMPTY_TRIE_HASH)
+        self.open_state_trie(EMPTY_TRIE_HASH)
     }
 
     // Methods exclusive for trie management during snap-syncing
@@ -2869,7 +2869,7 @@ impl Store {
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
         // Empty state trie is always available
-        if state_root == *EMPTY_TRIE_HASH {
+        if state_root == EMPTY_TRIE_HASH {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;

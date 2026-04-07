@@ -1,11 +1,9 @@
+use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, vec, vec::Vec};
+use core::fmt;
 use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Nibbles, Node, Trie, error::TrieError};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
+use crate::{Mutex, Nibbles, Node, Trie, error::TrieError};
 
 // Nibbles -> encoded node
 pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;

@@ -55,7 +55,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
     // The store type for this bench shouldn't matter as all operations use the LEVM cache
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let header = BlockHeader {
-        state_root: *EMPTY_TRIE_HASH,
+        state_root: EMPTY_TRIE_HASH,
         ..Default::default()
     };
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());

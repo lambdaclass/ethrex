@@ -198,7 +198,7 @@ impl RpcExecutionWitness {
             );
 
             for (hashed_address, storage_root_hash) in accounts {
-                if storage_root_hash == *EMPTY_TRIE_HASH {
+                if storage_root_hash == EMPTY_TRIE_HASH {
                     continue;
                 }
                 if !nodes.contains_key(&storage_root_hash) {
@@ -410,7 +410,7 @@ impl GuestProgramState {
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
-                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                    account_state.storage_root = EMPTY_TRIE_HASH;
                 }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
@@ -685,7 +685,7 @@ impl GuestProgramState {
                 return Ok(None);
             };
             let storage_trie = match self.storage_tries.get(&hashed_address) {
-                None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
+                None if storage_root == EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(

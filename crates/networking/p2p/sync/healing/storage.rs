@@ -587,7 +587,7 @@ fn get_initial_downloads(
                     .get(acc_path.as_bytes())
                     .expect("We should be able to open the store")?;
                 let account = AccountState::decode(&rlp).expect("We should have a valid account");
-                if account.storage_root == *EMPTY_TRIE_HASH {
+                if account.storage_root == EMPTY_TRIE_HASH {
                     return None;
                 }
 
@@ -615,7 +615,7 @@ pub fn determine_pending_children(
     let trie = store
         .open_direct_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
-            *EMPTY_TRIE_HASH,
+            EMPTY_TRIE_HASH,
         )
         .inspect_err(|_| {
             debug!("Malformed data when opening the storage trie in determine missing children")

@@ -154,7 +154,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
                 .await?;
         }
         // Process storage trie if it is not empty
-        if dump_account.storage_root != *EMPTY_TRIE_HASH {
+        if dump_account.storage_root != EMPTY_TRIE_HASH {
             storage_tasks.spawn(process_dump_storage(
                 dump_account.storage,
                 store.clone(),
@@ -175,7 +175,7 @@ async fn process_dump_storage(
     hashed_address: H256,
     storage_root: H256,
 ) -> eyre::Result<()> {
-    let mut trie = store.open_direct_storage_trie(hashed_address, *EMPTY_TRIE_HASH)?;
+    let mut trie = store.open_direct_storage_trie(hashed_address, EMPTY_TRIE_HASH)?;
     for (key, val) in dump_storage {
         // The key we receive is the preimage of the one stored in the trie
         trie.insert(keccak(key.0).0.to_vec(), val.encode_to_vec())?;
@@ -268,7 +268,7 @@ impl DumpProcessor {
                 prev_checkpoint
                     .as_ref()
                     .and_then(|check_point| check_point.processing.current_root)
-                    .unwrap_or(*EMPTY_TRIE_HASH),
+                    .unwrap_or(EMPTY_TRIE_HASH),
                 store,
             )),
             writer,

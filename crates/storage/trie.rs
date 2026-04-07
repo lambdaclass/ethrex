@@ -133,21 +133,22 @@ impl TrieDB for BackendTrieDB {
         let table = self.table_for_key(&prefixed_key);
         self.read_view
             .get(table, prefixed_key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+            .map_err(|e| TrieError::DbError(format!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let mut tx = self.db.begin_write().map_err(|e| {
-            TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
-        })?;
+        let mut tx = self
+            .db
+            .begin_write()
+            .map_err(|e| TrieError::DbError(format!("Failed to begin write transaction: {}", e)))?;
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
             tx.put_batch(table, vec![(prefixed_key, value)])
-                .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
+                .map_err(|e| TrieError::DbError(format!("Failed to write batch: {}", e)))?;
         }
         tx.commit()
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
+            .map_err(|e| TrieError::DbError(format!("Failed to write batch: {}", e)))
     }
 }
 
@@ -203,11 +204,11 @@ impl TrieDB for BackendTrieDBLocked {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.tx_for_key(&key);
         tx.get(key.as_ref())
-            .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+            .map_err(|e| TrieError::DbError(format!("Failed to get from database: {}", e)))
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
-        Err(TrieError::DbError(anyhow::anyhow!("trie is read-only")))
+        Err(TrieError::DbError(format!("trie is read-only")))
     }
 }

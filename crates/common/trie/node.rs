@@ -2,7 +2,12 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::sync::{Arc, OnceLock};
+use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+
+#[cfg(feature = "std")]
+type OnceLock<T> = std::sync::OnceLock<T>;
+#[cfg(not(feature = "std"))]
+type OnceLock<T> = core::cell::OnceCell<T>;
 
 pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};

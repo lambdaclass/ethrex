@@ -1,4 +1,11 @@
-use std::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 
 use ethereum_types::H256;
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};

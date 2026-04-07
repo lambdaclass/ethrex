@@ -1,3 +1,4 @@
+use alloc::{boxed::Box, string::String};
 use ethereum_types::H256;
 use ethrex_rlp::error::RLPDecodeError;
 use thiserror::Error;
@@ -16,7 +17,7 @@ pub enum TrieError {
     #[error("Lock Error: Panicked when trying to acquire a lock")]
     LockError,
     #[error("Database error: {0}")]
-    DbError(anyhow::Error),
+    DbError(String),
     #[error("Invalid trie input")]
     InvalidInput,
 }
@@ -43,8 +44,8 @@ pub struct ExtensionNodeErrorData {
     pub node_path: Nibbles,
 }
 
-impl std::fmt::Display for ExtensionNodeErrorData {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ExtensionNodeErrorData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "Node with hash {:#x}, child of the Extension Node (hash {:#x}, prefix {:?}) on path {:?}",

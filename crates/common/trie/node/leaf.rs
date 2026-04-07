@@ -1,4 +1,11 @@
-use std::mem;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
+use core::mem;
 
 use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;

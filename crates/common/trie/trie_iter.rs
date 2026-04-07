@@ -1,4 +1,11 @@
-use std::{cmp::Ordering, sync::Arc};
+use alloc::sync::Arc;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+use core::cmp::Ordering;
 
 use crate::{
     PathRLP, Trie, TrieDB, TrieError, ValueRLP,

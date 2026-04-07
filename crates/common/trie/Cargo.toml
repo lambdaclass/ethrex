@@ -10,19 +10,34 @@ license.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 
-ethereum-types.workspace = true
-anyhow = "1.0.86"
-bytes.workspace = true
-thiserror.workspace = true
-serde.workspace = true
-lazy_static.workspace = true
-crossbeam.workspace = true
-rayon.workspace = true
-rustc-hash.workspace = true
-rkyv.workspace = true
+ethereum-types = { version = "0.15.1", default-features = false }
+bytes = { version = "1.6.0", default-features = false }
+thiserror = { version = "2.0.9", default-features = false }
+serde = { version = "1.0.203", default-features = false, features = ["derive", "rc", "alloc"] }
+rkyv = { version = "0.8.10", default-features = false, features = ["alloc", "unaligned", "bytecheck"] }
+hex-literal = "0.4.1"
+
+# std-only deps
+anyhow = { version = "1.0.86", optional = true }
+lazy_static = { workspace = true, optional = true }
+crossbeam = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+rustc-hash = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["std"]
+std = [
+    "dep:anyhow",
+    "dep:lazy_static",
+    "dep:crossbeam",
+    "dep:rayon",
+    "dep:rustc-hash",
+    "ethereum-types/std",
+    "bytes/std",
+    "thiserror/std",
+    "serde/std",
+    "rkyv/std",
+]
 
 [lib]
 path = "./trie.rs"

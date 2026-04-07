@@ -1,6 +1,6 @@
+use core::hash::{Hash, Hasher};
 use ethereum_types::H256;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
 
 #[derive(
     Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord,
@@ -21,13 +21,13 @@ impl PartialEq for ArchivedH256Wrapper {
 }
 
 impl PartialOrd for ArchivedH256Wrapper {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for ArchivedH256Wrapper {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.0.cmp(&other.0)
     }
 }

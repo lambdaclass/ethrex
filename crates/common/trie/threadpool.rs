@@ -1,3 +1,10 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 use crossbeam::channel::{Sender, select_biased, unbounded};
 use std::marker::Send;
 use std::thread::{Builder, Scope};

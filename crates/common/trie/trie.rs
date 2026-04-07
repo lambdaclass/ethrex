@@ -1,5 +1,19 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+#[macro_use]
+extern crate alloc;
+
+use alloc::{
+    boxed::Box,
+    collections::BTreeMap,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
+
 pub mod db;
 pub mod error;
+#[cfg(feature = "std")]
 pub mod logger;
 mod nibbles;
 pub mod node;
@@ -8,22 +22,76 @@ pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
+#[cfg(feature = "std")]
 pub mod threadpool;
 mod trie_iter;
+#[cfg(feature = "std")]
 pub mod trie_sorted;
 mod verify_range;
+
+// Conditional Mutex: std::sync::Mutex when std is available,
+// trivial single-threaded wrapper for no_std guest programs.
+#[cfg(feature = "std")]
+pub use std::sync::Mutex;
+
+#[cfg(not(feature = "std"))]
+mod nostd_mutex {
+    use core::cell::UnsafeCell;
+
+    /// Single-threaded Mutex shim for no_std environments (guest programs).
+    pub struct Mutex<T>(UnsafeCell<T>);
+
+    unsafe impl<T: Send> Send for Mutex<T> {}
+    unsafe impl<T: Send> Sync for Mutex<T> {}
+
+    impl<T> Mutex<T> {
+        pub const fn new(val: T) -> Self {
+            Self(UnsafeCell::new(val))
+        }
+
+        #[allow(clippy::result_unit_err)]
+        pub fn lock(&self) -> Result<MutexGuard<'_, T>, ()> {
+            Ok(MutexGuard(&self.0))
+        }
+    }
+
+    impl<T: Default> Default for Mutex<T> {
+        fn default() -> Self {
+            Self::new(T::default())
+        }
+    }
+
+    pub struct MutexGuard<'a, T>(&'a UnsafeCell<T>);
+
+    impl<T> core::ops::Deref for MutexGuard<'_, T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            unsafe { &*self.0.get() }
+        }
+    }
+
+    impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
+        fn deref_mut(&mut self) -> &mut T {
+            unsafe { &mut *self.0.get() }
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+pub use nostd_mutex::Mutex;
+
 use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_crypto::{Crypto, NativeCrypto};
-use ethrex_rlp::constants::RLP_NULL;
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::{constants::RLP_NULL, encode::RLPEncode};
+use hex_literal::hex;
+#[cfg(feature = "std")]
 use rustc_hash::FxHashSet;
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+#[cfg(feature = "std")]
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
+#[cfg(feature = "std")]
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
@@ -35,14 +103,11 @@ pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use lazy_static::lazy_static;
 
-lazy_static! {
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256(
-        keccak_hash([RLP_NULL]),
-    );
-}
+// Keccak256(RLP_NULL) = Keccak256(0x80) = Root of empty trie
+pub const EMPTY_TRIE_HASH: H256 = H256(hex!(
+    "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+));
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
@@ -57,8 +122,8 @@ pub type TrieNode = (Nibbles, NodeRLP);
 pub struct Trie {
     db: Box<dyn TrieDB>,
     pub root: NodeRef,
-    pending_removal: FxHashSet<Nibbles>,
-    dirty: FxHashSet<Nibbles>,
+    pending_removal: alloc::collections::BTreeSet<Nibbles>,
+    dirty: alloc::collections::BTreeSet<Nibbles>,
 }
 
 impl Default for Trie {
@@ -82,7 +147,7 @@ impl Trie {
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
-            root: if root != *EMPTY_TRIE_HASH {
+            root: if root != EMPTY_TRIE_HASH {
                 NodeHash::from(root).into()
             } else {
                 Default::default()
@@ -196,7 +261,7 @@ impl Trie {
                 .compute_hash_no_alloc(&mut buf, crypto)
                 .finalize(crypto)
         } else {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         }
     }
 
@@ -247,11 +312,16 @@ impl Trie {
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc, crypto);
         }
-        if self.root.compute_hash(crypto) == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
+        if self.root.compute_hash(crypto) == NodeHash::Hashed(EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
         }
-        acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
-
+        acc.extend(
+            self.pending_removal
+                .clone()
+                .into_iter()
+                .map(|nib| (nib, vec![])),
+        );
+        self.pending_removal.clear();
         acc
     }
 
@@ -289,6 +359,7 @@ impl Trie {
     /// Obtains all encoded nodes traversed until reaching the node where every path is stored.
     /// The list doesn't include the root node, this is returned separately.
     /// Will still be constructed even if some path is not stored in the trie.
+    #[cfg(feature = "std")]
     pub fn get_proofs(
         &self,
         paths: &[PathRLP],
@@ -321,7 +392,7 @@ impl Trie {
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
-        if root_hash == *EMPTY_TRIE_HASH {
+        if root_hash == EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
 
@@ -578,6 +649,7 @@ impl Trie {
 
     /// Validate the trie structure in parallel by splitting at the root branch node.
     /// Each of the root's 16 subtrees is validated independently using rayon.
+    #[cfg(feature = "std")]
     pub fn validate_parallel(self) -> Result<(), TrieError> {
         use rayon::prelude::*;
 

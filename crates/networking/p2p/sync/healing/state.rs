@@ -299,7 +299,7 @@ async fn heal_state_trie(
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
-                let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+                let trie_db = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
                 db.put_batch(encoded_to_write.into_iter().collect())?;
@@ -347,7 +347,7 @@ fn heal_state_batch(
     healing_queue: &mut StateHealingQueue,
     nodes_to_write: &mut Vec<(Nibbles, Node)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (pending_children_count, pending_children) =

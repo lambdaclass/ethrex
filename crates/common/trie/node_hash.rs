@@ -1,3 +1,10 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 use ethereum_types::H256;
 use ethrex_crypto::Crypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
