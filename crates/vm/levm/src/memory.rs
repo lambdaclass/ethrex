@@ -341,19 +341,21 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
     // overflow detection, while u32 * u32 uses only MUL + MULHU.
     // words^2 max = 524288^2 = 274,877,906,944 which fits in u64, so
     // we widen to u64 only for the final result.
-    #[expect(clippy::as_conversions)]
-    #[expect(clippy::as_conversions)]
-    let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
-
     // On rv32, u64 * u64 emits MULH (signed multiply high) for overflow
     // detection, which Airbender's ISA does not support. Keep multiplications
     // in u32 and widen only the products.
-    #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
-    let words_squared = words.wrapping_mul(words) as u64;
-    #[expect(clippy::arithmetic_side_effects, clippy::as_conversions)]
-    let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * (words as u64);
+    // words max = 524288 (EIP-7825), so u32 is sufficient and words^2 fits in u64.
+    //
+    // allow (not expect) because the as_conversions lint is only active when
+    // compiled as a dependency of crates that deny it (e.g. ethrex-prover).
+    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+    {
+        let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
+        let words_squared = words.wrapping_mul(words) as u64;
+        let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * (words as u64);
 
-    Ok(gas_cost)
+        Ok(gas_cost)
+    }
 }
 
 #[inline]
