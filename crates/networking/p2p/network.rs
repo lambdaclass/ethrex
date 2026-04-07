@@ -3,10 +3,8 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[cfg(not(feature = "l2"))]
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
-use crate::discv5::server::{DiscoveryServer as Discv5Server, DiscoveryServerError as Discv5Error};
 use crate::{
-    discovery::{DiscoveryConfig, DiscoveryMultiplexer},
-    discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
+    discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError},
     metrics::{CurrentStepValue, METRICS},
     peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
@@ -21,7 +19,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{ActorRef, ActorStart as _};
+use spawned_concurrency::tasks::ActorRef;
 use std::{
     io,
     net::SocketAddr,
@@ -100,10 +98,8 @@ impl P2PContext {
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
-    #[error("Failed to start discv4 server: {0}")]
-    Discv4Error(#[from] Discv4Error),
-    #[error("Failed to start discv5 server: {0}")]
-    Discv5Error(#[from] Discv5Error),
+    #[error("Failed to start discovery server: {0}")]
+    DiscoveryError(#[from] DiscoveryServerError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
@@ -121,56 +117,22 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    // Start protocol servers first to get their handles
-    let discv4_handle = if config.discv4_enabled {
-        Some(
-            Discv4Server::spawn(
-                context.storage.clone(),
-                context.local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv4 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
+    let mut config = config;
+    config.initial_lookup_interval = context.initial_lookup_interval;
 
-    let discv5_handle = if config.discv5_enabled {
-        Some(
-            Discv5Server::spawn(
-                context.storage.clone(),
-                context.local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv5 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
-
-    // Start multiplexer actor with handles to protocol servers
-    DiscoveryMultiplexer::new(
+    DiscoveryServer::spawn(
+        context.storage.clone(),
+        context.local_node.clone(),
+        context.signer,
         udp_socket,
-        context.local_node.node_id(),
+        context.table.clone(),
+        bootnodes,
         config,
-        discv4_handle,
-        discv5_handle,
     )
-    .start();
+    .await
+    .inspect_err(|e| {
+        error!("Failed to start discovery server: {e}");
+    })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
