@@ -23,7 +23,7 @@ use crate::discv4::{
 };
 
 use crate::discv5::{
-    messages::{Packet as Discv5Packet, is_discv5_packet},
+    messages::{Packet as Discv5Packet, PacketCodecError},
     server::{DiscoveryServer as Discv5Server, Discv5Message, discv5_server_protocol},
 };
 
@@ -160,10 +160,9 @@ impl DiscoveryMultiplexer {
     fn route_packet(&mut self, data: &[u8], from: SocketAddr) {
         if is_discv4_packet(data) {
             self.route_to_discv4(data, from);
-        } else if is_discv5_packet(&self.local_node_id, data) {
-            self.route_to_discv5(data, from);
         } else {
-            trace!(from=?from, "Dropping unrecognized UDP packet");
+            // Try discv5 decode directly; non-discv5 packets are silently dropped.
+            self.route_to_discv5(data, from);
         }
     }
 
@@ -194,6 +193,8 @@ impl DiscoveryMultiplexer {
     }
 
     /// Route a packet to the discv5 handler.
+    /// Non-discv5 packets (InvalidProtocol, InvalidHeader, InvalidSize, CipherError)
+    /// are silently dropped to avoid noisy logs from stray UDP traffic.
     fn route_to_discv5(&mut self, data: &[u8], from: SocketAddr) {
         if !self.config.discv5_enabled {
             return;
@@ -203,7 +204,7 @@ impl DiscoveryMultiplexer {
             return;
         };
 
-        // Decode the discv5 packet
+        // Decode the discv5 packet; identification errors are silently dropped.
         match Discv5Packet::decode(&self.local_node_id, data) {
             Ok(packet) => {
                 let msg = Discv5Message::from(packet, from);
@@ -212,6 +213,14 @@ impl DiscoveryMultiplexer {
                 }) {
                     debug!(error=?e, "Failed to send discv5 message to handler");
                 }
+            }
+            Err(
+                PacketCodecError::InvalidProtocol(_)
+                | PacketCodecError::InvalidHeader
+                | PacketCodecError::InvalidSize
+                | PacketCodecError::CipherError(_),
+            ) => {
+                trace!(from=?from, "Dropping unrecognized UDP packet");
             }
             Err(e) => {
                 debug!(error=?e, "Failed to decode discv5 packet");
