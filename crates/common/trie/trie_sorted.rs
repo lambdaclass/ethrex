@@ -608,7 +608,10 @@ where
 
         let mut choices = BranchNode::EMPTY_CHOICES;
         for handle in handles {
-            if let Some((nibble, node_ref)) = handle.join().unwrap()? {
+            if let Some((nibble, node_ref)) = handle
+                .join()
+                .map_err(|_| TrieGenerationError::ThreadJoinError())??
+            {
                 choices[nibble as usize] = node_ref;
             }
         }

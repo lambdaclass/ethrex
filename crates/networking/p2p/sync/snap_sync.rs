@@ -1103,7 +1103,8 @@ async fn insert_accounts(
         Nibbles, Node, NodeRef, ThreadPool,
         node::BranchNode,
         trie_sorted::{
-            BUFFER_COUNT, SIZE_TO_WRITE_DB, assemble_root_from_subtries, trie_from_sorted_subtrie,
+            BUFFER_COUNT, SIZE_TO_WRITE_DB, TrieGenerationError, assemble_root_from_subtries,
+            trie_from_sorted_subtrie,
         },
     };
     use std::sync::Mutex;
@@ -1189,7 +1190,10 @@ async fn insert_accounts(
 
         let mut choices = BranchNode::EMPTY_CHOICES;
         for handle in handles {
-            if let Some((nibble, node_ref)) = handle.join().unwrap()? {
+            if let Some((nibble, node_ref)) = handle
+                .join()
+                .map_err(|_| TrieGenerationError::ThreadJoinError())??
+            {
                 choices[nibble as usize] = node_ref;
             }
         }
