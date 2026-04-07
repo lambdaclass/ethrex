@@ -5,7 +5,7 @@ use crate::{
             NodesMessage, Ordinary, Packet, PacketTrait as _, PingMessage, PongMessage,
             TalkResMessage, WhoAreYou, decrypt_message,
         },
-        server::{Discv5Message, Discv5State},
+        server::{Discv5Message, Discv5State, update_local_ip},
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
@@ -378,7 +378,6 @@ impl DiscoveryServer {
         if let Some(winning_ip) = discv5.record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
             && winning_ip != self.local_node.ip
         {
-            use crate::discv5::server::update_local_ip;
             tracing::info!(
                 protocol = "discv5",
                 old_ip = %self.local_node.ip,
@@ -531,7 +530,7 @@ impl DiscoveryServer {
     }
 
     async fn discv5_resolve_outbound_key(
-        &mut self,
+        &self,
         node_id: &H256,
         key: Option<[u8; 16]>,
     ) -> Result<[u8; 16], DiscoveryServerError> {

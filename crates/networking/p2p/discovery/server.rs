@@ -5,7 +5,7 @@ use crate::{
     },
     discv5::{
         messages::Packet as Discv5Packet,
-        server::{Discv5Message, Discv5State},
+        server::{Discv5Message, Discv5State, update_local_ip},
     },
     peer_table::{DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
     types::{INITIAL_ENR_SEQ, Node, NodeRecord},
@@ -298,7 +298,7 @@ impl DiscoveryServer {
     ) {
         trace!(protocol = "discv5", received = "Revalidate");
         let _ = self.discv5_revalidate().await.inspect_err(
-            |e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"),
+            |e| error!(protocol = "discv5", err=?e, "Error revalidating discovered peers"),
         );
     }
 
@@ -324,7 +324,7 @@ impl DiscoveryServer {
     ) {
         trace!(protocol = "discv5", received = "Lookup");
         let _ = self.discv5_lookup().await.inspect_err(
-            |e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"),
+            |e| error!(protocol = "discv5", err=?e, "Error performing Discovery lookup"),
         );
         let interval = self.get_lookup_interval().await;
         send_after(interval, ctx.clone(), discovery_server_protocol::LookupV5);
@@ -408,7 +408,7 @@ impl DiscoveryServer {
             Ok(packet) => {
                 let msg = Discv5Message::from(packet, from);
                 let _ = self.discv5_handle_packet(msg).await.inspect_err(
-                    |e| trace!(protocol = "discv5", err=%e, "Error handling discovery message"),
+                    |e| trace!(protocol = "discv5", err=?e, "Error handling discovery message"),
                 );
             }
             Err(e) => {
@@ -432,7 +432,6 @@ impl DiscoveryServer {
         if let Some(winning_ip) = winning_ip
             && winning_ip != self.local_node.ip
         {
-            use crate::discv5::server::update_local_ip;
             info!(
                 protocol = "discv5",
                 old_ip = %self.local_node.ip,
