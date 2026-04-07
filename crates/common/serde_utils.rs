@@ -1,4 +1,10 @@
-use std::time::Duration;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+use core::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq};
 
@@ -86,6 +92,7 @@ pub mod u256 {
         }
     }
 
+    #[cfg(feature = "std")]
     pub mod hashmap {
         use super::*;
         use serde::de::IntoDeserializer;
@@ -540,7 +547,7 @@ pub mod blob {
 }
 
 // Const generics are not supported on `Serialize` impls so we need separate impls for different array sizes
-fn serialize_vec_of_hex_encodables<S: Serializer, T: std::convert::AsRef<[u8]>>(
+fn serialize_vec_of_hex_encodables<S: Serializer, T: core::convert::AsRef<[u8]>>(
     value: &Vec<T>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -552,7 +559,7 @@ fn serialize_vec_of_hex_encodables<S: Serializer, T: std::convert::AsRef<[u8]>>(
 }
 
 pub mod duration {
-    use std::time::Duration;
+    use core::time::Duration;
 
     use super::*;
     pub fn deserialize<'de, D>(d: D) -> Result<Duration, D::Error>

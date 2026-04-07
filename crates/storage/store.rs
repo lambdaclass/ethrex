@@ -756,7 +756,7 @@ impl Store {
         use ethrex_common::constants::EMPTY_KECCACK_HASH;
 
         // Empty code special case
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(Some(CodeMetadata { length: 0 }));
         }
 
@@ -2370,7 +2370,7 @@ impl Store {
             .clone();
         let last_written = self.last_written()?;
         // When FKV is active the real storage root is in the flatkeyvalue store,
-        // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
+        // not in the account's RLP-encoded storage_root field. Use *EMPTY_TRIE_HASH
         // so open_storage_trie_shared falls through to the FKV path.
         let storage_root =
             if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {

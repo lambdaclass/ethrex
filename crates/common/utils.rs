@@ -1,4 +1,9 @@
 use crate::H256;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use ethereum_types::U256;
 use ethrex_crypto::keccak::keccak_hash;
 use hex::FromHexError;

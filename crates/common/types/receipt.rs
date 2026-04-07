@@ -1,3 +1,8 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
 use ethrex_crypto::Crypto;

@@ -49,7 +49,7 @@ impl Database for TestDatabase {
             .map(|acc| AccountState {
                 nonce: acc.info.nonce,
                 balance: acc.info.balance,
-                storage_root: *EMPTY_TRIE_HASH,
+                storage_root: EMPTY_TRIE_HASH,
                 code_hash: acc.info.code_hash,
             })
             .unwrap_or_default())

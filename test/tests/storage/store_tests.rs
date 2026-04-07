@@ -66,14 +66,14 @@ async fn test_iter_accounts(store: Store) {
                 AccountState {
                     nonce: 2 * i,
                     balance: U256::from(3 * i),
-                    code_hash: *EMPTY_KECCACK_HASH,
-                    storage_root: *EMPTY_TRIE_HASH,
+                    code_hash: EMPTY_KECCACK_HASH,
+                    storage_root: EMPTY_TRIE_HASH,
                 },
             )
         })
         .collect();
     accounts.sort_by_key(|a| a.0);
-    let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
+    let mut trie = store.open_direct_state_trie(EMPTY_TRIE_HASH).unwrap();
     for (address, state) in &accounts {
         trie.insert(address.0.to_vec(), state.encode_to_vec())
             .unwrap();
@@ -94,20 +94,20 @@ async fn test_iter_storage(store: Store) {
         .collect();
     slots.sort_by_key(|a| a.0);
     let mut trie = store
-        .open_direct_storage_trie(address, *EMPTY_TRIE_HASH)
+        .open_direct_storage_trie(address, EMPTY_TRIE_HASH)
         .unwrap();
     for (slot, value) in &slots {
         trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
     }
     let storage_root = trie.hash(&ethrex_crypto::NativeCrypto).unwrap();
-    let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
+    let mut trie = store.open_direct_state_trie(EMPTY_TRIE_HASH).unwrap();
     trie.insert(
         address.0.to_vec(),
         AccountState {
             nonce: 1,
             balance: U256::zero(),
             storage_root,
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: EMPTY_KECCACK_HASH,
         }
         .encode_to_vec(),
     )
@@ -219,7 +219,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
         parent_beacon_block_root: Some(H256::zero()),
-        requests_hash: Some(*EMPTY_KECCACK_HASH),
+        requests_hash: Some(EMPTY_KECCACK_HASH),
         ..Default::default()
     };
     let block_body = BlockBody {

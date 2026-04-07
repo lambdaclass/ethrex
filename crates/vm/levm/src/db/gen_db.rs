@@ -254,7 +254,7 @@ impl GeneralizedDatabase {
         use ethrex_common::constants::EMPTY_KECCACK_HASH;
 
         let code_hash = self.get_account(address)?.info.code_hash;
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(0);
         }
         let metadata = self.get_code_metadata(code_hash)?;

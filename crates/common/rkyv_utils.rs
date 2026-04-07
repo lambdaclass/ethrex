@@ -1,4 +1,10 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
+use core::hash::{Hash, Hasher};
 use ethereum_types::{Bloom, H160, H256, U256};
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
@@ -7,13 +13,26 @@ use rkyv::{
     vec::{ArchivedVec, VecResolver},
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-};
+#[cfg(feature = "std")]
+use std::collections::HashMap;
 
-// Re-export H256Wrapper from ethrex-trie to avoid duplication
+// Re-export H256Wrapper from ethrex-trie when std is available
+#[cfg(feature = "std")]
 pub use ethrex_trie::rkyv_utils::H256Wrapper;
+
+// When std is not available, define H256Wrapper locally
+#[cfg(not(feature = "std"))]
+#[derive(Archive, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[rkyv(remote = H256)]
+#[rkyv(derive(Ord, PartialOrd, PartialEq, Eq, Hash))]
+pub struct H256Wrapper([u8; 32]);
+
+#[cfg(not(feature = "std"))]
+impl From<H256Wrapper> for H256 {
+    fn from(value: H256Wrapper) -> Self {
+        Self(value.0)
+    }
+}
 
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = Vec<Vec<u8>>)]
@@ -135,6 +154,7 @@ impl From<OptionH256Wrapper> for Option<H256> {
     }
 }
 
+#[cfg(feature = "std")]
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = Option<HashMap<H160, Vec<Vec<u8>>>>)]
 pub enum OptionStorageWrapper {
@@ -145,6 +165,7 @@ pub enum OptionStorageWrapper {
     None,
 }
 
+#[cfg(feature = "std")]
 impl From<OptionStorageWrapper> for Option<HashMap<H160, Vec<Vec<u8>>>> {
     fn from(value: OptionStorageWrapper) -> Self {
         if let OptionStorageWrapper::Some(x) = value {

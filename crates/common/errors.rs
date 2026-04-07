@@ -1,4 +1,9 @@
 use crate::types::{InvalidBlockBodyError, InvalidBlockHeaderError};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 /// Errors that occur during block validation.
 ///

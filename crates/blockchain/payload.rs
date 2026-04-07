@@ -141,7 +141,7 @@ pub fn create_payload(
 
     let header = BlockHeader {
         parent_hash: args.parent,
-        ommers_hash: *DEFAULT_OMMERS_HASH,
+        ommers_hash: DEFAULT_OMMERS_HASH,
         coinbase: args.fee_recipient,
         state_root: parent_block.state_root,
         transactions_root: compute_transactions_root(&[], &NativeCrypto),
@@ -175,7 +175,7 @@ pub fn create_payload(
         parent_beacon_block_root: args.beacon_root,
         requests_hash: chain_config
             .is_prague_activated(args.timestamp)
-            .then_some(*DEFAULT_REQUESTS_HASH),
+            .then_some(DEFAULT_REQUESTS_HASH),
         slot_number: args.slot_number,
         ..Default::default()
     };

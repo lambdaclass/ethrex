@@ -777,7 +777,7 @@ impl Blockchain {
             hash.finalize(&NativeCrypto)
         } else {
             state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         };
 
         let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
@@ -938,7 +938,7 @@ impl Blockchain {
                                         if update.removed {
                                             results.push((
                                                 idx,
-                                                *EMPTY_TRIE_HASH,
+                                                EMPTY_TRIE_HASH,
                                                 vec![(Nibbles::default(), vec![RLP_NULL])],
                                             ));
                                             continue;
@@ -952,7 +952,7 @@ impl Blockchain {
                                                     Some(rlp) => {
                                                         AccountState::decode(&rlp)?.storage_root
                                                     }
-                                                    None => *EMPTY_TRIE_HASH,
+                                                    None => EMPTY_TRIE_HASH,
                                                 };
                                             self.storage.open_storage_trie(
                                                 *hashed_address,
@@ -1098,7 +1098,7 @@ impl Blockchain {
                 hash.finalize(&NativeCrypto)
             } else {
                 state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-                *EMPTY_TRIE_HASH
+                EMPTY_TRIE_HASH
             };
 
         Ok((
@@ -1459,7 +1459,7 @@ impl Blockchain {
                 continue; // empty account, doesn't have a storage trie
             };
             let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-            if storage_root_hash == *EMPTY_TRIE_HASH {
+            if storage_root_hash == EMPTY_TRIE_HASH {
                 continue; // empty storage trie
             }
             if !nodes.contains_key(&storage_root_hash) {
@@ -1693,7 +1693,7 @@ impl Blockchain {
                 continue; // empty account, doesn't have a storage trie
             };
             let storage_root_hash = AccountState::decode(&encoded_account)?.storage_root;
-            if storage_root_hash == *EMPTY_TRIE_HASH {
+            if storage_root_hash == EMPTY_TRIE_HASH {
                 continue; // empty storage trie
             }
             if !nodes.contains_key(&storage_root_hash) {
@@ -2585,7 +2585,7 @@ fn load_trie(
             let state_trie = storage.open_state_trie(parent_state_root)?;
             let storage_root = match state_trie.get(account_hash.as_bytes())? {
                 Some(rlp) => AccountState::decode(&rlp)?.storage_root,
-                None => *EMPTY_TRIE_HASH,
+                None => EMPTY_TRIE_HASH,
             };
             storage.open_storage_trie(account_hash, parent_state_root, storage_root)?
         }
@@ -2852,7 +2852,7 @@ fn handle_subtrie(
                                 .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                         }
                     }
-                    accounts.get_mut(&prefix).expect("just loaded").storage_root = *EMPTY_TRIE_HASH;
+                    accounts.get_mut(&prefix).expect("just loaded").storage_root = EMPTY_TRIE_HASH;
                     if expected_shards.insert(prefix, 0xFFFF).is_none() {
                         pending_storage_accounts += 1;
                     }
@@ -2866,7 +2866,7 @@ fn handle_subtrie(
                     let storage_root = accounts
                         .get(&prefix)
                         .map(|a| a.storage_root)
-                        .unwrap_or(*EMPTY_TRIE_HASH);
+                        .unwrap_or(EMPTY_TRIE_HASH);
 
                     let is_new = !expected_shards.contains_key(&prefix);
                     for (key, value) in account_storage {
@@ -2990,10 +2990,10 @@ fn handle_subtrie(
                             hash.finalize(&NativeCrypto)
                         } else {
                             state.nodes.push((Nibbles::default(), vec![RLP_NULL]));
-                            *EMPTY_TRIE_HASH
+                            EMPTY_TRIE_HASH
                         }
                     } else {
-                        *EMPTY_TRIE_HASH
+                        EMPTY_TRIE_HASH
                     };
                     storage_nodes.push((prefix, state.nodes));
 

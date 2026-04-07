@@ -57,7 +57,7 @@ pub enum Error {
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(clippy::useless_conversion, non_camel_case_types)]
 pub fn raise_fd_limit() -> Result<Outcome, Error> {
-    use std::cmp;
+    use core::cmp;
     use std::io;
     use std::mem::size_of_val;
     use std::ptr::null_mut;

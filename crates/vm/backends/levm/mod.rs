@@ -546,7 +546,7 @@ impl LEVM {
     /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
     fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
         if new_code.is_empty() {
-            (*EMPTY_KECCACK_HASH, None)
+            (EMPTY_KECCACK_HASH, None)
         } else {
             let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
             let hash = code_obj.hash;
@@ -633,10 +633,10 @@ impl LEVM {
             }
 
             // Detect account removal (EIP-161): post-state empty but pre-state existed
-            let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCACK_HASH;
+            let post_empty = balance.is_zero() && nonce == 0 && code_hash == EMPTY_KECCACK_HASH;
             let pre_empty = prestate.balance.is_zero()
                 && prestate.nonce == 0
-                && prestate.code_hash == *EMPTY_KECCACK_HASH;
+                && prestate.code_hash == EMPTY_KECCACK_HASH;
             let removed = post_empty && !pre_empty;
 
             let balance_changed = acct_changes
@@ -751,7 +751,7 @@ impl LEVM {
                 let code_hash = code_update
                     .as_ref()
                     .map(|(h, _)| *h)
-                    .unwrap_or(*EMPTY_KECCACK_HASH);
+                    .unwrap_or(EMPTY_KECCACK_HASH);
                 // NOTE: has_storage is false for newly inserted accounts. This is safe
                 // because this DB is only used for the parallel execution path (state
                 // comes from BAL, not get_state_transitions_tx). Do not reuse this DB
@@ -1426,7 +1426,7 @@ impl LEVM {
                 if seeded_pos > 0 {
                     let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
                     let seeded_hash = if seeded_code.is_empty() {
-                        *EMPTY_KECCACK_HASH
+                        EMPTY_KECCACK_HASH
                     } else {
                         ethrex_common::utils::keccak(seeded_code)
                     };
@@ -1533,7 +1533,7 @@ impl LEVM {
             if let Some(expected_code) = find_exact_change_code(&acct.code_changes, withdrawal_idx)
             {
                 let code_hash = if expected_code.is_empty() {
-                    *EMPTY_KECCACK_HASH
+                    EMPTY_KECCACK_HASH
                 } else {
                     ethrex_common::utils::keccak(expected_code)
                 };
@@ -1714,7 +1714,7 @@ impl LEVM {
                 store
                     .get_account_state(ac.address)
                     .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                    .filter(|s| s.code_hash != EMPTY_KECCACK_HASH)
                     .map(|s| s.code_hash)
             })
             .collect();
@@ -2451,7 +2451,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(100),
                 nonce: 5,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: EMPTY_KECCACK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -2478,7 +2478,7 @@ mod bal_tests {
         // Last balance entry wins
         assert_eq!(info.balance, U256::from(80));
         assert_eq!(info.nonce, 6);
-        assert_eq!(info.code_hash, *EMPTY_KECCACK_HASH);
+        assert_eq!(info.code_hash, EMPTY_KECCACK_HASH);
         // Storage
         let key = ethrex_common::utils::u256_to_h256(U256::from(42));
         assert_eq!(*u.added_storage.get(&key).unwrap(), U256::from(999));
@@ -2493,7 +2493,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(1000),
                 nonce: 0,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: EMPTY_KECCACK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -2534,7 +2534,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(50),
                 nonce: 1,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: EMPTY_KECCACK_HASH,
                 storage_root: H256::zero(),
             },
         );

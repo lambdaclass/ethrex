@@ -2,6 +2,11 @@ use crate::{
     H256,
     types::{BlobsBundle, balance_diff::BalanceDiff},
 };
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]

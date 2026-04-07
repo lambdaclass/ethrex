@@ -1,9 +1,12 @@
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
+#[cfg(feature = "std")]
 use ethrex_trie::Trie;
+#[cfg(feature = "std")]
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +108,7 @@ pub struct CodeMetadata {
     pub length: u64,
 }
 
+#[cfg(feature = "std")]
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
@@ -140,7 +144,7 @@ pub struct AccountStateSlimCodec(pub AccountState);
 impl Default for AccountInfo {
     fn default() -> Self {
         Self {
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: EMPTY_KECCACK_HASH,
             balance: Default::default(),
             nonce: Default::default(),
         }
@@ -152,8 +156,8 @@ impl Default for AccountState {
         Self {
             nonce: Default::default(),
             balance: Default::default(),
-            storage_root: *EMPTY_TRIE_HASH,
-            code_hash: *EMPTY_KECCACK_HASH,
+            storage_root: EMPTY_TRIE_HASH,
+            code_hash: EMPTY_KECCACK_HASH,
         }
     }
 }
@@ -162,12 +166,13 @@ impl Default for Code {
     fn default() -> Self {
         Self {
             bytecode: Bytes::new(),
-            hash: *EMPTY_KECCACK_HASH,
+            hash: EMPTY_KECCACK_HASH,
             jump_targets: Vec::new(),
         }
     }
 }
 
+#[cfg(feature = "std")]
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
         let code = Code::from_bytecode(genesis.code, &NativeCrypto);
@@ -249,7 +254,7 @@ impl RLPEncode for AccountStateSlimCodec {
         struct StorageRootCodec<'a>(&'a H256);
         impl RLPEncode for StorageRootCodec<'_> {
             fn encode(&self, buf: &mut dyn BufMut) {
-                let data = if *self.0 != *EMPTY_TRIE_HASH {
+                let data = if *self.0 != EMPTY_TRIE_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
@@ -262,7 +267,7 @@ impl RLPEncode for AccountStateSlimCodec {
         struct CodeHashCodec<'a>(&'a H256);
         impl RLPEncode for CodeHashCodec<'_> {
             fn encode(&self, buf: &mut dyn BufMut) {
-                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                let data = if *self.0 != EMPTY_KECCACK_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
@@ -287,7 +292,7 @@ impl RLPDecode for AccountStateSlimCodec {
         impl RLPDecode for StorageRootCodec {
             fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
                 let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_TRIE_HASH,
+                    Some(0x80) => EMPTY_TRIE_HASH,
                     Some(0xA0) => {
                         let data;
                         (data, rlp) = rlp
@@ -306,7 +311,7 @@ impl RLPDecode for AccountStateSlimCodec {
         impl RLPDecode for CodeHashCodec {
             fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
                 let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_KECCACK_HASH,
+                    Some(0x80) => EMPTY_KECCACK_HASH,
                     Some(0xA0) => {
                         let data;
                         (data, rlp) = rlp
@@ -339,6 +344,7 @@ impl RLPDecode for AccountStateSlimCodec {
     }
 }
 
+#[cfg(feature = "std")]
 pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
         (!v.is_zero()).then_some((
@@ -349,6 +355,7 @@ pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto)
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
+#[cfg(feature = "std")]
 impl From<&GenesisAccount> for AccountState {
     fn from(value: &GenesisAccount) -> Self {
         AccountState {
@@ -360,6 +367,7 @@ impl From<&GenesisAccount> for AccountState {
     }
 }
 
+#[cfg(feature = "std")]
 impl Account {
     pub fn new(balance: U256, code: Code, nonce: u64, storage: FxHashMap<H256, U256>) -> Self {
         Self {
@@ -376,7 +384,7 @@ impl Account {
 
 impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == EMPTY_KECCACK_HASH
     }
 }
 

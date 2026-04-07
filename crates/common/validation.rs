@@ -2,13 +2,20 @@
 //!
 //! This module provides pure validation functions that can be used without
 //! storage dependencies, making them suitable for use in zkVM guest programs.
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use crate::errors::InvalidBlockError;
+#[cfg(feature = "std")]
+use crate::types::compute_receipts_root;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
 use ethrex_crypto::Crypto;
@@ -77,6 +84,7 @@ pub fn validate_gas_used(
 }
 
 /// Validates that the receipts root matches the block header.
+#[cfg(feature = "std")]
 pub fn validate_receipts_root(
     block_header: &BlockHeader,
     receipts: &[Receipt],

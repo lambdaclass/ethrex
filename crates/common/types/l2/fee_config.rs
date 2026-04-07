@@ -1,3 +1,8 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
 use ethereum_types::Address;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};

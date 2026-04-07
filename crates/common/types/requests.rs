@@ -1,4 +1,9 @@
 use crate::H256;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
 use ethereum_types::Address;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
@@ -70,12 +75,12 @@ impl Requests {
         let bytes: Vec<u8> = match self {
             Requests::Deposit(deposits) => {
                 let deposit_data = deposits.iter().flat_map(|d| d.to_summarized_byte_array());
-                std::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
+                core::iter::once(DEPOSIT_TYPE).chain(deposit_data).collect()
             }
-            Requests::Withdrawal(data) => std::iter::once(WITHDRAWAL_TYPE)
+            Requests::Withdrawal(data) => core::iter::once(WITHDRAWAL_TYPE)
                 .chain(data.iter().cloned())
                 .collect(),
-            Requests::Consolidation(data) => std::iter::once(CONSOLIDATION_TYPE)
+            Requests::Consolidation(data) => core::iter::once(CONSOLIDATION_TYPE)
                 .chain(data.iter().cloned())
                 .collect(),
         };
@@ -96,7 +101,7 @@ impl Requests {
                     && log
                         .topics
                         .first()
-                        .is_some_and(|topic| topic == &*DEPOSIT_TOPIC)
+                        .is_some_and(|topic| topic == &DEPOSIT_TOPIC)
                 {
                     deposits.push(Deposit::from_abi_byte_array(&log.data)?);
                 }

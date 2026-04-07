@@ -69,7 +69,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
-        if code_hash != *EMPTY_KECCACK_HASH {
+        if code_hash != EMPTY_KECCACK_HASH {
             let mut code_accessed = self
                 .code_accessed
                 .lock()

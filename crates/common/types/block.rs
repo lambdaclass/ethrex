@@ -10,6 +10,11 @@ use crate::{
     },
     types::{Receipt, Transaction},
 };
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
 use ethereum_types::Bloom;
 use ethrex_crypto::{Crypto, CryptoError, NativeCrypto};
@@ -19,17 +24,19 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+#[cfg(feature = "std")]
 use ethrex_trie::Trie;
+#[cfg(feature = "std")]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
-use std::cmp::{Ordering, max};
+use core::cmp::{Ordering, max};
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
-use once_cell::sync::OnceCell;
+use crate::OnceCell;
 
 #[derive(
     PartialEq, Eq, Debug, Clone, Deserialize, Serialize, Default, RSerialize, RDeserialize, Archive,
@@ -320,6 +327,7 @@ impl BlockBody {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn get_transactions_with_sender(
         &self,
         crypto: &dyn Crypto,
@@ -331,8 +339,19 @@ impl BlockBody {
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }
+    #[cfg(not(feature = "std"))]
+    pub fn get_transactions_with_sender(
+        &self,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
+        self.transactions
+            .iter()
+            .map(|tx| Ok((tx, tx.sender(crypto)?)))
+            .collect()
+    }
 }
 
+#[cfg(feature = "std")]
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
     let iter = transactions.iter().enumerate().map(|(idx, tx)| {
         // Key: RLP(tx_index)
@@ -343,6 +362,7 @@ pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Cryp
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
+#[cfg(feature = "std")]
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
     let iter = receipts
         .iter()
@@ -352,6 +372,7 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
+#[cfg(feature = "std")]
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
         .iter()
@@ -684,7 +705,7 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::NonceNotZero);
     }
 
-    if header.ommers_hash != *DEFAULT_OMMERS_HASH {
+    if header.ommers_hash != DEFAULT_OMMERS_HASH {
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
 
@@ -696,6 +717,7 @@ pub fn validate_block_header(
 }
 
 /// Validates that the body matches with the header
+#[cfg(feature = "std")]
 pub fn validate_block_body(
     block_header: &BlockHeader,
     block_body: &BlockBody,
@@ -722,7 +744,7 @@ pub fn validate_block_body(
             }
         }
         (Some(withdrawals_root), None) => {
-            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
+            if withdrawals_root != EMPTY_WITHDRAWALS_HASH {
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
         }
@@ -924,7 +946,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(EMPTY_KECCACK_HASH),
             ..Default::default()
         };
         let block = BlockHeader {
@@ -968,7 +990,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(EMPTY_KECCACK_HASH),
             ..Default::default()
         };
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());

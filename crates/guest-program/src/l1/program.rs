@@ -175,7 +175,7 @@ fn new_payload_request_to_block(
 
     let header = BlockHeader {
         parent_hash: H256::from_slice(&payload.parent_hash),
-        ommers_hash: *DEFAULT_OMMERS_HASH,
+        ommers_hash: DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
         state_root: H256::from_slice(&payload.state_root),
         transactions_root: compute_transactions_root(&body.transactions, crypto),

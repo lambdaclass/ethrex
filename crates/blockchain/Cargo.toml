@@ -10,7 +10,7 @@ license.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
-ethrex-common = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false, features = ["std"] }
 ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true

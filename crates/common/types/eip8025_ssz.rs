@@ -4,6 +4,7 @@
 //! `NewPayloadRequest` and producing the `PublicInput` committed to by
 //! execution proofs.
 
+use alloc::vec::Vec;
 use libssz::{SszDecode, SszEncode};
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_merkle::{HashTreeRoot, Sha256Hasher};

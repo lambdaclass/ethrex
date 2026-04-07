@@ -7,7 +7,7 @@ documentation.workspace = true
 license.workspace = true
 
 [dependencies]
-ethrex-common = { workspace = true, default-features = false }
+ethrex-common = { workspace = true, default-features = false, features = ["std"] }
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }

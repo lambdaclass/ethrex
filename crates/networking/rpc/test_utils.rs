@@ -79,7 +79,7 @@ fn test_header(block_num: u64) -> BlockHeader {
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
         parent_beacon_block_root: Some(H256::zero()),
-        requests_hash: Some(*DEFAULT_REQUESTS_HASH),
+        requests_hash: Some(DEFAULT_REQUESTS_HASH),
         ..Default::default()
     }
 }

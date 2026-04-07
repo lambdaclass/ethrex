@@ -1,6 +1,11 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::{cmp::min, fmt::Display};
+#[cfg(feature = "std")]
 use std::{
-    cmp::min,
-    fmt::Display,
     num::NonZeroUsize,
     sync::{LazyLock, Mutex},
 };
@@ -9,9 +14,12 @@ use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, CryptoError};
+#[cfg(feature = "std")]
 use lru::LruCache;
+#[cfg(feature = "std")]
 pub use mempool::MempoolTransaction;
 
+#[cfg(feature = "std")]
 const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 
 /// Global cache mapping transaction hash → recovered sender address.
@@ -24,6 +32,7 @@ const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
 /// a thread panicked mid-update; the LruCache invariants are maintained by the
 /// std Mutex (data is still accessible), and a missing entry only costs one
 /// redundant recovery, so it's safe to keep using.
+#[cfg(feature = "std")]
 pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
     Mutex::new(LruCache::new(
         NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
@@ -46,8 +55,8 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+use crate::OnceCell;
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
-use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -391,7 +400,7 @@ impl From<TxType> for u8 {
 }
 
 impl Display for TxType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TxType::Legacy => write!(f, "Legacy"),
             TxType::EIP2930 => write!(f, "EIP2930"),
@@ -1107,6 +1116,7 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
+    #[cfg(feature = "std")]
     pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
         let sender_cache = match self {
             Transaction::LegacyTransaction(tx) => &tx.sender_cache,
@@ -1138,6 +1148,25 @@ impl Transaction {
                 Ok(sender)
             })
             .copied()
+    }
+
+    #[cfg(not(feature = "std"))]
+    pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        let sender_cache = match self {
+            Transaction::LegacyTransaction(tx) => &tx.sender_cache,
+            Transaction::EIP2930Transaction(tx) => &tx.sender_cache,
+            Transaction::EIP1559Transaction(tx) => &tx.sender_cache,
+            Transaction::EIP4844Transaction(tx) => &tx.sender_cache,
+            Transaction::EIP7702Transaction(tx) => &tx.sender_cache,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.sender_cache,
+            Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
+        };
+        if let Some(addr) = sender_cache.get() {
+            return Ok(*addr);
+        }
+        let sender = self.compute_sender(crypto)?;
+        let _ = sender_cache.set(sender);
+        Ok(sender)
     }
 
     fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
@@ -1749,11 +1778,12 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
+    use alloc::collections::BTreeMap;
+    use core::str::FromStr;
     use ethereum_types::H160;
     use serde::Deserialize;
     use serde::{Deserializer, de::Error};
     use serde_json::Value;
-    use std::{collections::HashMap, str::FromStr};
 
     #[cfg(feature = "c-kzg")]
     use crate::types::BYTES_PER_BLOB;
@@ -2134,7 +2164,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
             let tx_type =
                 serde_json::from_value::<TxType>(map.remove("type").unwrap_or(Value::default()))
                     .unwrap_or_else(|_| {
@@ -2200,7 +2230,7 @@ mod serde_impl {
     }
 
     fn deserialize_input_field(
-        map: &mut std::collections::HashMap<String, Value>,
+        map: &mut alloc::collections::BTreeMap<String, Value>,
     ) -> Result<Bytes, serde_json::Error> {
         let data_str: String = serde_json::from_value(
             map.remove("input")
@@ -2222,7 +2252,7 @@ mod serde_impl {
     }
 
     fn deserialize_field<'de, T, D>(
-        map: &mut HashMap<String, serde_json::Value>,
+        map: &mut BTreeMap<String, serde_json::Value>,
         key: &str,
     ) -> Result<T, D::Error>
     where
@@ -2241,7 +2271,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(LegacyTransaction {
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
@@ -2263,7 +2293,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP2930Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
@@ -2295,7 +2325,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
             Ok(EIP1559Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
                 nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
@@ -2331,7 +2361,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP4844Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
@@ -2373,7 +2403,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP7702Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
@@ -2417,7 +2447,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(PrivilegedL2Transaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
@@ -2447,7 +2477,7 @@ mod serde_impl {
         where
             D: serde::Deserializer<'de>,
         {
-            let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
+            let mut map = <BTreeMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(FeeTokenTransaction {
                 chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
@@ -2542,7 +2572,7 @@ mod serde_impl {
     {
         // The input field can be named either input or data
         // In case we have both fields both should be named the same
-        let variables = HashMap::<String, Value>::deserialize(deserializer)?;
+        let variables = BTreeMap::<String, Value>::deserialize(deserializer)?;
         let data = variables.get("data");
         let input = variables.get("input");
         let value = match (data, input) {
@@ -2750,7 +2780,7 @@ mod serde_impl {
                 return Err(GenericTransactionError::InvalidTxType(value.r#type));
             }
             let TxKind::Call(to) = value.to else {
-                return Err(GenericTransactionError::MissingField("to".to_owned()));
+                return Err(GenericTransactionError::MissingField(String::from("to")));
             };
             Ok(Self {
                 chain_id: value.chain_id.unwrap_or_default(),
@@ -2885,9 +2915,9 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
                 fee_token: value
                     .fee_token
-                    .ok_or(GenericTransactionError::MissingField(
-                        "fee token".to_owned(),
-                    ))?,
+                    .ok_or(GenericTransactionError::MissingField(String::from(
+                        "fee token",
+                    )))?,
                 chain_id: value.chain_id.unwrap_or_default(),
                 ..Default::default()
             })
@@ -2966,6 +2996,7 @@ mod serde_impl {
     }
 }
 
+#[cfg(feature = "std")]
 mod mempool {
     use super::*;
     use std::{
@@ -3032,7 +3063,7 @@ mod mempool {
         }
     }
 
-    impl std::ops::Deref for MempoolTransaction {
+    impl core::ops::Deref for MempoolTransaction {
         type Target = Transaction;
 
         fn deref(&self) -> &Self::Target {

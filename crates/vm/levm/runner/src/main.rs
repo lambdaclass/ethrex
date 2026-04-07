@@ -145,7 +145,7 @@ fn main() {
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let header = BlockHeader {
-        state_root: *EMPTY_TRIE_HASH,
+        state_root: EMPTY_TRIE_HASH,
         ..Default::default()
     };
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());

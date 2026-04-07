@@ -75,7 +75,7 @@ impl From<AccountState> for LevmAccount {
             },
             storage: Default::default(),
             status: AccountStatus::Unmodified,
-            has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+            has_storage: state.storage_root != EMPTY_TRIE_HASH,
             // An account with all default fields was not found in the DB.
             // Post-EIP-161, truly empty accounts are pruned from the trie,
             // so default == non-existent. Accounts with non-empty storage root
@@ -107,7 +107,7 @@ impl LevmAccount {
     }
 
     pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
+        self.info.code_hash != EMPTY_KECCACK_HASH
     }
 
     pub fn create_would_collide(&self) -> bool {

@@ -1,4 +1,9 @@
-use std::fmt;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::fmt;
 
 use crc32fast::Hasher;
 use ethrex_rlp::{

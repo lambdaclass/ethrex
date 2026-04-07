@@ -166,7 +166,7 @@ async fn heal_state_trie(
                                 H256::from_slice(&meta.path.concat(&node.partial).to_bytes());
 
                             // // Collect valid code hash
-                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                            if account.code_hash != EMPTY_KECCACK_HASH {
                                 code_hash_collector.add(account.code_hash);
                                 code_hash_collector.flush_if_needed().await?;
                             }

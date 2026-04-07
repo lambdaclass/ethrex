@@ -1,3 +1,8 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethereum_types::{Address, U256};

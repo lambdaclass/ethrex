@@ -1,6 +1,11 @@
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use bytes::Bytes;
+use core::fmt::Display;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
 
 /// Enum used to identify the different proving systems.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +41,7 @@ impl ProverType {
 }
 
 impl Display for ProverType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Exec => write!(f, "Exec"),
             Self::RISC0 => write!(f, "RISC0"),

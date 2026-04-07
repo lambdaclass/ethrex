@@ -1,3 +1,5 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use ethrex_p2p::types::Node;
 use std::{
     fmt::{self},

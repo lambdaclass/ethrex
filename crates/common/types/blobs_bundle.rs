@@ -1,4 +1,9 @@
-use std::ops::AddAssign;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::ops::AddAssign;
 
 use crate::serde_utils;
 #[cfg(feature = "c-kzg")]
@@ -534,7 +539,7 @@ mod tests {
         let blob = crate::types::blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
             .expect("Failed to create blob");
         let blobs =
-            std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
+            core::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
 
         let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
             .expect("Failed to create blobs bundle");

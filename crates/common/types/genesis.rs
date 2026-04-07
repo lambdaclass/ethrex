@@ -1,21 +1,25 @@
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::encode::RLPEncode;
+#[cfg(feature = "std")]
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "std")]
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     io::{BufReader, Error},
     path::Path,
 };
 use tracing::warn;
 
-use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-};
+use super::{AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE};
+#[cfg(feature = "std")]
+use super::{compute_receipts_root, compute_transactions_root, compute_withdrawals_root};
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
     rkyv_utils,
@@ -63,10 +67,12 @@ pub enum GenesisError {
     Decode(#[from] serde_json::Error),
     #[error("Fork not supported. Only post-merge networks are supported.")]
     InvalidFork(),
+    #[cfg(feature = "std")]
     #[error("Failed to open genesis file: {0}")]
     File(#[from] Error),
 }
 
+#[cfg(feature = "std")]
 impl TryFrom<&Path> for Genesis {
     type Error = GenesisError;
 
@@ -275,6 +281,7 @@ pub struct ChainConfig {
     pub enable_verkle_at_genesis: bool,
 }
 
+#[cfg(feature = "std")]
 lazy_static::lazy_static! {
     pub static ref NETWORK_NAMES: HashMap<u64, &'static str> = {
         HashMap::from([
@@ -407,6 +414,7 @@ impl ChainConfig {
         self.eip155_block.is_some_and(|num| num <= block_number)
     }
 
+    #[cfg(feature = "std")]
     pub fn display_config(&self) -> String {
         let network = NETWORK_NAMES.get(&self.chain_id).unwrap_or(&"unknown");
         let mut output = format!("Chain ID: {} ({})\n\n", self.chain_id, network);
@@ -676,6 +684,7 @@ pub struct GenesisAccount {
     pub nonce: u64,
 }
 
+#[cfg(feature = "std")]
 impl Genesis {
     pub fn get_block(&self) -> Block {
         Block::new(self.get_block_header(), self.get_block_body())
@@ -710,20 +719,20 @@ impl Genesis {
         let requests_hash = self
             .config
             .is_prague_activated(self.timestamp)
-            .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
+            .then_some(self.requests_hash.unwrap_or(DEFAULT_REQUESTS_HASH));
 
         let block_access_list_hash = self
             .config
             .is_amsterdam_activated(self.timestamp)
             .then_some(
                 self.block_access_list_hash
-                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
+                    .unwrap_or(EMPTY_BLOCK_ACCESS_LIST_HASH),
             );
         let slot_number = self.slot_number;
 
         BlockHeader {
             parent_hash: H256::zero(),
-            ommers_hash: *DEFAULT_OMMERS_HASH,
+            ommers_hash: DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
             state_root: self.compute_state_root(),
             transactions_root: compute_transactions_root(&[], &NativeCrypto),
@@ -890,7 +899,7 @@ mod tests {
         let header = genesis_block.header;
         let body = genesis_block.body;
         assert_eq!(header.parent_hash, H256::from([0; 32]));
-        assert_eq!(header.ommers_hash, *DEFAULT_OMMERS_HASH);
+        assert_eq!(header.ommers_hash, DEFAULT_OMMERS_HASH);
         assert_eq!(header.coinbase, Address::default());
         assert_eq!(
             header.state_root,

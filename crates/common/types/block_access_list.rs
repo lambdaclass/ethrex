@@ -1,3 +1,6 @@
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use bytes::{BufMut, Bytes};
 use ethereum_types::{Address, H256, U256};
 use ethrex_rlp::{
@@ -5,10 +8,11 @@ use ethrex_rlp::{
     encode::{RLPEncode, encode_length, list_length},
     structs,
 };
+#[cfg(feature = "std")]
 use indexmap::{IndexMap, IndexSet};
+#[cfg(feature = "std")]
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
 
 use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
 use crate::utils::keccak;
@@ -546,7 +550,7 @@ impl BlockAccessList {
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
         if self.inner.is_empty() {
-            return *EMPTY_BLOCK_ACCESS_LIST_HASH;
+            return EMPTY_BLOCK_ACCESS_LIST_HASH;
         }
 
         let buf = self.encode_to_vec();
@@ -555,6 +559,7 @@ impl BlockAccessList {
 
     /// Builds a validation index for fast per-tx BAL verification.
     /// Call once per block before parallel execution.
+    #[cfg(feature = "std")]
     pub fn build_validation_index(&self) -> BalAddressIndex {
         let mut addr_to_idx =
             FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
@@ -602,6 +607,7 @@ impl BlockAccessList {
 
 /// Pre-computed index for fast per-tx BAL validation lookups.
 /// Built once per block, shared read-only across parallel tx validations.
+#[cfg(feature = "std")]
 pub struct BalAddressIndex {
     /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
     pub addr_to_idx: FxHashMap<Address, usize>,
@@ -716,6 +722,7 @@ pub struct BlockAccessListCheckpoint {
 /// Unlike [`BlockAccessListCheckpoint`] (for inner-call reverts), this captures the
 /// full recorder state including touched addresses and storage reads, enabling complete
 /// rollback without cloning the entire recorder.
+#[cfg(feature = "std")]
 #[derive(Debug)]
 pub struct TxCheckpoint {
     inner: BlockAccessListCheckpoint,
@@ -735,6 +742,7 @@ pub struct TxCheckpoint {
 /// - 0: System contracts (pre-execution phase)
 /// - 1..n: Transaction indices (1-indexed)
 /// - n+1: Post-execution phase (withdrawals)
+#[cfg(feature = "std")]
 #[derive(Debug, Default, Clone)]
 pub struct BlockAccessListRecorder {
     /// Current block access index per EIP-7928 spec (uint16).
@@ -779,6 +787,7 @@ pub struct BlockAccessListRecorder {
     in_system_call: bool,
 }
 
+#[cfg(feature = "std")]
 impl BlockAccessListRecorder {
     /// Creates a new empty recorder.
     pub fn new() -> Self {

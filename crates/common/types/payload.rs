@@ -1,4 +1,9 @@
 use super::{BlobsBundle, Block, block_access_list::BlockAccessList, requests::EncodedRequests};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use ethereum_types::U256;
 
 #[derive(Debug, Clone)]

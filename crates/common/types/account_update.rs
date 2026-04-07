@@ -2,9 +2,16 @@ use crate::{
     Address, H256, U256,
     types::{AccountInfo, Code},
 };
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
+#[cfg(feature = "std")]
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "std")]
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountUpdate {
     pub address: Address,
@@ -18,6 +25,7 @@ pub struct AccountUpdate {
     // removed_storage_keys: Vec<H256>,
 }
 
+#[cfg(feature = "std")]
 impl AccountUpdate {
     /// Creates new empty update for the given account
     pub fn new(address: Address) -> AccountUpdate {

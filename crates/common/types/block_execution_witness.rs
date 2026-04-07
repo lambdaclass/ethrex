@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use bytes::Bytes;
 
@@ -14,6 +16,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+#[cfg(feature = "std")]
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
@@ -585,7 +588,7 @@ impl GuestProgramState {
     /// Retrieves the account code for a specific account.
     /// Returns an Err if the code is not found.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
         match self.codes_hashed.get(&code_hash) {
@@ -611,7 +614,7 @@ impl GuestProgramState {
     ) -> Result<CodeMetadata, GuestProgramStateError> {
         use crate::constants::EMPTY_KECCACK_HASH;
 
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == EMPTY_KECCACK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
         match self.codes_hashed.get(&code_hash) {

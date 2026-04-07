@@ -1,4 +1,9 @@
 use crate::{Address, H256, U256};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,

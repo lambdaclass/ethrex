@@ -97,7 +97,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
             );
             let parent_beacon_block_root = Some(H256::zero());
             let requests_hash = if fork == Fork::Prague {
-                Some(*DEFAULT_REQUESTS_HASH)
+                Some(DEFAULT_REQUESTS_HASH)
             } else {
                 None
             };
