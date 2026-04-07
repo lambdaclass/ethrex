@@ -502,7 +502,7 @@ pub async fn snap_sync(
     for file_path in code_hash_files {
         let snapshot_contents = async_fs::read_file(&file_path).await?;
         let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(file_path.clone()))?;
+            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(file_path))?;
 
         for hash in code_hashes {
             // If we haven't seen the code hash yet, add it to the list of hashes to download
