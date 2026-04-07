@@ -1177,7 +1177,7 @@ async fn insert_accounts(
                     if !nibble_iter.storage_accounts.is_empty() {
                         per_thread_storage_accounts
                             .lock()
-                            .unwrap()
+                            .expect("storage accounts mutex poisoned")
                             .push(nibble_iter.storage_accounts);
                     }
 
@@ -1207,7 +1207,7 @@ async fn insert_accounts(
     // Merge per-thread storage accounts (code hashes already flushed to disk by each thread)
     for (account_hash, storage_root) in per_thread_storage_accounts
         .into_inner()
-        .unwrap()
+        .expect("storage accounts mutex poisoned")
         .into_iter()
         .flatten()
     {
