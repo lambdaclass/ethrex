@@ -509,6 +509,7 @@ pub async fn start_api(
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
+    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(storage.get_chain_config().chain_id);
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let block_worker_channel = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
@@ -572,7 +573,7 @@ pub async fn start_api(
     tokio::spawn(async move {
         loop {
             let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
-            if result.is_err() {
+            if result.is_err() && !is_polygon {
                 warn!("No messages from the consensus layer. Is the consensus client running?");
             }
         }
