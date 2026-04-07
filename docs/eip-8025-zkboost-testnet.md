@@ -28,9 +28,9 @@ Lighthouse produces blocks via ethrex, then requests proofs from zkboost. zkboos
 ### Clone repositories
 
 ```bash
-# ethrex (eip-8025-zkboost branch)
+# ethrex (eip-8025 branch)
 git clone https://github.com/lambdaclass/ethrex.git
-cd ethrex && git checkout eip-8025-zkboost
+cd ethrex && git checkout eip-8025
 
 # zkboost
 git clone https://github.com/eth-act/zkboost.git
