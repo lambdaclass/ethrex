@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{types::TxKind, Address};
+use ethrex_common::{Address, types::TxKind};
 use ethrex_crypto::NativeCrypto;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -120,7 +120,10 @@ pub fn inspect(context: RpcApiContext) -> Result<Value, RpcErr> {
                 gas_price
             ),
         };
-        pending.entry(sender).or_default().insert(tx.nonce(), summary);
+        pending
+            .entry(sender)
+            .or_default()
+            .insert(tx.nonce(), summary);
     }
     let response = MempoolInspect {
         pending,
