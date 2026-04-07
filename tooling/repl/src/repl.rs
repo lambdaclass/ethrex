@@ -3,33 +3,49 @@ use std::sync::Arc;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{Config, Editor};
+use serde_json::Value;
 
 use crate::client::RpcClient;
 use crate::commands::{CommandDef, CommandRegistry, ParamType};
 use crate::completer::ReplHelper;
 use crate::ens;
 use crate::formatter;
-use crate::parser::{self, ParsedCommand};
+use crate::parser::{self, ParsedCommand, RpcArg};
+use crate::variables::VariableStore;
 
 pub struct Repl {
     client: RpcClient,
+    authrpc_client: Option<RpcClient>,
     registry: Arc<CommandRegistry>,
     history_path: String,
+    variables: VariableStore,
+    proof_callback_port: u16,
+    proof_callback_timeout: u64,
 }
 
 impl Repl {
-    pub fn new(client: RpcClient, history_path: String) -> Self {
+    pub fn new(
+        client: RpcClient,
+        authrpc_client: Option<RpcClient>,
+        history_path: String,
+        proof_callback_port: u16,
+        proof_callback_timeout: u64,
+    ) -> Self {
         Self {
             client,
+            authrpc_client,
             registry: Arc::new(CommandRegistry::new()),
             history_path,
+            variables: VariableStore::new(),
+            proof_callback_port,
+            proof_callback_timeout,
         }
     }
 
     pub async fn run(&mut self) {
         let config = Config::builder().auto_add_history(true).build();
 
-        let helper = ReplHelper::new(Arc::clone(&self.registry));
+        let helper = ReplHelper::new(Arc::clone(&self.registry), self.variables.clone());
         let mut rl: Editor<ReplHelper, DefaultHistory> =
             Editor::with_config(config).expect("Failed to create editor");
         rl.set_helper(Some(helper));
@@ -98,6 +114,7 @@ impl Repl {
     }
 
     /// Execute a single command and return the result as a string (for -x mode).
+    /// Does not store variables (one-shot execution).
     pub async fn execute_command(&self, input: &str) -> String {
         match parser::parse(input) {
             Ok(cmd) => match cmd {
@@ -105,7 +122,13 @@ impl Repl {
                     namespace,
                     method,
                     args,
-                } => self.execute_rpc(&namespace, &method, &args).await,
+                } => match self.resolve_var_args(&args) {
+                    Ok(resolved) => self.execute_rpc(&namespace, &method, &resolved).await,
+                    Err(e) => formatter::format_error(&e),
+                },
+                ParsedCommand::Assignment { .. } | ParsedCommand::PrintVar { .. } => {
+                    formatter::format_error("variables not available in one-shot mode (-x)")
+                }
                 ParsedCommand::UtilityCall { name, args } => execute_utility(&name, &args),
                 ParsedCommand::BuiltinCommand { name, .. } => {
                     format!("Built-in command .{name} not available in non-interactive mode")
@@ -117,7 +140,7 @@ impl Repl {
     }
 
     /// Execute a single input line. Returns `true` if the REPL should exit.
-    async fn execute_input(&self, input: &str) -> bool {
+    async fn execute_input(&mut self, input: &str) -> bool {
         let parsed = match parser::parse(input) {
             Ok(p) => p,
             Err(e) => {
@@ -133,8 +156,34 @@ impl Repl {
                 method,
                 args,
             } => {
-                let result = self.execute_rpc(&namespace, &method, &args).await;
+                let resolved = match self.resolve_var_args(&args) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        println!("{}", formatter::format_error(&e));
+                        return false;
+                    }
+                };
+                let result = self.execute_rpc(&namespace, &method, &resolved).await;
                 println!("{result}");
+            }
+            ParsedCommand::Assignment { var_name, command } => {
+                let result = self.execute_assignment(&var_name, &command).await;
+                println!("{result}");
+            }
+            ParsedCommand::PrintVar { name, path, offset } => {
+                match self.resolve_var_ref(&name, &path) {
+                    Ok(value) => {
+                        let result = match offset {
+                            Some(off) => apply_offset(&value, off),
+                            None => Ok(value),
+                        };
+                        match result {
+                            Ok(v) => println!("{}", formatter::format_value(&v)),
+                            Err(e) => println!("{}", formatter::format_error(&e)),
+                        }
+                    }
+                    Err(e) => println!("{}", formatter::format_error(&e)),
+                }
             }
             ParsedCommand::BuiltinCommand { name, args } => {
                 if self.execute_builtin(&name, &args) {
@@ -149,37 +198,184 @@ impl Repl {
         false
     }
 
-    async fn execute_rpc(
-        &self,
+    /// Resolve variable references in RPC arguments to concrete JSON values.
+    /// Handles both top-level `$var.path` tokens and `$var.path` strings
+    /// embedded inside JSON objects/arrays.
+    fn resolve_var_args(&self, args: &[RpcArg]) -> Result<Vec<Value>, String> {
+        args.iter()
+            .map(|arg| match arg {
+                RpcArg::Literal(v) => self.resolve_vars_in_value(v),
+                RpcArg::VarRef { name, path, offset } => {
+                    let value = self.resolve_var_ref(name, path)?;
+                    match offset {
+                        Some(off) => apply_offset(&value, *off),
+                        None => Ok(value),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Resolve a single `$name.path` variable reference.
+    fn resolve_var_ref(&self, name: &str, path: &[String]) -> Result<Value, String> {
+        let value = self
+            .variables
+            .get(name)
+            .ok_or_else(|| format!("undefined variable: {name}"))?;
+        let mut current = value;
+        for field in path {
+            current = current
+                .get(field)
+                .ok_or_else(|| format!("field '{field}' not found in variable '{name}'"))?
+                .clone();
+        }
+        Ok(current)
+    }
+
+    /// Walk a JSON value tree and resolve any string values that look like
+    /// `$var` or `$var.field.nested`.
+    fn resolve_vars_in_value(&self, value: &Value) -> Result<Value, String> {
+        match value {
+            Value::String(s) if s.starts_with('$') => {
+                let ref_str = &s[1..]; // strip '$'
+                let parts: Vec<&str> = ref_str.split('.').collect();
+                let name = parts[0];
+                let path: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.resolve_var_ref(name, &path)
+            }
+            Value::Object(map) => {
+                let mut resolved = serde_json::Map::new();
+                for (k, v) in map {
+                    resolved.insert(k.clone(), self.resolve_vars_in_value(v)?);
+                }
+                Ok(Value::Object(resolved))
+            }
+            Value::Array(arr) => {
+                let resolved: Result<Vec<Value>, String> =
+                    arr.iter().map(|v| self.resolve_vars_in_value(v)).collect();
+                Ok(Value::Array(resolved?))
+            }
+            other => Ok(other.clone()),
+        }
+    }
+
+    /// Execute an assignment: run the inner command and store the result.
+    async fn execute_assignment(&mut self, var_name: &str, command: &ParsedCommand) -> String {
+        match command {
+            ParsedCommand::RpcCall {
+                namespace,
+                method,
+                args,
+            } => {
+                let resolved = match self.resolve_var_args(args) {
+                    Ok(r) => r,
+                    Err(e) => return formatter::format_error(&e),
+                };
+                match self.call_rpc_raw(namespace, method, &resolved).await {
+                    Ok((result, cmd)) => {
+                        let formatted = formatter::format_value(&result);
+                        let is_request_proofs = cmd.rpc_method == "engine_requestProofsV1";
+                        self.variables.insert(var_name.to_string(), result);
+
+                        // After a successful requestProofsV1, spawn a one-shot
+                        // HTTP listener to receive the GeneratedProof callback.
+                        if is_request_proofs {
+                            let port = self.proof_callback_port;
+                            let timeout = self.proof_callback_timeout;
+                            crate::proof_callback::spawn_listener(
+                                port,
+                                timeout,
+                                self.variables.clone(),
+                            );
+                            format!(
+                                "{formatted}\nListening for proof callback on port {port} (timeout: {timeout}s)..."
+                            )
+                        } else {
+                            formatted
+                        }
+                    }
+                    Err(e) => formatter::format_error(&e),
+                }
+            }
+            ParsedCommand::UtilityCall { name, args } => {
+                let result_str = execute_utility(name, args);
+                // Try to parse as JSON value for storage; fall back to string
+                let value: Value = serde_json::from_str(&result_str)
+                    .unwrap_or_else(|_| Value::String(result_str.clone()));
+                self.variables.insert(var_name.to_string(), value);
+                result_str
+            }
+            ParsedCommand::PrintVar { name, path, offset } => {
+                match self.resolve_var_ref(name, path) {
+                    Ok(value) => {
+                        let result = match offset {
+                            Some(off) => apply_offset(&value, *off),
+                            None => Ok(value),
+                        };
+                        match result {
+                            Ok(v) => {
+                                let formatted = formatter::format_value(&v);
+                                self.variables.insert(var_name.to_string(), v);
+                                formatted
+                            }
+                            Err(e) => formatter::format_error(&e),
+                        }
+                    }
+                    Err(e) => formatter::format_error(&e),
+                }
+            }
+            _ => formatter::format_error(
+                "can only assign from RPC calls, utility functions, or variable expressions",
+            ),
+        }
+    }
+
+    /// Select the appropriate RPC client based on namespace.
+    fn client_for_namespace(&self, namespace: &str) -> Result<&RpcClient, String> {
+        if namespace == "engine" {
+            self.authrpc_client
+                .as_ref()
+                .ok_or_else(|| "engine namespace requires --authrpc.jwtsecret".to_string())
+        } else {
+            Ok(&self.client)
+        }
+    }
+
+    /// Send an RPC request and return the raw result together with the resolved
+    /// `CommandDef`.  Both `execute_rpc` and `execute_assignment` use this so
+    /// that the shared plumbing (client selection, registry lookup, ENS
+    /// resolution, param building, network call) lives in one place.
+    async fn call_rpc_raw<'a>(
+        &'a self,
         namespace: &str,
         method: &str,
-        args: &[serde_json::Value],
-    ) -> String {
-        let cmd = match self.registry.find(namespace, method) {
-            Some(c) => c,
-            None => {
-                return formatter::format_error(&format!("unknown command: {namespace}.{method}"));
-            }
-        };
+        args: &[Value],
+    ) -> Result<(Value, &'a CommandDef), String> {
+        let client = self.client_for_namespace(namespace)?;
 
-        let resolved_args = match self.resolve_ens_in_args(cmd, args).await {
-            Ok(a) => a,
-            Err(e) => return formatter::format_error(&e),
-        };
+        let cmd = self
+            .registry
+            .find(namespace, method)
+            .ok_or_else(|| format!("unknown command: {namespace}.{method}"))?;
 
-        let params = match cmd.build_params(&resolved_args) {
-            Ok(p) => p,
-            Err(e) => {
-                return formatter::format_error(&format!(
-                    "{e}\nUsage: {}",
-                    formatter::command_usage(cmd)
-                ));
-            }
-        };
+        let resolved_args = self.resolve_ens_in_args(cmd, args).await?;
 
-        match self.client.send_request(cmd.rpc_method, params).await {
-            Ok(result) => formatter::format_value(&result),
-            Err(e) => formatter::format_error(&e.to_string()),
+        let params = cmd
+            .build_params(&resolved_args)
+            .map_err(|e| format!("{e}\nUsage: {}", formatter::command_usage(cmd)))?;
+
+        let result = client
+            .send_request(cmd.rpc_method, params)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok((result, cmd))
+    }
+
+    async fn execute_rpc(&self, namespace: &str, method: &str, args: &[Value]) -> String {
+        match self.call_rpc_raw(namespace, method, args).await {
+            Ok((result, _cmd)) => formatter::format_value(&result),
+            Err(e) => formatter::format_error(&e),
         }
     }
 
@@ -236,6 +432,22 @@ impl Repl {
                     println!("Usage: .connect <url>");
                 }
             }
+            "vars" => {
+                let entries = self.variables.entries();
+                if entries.is_empty() {
+                    println!("No variables stored");
+                } else {
+                    for (name, value) in &entries {
+                        let s = value.to_string();
+                        let preview = if s.len() > 80 {
+                            format!("{}...", &s[..77])
+                        } else {
+                            s
+                        };
+                        println!("  {name} = {preview}");
+                    }
+                }
+            }
             "history" => {
                 println!("History file: {}", self.history_path);
             }
@@ -263,6 +475,7 @@ impl Repl {
             println!("  .exit / .quit              Exit REPL");
             println!("  .clear                     Clear screen");
             println!("  .connect <url>             Show/change endpoint");
+            println!("  .vars                      List stored variables");
             println!("  .history                   Show history file path");
             println!("\nType .help <namespace> to list namespace methods.");
             println!("Type .help <namespace.method> for method details.");
@@ -313,6 +526,52 @@ impl Repl {
                 }
             }
         }
+    }
+}
+
+/// Apply an arithmetic offset to a JSON value.
+///
+/// Handles:
+/// - Hex strings (`"0x1a"` + 1 → `"0x1b"`)
+/// - Decimal strings (`"100"` + 1 → `"101"`)
+/// - JSON numbers (`100` + 1 → `101`)
+fn apply_offset(value: &Value, offset: i64) -> Result<Value, String> {
+    let n: i64 = match value {
+        Value::String(s) => {
+            if let Some(hex) = s.strip_prefix("0x") {
+                i64::from_str_radix(hex, 16)
+                    .map_err(|_| format!("cannot apply arithmetic to non-numeric value: {s}"))?
+            } else {
+                s.parse()
+                    .map_err(|_| format!("cannot apply arithmetic to non-numeric value: {s}"))?
+            }
+        }
+        Value::Number(n) => n
+            .as_i64()
+            .ok_or_else(|| "cannot apply arithmetic to non-integer number".to_string())?,
+        other => {
+            return Err(format!(
+                "cannot apply arithmetic to {}",
+                match other {
+                    Value::Object(_) => "object",
+                    Value::Array(_) => "array",
+                    Value::Bool(_) => "boolean",
+                    Value::Null => "null",
+                    _ => "value",
+                }
+            ));
+        }
+    };
+
+    let result = n
+        .checked_add(offset)
+        .ok_or_else(|| "arithmetic overflow".to_string())?;
+
+    // Preserve the original format: hex in → hex out, decimal in → decimal out
+    match value {
+        Value::String(s) if s.starts_with("0x") => Ok(Value::String(format!("0x{result:x}"))),
+        Value::Number(_) => Ok(Value::Number(result.into())),
+        _ => Ok(Value::String(result.to_string())),
     }
 }
 

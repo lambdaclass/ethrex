@@ -37,10 +37,9 @@ use tokio::net::UdpSocket;
 use tracing::{debug, error, info, trace};
 
 const EXPIRATION_SECONDS: u64 = 20;
-/// Interval between revalidation checks (how often we run the revalidation loop).
-/// Must be short so that new contacts from handle_neighbors (which no longer
-/// sends immediate pings) get validated quickly and become usable for lookups.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
+/// Interval between revalidation checks. Each check pings one random stale
+/// contact, so this controls the maximum revalidation ping rate (~1/sec).
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// The initial interval between peer lookups, until the number of peers reaches
@@ -264,6 +263,11 @@ impl DiscoveryServer {
         if node_id(&sender_public_key) == self.local_node.node_id() {
             return Ok(());
         }
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_incoming(message.metric_label());
+        }
         match message {
             Message::Ping(ping_message) => {
                 trace!(protocol = "discv4", received = "Ping", msg = ?ping_message, from = %format!("{sender_public_key:#x}"));
@@ -346,9 +350,9 @@ impl DiscoveryServer {
     }
 
     async fn revalidate_peers(&mut self) -> Result<(), DiscoveryServerError> {
-        for contact in self
+        if let Some(contact) = self
             .peer_table
-            .get_contacts_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv4)
+            .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv4)
             .await?
         {
             self.send_ping(&contact.node).await?;
@@ -371,6 +375,11 @@ impl DiscoveryServer {
                 self.peer_table.set_disposable(contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
             } else {
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::p2p::METRICS_P2P;
+                    METRICS_P2P.inc_discv4_outgoing("FindNode");
+                }
                 self.pending_find_node
                     .insert(contact.node.node_id(), Instant::now());
             }
@@ -749,6 +758,11 @@ impl DiscoveryServer {
         message: Message,
         addr: SocketAddr,
     ) -> Result<usize, DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_outgoing(message.metric_label());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
@@ -761,6 +775,11 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<H256, DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_outgoing(message.metric_label());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         let message_hash: [u8; 32] = buf[..32]
