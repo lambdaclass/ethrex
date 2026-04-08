@@ -473,13 +473,20 @@ impl<'a> VM<'a> {
 
         let mut substate = Substate::initialize(&env, tx)?;
 
-        // Polygon: add P256Verify (0x100) to warm set.
-        // Note: env.config.fork is Prague (not a Polygon-specific fork), so
-        // fork.is_polygon() returns false. We must use vm_type to detect Polygon.
         if matches!(vm_type, VMType::Polygon(_)) {
+            // Polygon: add P256Verify (0x100) to warm set.
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
+            // Polygon: remove BLS precompile addresses (0x0b-0x11) from warm set.
+            // Bor doesn't warm BLS precompiles in the access list (they're executed
+            // as precompiles but not pre-warmed). The initialize() method warms all
+            // Prague precompiles (1-17), so we remove the BLS ones here.
+            for i in 0x0b..=0x11u64 {
+                substate
+                    .accessed_addresses
+                    .remove(&Address::from_low_u64_be(i));
+            }
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
