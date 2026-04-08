@@ -78,10 +78,7 @@ impl Crypto for AirbenderCrypto {
     }
 
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
-        // Use the same keccak as the trie (tiny_keccak) to rule out
-        // delegation issues. The delegated Keccak256 from airbender-crypto
-        // uses CSR keccak_special5 which may produce wrong results.
-        ethrex_crypto::keccak::keccak_hash(input)
+        Keccak256::digest(input)
     }
 
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
