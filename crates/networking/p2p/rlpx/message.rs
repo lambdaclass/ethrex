@@ -66,7 +66,9 @@ pub enum EthCapVersion {
 impl EthCapVersion {
     pub const fn eth_capability_offset(&self) -> u8 {
         match self {
-            EthCapVersion::V68Bsc => ETH_CAPABILITY_OFFSET_WITH_BSC,
+            // BSC does NOT shift eth offsets when bsc capability is present.
+            // The bsc sub-protocol uses codes within the eth range (e.g. UpgradeStatusMsg = 0x0b).
+            EthCapVersion::V68Bsc => ETH_CAPABILITY_OFFSET,
             _ => ETH_CAPABILITY_OFFSET,
         }
     }
@@ -76,7 +78,7 @@ impl EthCapVersion {
             EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => SNAP_CAPABILITY_OFFSET_ETH_70,
-            EthCapVersion::V68Bsc => SNAP_CAPABILITY_OFFSET_ETH_68_BSC,
+            EthCapVersion::V68Bsc => SNAP_CAPABILITY_OFFSET_ETH_68,
         }
     }
 
@@ -85,7 +87,7 @@ impl EthCapVersion {
             EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
-            EthCapVersion::V68Bsc => BASED_CAPABILITY_OFFSET_ETH_68_BSC,
+            EthCapVersion::V68Bsc => BASED_CAPABILITY_OFFSET_ETH_68,
         }
     }
 
@@ -242,13 +244,6 @@ impl Message {
                 PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
-        } else if matches!(eth_version, EthCapVersion::V68Bsc)
-            && msg_id < eth_version.eth_capability_offset()
-        {
-            // bsc sub-protocol range (0x10-0x11 for bsc/1 with 2 messages).
-            // We advertise bsc/1 so BSC peers keep the connection open, but we don't
-            // implement the bsc sub-protocol beyond silently consuming incoming messages.
-            Ok(Message::BscIgnored)
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
             match msg_id - eth_version.eth_capability_offset() {
@@ -306,6 +301,11 @@ impl Message {
                 }
                 UpgradeStatusMsg::CODE => {
                     Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
+                }
+                _ if matches!(eth_version, EthCapVersion::V68Bsc) => {
+                    // Unknown eth-range code on BSC — likely a bsc sub-protocol message
+                    // (VotesMsg, BscCapMsg, etc.) that uses codes within the eth range.
+                    Ok(Message::BscIgnored)
                 }
                 _ => Err(RLPDecodeError::MalformedData),
             }
