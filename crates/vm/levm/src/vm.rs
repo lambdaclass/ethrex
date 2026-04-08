@@ -478,10 +478,14 @@ impl<'a> VM<'a> {
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
-            // Polygon: remove BLS precompile addresses (0x0b-0x11) from warm set.
-            // Bor doesn't warm BLS precompiles in the access list (they're executed
-            // as precompiles but not pre-warmed). The initialize() method warms all
-            // Prague precompiles (1-17), so we remove the BLS ones here.
+            // Polygon: remove non-active precompile addresses from warm set.
+            // Bor only warms precompiles 1-9 + P256Verify. The initialize() method
+            // warms all Prague precompiles (1-17), so we remove the inactive ones:
+            // - 0x0a (KZG): not available on Polygon
+            // - 0x0b-0x11 (BLS): executed as precompiles but not pre-warmed in Bor
+            substate
+                .accessed_addresses
+                .remove(&Address::from_low_u64_be(0x0a));
             for i in 0x0b..=0x11u64 {
                 substate
                     .accessed_addresses
