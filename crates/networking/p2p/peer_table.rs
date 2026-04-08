@@ -938,6 +938,9 @@ impl PeerTableServer {
 
     /// Get closest nodes for discv4 (returns Vec<Node>)
     fn do_get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
+        #[cfg(feature = "metrics")]
+        let scan_start = std::time::Instant::now();
+
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         for (contact_id, contact) in &self.contacts {
@@ -953,6 +956,13 @@ impl PeerTableServer {
                 }
             }
         }
+
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.observe_iter_contacts_duration(scan_start.elapsed().as_secs_f64());
+        }
+
         nodes.into_iter().map(|(node, _)| node).collect()
     }
 
@@ -986,6 +996,9 @@ impl PeerTableServer {
             if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
                 continue;
             }
+            #[cfg(feature = "metrics")]
+            let insert_start = std::time::Instant::now();
+
             match self.contacts.entry(node_id) {
                 Entry::Vacant(vacant_entry) => {
                     vacant_entry.insert(Contact::new(node, protocol));
@@ -995,6 +1008,12 @@ impl PeerTableServer {
                     // Contact already exists, just add the protocol
                     occupied_entry.get_mut().add_protocol(protocol);
                 }
+            }
+
+            #[cfg(feature = "metrics")]
+            {
+                use ethrex_metrics::p2p::METRICS_P2P;
+                METRICS_P2P.observe_insert_contact_duration(insert_start.elapsed().as_secs_f64());
             }
         }
     }
