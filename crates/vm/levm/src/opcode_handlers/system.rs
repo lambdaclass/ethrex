@@ -1145,24 +1145,6 @@ impl<'a> VM<'a> {
 
         old_callframe_memory.clean_from_base();
 
-        // Debug: trace inner call results for system calls (gas_price=0)
-        if self.env.gas_price.is_zero() && !ctx_result.is_success() {
-            // Try to decode revert reason (Error(string) selector = 0x08c379a0)
-            let reason = if ctx_result.output.len() >= 68 && ctx_result.output[..4] == [0x08, 0xc3, 0x79, 0xa0] {
-                String::from_utf8_lossy(&ctx_result.output[68..]).trim_matches('\0').to_string()
-            } else {
-                format!("raw({} bytes)", ctx_result.output.len())
-            };
-            eprintln!(
-                "INNER_CALL to={:?} from={:?} depth={} success=false gas_used={} reason={}",
-                executed_call_frame.to,
-                executed_call_frame.msg_sender,
-                executed_call_frame.depth,
-                ctx_result.gas_used,
-                reason,
-            );
-        }
-
         let parent_call_frame = &mut self.current_call_frame;
         let child_unused_gas = gas_limit
             .checked_sub(ctx_result.gas_used)
