@@ -6,7 +6,7 @@
 use crate::rlpx::error::PeerConnectionError;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
-use ethrex_trie::TrieError;
+use crate::snap::mpt_stubs::TrieError;
 use spawned_concurrency::error::ActorError;
 use std::io::ErrorKind;
 use std::path::PathBuf;

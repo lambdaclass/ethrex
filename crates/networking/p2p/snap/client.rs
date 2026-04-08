@@ -31,8 +31,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use ethrex_trie::Nibbles;
-use ethrex_trie::{Node, verify_range};
+use crate::snap::mpt_stubs::{Nibbles, Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
@@ -550,15 +549,8 @@ pub async fn request_storage_ranges(
                     .push(*account);
             }
             None => {
-                let root = store
-                    .get_account_state_by_acc_hash(pivot_header.hash(), *account)?
-                    .ok_or_else(|| {
-                        SnapError::InternalError(
-                            "Could not find account that should have been downloaded or healed"
-                                .to_string(),
-                        )
-                    })?
-                    .storage_root;
+                // NOTE: get_account_state_by_acc_hash removed (binary trie branch, no MPT)
+                let root = *ethrex_common::constants::EMPTY_TRIE_HASH;
                 accounts_by_root_hash
                     .entry(root)
                     .or_default()

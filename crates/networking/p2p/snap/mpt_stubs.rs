@@ -46,6 +46,14 @@ impl Nibbles {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn slice(&self, _start: usize, _end: usize) -> Self {
+        Nibbles(self.0.clone())
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Nibbles(bytes.to_vec())
+    }
 }
 
 /// Stub replacement for ethrex_trie::Node.
@@ -63,6 +71,10 @@ impl Node {
 
     pub fn compute_hash(&self, _crypto: &ethrex_crypto::NativeCrypto) -> NodeHash {
         NodeHash
+    }
+
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        Vec::new()
     }
 }
 
@@ -130,8 +142,18 @@ pub trait TrieDB: Send + Sync {
 
 /// Stub replacement for ethrex_trie::TrieError.
 #[derive(Debug, thiserror::Error)]
-#[error("MPT trie error (binary trie branch): {0}")]
-pub struct TrieError(pub String);
+pub enum TrieError {
+    #[error("MPT trie error (binary trie branch): {0}")]
+    Other(String),
+    #[error("Inconsistent tree")]
+    InconsistentTree,
+}
+
+impl From<String> for TrieError {
+    fn from(s: String) -> Self {
+        TrieError::Other(s)
+    }
+}
 
 /// Stub replacement for ethrex_trie::Trie (rocksdb feature only, snap_sync.rs).
 pub struct Trie;
