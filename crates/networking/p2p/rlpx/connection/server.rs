@@ -823,7 +823,7 @@ where
         // Reference: https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
         let mut received_upgrade_status = false;
         let mut status_received = false;
-        for _ in 0..3 {
+        for _ in 0..5 {
             let msg = match receive(stream).await {
                 Some(msg) => msg?,
                 None => return Err(PeerConnectionError::Disconnected),
@@ -873,6 +873,10 @@ where
                     received_upgrade_status = true;
                     // Continue loop to read the actual Status message
                 }
+                Message::BscIgnored => {
+                    trace!(peer=%state.node, "Ignoring bsc sub-protocol message during handshake");
+                    // Continue loop — BSC peers send BscCapMsg before Status
+                }
                 Message::Disconnect(disconnect) => {
                     return Err(PeerConnectionError::HandshakeError(format!(
                         "Peer disconnected due to: {}",
@@ -888,7 +892,7 @@ where
         }
         if !status_received {
             return Err(PeerConnectionError::HandshakeError(
-                "Did not receive Status message after 3 attempts".to_string(),
+                "Did not receive Status message after 5 attempts".to_string(),
             ));
         }
         let _ = received_upgrade_status;
