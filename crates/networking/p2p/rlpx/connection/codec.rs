@@ -229,13 +229,15 @@ impl Decoder for RLPxCodec {
             })?;
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
+        let version = *self
+            .eth_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+        tracing::trace!(msg_id, ?version, "Decoding RLPx message");
         Ok(Some(rlpx::Message::decode(
             msg_id,
             msg_data,
-            *self
-                .eth_version
-                .read()
-                .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
+            version,
         )?))
     }
 
