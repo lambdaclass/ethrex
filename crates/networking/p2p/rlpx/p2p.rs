@@ -73,6 +73,13 @@ impl Capability {
         }
     }
 
+    pub const fn bsc(version: u8) -> Self {
+        Capability {
+            protocol: pad_right(b"bsc"),
+            version,
+        }
+    }
+
     pub fn protocol(&self) -> &str {
         let len = self
             .protocol

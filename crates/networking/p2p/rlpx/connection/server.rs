@@ -200,6 +200,7 @@ pub struct Established {
     pub(crate) capabilities: Vec<Capability>,
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
+    pub(crate) negotiated_bsc_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
@@ -622,8 +623,13 @@ where
     }
     exchange_hello_messages(state, &mut stream).await?;
 
-    // Update eth capability version to the negotiated version for further message decoding
+    // Update eth capability version to the negotiated version for further message decoding.
+    // When bsc/1 is also negotiated, use V68Bsc so that the message decoder accounts for
+    // the alphabetical offset shift (bsc/1 occupies 0x10-0x11, eth/68 starts at 0x12).
     let version = match &state.negotiated_eth_capability {
+        Some(cap) if cap == &Capability::eth(68) && state.negotiated_bsc_capability.is_some() => {
+            EthCapVersion::V68Bsc
+        }
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
         Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
@@ -958,9 +964,6 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
-    // This allow is because in l2 we mut the capabilities
-    // to include the l2 cap
-    #[allow(unused_mut)]
     let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
@@ -969,6 +972,12 @@ where
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+    }
+    // BSC chains (mainnet 56 / Chapel 97) require the bsc capability in the Hello message.
+    // Without it, BSC peers classify us as a non-BSC peer and disconnect to free peer slots.
+    let chain_id_for_hello = state.storage.get_chain_config().chain_id;
+    if chain_id_for_hello == 56 || chain_id_for_hello == 97 {
+        supported_capabilities.push(Capability::bsc(1));
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
@@ -988,6 +997,7 @@ where
         Message::Hello(hello_message) => {
             let mut negotiated_eth_version = 0;
             let mut negotiated_snap_version = 0;
+            let mut negotiated_bsc_version = 0u8;
 
             trace!(
                 peer=%state.node,
@@ -1012,6 +1022,15 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    // bsc/1 is only advertised by us on BSC chains; accept any bsc version
+                    // the peer supports (we only negotiate version 1 from our side).
+                    "bsc"
+                        if (chain_id_for_hello == 56 || chain_id_for_hello == 97)
+                            && cap.version >= 1
+                            && cap.version > negotiated_bsc_version =>
+                    {
+                        negotiated_bsc_version = cap.version;
+                    }
                     #[cfg(feature = "l2")]
                     "based" if state.l2_state.is_supported() => {
                         state.l2_state.set_established()?;
@@ -1031,6 +1050,11 @@ where
             if negotiated_snap_version != 0 {
                 debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
+            }
+
+            if negotiated_bsc_version != 0 {
+                debug!("Negotiated bsc version: bsc/{}", negotiated_bsc_version);
+                state.negotiated_bsc_capability = Some(Capability::bsc(negotiated_bsc_version));
             }
 
             state.node.version = Some(hello_message.client_id);
@@ -1420,6 +1444,12 @@ async fn handle_incoming_message(
                 disable_peer_tx_broadcast=%msg.disable_peer_tx_broadcast,
                 "Received BSC UpgradeStatus",
             );
+        }
+        // bsc sub-protocol messages (BscCapMsg / VotesMsg) — silently consumed.
+        // We advertise bsc/1 to keep BSC peers connected but do not implement the
+        // bsc sub-protocol beyond accepting the connection.
+        Message::BscIgnored => {
+            trace!(peer=%state.node, "Received bsc sub-protocol message (ignored)");
         }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
