@@ -474,18 +474,11 @@ impl<'a> VM<'a> {
         let mut substate = Substate::initialize(&env, tx)?;
 
         if matches!(vm_type, VMType::Polygon(_)) {
-            // Polygon warm set adjustments to match Bor:
-            // - Add P256Verify (0x100) — always active on Polygon.
-            substate
-                .accessed_addresses
-                .insert(Address::from_low_u64_be(0x100));
-            // - Remove BLS precompiles (0x0b-0x11) — Bor warms Cancun set (1-10),
-            //   not Prague (1-17). Coinbase stays warm (EIP-3651 IS active on Bor).
-            for i in 0x0b..=0x11u64 {
-                substate
-                    .accessed_addresses
-                    .remove(&Address::from_low_u64_be(i));
-            }
+            // Polygon warm set = Prague precompiles (1-17) + coinbase + origin + tx.to.
+            // Do NOT add P256Verify (0x100) — Bor doesn't warm it
+            // (it's not in geth's ActivePrecompiles list for any fork).
+            // All of 1-17 + coinbase + origin are already set by initialize().
+            // Nothing to add or remove.
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
