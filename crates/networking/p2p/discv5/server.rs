@@ -725,10 +725,7 @@ impl DiscoveryServer {
         // Per spec, distance 0 means the node itself — include the local ENR explicitly.
         let mut nodes = self
             .peer_table
-            .get_nodes_at_distances(
-                self.local_node.node_id(),
-                find_node_message.distances.clone(),
-            )
+            .get_nodes_at_distances(find_node_message.distances.clone())
             .await?;
         if find_node_message.distances.contains(&0) {
             nodes.push(self.local_node_record.clone());

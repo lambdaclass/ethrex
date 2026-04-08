@@ -63,8 +63,8 @@ const MAX_REPLACEMENTS_PER_BUCKET: usize = 10;
 /// Each bucket stores contacts at a specific XOR distance range from the local node.
 #[derive(Debug, Clone, Default)]
 pub struct KBucket {
-    pub contacts: Vec<(H256, Contact)>,
-    pub replacements: Vec<(H256, Contact)>,
+    pub(crate) contacts: Vec<(H256, Contact)>,
+    pub(crate) replacements: Vec<(H256, Contact)>,
 }
 
 impl KBucket {
@@ -113,14 +113,12 @@ impl KBucket {
     /// Remove a contact from the main list and promote a replacement if available.
     /// Returns the promoted replacement's node ID, if any.
     fn remove_and_promote(&mut self, node_id: &H256) -> Option<H256> {
-        let Some(idx) = self.contacts.iter().position(|(id, _)| id == node_id) else {
-            return None;
-        };
+        let idx = self.contacts.iter().position(|(id, _)| id == node_id)?;
         self.contacts.remove(idx);
-        if let Some((replacement_id, replacement)) = self.replacements.pop() {
-            let promoted_id = replacement_id;
+        if !self.replacements.is_empty() {
+            let (replacement_id, replacement) = self.replacements.remove(0);
             self.contacts.push((replacement_id, replacement));
-            Some(promoted_id)
+            Some(replacement_id)
         } else {
             None
         }
@@ -384,11 +382,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn insert_if_new(&self, node: Node, protocol: DiscoveryProtocol) -> Response<bool>;
     fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> Response<ContactValidation>;
     fn get_closest_nodes(&self, node_id: H256) -> Response<Vec<Node>>;
-    fn get_nodes_at_distances(
-        &self,
-        local_node_id: H256,
-        distances: Vec<u32>,
-    ) -> Response<Vec<NodeRecord>>;
+    fn get_nodes_at_distances(&self, distances: Vec<u32>) -> Response<Vec<NodeRecord>>;
     fn get_peers_data(&self) -> Response<Vec<PeerData>>;
     fn get_random_peer(
         &self,
@@ -587,15 +581,14 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordPongReceived,
         _ctx: &Context<Self>,
     ) {
-        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
-            if contact
+        if let Some(contact) = self.get_contact_mut(&msg.node_id)
+            && contact
                 .ping_id
                 .as_ref()
                 .map(|value| *value == msg.ping_id)
                 .unwrap_or(false)
-            {
-                contact.ping_id = None;
-            }
+        {
+            contact.ping_id = None;
         }
     }
 
@@ -869,7 +862,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetNodesAtDistances,
         _ctx: &Context<Self>,
     ) -> Vec<NodeRecord> {
-        self.do_get_nodes_at_distances(msg.local_node_id, &msg.distances)
+        self.do_get_nodes_at_distances(&msg.distances)
     }
 
     #[request_handler]
@@ -933,13 +926,13 @@ impl PeerTableServer {
     }
 
     /// Insert a contact into the appropriate k-bucket. Returns true if inserted
-    /// (into main list or replacement list), false if the node is the local node.
+    /// into the main list, false if the node went to the replacement list or is
+    /// the local node.
     fn insert_contact(&mut self, node_id: H256, contact: Contact) -> bool {
         let Some(idx) = self.bucket_for(&node_id) else {
             return false;
         };
-        self.buckets[idx].insert(node_id, contact);
-        true
+        self.buckets[idx].insert(node_id, contact)
     }
 
     /// Iterate over all contacts across all buckets.
@@ -1086,17 +1079,13 @@ impl PeerTableServer {
             let dist = xor_distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), dist));
-            } else {
-                // Find the farthest node in the result set and replace if closer
-                if let Some((farthest_idx, _)) = nodes
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, (_, d))| *d)
-                {
-                    if dist < nodes[farthest_idx].1 {
-                        nodes[farthest_idx] = (contact.node.clone(), dist);
-                    }
-                }
+            } else if let Some((farthest_idx, _)) = nodes
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, (_, d))| *d)
+                && dist < nodes[farthest_idx].1
+            {
+                nodes[farthest_idx] = (contact.node.clone(), dist);
             }
         }
         nodes.into_iter().map(|(node, _)| node).collect()
@@ -1106,10 +1095,10 @@ impl PeerTableServer {
     /// Uses the discv5 spec log-distance: `floor(log2(XOR))` for non-zero XOR.
     /// Distance 0 is reserved for the local node itself (handled by the caller),
     /// so contacts start at distance >= 1.
-    fn do_get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
+    fn do_get_nodes_at_distances(&self, distances: &[u32]) -> Vec<NodeRecord> {
         self.iter_contacts()
             .filter_map(|(contact_id, contact)| {
-                let dist = distance(&local_node_id, contact_id) as u32;
+                let dist = distance(&self.local_node_id, contact_id) as u32;
                 if distances.contains(&dist) {
                     contact.record.clone()
                 } else {
@@ -1126,9 +1115,11 @@ impl PeerTableServer {
             if self.discarded_contacts.contains(&node_id) || node_id == self.local_node_id {
                 continue;
             }
-            if let Some(contact) = self.get_contact_mut(&node_id) {
-                // Contact already exists, just add the protocol
-                contact.add_protocol(protocol);
+            if self.contact_exists(&node_id) {
+                // Contact already exists (main or replacement list), update protocol
+                if let Some(contact) = self.get_contact_mut(&node_id) {
+                    contact.add_protocol(protocol);
+                }
             } else {
                 let contact = Contact::new(node, protocol);
                 if self.insert_contact(node_id, contact) {
