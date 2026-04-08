@@ -475,12 +475,14 @@ impl<'a> VM<'a> {
 
         if matches!(vm_type, VMType::Polygon(_)) {
             // Polygon: add P256Verify (0x100) to warm set.
-            // All Prague precompile addresses (1-17) are kept warm from initialize().
-            // Even if some (KZG, BLS) are not active as precompiles on Polygon,
-            // they must stay in the initial warm set to match Bor's behavior.
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
+            // Polygon: remove coinbase from warm set.
+            // Bor doesn't implement EIP-3651 (warm coinbase). The coinbase was
+            // added by Substate::initialize() because fork >= Shanghai, but Polygon's
+            // Shanghai-equivalent fork doesn't include EIP-3651.
+            substate.accessed_addresses.remove(&env.coinbase);
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
