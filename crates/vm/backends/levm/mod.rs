@@ -2235,6 +2235,7 @@ pub fn polygon_system_call_levm(
         coinbase,
         timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
+        difficulty: block_header.difficulty,
         base_fee_per_gas: U256::zero(),
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas,
