@@ -57,9 +57,7 @@ debug-assertions = true
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
-ethrex-common = { path = "./crates/common", default-features = false, features = ["uint-ethereum-types"] }
-# To use ruint backend: change above to features = ["uint-ruint"]
-# Only ONE uint backend can be active at a time.
+ethrex-common = { path = "./crates/common", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }

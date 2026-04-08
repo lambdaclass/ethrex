@@ -5,9 +5,11 @@ pub use ethereum_types::{
 };
 pub type Address = H160;
 
-// Switchable uint types
+// Injectable uint types — vendors call install_uint256_backend() to override.
 mod uint;
-pub use uint::{ParseU256Error, U256, U512};
+pub use uint::{
+    DefaultUint256Ops, ParseU256Error, U256, U512, Uint256Ops, install_uint256_backend,
+};
 pub mod constants;
 pub mod serde_utils;
 pub mod types;

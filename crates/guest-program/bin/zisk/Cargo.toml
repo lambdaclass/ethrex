@@ -22,7 +22,6 @@ ethrex-vm = { path = "../../../vm", default-features = false, features = [
 ] }
 ethrex-common = { path = "../../../common", default-features = false, features = [
     "zisk",
-    "uint-ethereum-types",  # Switch to "uint-ruint" to benchmark alternative backend
 ] }
 
 [features]

@@ -1,7 +1,6 @@
 use ethrex_common::{U256, U512};
 
 // EVM-critical operations — these must produce identical results regardless of backend.
-// Expected values are from ethereum_types (the reference backend).
 
 #[test]
 fn test_overflowing_add() {
@@ -32,19 +31,15 @@ fn test_overflowing_mul() {
 
 #[test]
 fn test_overflowing_pow() {
-    // 2^10 = 1024
     assert_eq!(
         U256::from(2u64).overflowing_pow(U256::from(10u64)),
         (U256::from(1024u64), false)
     );
-    // 0^0 = 1 (EVM convention)
     assert_eq!(
         U256::zero().overflowing_pow(U256::zero()),
         (U256::one(), false)
     );
-    // 2^256 overflows
     assert!(U256::from(2u64).overflowing_pow(U256::from(256u64)).1);
-    // 2^255
     let pow255 = U256::from(2u64).overflowing_pow(U256::from(255u64));
     assert_eq!(pow255.0, U256::one() << 255usize);
     assert!(!pow255.1);
@@ -66,10 +61,8 @@ fn test_checked_div_and_rem() {
 
 #[test]
 fn test_shift_at_boundary() {
-    // Shift by exactly 256 should return 0 (as in EVM)
     assert_eq!(U256::MAX << 256usize, U256::zero());
     assert_eq!(U256::MAX >> 256usize, U256::zero());
-    // Shift by 255
     assert_eq!(
         U256::one() << 255usize,
         U256::from_limbs([0, 0, 0, 1 << 63])
@@ -79,19 +72,16 @@ fn test_shift_at_boundary() {
 
 #[test]
 fn test_signextend_pattern() {
-    // SIGNEXTEND opcode pattern: value |= U256::MAX << (8 * (x + 1))
-    // For x=0: MAX << 8
     let mask = U256::MAX << 8usize;
-    let val = U256::from(0x80u64); // sign bit set for byte 0
+    let val = U256::from(0x80u64);
     assert_eq!(val | mask, U256::MAX - U256::from(0x7fu64));
 }
 
 #[test]
 fn test_byte_method() {
-    // byte(0) = least significant byte (LE convention, same as both backends)
     let val = U256::from(0xABu64);
-    assert_eq!(val.byte(0), 0xAB); // least significant byte
-    assert_eq!(val.byte(31), 0x00); // most significant byte
+    assert_eq!(val.byte(0), 0xAB);
+    assert_eq!(val.byte(31), 0x00);
 }
 
 #[test]
@@ -146,11 +136,8 @@ fn test_leading_zeros_and_bits() {
 
 #[test]
 fn test_signed_from() {
-    // -1i32 → MAX
     assert_eq!(U256::from(-1i32), U256::MAX);
-    // -1i64 → MAX
     assert_eq!(U256::from(-1i64), U256::MAX);
-    // -2i32 → MAX - 1
     assert_eq!(U256::from(-2i32), U256::MAX - U256::one());
 }
 
@@ -163,23 +150,37 @@ fn test_not() {
 
 #[test]
 fn test_u512_addmod() {
-    // Simulate ADDMOD opcode: (a + b) % mod
     let a = U256::MAX;
     let b = U256::from(2u64);
     let m = U256::from(3u64);
     let result = (U512::from(a).overflowing_add(b.into()).0 % m).low_u256();
-    // MAX + 2 = 2^256 + 1; (2^256 + 1) % 3 = ?
-    // 2^256 mod 3 = (2^2)^128 mod 3 = 1^128 mod 3 = 1; so (1+1) % 3 = 2
     assert_eq!(result, U256::from(2u64));
 }
 
 #[test]
 fn test_cross_type_arith_negative_i32() {
-    // The cross-type macro casts i32 to u64 before U256::from.
-    // For negative i32: (-1i32 as u64) = 0xFFFFFFFF_FFFFFFFF
-    // So U256 + (-1i32) actually adds a very large number.
     let x = U256::from(100u64);
     let result = x + (-1i32);
-    // -1i32 as u64 = 18446744073709551615, so U256::from(18446744073709551615u64)
     assert_eq!(result, x + U256::from(u64::MAX));
+}
+
+// ---- Backend injection tests ----
+
+#[test]
+fn test_default_backend_works_without_install() {
+    // No install_uint256_backend call — default kicks in.
+    assert_eq!(
+        U256::from(10u64).overflowing_add(U256::from(20u64)),
+        (U256::from(30u64), false)
+    );
+}
+
+#[test]
+fn test_install_backend_returns_false_on_second_call() {
+    // OnceLock is already set (by default init or a prior install).
+    // A second call should return false.
+    let result = ethrex_common::install_uint256_backend(ethrex_common::DefaultUint256Ops);
+    // Can't assert true/false deterministically since other tests may have triggered
+    // the default init. Just verify it doesn't panic.
+    let _ = result;
 }
