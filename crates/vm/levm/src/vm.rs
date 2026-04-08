@@ -45,6 +45,13 @@ pub enum VMType {
     L1,
     /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
+    /// BNB Smart Chain (BSC) execution.
+    ///
+    /// BSC uses the Parlia PoA consensus engine. Unlike L1, transaction fees are
+    /// credited to `SystemAddress` (`0xffffFFFf…fFFfE`) during EVM execution
+    /// rather than to `header.coinbase`. The validator (coinbase) later receives
+    /// its rewards via a system call at the end of the block.
+    Bsc,
 }
 
 /// Execution substate that tracks changes during transaction execution.
@@ -632,6 +639,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.vm_type,
                 self.db.store.precompile_cache(),
                 self.crypto,
             );
@@ -683,12 +691,14 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_precompile(
         code_address: H160,
         calldata: &Bytes,
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        vm_type: VMType,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
@@ -698,6 +708,7 @@ impl<'a> VM<'a> {
                 calldata,
                 gas_remaining,
                 fork,
+                vm_type,
                 cache,
                 crypto,
             ),

@@ -45,6 +45,8 @@ use crate::{
     vm::StoreVmDatabase,
 };
 
+use ethrex_bsc::genesis::is_bsc_chain;
+
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -155,13 +157,20 @@ pub fn create_payload(
         extra_data,
         prev_randao: args.random,
         nonce: 0,
-        base_fee_per_gas: calculate_base_fee_per_gas(
-            gas_limit,
-            parent_block.gas_limit,
-            parent_block.gas_used,
-            parent_block.base_fee_per_gas.unwrap_or_default(),
-            args.elasticity_multiplier,
-        ),
+        // BSC adopted EIP-1559 but hardcodes the base fee to 0.
+        // All gas price revenue goes to SystemAddress rather than being burned.
+        // Reference: bnb-chain/bsc consensus/parlia/parlia.go (no base fee burn).
+        base_fee_per_gas: if is_bsc_chain(chain_config.chain_id) {
+            Some(0)
+        } else {
+            calculate_base_fee_per_gas(
+                gas_limit,
+                parent_block.gas_limit,
+                parent_block.gas_used,
+                parent_block.base_fee_per_gas.unwrap_or_default(),
+                args.elasticity_multiplier,
+            )
+        },
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
             .then_some(compute_withdrawals_root(

@@ -8,6 +8,7 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
+use super::eth::bsc::UpgradeStatusMsg;
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
 };
@@ -98,6 +99,9 @@ pub enum Message {
     Receipts69(Receipts69),
     Receipts70(Receipts70),
     BlockRangeUpdate(BlockRangeUpdate),
+    // BSC-specific extension messages
+    // https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/protocol.go
+    UpgradeStatus(UpgradeStatusMsg),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -151,6 +155,9 @@ impl Message {
             Message::Receipts70(_) => eth_version.eth_capability_offset() + Receipts70::CODE,
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
+            }
+            Message::UpgradeStatus(_) => {
+                eth_version.eth_capability_offset() + UpgradeStatusMsg::CODE
             }
             // snap capability
             Message::GetAccountRange(_) => {
@@ -242,6 +249,9 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
+                UpgradeStatusMsg::CODE => {
+                    Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
+                }
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
@@ -312,6 +322,7 @@ impl Message {
             Message::Receipts69(msg) => msg.encode(buf),
             Message::Receipts70(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
+            Message::UpgradeStatus(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -360,7 +371,8 @@ impl Message {
             | Message::Status70(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
-            | Message::BlockRangeUpdate(_) => None,
+            | Message::BlockRangeUpdate(_)
+            | Message::UpgradeStatus(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
         }
@@ -393,6 +405,7 @@ impl Message {
             Message::Receipts69(_) => "Receipts",
             Message::Receipts70(_) => "Receipts",
             Message::BlockRangeUpdate(_) => "BlockRangeUpdate",
+            Message::UpgradeStatus(_) => "UpgradeStatus",
             Message::GetAccountRange(_) => "GetAccountRange",
             Message::AccountRange(_) => "AccountRange",
             Message::GetStorageRanges(_) => "GetStorageRanges",
@@ -435,6 +448,7 @@ impl Display for Message {
             Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
             Message::Receipts70(_) => "eth:Receipts(70)".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
+            Message::UpgradeStatus(_) => "bsc:UpgradeStatus".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),

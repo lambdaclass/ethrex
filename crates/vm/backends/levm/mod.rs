@@ -207,7 +207,9 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            // BSC uses Parlia PoA — EIP requests (deposits, withdrawals, consolidations)
+            // are Ethereum PoS-specific and do not apply to BSC.
+            VMType::L2(_) | VMType::Bsc => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -325,7 +327,8 @@ impl LEVM {
                 VMType::L1 => {
                     extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                 }
-                VMType::L2(_) => Default::default(),
+                // BSC uses Parlia PoA — EIP requests do not apply.
+                VMType::L2(_) | VMType::Bsc => Default::default(),
             };
 
             if let Some(withdrawals) = &block.body.withdrawals {
@@ -521,7 +524,8 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            // BSC uses Parlia PoA — EIP requests do not apply.
+            VMType::L2(_) | VMType::Bsc => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -2050,7 +2054,9 @@ impl LEVM {
         let fork = chain_config.fork(block_header.timestamp);
 
         // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2(_) = vm_type {
+        // BSC uses Parlia PoA — beacon root contract calls and block hash history
+        // (EIP-4788, EIP-2935) are Ethereum PoS-specific and do not apply.
+        if matches!(vm_type, VMType::L2(_) | VMType::Bsc) {
             return Ok(());
         }
 
@@ -2151,6 +2157,73 @@ pub fn generic_system_contract_levm(
     } else {
         // If the coinbase account was not in the cache, we need to remove it
         db.current_accounts_state.remove(&block_header.coinbase);
+    }
+
+    Ok(report)
+}
+
+/// Execute a BSC (Parlia) system call against a system contract.
+///
+/// Unlike L1 system calls, BSC system transactions originate from the block coinbase
+/// (not from `SYSTEM_ADDRESS`), use gas price 0, and may carry a non-zero `msg.value`
+/// (used by `deposit()` to transfer accumulated gas fees to the validator contract).
+///
+/// The `from` account state is restored after the call so that EVM call-mechanism
+/// side-effects (nonce increment, gas deduction) on the coinbase are not persisted.
+///
+/// Reference: `consensus/parlia/parlia.go` `applyTransaction`.
+#[allow(clippy::too_many_arguments)]
+pub fn bsc_system_call_levm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
+    value: U256,
+    db: &mut GeneralizedDatabase,
+    contract_address: Address,
+    from: Address,
+    gas_limit: u64,
+    vm_type: VMType,
+    crypto: &dyn Crypto,
+) -> Result<ExecutionReport, EvmError> {
+    let chain_config = db.store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+
+    // Back up the `from` account state so that nonce/balance side-effects of
+    // the EVM call mechanism itself are not visible after the system call.
+    let from_backup = db.current_accounts_state.get(&from).cloned();
+
+    let env = Environment {
+        origin: from,
+        gas_limit: gas_limit + TX_BASE_COST,
+        block_number: block_header.number,
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp,
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_gas_limit: i64::MAX as u64,
+        config,
+        ..Default::default()
+    };
+
+    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        value,
+        data: calldata,
+        ..Default::default()
+    });
+
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
+        .and_then(|mut vm| vm.execute())
+        .map_err(EvmError::from);
+
+    let report = result?;
+
+    // Restore the caller (coinbase) account to its pre-call state so that
+    // BSC system transactions do not appear to charge gas from the coinbase.
+    if let Some(from_account) = from_backup {
+        db.current_accounts_state.insert(from, from_account);
+    } else {
+        db.current_accounts_state.remove(&from);
     }
 
     Ok(report)

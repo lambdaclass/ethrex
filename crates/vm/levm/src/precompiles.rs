@@ -257,6 +257,16 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
+        || (matches!(vm_type, VMType::Bsc) && {
+            #[cfg(feature = "bsc")]
+            {
+                ethrex_bsc::precompiles::is_bsc_precompile(address)
+            }
+            #[cfg(not(feature = "bsc"))]
+            {
+                false
+            }
+        })
 }
 
 /// Per-block cache for precompile results shared between warmer and executor.
@@ -302,9 +312,32 @@ pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    vm_type: VMType,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
+    // BSC-specific precompiles are dispatched before the standard Ethereum
+    // table so they run in addition to the standard set (0x01-0x0a), not
+    // instead of them.
+    #[cfg(not(feature = "bsc"))]
+    let _ = vm_type;
+    #[cfg(feature = "bsc")]
+    if matches!(vm_type, VMType::Bsc) && ethrex_bsc::precompiles::is_bsc_precompile(&address) {
+        let gas_limit = *gas_remaining;
+        match ethrex_bsc::precompiles::run_bsc_precompile(&address, calldata, gas_limit) {
+            Ok((gas_used, output)) => {
+                increase_precompile_consumed_gas(gas_used, gas_remaining)?;
+                return Ok(Bytes::from(output));
+            }
+            Err(ethrex_bsc::precompiles::PrecompileError::NotEnoughGas) => {
+                return Err(PrecompileError::NotEnoughGas.into());
+            }
+            Err(_) => {
+                return Err(PrecompileError::ParsingInputError.into());
+            }
+        }
+    }
+
     type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {

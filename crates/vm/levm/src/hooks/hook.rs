@@ -20,6 +20,9 @@ pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     match vm_type {
         VMType::L1 => l1_hooks(),
         VMType::L2(fee_config) => l2_hooks(*fee_config),
+        // BSC uses the same execution flow as L1; fee routing is handled
+        // inside pay_coinbase by inspecting the vm_type at finalization time.
+        VMType::Bsc => l1_hooks(),
     }
 }
 

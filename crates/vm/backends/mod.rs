@@ -77,6 +77,24 @@ impl Evm {
         Self::_new_from_db(store, VMType::L2(fee_config), crypto)
     }
 
+    /// Creates a new EVM instance configured for BNB Smart Chain (BSC) execution.
+    pub fn new_for_bsc(db: impl VmDatabase + 'static, crypto: Arc<dyn Crypto>) -> Self {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+        Evm {
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
+            vm_type: VMType::Bsc,
+            crypto,
+        }
+    }
+
+    /// Creates a new EVM instance for BSC from an existing database arc.
+    pub fn new_from_db_for_bsc(
+        store: Arc<impl LevmDatabase + 'static>,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::Bsc, crypto)
+    }
+
     fn _new_from_db(
         store: Arc<impl LevmDatabase + 'static>,
         vm_type: VMType,
@@ -229,6 +247,65 @@ impl Evm {
     /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
     pub fn set_bal_index(&mut self, index: u16) {
         self.db.set_bal_index(index);
+    }
+
+    /// Execute a BSC (Parlia) system call against a system contract.
+    ///
+    /// System calls originate from `from` (typically the block coinbase), carry an
+    /// optional `value` (non-zero for `deposit()`), and run at zero gas price.
+    /// Returns the execution report; callers are responsible for checking success.
+    pub fn execute_bsc_system_call(
+        &mut self,
+        block_header: &BlockHeader,
+        contract_address: Address,
+        from: Address,
+        calldata: bytes::Bytes,
+        value: ethrex_common::U256,
+        gas_limit: u64,
+    ) -> Result<ethrex_levm::errors::ExecutionReport, EvmError> {
+        levm::bsc_system_call_levm(
+            block_header,
+            calldata,
+            value,
+            &mut self.db,
+            contract_address,
+            from,
+            gas_limit,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Read the current balance of `address` from the EVM state cache.
+    ///
+    /// Used by BSC block finalization to check the SYSTEM_ADDRESS balance before
+    /// draining it into the `deposit()` system call.
+    pub fn get_account_balance(
+        &mut self,
+        address: Address,
+    ) -> Result<ethrex_common::U256, EvmError> {
+        let account = self
+            .db
+            .get_account(address)
+            .map_err(|e| EvmError::Custom(format!("get_account_balance: {e}")))?;
+        Ok(account.info.balance)
+    }
+
+    /// Set the balance of `address` in the EVM state cache.
+    ///
+    /// Used by BSC block finalization to zero out the SYSTEM_ADDRESS balance
+    /// before executing the `deposit()` system call.
+    pub fn set_account_balance(
+        &mut self,
+        address: Address,
+        balance: ethrex_common::U256,
+    ) -> Result<(), EvmError> {
+        let account = self
+            .db
+            .get_account_mut(address)
+            .map_err(|e| EvmError::Custom(format!("set_account_balance: {e}")))?;
+        account.info.balance = balance;
+        Ok(())
     }
 
     pub fn simulate_tx_from_generic(

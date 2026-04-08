@@ -725,16 +725,28 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
     }
 }
 
-/// Handle requests from consensus client
+/// Handle requests from consensus client.
+///
+/// On BSC networks (chain_id 56 or 97), the engine_ namespace is disabled
+/// since BSC uses Parlia consensus rather than a beacon chain CL.
 pub async fn map_authrpc_requests(
     req: &RpcRequest,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.namespace() {
+        Ok(RpcNamespace::Engine) if is_bsc_network(&context) => {
+            Err(RpcErr::MethodNotFound(req.method.clone()))
+        }
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
+}
+
+/// Returns true if the node is running on a BSC network (mainnet or Chapel testnet).
+fn is_bsc_network(context: &RpcApiContext) -> bool {
+    let chain_id = context.storage.get_chain_config().chain_id;
+    ethrex_bsc::genesis::is_bsc_chain(chain_id)
 }
 
 /// Routes `eth_*` namespace requests to their handlers.

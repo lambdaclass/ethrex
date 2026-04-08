@@ -147,7 +147,7 @@ type BlockExecutionPipelineResult = (
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-/// Specifies whether the blockchain operates as L1 (mainnet/testnet) or L2 (rollup).
+/// Specifies whether the blockchain operates as L1 (mainnet/testnet), L2 (rollup), or BSC.
 #[derive(Debug, Clone, Default)]
 pub enum BlockchainType {
     /// Standard Ethereum L1 blockchain.
@@ -155,6 +155,8 @@ pub enum BlockchainType {
     L1,
     /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
+    /// BNB Smart Chain with Parlia consensus.
+    Bsc,
 }
 
 /// Configuration for L2 rollup operation.
@@ -210,6 +212,9 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Parlia consensus engine for BSC chains.
+    /// Present only when `options.type == BlockchainType::Bsc`.
+    pub parlia_engine: Option<Arc<ethrex_bsc::consensus::engine::ParliaEngine>>,
 }
 
 /// Configuration options for the blockchain.
@@ -326,6 +331,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            parlia_engine: None,
         }
     }
 
@@ -336,6 +342,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            parlia_engine: None,
         }
     }
 
@@ -356,16 +363,26 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
 
         let (execution_result, bal) = vm.execute_block(block)?;
+
+        // For BSC: execute Parlia system calls after user transactions, before
+        // computing state transitions.  Must happen before get_state_transitions()
+        // so that system-call state changes are included in the state root.
+        if matches!(self.options.r#type, BlockchainType::Bsc) {
+            execute_bsc_system_calls(block, &parent_header, &mut vm)?;
+        }
+
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        if !matches!(self.options.r#type, BlockchainType::Bsc) {
+            validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        }
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
@@ -1235,6 +1252,10 @@ impl Blockchain {
                     };
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
+                // BSC uses the same EVM execution path as L1 for now.
+                BlockchainType::Bsc => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
             };
 
             // Re-execute block with logger
@@ -1847,6 +1868,10 @@ impl Blockchain {
                     })?,
                     Arc::new(NativeCrypto),
                 ),
+                // BSC uses the same EVM execution path as L1 for now.
+                BlockchainType::Bsc => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
             };
             (vm, Some(logger))
         } else {
@@ -3055,6 +3080,8 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
+        // BSC uses the same EVM execution path as L1 for now.
+        BlockchainType::Bsc => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
     };
     Ok(evm)
 }
@@ -3133,6 +3160,106 @@ fn branchify(node: Node) -> Box<BranchNode> {
             Box::new(BranchNode::new(choices))
         }
     }
+}
+
+/// Execute BSC (Parlia) system calls after all user transactions in a block.
+///
+/// This function must be called BEFORE [`Evm::get_state_transitions`] so that
+/// the state changes produced by system calls are captured in the account
+/// update diff, and therefore included in the state root computation.
+///
+/// # Execution order
+///
+/// Matches `consensus/parlia/parlia.go` `Finalize`:
+///
+/// 1. `slash()` — if `spoiled_validator` is `Some` (out-of-turn block).
+/// 2. `deposit()` — every block; transfers `SYSTEM_ADDRESS` balance to the
+///    `ValidatorContract` as the block reward.
+/// 3. `distributeFinalityReward()` — every 200 blocks (TODO: needs snapshot).
+/// 4. `updateValidatorSetV2()` — breathe blocks only (TODO: needs snapshot).
+fn execute_bsc_system_calls(
+    block: &Block,
+    parent_header: &BlockHeader,
+    vm: &mut Evm,
+) -> Result<(), ChainError> {
+    use ethrex_bsc::system_calls::{apply_system_contract_upgrades, build_bsc_system_messages};
+    use ethrex_common::constants::SYSTEM_ADDRESS;
+
+    let coinbase = block.header.coinbase;
+    let block_number = block.header.number;
+    let block_timestamp = block.header.timestamp;
+    let parent_timestamp = parent_header.timestamp;
+
+    // Task 3.10: apply system contract code upgrades at fork boundaries.
+    apply_system_contract_upgrades(block_number, block_timestamp)
+        .map_err(|e| ChainError::Custom(format!("BSC system contract upgrade: {e}")))?;
+
+    // Read and drain the SYSTEM_ADDRESS balance — this is the accumulated gas
+    // fees from all user transactions in the block.  The balance is zeroed
+    // here and passed as `msg.value` to the `deposit()` call.
+    let deposit_value = vm
+        .get_account_balance(SYSTEM_ADDRESS)
+        .map_err(|e| ChainError::Custom(format!("BSC read SYSTEM_ADDRESS balance: {e}")))?;
+
+    if deposit_value > U256::zero() {
+        vm.set_account_balance(SYSTEM_ADDRESS, U256::zero())
+            .map_err(|e| ChainError::Custom(format!("BSC zero SYSTEM_ADDRESS balance: {e}")))?;
+    }
+
+    // Build the ordered list of system messages for this block.
+    // TODO: pass actual `spoiled_validator` once Parlia snapshot tracking is
+    // implemented.  For now we always pass `None`, which skips the `slash()`
+    // call; that is safe for checkpoint sync where we only validate recent blocks.
+    let messages = build_bsc_system_messages(
+        coinbase,
+        parent_timestamp,
+        block_timestamp,
+        block_number,
+        deposit_value,
+        None, // spoiled_validator — TODO: derive from Parlia snapshot
+    );
+
+    for msg in messages {
+        debug!(
+            block_number,
+            from = ?msg.from,
+            to = ?msg.to,
+            value = ?msg.value,
+            data_len = msg.data.len(),
+            "Executing BSC system call"
+        );
+
+        match vm.execute_bsc_system_call(
+            &block.header,
+            msg.to,
+            msg.from,
+            bytes::Bytes::from(msg.data),
+            msg.value,
+            msg.gas_limit,
+        ) {
+            Ok(report) if report.is_success() => {
+                // System call succeeded; state changes are already applied to vm.db.
+            }
+            Ok(report) => {
+                // A reverting system call is non-fatal — log it and continue.
+                // The BSC reference client does the same: it logs but does not
+                // abort block processing if a system tx reverts.
+                warn!(
+                    block_number,
+                    to = ?msg.to,
+                    "BSC system call reverted: {:?}", report.output
+                );
+            }
+            Err(e) => {
+                return Err(ChainError::Custom(format!(
+                    "BSC system call to {:?} failed: {e}",
+                    msg.to
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {

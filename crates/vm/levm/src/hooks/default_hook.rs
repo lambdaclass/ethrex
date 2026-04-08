@@ -5,12 +5,13 @@ use crate::{
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
+    constants::SYSTEM_ADDRESS,
     types::{Code, Fork},
 };
 
@@ -316,6 +317,15 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
+    // On BSC, transaction fees are routed to SystemAddress during EVM execution
+    // rather than directly to the block producer (coinbase). The validator receives
+    // its reward later via a system call at the end of the block.
+    // Reference: bnb-chain/bsc core/state_transition.go:568-576.
+    let fee_recipient = match vm.vm_type {
+        VMType::Bsc => SYSTEM_ADDRESS,
+        _ => vm.env.coinbase,
+    };
+
     // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
     // even if the priority fee is zero. System contract calls have gas_price = 0,
     // so we use this to distinguish them from user transactions.
@@ -325,9 +335,9 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         recorder.record_touched_address(vm.env.coinbase);
     }
 
-    // Only pay coinbase if there's actually a fee to pay.
+    // Only pay fee recipient if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
-        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+        vm.increase_account_balance(fee_recipient, coinbase_fee)?;
     }
 
     Ok(())

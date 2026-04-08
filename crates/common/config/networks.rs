@@ -1,3 +1,4 @@
+use ethrex_bsc::genesis::{BSC_CHAPEL_CHAIN_ID, BSC_MAINNET_CHAIN_ID};
 use ethrex_p2p::types::Node;
 use std::{
     fmt::{self},
@@ -43,6 +44,8 @@ pub enum PublicNetwork {
     Hoodi,
     Sepolia,
     Mainnet,
+    BscMainnet,
+    BscTestnet,
 }
 
 impl From<&str> for Network {
@@ -51,6 +54,8 @@ impl From<&str> for Network {
             "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
             "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "bsc-mainnet" | "bsc" => Network::PublicNetwork(PublicNetwork::BscMainnet),
+            "bsc-testnet" | "chapel" => Network::PublicNetwork(PublicNetwork::BscTestnet),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
@@ -65,6 +70,8 @@ impl TryFrom<u64> for Network {
             MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            BSC_MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::BscMainnet)),
+            BSC_CHAPEL_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::BscTestnet)),
             _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
@@ -88,6 +95,8 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::BscMainnet) => write!(f, "bsc-mainnet"),
+            Network::PublicNetwork(PublicNetwork::BscTestnet) => write!(f, "bsc-testnet"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
@@ -103,6 +112,12 @@ impl Network {
 
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
+            Network::PublicNetwork(PublicNetwork::BscMainnet) => {
+                Ok(ethrex_bsc::genesis::bsc_mainnet_genesis())
+            }
+            Network::PublicNetwork(PublicNetwork::BscTestnet) => {
+                Ok(ethrex_bsc::genesis::bsc_chapel_genesis())
+            }
             Network::PublicNetwork(public_network) => {
                 Ok(serde_json::from_str(get_genesis_contents(*public_network))?)
             }
@@ -120,6 +135,14 @@ impl Network {
         }
     }
 
+    /// Returns true if this is a BSC network (mainnet or testnet).
+    pub fn is_bsc(&self) -> bool {
+        matches!(
+            self,
+            Network::PublicNetwork(PublicNetwork::BscMainnet | PublicNetwork::BscTestnet)
+        )
+    }
+
     /// Returns the network-specific subdirectory name for the datadir.
     /// Public networks get a named suffix; custom genesis files and L2 chains
     /// use their chain ID as suffix.
@@ -128,6 +151,8 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet".to_owned()),
             Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi".to_owned()),
             Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia".to_owned()),
+            Network::PublicNetwork(PublicNetwork::BscMainnet) => Some("bsc-mainnet".to_owned()),
+            Network::PublicNetwork(PublicNetwork::BscTestnet) => Some("bsc-testnet".to_owned()),
             Network::LocalDevnet => None,
             Network::LocalDevnetL2 => None,
             Network::L2Chain(chain_id) => Some(format!("chain-{chain_id}")),
@@ -144,21 +169,43 @@ impl Network {
         // Explicit list derived from PublicNetwork variants + dev mode.
         // Update this when adding new PublicNetwork variants.
         &[
-            "mainnet", // PublicNetwork::Mainnet
-            "hoodi",   // PublicNetwork::Hoodi
-            "sepolia", // PublicNetwork::Sepolia
-            "dev",     // dev mode
+            "mainnet",     // PublicNetwork::Mainnet
+            "hoodi",       // PublicNetwork::Hoodi
+            "sepolia",     // PublicNetwork::Sepolia
+            "bsc-mainnet", // PublicNetwork::BscMainnet
+            "bsc-testnet", // PublicNetwork::BscTestnet
+            "dev",         // dev mode
         ]
     }
 
     pub fn get_bootnodes(&self) -> Vec<Node> {
-        let bootnodes = match self {
-            Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
-            Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
-            Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
-            _ => return vec![],
-        };
-        serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
+        match self {
+            Network::PublicNetwork(
+                PublicNetwork::Hoodi | PublicNetwork::Mainnet | PublicNetwork::Sepolia,
+            ) => {
+                let bootnodes = match self {
+                    Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
+                    Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
+                    Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
+                    _ => unreachable!(),
+                };
+                serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
+            }
+            Network::PublicNetwork(PublicNetwork::BscTestnet) => {
+                // BSC Chapel testnet bootnodes (port 30311)
+                let enodes: &[&str] = &[
+                    "enode://db1e2c76cbeb72e0b1a6e27bd78a8e594aa498d3a2792e0f1fa5e3748728a2e3d14bf0bdd8be8a3fec3ad0a13a3e3d69a05abec33bfac9dcbc0afaafba32e5301@52.199.214.252:30311",
+                    "enode://e5c4320e7c3ad28ac6e61a6126e5e9c9c0bca6d7b36f7ed74f76ad404bbbe09a6e0ad59d7eb9f56d6a33e4e40d3e7fbd19c59c7c2fd44b04c29b2e23c1ba4eae9@52.51.80.128:30311",
+                    "enode://7560180973a5fa2e8b76e4d0a94e2c7fe4e7eaceb93dbd2215be2dba5d6c59073c7b78e06d1c6ddb2d0236e67c80d6be14c42fcb2d99af91dd30eb1c5969c07c0@3.209.122.123:30311",
+                    "enode://665cf77ca950e41223547a8153b9a33b3acd6e24f91cca37f44fd1e8d14e58599e38434e9a0964e32d4a03109a94a3f56e7bae4c67c7fce32d45e3d791d4d9cd7@52.72.123.113:30311",
+                ];
+                enodes
+                    .iter()
+                    .filter_map(|e| Node::from_enode_url(e).ok())
+                    .collect()
+            }
+            _ => vec![],
+        }
     }
 }
 
@@ -167,6 +214,8 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
         PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
         PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
         PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
+        // BSC genesis is built programmatically, not from a JSON file
+        PublicNetwork::BscMainnet | PublicNetwork::BscTestnet => "",
     }
 }
 
@@ -249,6 +298,8 @@ mod tests {
             Network::PublicNetwork(PublicNetwork::Mainnet),
             Network::PublicNetwork(PublicNetwork::Hoodi),
             Network::PublicNetwork(PublicNetwork::Sepolia),
+            Network::PublicNetwork(PublicNetwork::BscMainnet),
+            Network::PublicNetwork(PublicNetwork::BscTestnet),
         ];
         for net in &networks {
             let suffix = net

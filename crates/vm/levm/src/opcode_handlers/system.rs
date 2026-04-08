@@ -944,6 +944,7 @@ impl<'a> VM<'a> {
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.vm_type,
                 self.db.store.precompile_cache(),
                 self.crypto,
             )?;

@@ -477,12 +477,18 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
+    let blockchain_type = if network.is_bsc() {
+        BlockchainType::Bsc
+    } else {
+        BlockchainType::L1
+    };
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
-            r#type: BlockchainType::L1,
+            r#type: blockchain_type,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
         },
@@ -564,6 +570,14 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+    }
+
+    // BSC sync bridge stub: BSC uses Parlia consensus and has no Engine API.
+    // Block ingestion is driven by P2P (NewBlock / snap sync) rather than FCU.
+    // TODO: implement the full BSC sync bridge that polls P2P for new blocks and
+    // triggers the sync manager, analogous to the Polygon bridge.
+    if network.is_bsc() {
+        info!("Running in BSC mode — Engine API is disabled; sync driven by P2P");
     }
 
     if opts.dev {

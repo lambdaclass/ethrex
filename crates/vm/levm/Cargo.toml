@@ -10,6 +10,7 @@ license.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
+ethrex-bsc = { workspace = true, optional = true }
 derive_more = { version = "1.0.0", features = ["full"] }
 
 bytes.workspace = true
@@ -24,6 +25,7 @@ rayon.workspace = true
 
 [features]
 default = []
+bsc = ["dep:ethrex-bsc"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 ethereum_foundation_tests = []
 debug = []

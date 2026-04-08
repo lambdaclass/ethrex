@@ -16,6 +16,7 @@ use crate::{
         error::PeerConnectionError,
         eth::{
             blocks::{BlockBodies, BlockHeaders},
+            bsc::UpgradeStatusMsg,
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
@@ -795,6 +796,21 @@ where
         };
         trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
+
+        // BSC peers (chain ID 56 = mainnet, 97 = Chapel testnet) expect an
+        // UpgradeStatusMsg (0x0b) immediately after the eth status message.
+        // Reference: https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/handshake.go
+        let chain_id = state.storage.get_chain_config().chain_id;
+        if chain_id == 56 || chain_id == 97 {
+            trace!(peer=%state.node, "Sending BSC UpgradeStatus");
+            send(
+                state,
+                Message::UpgradeStatus(UpgradeStatusMsg {
+                    disable_peer_tx_broadcast: false,
+                }),
+            )
+            .await?;
+        }
         // The next immediate message in the ETH protocol is the
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
@@ -1350,6 +1366,17 @@ async fn handle_incoming_message(
             } else {
                 return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
             }
+        }
+        // BSC-specific: UpgradeStatusMsg (0x0b) is sent by BSC peers immediately
+        // after the eth status exchange. We consume it without disconnecting.
+        // The disable_peer_tx_broadcast flag is ignored for now.
+        // Reference: https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/handshake.go
+        Message::UpgradeStatus(msg) => {
+            trace!(
+                peer=%state.node,
+                disable_peer_tx_broadcast=%msg.disable_peer_tx_broadcast,
+                "Received BSC UpgradeStatus",
+            );
         }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
