@@ -29,22 +29,38 @@ impl ZiskBackend {
     }
 
     fn write_elf_file() -> Result<(), BackendError> {
-        match std::fs::read(ELF_PATH) {
-            Ok(existing_content) => {
-                if existing_content != ZKVM_ZISK_PROGRAM_ELF {
-                    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)
-                        .map_err(BackendError::execution)?;
-                }
-            }
-            Err(e) => {
-                if e.kind() == ErrorKind::NotFound {
-                    std::fs::write(ELF_PATH, ZKVM_ZISK_PROGRAM_ELF)
-                        .map_err(BackendError::execution)?;
+        let needs_write = match std::fs::metadata(ELF_PATH) {
+            Ok(meta) => {
+                // If the file size doesn't match, we know we need to rewrite without
+                // reading potentially large/corrupted file contents.
+                if meta.len() != u64::try_from(ZKVM_ZISK_PROGRAM_ELF.len()).unwrap_or(0) {
+                    true
                 } else {
-                    return Err(BackendError::execution(e));
+                    // Size matches — read and compare contents.
+                    let existing_content =
+                        std::fs::read(ELF_PATH).map_err(BackendError::execution)?;
+                    existing_content != ZKVM_ZISK_PROGRAM_ELF
                 }
             }
+            Err(e) if e.kind() == ErrorKind::NotFound => true,
+            Err(e) => return Err(BackendError::execution(e)),
+        };
+
+        if needs_write {
+            // Atomic write: write to a temporary file in the same directory, then
+            // rename into place. rename() is atomic on POSIX filesystems, so we
+            // never leave a half-written ELF file behind if the process crashes.
+            let tmp_path = format!("{ELF_PATH}.{}.tmp", std::process::id());
+            std::fs::write(&tmp_path, ZKVM_ZISK_PROGRAM_ELF).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                BackendError::execution(e)
+            })?;
+            std::fs::rename(&tmp_path, ELF_PATH).map_err(|e| {
+                let _ = std::fs::remove_file(&tmp_path);
+                BackendError::execution(e)
+            })?;
         }
+
         Ok(())
     }
 
