@@ -529,8 +529,7 @@ impl DiscoveryServer {
 
         // Add the peer to the peer table
         if let Some(record) = &authdata.record {
-            self.peer_table
-                .new_contact_records(vec![record.clone()])?;
+            self.peer_table.new_contact_records(vec![record.clone()])?;
         }
 
         // Derive session keys (we are the recipient, node B)
@@ -773,8 +772,7 @@ impl DiscoveryServer {
         nodes_message: NodesMessage,
     ) -> Result<(), DiscoveryServerError> {
         // TODO(#3746): check that we requested neighbors from the node
-        self.peer_table
-            .new_contact_records(nodes_message.nodes)?;
+        self.peer_table.new_contact_records(nodes_message.nodes)?;
         Ok(())
     }
 
@@ -1470,9 +1468,7 @@ mod tests {
         );
 
         // Add the remote node as a contact with its ENR record
-        peer_table
-            .new_contact_records(vec![remote_record])
-            .unwrap();
+        peer_table.new_contact_records(vec![remote_record]).unwrap();
 
         // Set up a session for the remote node (required for send_ordinary)
         let session = Session {

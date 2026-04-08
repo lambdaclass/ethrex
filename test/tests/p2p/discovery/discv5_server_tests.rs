@@ -161,9 +161,7 @@ async fn test_enr_update_request_on_pong() {
         Store::new("", EngineType::InMemory).expect("Failed to create store"),
     );
 
-    peer_table
-        .new_contact_records(vec![remote_record])
-        .unwrap();
+    peer_table.new_contact_records(vec![remote_record]).unwrap();
 
     let session = Session {
         outbound_key: [0u8; 16],

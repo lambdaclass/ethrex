@@ -68,12 +68,22 @@ pub struct KBucket {
 }
 
 impl KBucket {
-    /// Find a contact by node ID within this bucket.
+    /// Find a contact by node ID in the main list.
     fn get(&self, node_id: &H256) -> Option<&Contact> {
         self.contacts
             .iter()
             .find(|(id, _)| id == node_id)
             .map(|(_, c)| c)
+    }
+
+    /// Find a contact by node ID in either the main or replacement list.
+    fn get_any(&self, node_id: &H256) -> Option<&Contact> {
+        self.get(node_id).or_else(|| {
+            self.replacements
+                .iter()
+                .find(|(id, _)| id == node_id)
+                .map(|(_, c)| c)
+        })
     }
 
     /// Find a mutable reference to a contact by node ID within this bucket.
@@ -312,15 +322,9 @@ pub enum ContactValidation {
 #[protocol]
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
-    fn new_contacts(
-        &self,
-        nodes: Vec<Node>,
-        protocol: DiscoveryProtocol,
-    ) -> Result<(), ActorError>;
-    fn new_contact_records(
-        &self,
-        node_records: Vec<NodeRecord>,
-    ) -> Result<(), ActorError>;
+    fn new_contacts(&self, nodes: Vec<Node>, protocol: DiscoveryProtocol)
+    -> Result<(), ActorError>;
+    fn new_contact_records(&self, node_records: Vec<NodeRecord>) -> Result<(), ActorError>;
     fn new_connected_peer(
         &self,
         node: Node,
@@ -935,6 +939,27 @@ impl PeerTableServer {
         self.buckets[idx].insert(node_id, contact)
     }
 
+    /// Look up a contact by node ID in either the main or replacement list.
+    fn get_contact_or_replacement(&self, node_id: &H256) -> Option<&Contact> {
+        let idx = self.bucket_for(node_id)?;
+        self.buckets[idx].get_any(node_id)
+    }
+
+    /// Look up a mutable reference in either the main or replacement list.
+    fn get_contact_or_replacement_mut(&mut self, node_id: &H256) -> Option<&mut Contact> {
+        let idx = self.bucket_for(node_id)?;
+        let bucket = &mut self.buckets[idx];
+        // Search main list first, then replacement list.
+        // Done inline to avoid borrow-checker issues with or_else closures.
+        if let Some(pos) = bucket.contacts.iter().position(|(id, _)| id == node_id) {
+            return Some(&mut bucket.contacts[pos].1);
+        }
+        if let Some(pos) = bucket.replacements.iter().position(|(id, _)| id == node_id) {
+            return Some(&mut bucket.replacements[pos].1);
+        }
+        None
+    }
+
     /// Iterate over all contacts across all buckets.
     fn iter_contacts(&self) -> impl Iterator<Item = (&H256, &Contact)> {
         self.buckets
@@ -1079,10 +1104,8 @@ impl PeerTableServer {
             let dist = xor_distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), dist));
-            } else if let Some((farthest_idx, _)) = nodes
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, (_, d))| *d)
+            } else if let Some((farthest_idx, _)) =
+                nodes.iter().enumerate().max_by_key(|(_, (_, d))| *d)
                 && dist < nodes[farthest_idx].1
             {
                 nodes[farthest_idx] = (contact.node.clone(), dist);
@@ -1143,7 +1166,7 @@ impl PeerTableServer {
                     // Check if we need to evaluate fork_id before taking
                     // the mutable borrow.
                     let should_update = self
-                        .get_contact(&node_id)
+                        .get_contact_or_replacement(&node_id)
                         .map(|c| match c.record.as_ref() {
                             None => true,
                             Some(r) => node_record.seq > r.seq,
@@ -1154,11 +1177,10 @@ impl PeerTableServer {
                     } else {
                         None
                     };
-                    if let Some(contact) = self.get_contact_mut(&node_id) {
+                    if let Some(contact) = self.get_contact_or_replacement_mut(&node_id) {
                         contact.add_protocol(DiscoveryProtocol::Discv5);
                         if should_update {
-                            if contact.node.ip != node.ip
-                                || contact.node.udp_port != node.udp_port
+                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
                             {
                                 contact.validation_timestamp = None;
                                 contact.ping_id = None;
@@ -1169,8 +1191,7 @@ impl PeerTableServer {
                         }
                     }
                 } else {
-                    let is_fork_id_valid =
-                        Self::evaluate_fork_id(&node_record, &self.store).await;
+                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, &self.store).await;
                     let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                     contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
