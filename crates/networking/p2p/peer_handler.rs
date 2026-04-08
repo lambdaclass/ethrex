@@ -24,7 +24,7 @@ use std::{
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 // Re-export constants from snap::constants for backward compatibility
 pub use crate::snap::constants::{
