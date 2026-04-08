@@ -436,7 +436,7 @@ pub async fn request_bytecodes(
             .copied()
             .collect();
 
-        let mut peer_table = peers.peer_table.clone();
+        let peer_table = peers.peer_table.clone();
 
         tokio::spawn(async move {
             let empty_task_result = TaskResult {
@@ -457,7 +457,7 @@ pub async fn request_bytecodes(
             });
             if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
                 PeerHandler::make_request(
-                    &mut peer_table,
+                    &peer_table,
                     peer_id,
                     &mut connection,
                     request,
@@ -1023,7 +1023,7 @@ pub async fn request_storage_ranges(
 pub async fn request_state_trienodes(
     peer_id: H256,
     mut connection: PeerConnection,
-    mut peer_table: PeerTable,
+    peer_table: PeerTable,
     state_root: H256,
     paths: Vec<RequestMetadata>,
 ) -> Result<Vec<Node>, SnapError> {
@@ -1043,7 +1043,7 @@ pub async fn request_state_trienodes(
         bytes: MAX_RESPONSE_BYTES,
     });
     let nodes = match PeerHandler::make_request(
-        &mut peer_table,
+        &peer_table,
         peer_id,
         &mut connection,
         request,
@@ -1088,7 +1088,7 @@ pub async fn request_state_trienodes(
 pub async fn request_storage_trienodes(
     peer_id: H256,
     mut connection: PeerConnection,
-    mut peer_table: PeerTable,
+    peer_table: PeerTable,
     get_trie_nodes: GetTrieNodes,
 ) -> Result<TrieNodes, RequestStorageTrieNodesError> {
     // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
@@ -1096,7 +1096,7 @@ pub async fn request_storage_trienodes(
     let request_id = get_trie_nodes.id;
     let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
     match PeerHandler::make_request(
-        &mut peer_table,
+        &peer_table,
         peer_id,
         &mut connection,
         request,
@@ -1123,7 +1123,7 @@ pub async fn request_storage_trienodes(
 async fn request_account_range_worker(
     peer_id: H256,
     mut connection: PeerConnection,
-    mut peer_table: PeerTable,
+    peer_table: PeerTable,
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
@@ -1143,7 +1143,7 @@ async fn request_account_range_worker(
         accounts,
         proof,
     })) = PeerHandler::make_request(
-        &mut peer_table,
+        &peer_table,
         peer_id,
         &mut connection,
         request,
@@ -1225,7 +1225,7 @@ async fn request_storage_ranges_worker(
     task: StorageTask,
     peer_id: H256,
     mut connection: PeerConnection,
-    mut peer_table: PeerTable,
+    peer_table: PeerTable,
     state_root: H256,
     chunk_account_hashes: Vec<H256>,
     chunk_storage_roots: Vec<H256>,
@@ -1257,7 +1257,7 @@ async fn request_storage_ranges_worker(
         slots,
         proof,
     })) = PeerHandler::make_request(
-        &mut peer_table,
+        &peer_table,
         peer_id,
         &mut connection,
         request,
