@@ -479,10 +479,8 @@ impl<'a> VM<'a> {
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
-            // - Remove coinbase — Bor doesn't implement EIP-3651 (warm coinbase).
-            substate.accessed_addresses.remove(&env.coinbase);
             // - Remove BLS precompiles (0x0b-0x11) — Bor warms Cancun set (1-10),
-            //   not Prague (1-17). Address 0x0a (KZG) stays warm as part of 1-10.
+            //   not Prague (1-17). Coinbase stays warm (EIP-3651 IS active on Bor).
             for i in 0x0b..=0x11u64 {
                 substate
                     .accessed_addresses
