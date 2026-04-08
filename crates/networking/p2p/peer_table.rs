@@ -17,9 +17,9 @@ use crate::{
     utils::distance,
 };
 use bytes::Bytes;
-use ethrex_common::H256;
+use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
-use indexmap::{IndexMap, map::Entry};
+use indexmap::IndexMap;
 use rand::seq::{IteratorRandom, SliceRandom};
 use rustc_hash::{FxHashMap, FxHashSet};
 use spawned_concurrency::{
@@ -47,12 +47,106 @@ const REQUESTS_WEIGHT: i64 = 1;
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
-/// The target number of contacts to maintain in peer_table.
-const TARGET_CONTACTS: usize = 100_000;
 /// Maximum number of ENRs to return in a FindNode response (discv4 compatible).
 pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 /// Maximum number of ENRs to return in a discv5 FindNode response.
 const MAX_ENRS_PER_FINDNODE_RESPONSE: usize = 16;
+
+/// Number of k-buckets in the Kademlia routing table (one per bit of the 256-bit node ID).
+const NUMBER_OF_BUCKETS: usize = 256;
+/// Maximum number of contacts per k-bucket (Kademlia k parameter).
+pub const MAX_NODES_PER_BUCKET: usize = 16;
+/// Maximum number of replacement entries per k-bucket.
+const MAX_REPLACEMENTS_PER_BUCKET: usize = 10;
+
+/// A single k-bucket in the Kademlia routing table.
+/// Each bucket stores contacts at a specific XOR distance range from the local node.
+#[derive(Debug, Clone, Default)]
+pub struct KBucket {
+    pub contacts: Vec<(H256, Contact)>,
+    pub replacements: Vec<(H256, Contact)>,
+}
+
+impl KBucket {
+    /// Find a contact by node ID within this bucket.
+    fn get(&self, node_id: &H256) -> Option<&Contact> {
+        self.contacts
+            .iter()
+            .find(|(id, _)| id == node_id)
+            .map(|(_, c)| c)
+    }
+
+    /// Find a mutable reference to a contact by node ID within this bucket.
+    fn get_mut(&mut self, node_id: &H256) -> Option<&mut Contact> {
+        self.contacts
+            .iter_mut()
+            .find(|(id, _)| id == node_id)
+            .map(|(_, c)| c)
+    }
+
+    /// Check if a contact exists in this bucket (main or replacement list).
+    fn contains(&self, node_id: &H256) -> bool {
+        self.contacts.iter().any(|(id, _)| id == node_id)
+            || self.replacements.iter().any(|(id, _)| id == node_id)
+    }
+
+    /// Insert a contact into the bucket. Returns true if inserted into main list.
+    /// If the bucket is full, the contact is added to the replacement list instead.
+    fn insert(&mut self, node_id: H256, contact: Contact) -> bool {
+        if self.contacts.len() < MAX_NODES_PER_BUCKET {
+            self.contacts.push((node_id, contact));
+            true
+        } else {
+            self.insert_replacement(node_id, contact);
+            false
+        }
+    }
+
+    /// Add a contact to the replacement list, evicting the oldest if full.
+    fn insert_replacement(&mut self, node_id: H256, contact: Contact) {
+        if self.replacements.len() >= MAX_REPLACEMENTS_PER_BUCKET {
+            self.replacements.remove(0);
+        }
+        self.replacements.push((node_id, contact));
+    }
+
+    /// Remove a contact from the main list and promote a replacement if available.
+    /// Returns the promoted replacement's node ID, if any.
+    fn remove_and_promote(&mut self, node_id: &H256) -> Option<H256> {
+        let Some(idx) = self.contacts.iter().position(|(id, _)| id == node_id) else {
+            return None;
+        };
+        self.contacts.remove(idx);
+        if let Some((replacement_id, replacement)) = self.replacements.pop() {
+            let promoted_id = replacement_id;
+            self.contacts.push((replacement_id, replacement));
+            Some(promoted_id)
+        } else {
+            None
+        }
+    }
+}
+
+/// Computes the bucket index for a node relative to the local node.
+/// Uses XOR distance: bucket = floor(log2(XOR(local, remote))), i.e. the
+/// position of the highest set bit minus 1.
+/// Returns None for the local node itself (XOR = 0).
+fn bucket_index(local_node_id: &H256, node_id: &H256) -> Option<usize> {
+    let xor = *local_node_id ^ *node_id;
+    let dist = U256::from_big_endian(xor.as_bytes());
+    if dist.is_zero() {
+        None
+    } else {
+        Some(dist.bits() - 1)
+    }
+}
+
+/// Computes the raw XOR distance between two node IDs.
+/// Used for comparing relative closeness: a is closer to target than b
+/// iff xor_distance(target, a) < xor_distance(target, b).
+fn xor_distance(a: &H256, b: &H256) -> H256 {
+    *a ^ *b
+}
 
 /// Identifies which discovery protocol was used to find a contact.
 /// This allows protocol-specific lookups to only query compatible contacts.
@@ -223,13 +317,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn new_contacts(
         &self,
         nodes: Vec<Node>,
-        local_node_id: H256,
         protocol: DiscoveryProtocol,
     ) -> Result<(), ActorError>;
     fn new_contact_records(
         &self,
         node_records: Vec<NodeRecord>,
-        local_node_id: H256,
     ) -> Result<(), ActorError>;
     fn new_connected_peer(
         &self,
@@ -307,7 +399,8 @@ pub trait PeerTableServerProtocol: Send + Sync {
 
 #[derive(Debug)]
 pub struct PeerTableServer {
-    contacts: IndexMap<H256, Contact>,
+    local_node_id: H256,
+    buckets: Vec<KBucket>,
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
     discarded_contacts: FxHashSet<H256>,
@@ -320,13 +413,14 @@ pub struct PeerTableServer {
 
 #[actor(protocol = PeerTableServerProtocol)]
 impl PeerTableServer {
-    pub fn spawn(target_peers: usize, store: Store) -> PeerTable {
-        PeerTableServer::new(target_peers, store).start()
+    pub fn spawn(local_node_id: H256, target_peers: usize, store: Store) -> PeerTable {
+        PeerTableServer::new(local_node_id, target_peers, store).start()
     }
 
-    pub(crate) fn new(target_peers: usize, store: Store) -> Self {
+    pub(crate) fn new(local_node_id: H256, target_peers: usize, store: Store) -> Self {
         Self {
-            contacts: Default::default(),
+            local_node_id,
+            buckets: vec![KBucket::default(); NUMBER_OF_BUCKETS],
             peers: Default::default(),
             already_tried_peers: Default::default(),
             discarded_contacts: Default::default(),
@@ -353,8 +447,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewContacts,
         _ctx: &Context<Self>,
     ) {
-        self.do_new_contacts(msg.nodes, msg.local_node_id, msg.protocol)
-            .await;
+        self.do_new_contacts(msg.nodes, msg.protocol).await;
     }
 
     #[send_handler]
@@ -363,8 +456,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewContactRecords,
         _ctx: &Context<Self>,
     ) {
-        self.do_new_contact_records(msg.node_records, msg.local_node_id)
-            .await;
+        self.do_new_contact_records(msg.node_records).await;
     }
 
     #[send_handler]
@@ -387,7 +479,7 @@ impl PeerTableServer {
         // Store in the standalone sessions map (always succeeds, no contact required).
         self.sessions.insert(msg.node_id, msg.session.clone());
         // Also update the contact's cached session if the contact exists.
-        if let Some(contact) = self.contacts.get_mut(&msg.node_id) {
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
             contact.session = Some(msg.session);
         }
     }
@@ -429,9 +521,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::SetUnwanted,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.unwanted = true);
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.unwanted = true;
+        }
     }
 
     #[send_handler]
@@ -440,9 +532,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::SetIsForkIdValid,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.is_fork_id_valid = Some(msg.valid));
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.is_fork_id_valid = Some(msg.valid);
+        }
     }
 
     #[send_handler]
@@ -484,9 +576,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordPingSent,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.record_ping_sent(msg.ping_id));
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.record_ping_sent(msg.ping_id);
+        }
     }
 
     #[send_handler]
@@ -495,16 +587,16 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordPongReceived,
         _ctx: &Context<Self>,
     ) {
-        self.contacts.entry(msg.node_id).and_modify(|contact| {
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
             if contact
                 .ping_id
                 .as_ref()
                 .map(|value| *value == msg.ping_id)
                 .unwrap_or(false)
             {
-                contact.ping_id = None
+                contact.ping_id = None;
             }
-        });
+        }
     }
 
     #[send_handler]
@@ -513,9 +605,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordEnrRequestSent,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.record_enr_request_sent(msg.request_hash));
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.record_enr_request_sent(msg.request_hash);
+        }
     }
 
     #[send_handler]
@@ -524,9 +616,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordEnrResponseReceived,
         _ctx: &Context<Self>,
     ) {
-        self.contacts.entry(msg.node_id).and_modify(|contact| {
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
             contact.record_enr_response_received(msg.request_hash, msg.record);
-        });
+        }
     }
 
     #[send_handler]
@@ -535,9 +627,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::SetDisposable,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.disposable = true);
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.disposable = true;
+        }
     }
 
     #[send_handler]
@@ -546,9 +638,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::IncrementFindNodeSent,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.n_find_node_sent += 1);
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.n_find_node_sent += 1;
+        }
     }
 
     #[send_handler]
@@ -557,9 +649,9 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::MarkKnowsUs,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|c| c.knows_us = true);
+        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
+            contact.knows_us = true;
+        }
     }
 
     #[send_handler]
@@ -606,7 +698,7 @@ impl PeerTableServer {
         _msg: peer_table_server_protocol::TargetReached,
         _ctx: &Context<Self>,
     ) -> bool {
-        self.contacts.len() >= TARGET_CONTACTS && self.peers.len() >= self.target_peers
+        self.peers.len() >= self.target_peers
     }
 
     #[request_handler]
@@ -660,7 +752,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetContact,
         _ctx: &Context<Self>,
     ) -> Option<Box<Contact>> {
-        self.contacts.get(&msg.node_id).cloned().map(Box::new)
+        self.get_contact(&msg.node_id).cloned().map(Box::new)
     }
 
     #[request_handler]
@@ -740,13 +832,16 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::InsertIfNew,
         _ctx: &Context<Self>,
     ) -> bool {
-        match self.contacts.entry(msg.node.node_id()) {
-            Entry::Occupied(_) => false,
-            Entry::Vacant(entry) => {
-                METRICS.record_new_discovery().await;
-                entry.insert(Contact::new(msg.node, msg.protocol));
-                true
-            }
+        let node_id = msg.node.node_id();
+        if self.contact_exists(&node_id) {
+            return false;
+        }
+        let contact = Contact::new(msg.node, msg.protocol);
+        if self.insert_contact(node_id, contact) {
+            METRICS.record_new_discovery().await;
+            true
+        } else {
+            false
         }
     }
 
@@ -805,18 +900,61 @@ impl PeerTableServer {
         self.sessions
             .get(&msg.node_id)
             .cloned()
-            .or_else(|| self.contacts.get(&msg.node_id)?.session.clone())
+            .or_else(|| self.get_contact(&msg.node_id)?.session.clone())
     }
 
     // === Private helper methods ===
 
-    // Weighting function used to select best peer
+    // --- K-bucket accessors ---
+
+    /// Get the bucket index for a node ID, or None if it's the local node.
+    fn bucket_for(&self, node_id: &H256) -> Option<usize> {
+        bucket_index(&self.local_node_id, node_id)
+    }
+
+    /// Look up a contact by node ID (O(K) within the bucket).
+    fn get_contact(&self, node_id: &H256) -> Option<&Contact> {
+        let idx = self.bucket_for(node_id)?;
+        self.buckets[idx].get(node_id)
+    }
+
+    /// Look up a mutable reference to a contact by node ID.
+    fn get_contact_mut(&mut self, node_id: &H256) -> Option<&mut Contact> {
+        let idx = self.bucket_for(node_id)?;
+        self.buckets[idx].get_mut(node_id)
+    }
+
+    /// Check if a contact exists in any bucket (main or replacement list).
+    fn contact_exists(&self, node_id: &H256) -> bool {
+        let Some(idx) = self.bucket_for(node_id) else {
+            return false;
+        };
+        self.buckets[idx].contains(node_id)
+    }
+
+    /// Insert a contact into the appropriate k-bucket. Returns true if inserted
+    /// (into main list or replacement list), false if the node is the local node.
+    fn insert_contact(&mut self, node_id: H256, contact: Contact) -> bool {
+        let Some(idx) = self.bucket_for(&node_id) else {
+            return false;
+        };
+        self.buckets[idx].insert(node_id, contact);
+        true
+    }
+
+    /// Iterate over all contacts across all buckets.
+    fn iter_contacts(&self) -> impl Iterator<Item = (&H256, &Contact)> {
+        self.buckets
+            .iter()
+            .flat_map(|bucket| bucket.contacts.iter().map(|(id, c)| (id, c)))
+    }
+
+    // --- Peer selection ---
+
     fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
         score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
     }
 
-    // Returns if the peer has room for more connections given the current score
-    // and amount of inflight requests
     fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
         let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
         let max_requests = (MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio).max(1.0);
@@ -842,30 +980,34 @@ impl PeerTableServer {
             .map(|(k, _, _, v)| (k, v))
     }
 
-    fn prune(&mut self) {
-        let disposable_contacts = self
-            .contacts
-            .iter()
-            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
-            .collect::<Vec<_>>();
+    // --- Contact operations ---
 
-        for contact_to_discard_id in disposable_contacts {
-            self.contacts.swap_remove(&contact_to_discard_id);
-            self.discarded_contacts.insert(contact_to_discard_id);
+    fn prune(&mut self) {
+        let disposable_contacts: Vec<H256> = self
+            .iter_contacts()
+            .filter_map(|(id, c)| c.disposable.then_some(*id))
+            .collect();
+
+        for node_id in disposable_contacts {
+            if let Some(idx) = self.bucket_for(&node_id) {
+                self.buckets[idx].remove_and_promote(&node_id);
+                self.discarded_contacts.insert(node_id);
+            }
         }
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
-        for contact in self.contacts.values() {
-            let node_id = contact.node.node_id();
-            if !self.peers.contains_key(&node_id)
-                && !self.already_tried_peers.contains(&node_id)
-                && contact.knows_us
-                && !contact.unwanted
-                && contact.is_fork_id_valid != Some(false)
-            {
-                self.already_tried_peers.insert(node_id);
-                return Some(contact.clone());
+        for bucket in &self.buckets {
+            for (node_id, contact) in &bucket.contacts {
+                if !self.peers.contains_key(node_id)
+                    && !self.already_tried_peers.contains(node_id)
+                    && contact.knows_us
+                    && !contact.unwanted
+                    && contact.is_fork_id_valid != Some(false)
+                {
+                    self.already_tried_peers.insert(*node_id);
+                    return Some(contact.clone());
+                }
             }
         }
         tracing::trace!("Resetting list of tried peers.");
@@ -874,13 +1016,13 @@ impl PeerTableServer {
     }
 
     fn do_get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| {
+        self.iter_contacts()
+            .filter(|(_, c)| {
                 c.supports_protocol(protocol)
                     && c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
                     && !c.disposable
             })
+            .map(|(_, c)| c)
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
@@ -889,15 +1031,15 @@ impl PeerTableServer {
 
     /// Get contact for ENR lookup (discv4 only)
     fn do_get_contact_for_enr_lookup(&mut self) -> Option<Contact> {
-        self.contacts
-            .values()
-            .filter(|c| {
+        self.iter_contacts()
+            .filter(|(_, c)| {
                 c.is_discv4
                     && c.was_validated()
                     && !c.has_pending_enr_request()
                     && c.record.is_none()
                     && !c.disposable
             })
+            .map(|(_, c)| c)
             .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
             .cloned()
@@ -909,19 +1051,19 @@ impl PeerTableServer {
         revalidation_interval: Duration,
         protocol: DiscoveryProtocol,
     ) -> Option<Box<Contact>> {
-        self.contacts
-            .values()
-            .filter(|c| {
+        self.iter_contacts()
+            .filter(|(_, c)| {
                 c.supports_protocol(protocol)
                     && Self::is_validation_needed(c, revalidation_interval)
             })
+            .map(|(_, c)| c)
             .choose(&mut rand::rngs::OsRng)
             .cloned()
             .map(Box::new)
     }
 
     fn do_validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> ContactValidation {
-        let Some(contact) = self.contacts.get(&node_id) else {
+        let Some(contact) = self.get_contact(&node_id) else {
             return ContactValidation::UnknownContact;
         };
         if !contact.was_validated() {
@@ -936,19 +1078,23 @@ impl PeerTableServer {
         ContactValidation::Valid(Box::new(contact.clone()))
     }
 
-    /// Get closest nodes for discv4 (returns Vec<Node>)
+    /// Get closest nodes using raw XOR distance for accurate ordering.
     fn do_get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
-        let mut nodes: Vec<(Node, usize)> = vec![];
+        let mut nodes: Vec<(Node, H256)> = vec![];
 
-        for (contact_id, contact) in &self.contacts {
-            let dist = Self::distance(&node_id, contact_id);
+        for (contact_id, contact) in self.iter_contacts() {
+            let dist = xor_distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), dist));
             } else {
-                for (i, (_, d)) in &mut nodes.iter().enumerate() {
-                    if dist < *d {
-                        nodes[i] = (contact.node.clone(), dist);
-                        break;
+                // Find the farthest node in the result set and replace if closer
+                if let Some((farthest_idx, _)) = nodes
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, (_, d))| *d)
+                {
+                    if dist < nodes[farthest_idx].1 {
+                        nodes[farthest_idx] = (contact.node.clone(), dist);
                     }
                 }
             }
@@ -961,8 +1107,7 @@ impl PeerTableServer {
     /// Distance 0 is reserved for the local node itself (handled by the caller),
     /// so contacts start at distance >= 1.
     fn do_get_nodes_at_distances(&self, local_node_id: H256, distances: &[u32]) -> Vec<NodeRecord> {
-        self.contacts
-            .iter()
+        self.iter_contacts()
             .filter_map(|(contact_id, contact)| {
                 let dist = distance(&local_node_id, contact_id) as u32;
                 if distances.contains(&dist) {
@@ -975,61 +1120,54 @@ impl PeerTableServer {
             .collect()
     }
 
-    async fn do_new_contacts(
-        &mut self,
-        nodes: Vec<Node>,
-        local_node_id: H256,
-        protocol: DiscoveryProtocol,
-    ) {
+    async fn do_new_contacts(&mut self, nodes: Vec<Node>, protocol: DiscoveryProtocol) {
         for node in nodes {
             let node_id = node.node_id();
-            if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+            if self.discarded_contacts.contains(&node_id) || node_id == self.local_node_id {
                 continue;
             }
-            match self.contacts.entry(node_id) {
-                Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(Contact::new(node, protocol));
+            if let Some(contact) = self.get_contact_mut(&node_id) {
+                // Contact already exists, just add the protocol
+                contact.add_protocol(protocol);
+            } else {
+                let contact = Contact::new(node, protocol);
+                if self.insert_contact(node_id, contact) {
                     METRICS.record_new_discovery().await;
-                }
-                Entry::Occupied(mut occupied_entry) => {
-                    // Contact already exists, just add the protocol
-                    occupied_entry.get_mut().add_protocol(protocol);
                 }
             }
         }
     }
 
-    async fn do_new_contact_records(&mut self, node_records: Vec<NodeRecord>, local_node_id: H256) {
+    async fn do_new_contact_records(&mut self, node_records: Vec<NodeRecord>) {
         for node_record in node_records {
             if !node_record.verify_signature() {
                 continue;
             }
             if let Ok(node) = Node::from_enr(&node_record) {
                 let node_id = node.node_id();
-                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                if self.discarded_contacts.contains(&node_id) || node_id == self.local_node_id {
                     continue;
                 }
-                match self.contacts.entry(node_id) {
-                    Entry::Vacant(vacant_entry) => {
-                        let is_fork_id_valid =
-                            Self::evaluate_fork_id(&node_record, &self.store).await;
-                        let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
-                        contact.is_fork_id_valid = is_fork_id_valid;
-                        contact.record = Some(node_record);
-                        vacant_entry.insert(contact);
-                        METRICS.record_new_discovery().await;
-                    }
-                    Entry::Occupied(mut occupied_entry) => {
-                        let should_update = match occupied_entry.get().record.as_ref() {
+                if self.contact_exists(&node_id) {
+                    // Check if we need to evaluate fork_id before taking
+                    // the mutable borrow.
+                    let should_update = self
+                        .get_contact(&node_id)
+                        .map(|c| match c.record.as_ref() {
                             None => true,
                             Some(r) => node_record.seq > r.seq,
-                        };
-                        let contact = occupied_entry.get_mut();
+                        })
+                        .unwrap_or(false);
+                    let is_fork_id_valid = if should_update {
+                        Self::evaluate_fork_id(&node_record, &self.store).await
+                    } else {
+                        None
+                    };
+                    if let Some(contact) = self.get_contact_mut(&node_id) {
                         contact.add_protocol(DiscoveryProtocol::Discv5);
                         if should_update {
-                            let is_fork_id_valid =
-                                Self::evaluate_fork_id(&node_record, &self.store).await;
-                            if contact.node.ip != node.ip || contact.node.udp_port != node.udp_port
+                            if contact.node.ip != node.ip
+                                || contact.node.udp_port != node.udp_port
                             {
                                 contact.validation_timestamp = None;
                                 contact.ping_id = None;
@@ -1038,6 +1176,15 @@ impl PeerTableServer {
                             contact.record = Some(node_record);
                             contact.is_fork_id_valid = is_fork_id_valid;
                         }
+                    }
+                } else {
+                    let is_fork_id_valid =
+                        Self::evaluate_fork_id(&node_record, &self.store).await;
+                    let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
+                    contact.is_fork_id_valid = is_fork_id_valid;
+                    contact.record = Some(node_record);
+                    if self.insert_contact(node_id, contact) {
+                        METRICS.record_new_discovery().await;
                     }
                 }
             }
@@ -1105,10 +1252,6 @@ impl PeerTableServer {
             })
             .collect();
         peers.choose(&mut rand::rngs::OsRng).cloned()
-    }
-
-    fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
-        distance(node_id_1, node_id_2)
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {

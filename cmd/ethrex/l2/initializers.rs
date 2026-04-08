@@ -241,7 +241,11 @@ pub async fn init_l2(
         if !opts.sequencer_opts.based {
             blockchain.set_synced();
         }
-        let peer_table = PeerTableServer::spawn(opts.node_opts.target_peers, store.clone());
+        let peer_table = PeerTableServer::spawn(
+            local_p2p_node.node_id(),
+            opts.node_opts.target_peers,
+            store.clone(),
+        );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
             tracker.clone(),
