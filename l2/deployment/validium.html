@@ -252,6 +252,7 @@
   --committer.l1-address &lt;L1_COMMITTER_ADDRESS&gt; \
   --proof-sender.l1-address &lt;L1_PROOF_SENDER_ADDRESS&gt; \
   --env-file-path &lt;PATH_TO_ENV_FILE&gt; \
+  --l2-gas-limit &lt;L2_GAS_LIMIT&gt; \
   --randomize-contract-deployment
 </code></pre>
 <div class="mdbook-alerts mdbook-alerts-caution">
@@ -295,6 +296,7 @@
 <li>The <code>CommonBridge</code> and <code>OnChainProposer</code> contracts are upgradeable and ownable, with implementations behind proxies initialized during deployment. Replace <code>COMMON_BRIDGE_OWNER_ADDRESS</code> and <code>ON_CHAIN_PROPOSER_OWNER_ADDRESS</code> with the address of the account you want as the owner. The owner can upgrade implementations or perform administrative actions; for more details, see the Architecture section.</li>
 <li>The sequencer components (<code>L1Committer</code> and <code>L1ProofSender</code>) require funded accounts on the target L1 to advance the network. Replace <code>L1_COMMITTER_ADDRESS</code> and <code>L1_PROOF_SENDER_ADDRESS</code> with the addresses of those accounts.</li>
 <li>Replace <code>PATH_TO_ENV_FILE</code> with the path where you want to save the generated environment file. This file contains the deployed contract addresses and other configuration details needed to run the L2 node.</li>
+<li>Replace <code>L2_GAS_LIMIT</code> with the desired L2 block gas limit (defaults to <code>30000000</code>). This value is stored in the <code>CommonBridge</code> contract and can be updated later by the bridge owner.</li>
 <li>L1 contract deployment uses the <code>CREATE2</code> opcode for deterministic addresses. To deploy non-deterministically, include the <code>--randomize-contract-deployment</code> flag.</li>
 </ul>
 </div>
@@ -346,7 +348,7 @@
 <li>
 <p>Tune throughput with the gas caps:</p>
 <ul>
-<li><code>--block-producer.block-gas-limit</code> (env: <code>ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT</code>, default: <code>30000000</code>): Sets the gas limit per L2 block.</li>
+<li>The L2 block gas limit is stored on-chain in the <code>CommonBridge</code> contract (set during deployment via <code>--l2-gas-limit</code>, defaults to 30000000). The sequencer fetches this value on startup. See <a href="./upgrades.html#from-v10-to-v11">Upgrades</a> for how to view and update it.</li>
 <li><code>--committer.batch-gas-limit</code> (env: <code>ETHREX_COMMITTER_BATCH_GAS_LIMIT</code>): Sets the gas limit per batch sent to L1—should be at or above the block gas limit.</li>
 </ul>
 <p>You can use either the environment variables or the flags to configure these values.</p>
