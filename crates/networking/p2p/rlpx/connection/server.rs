@@ -811,38 +811,64 @@ where
             )
             .await?;
         }
-        // The next immediate message in the ETH protocol is the
-        // status, reference here:
-        // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-        let msg = match receive(stream).await {
-            Some(msg) => msg?,
-            None => return Err(PeerConnectionError::Disconnected),
-        };
-        match msg {
-            Message::Status68(msg_data) => {
-                trace!(peer=%state.node, "Received Status(68)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Status69(msg_data) => {
-                trace!(peer=%state.node, "Received Status(69)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Status70(msg_data) => {
-                trace!(peer=%state.node, "Received Status(70)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Disconnect(disconnect) => {
-                return Err(PeerConnectionError::HandshakeError(format!(
-                    "Peer disconnected due to: {}",
-                    disconnect.reason()
-                )));
-            }
-            _ => {
-                return Err(PeerConnectionError::HandshakeError(
-                    "Expected a Status message".to_string(),
-                ));
+        // The next immediate message in the ETH protocol is the status.
+        // BSC peers may send an UpgradeStatusMsg before or after their Status —
+        // consume it if it arrives first, then read the actual Status.
+        // Reference: https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
+        let mut received_upgrade_status = false;
+        let mut status_received = false;
+        for _ in 0..3 {
+            let msg = match receive(stream).await {
+                Some(msg) => msg?,
+                None => return Err(PeerConnectionError::Disconnected),
+            };
+            match msg {
+                Message::Status68(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(68)");
+                    backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    status_received = true;
+                    break;
+                }
+                Message::Status69(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(69)");
+                    backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    status_received = true;
+                    break;
+                }
+                Message::Status70(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(70)");
+                    backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    status_received = true;
+                    break;
+                }
+                Message::UpgradeStatus(upgrade) => {
+                    trace!(
+                        peer=%state.node,
+                        disable_tx_broadcast=%upgrade.disable_peer_tx_broadcast,
+                        "Received BSC UpgradeStatus"
+                    );
+                    received_upgrade_status = true;
+                    // Continue loop to read the actual Status message
+                }
+                Message::Disconnect(disconnect) => {
+                    return Err(PeerConnectionError::HandshakeError(format!(
+                        "Peer disconnected due to: {}",
+                        disconnect.reason()
+                    )));
+                }
+                _ => {
+                    return Err(PeerConnectionError::HandshakeError(
+                        "Expected a Status message".to_string(),
+                    ));
+                }
             }
         }
+        if !status_received {
+            return Err(PeerConnectionError::HandshakeError(
+                "Did not receive Status message after 3 attempts".to_string(),
+            ));
+        }
+        let _ = received_upgrade_status;
     }
     Ok(())
 }
