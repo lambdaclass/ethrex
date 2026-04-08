@@ -363,6 +363,8 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
     let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
     let udp_port = opts
         .discovery_port
+        .as_deref()
+        .unwrap_or(&opts.p2p_port)
         .parse()
         .expect("Failed to parse discovery port");
 

@@ -269,13 +269,12 @@ pub struct Options {
     pub p2p_port: String,
     #[arg(
         long = "discovery.port",
-        default_value = "30303",
         value_name = "PORT",
-        help = "UDP port for P2P discovery.",
+        help = "UDP port for P2P discovery. Defaults to the P2P port if not set.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_DISCOVERY_PORT"
     )]
-    pub discovery_port: String,
+    pub discovery_port: Option<String>,
     #[arg(
         long = "p2p.discv4",
         default_value_t = true,
@@ -399,7 +398,7 @@ impl Options {
             authrpc_addr: "localhost".to_string(),
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_port: "30303".into(),
-            discovery_port: "30303".into(),
+            discovery_port: None,
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
@@ -421,7 +420,7 @@ impl Options {
             authrpc_port: "8551".into(),
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_port: "30303".into(),
-            discovery_port: "30303".into(),
+            discovery_port: None,
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
@@ -447,7 +446,7 @@ impl Default for Options {
             p2p_disabled: Default::default(),
             p2p_addr: None,
             p2p_port: Default::default(),
-            discovery_port: Default::default(),
+            discovery_port: None,
             discv4_enabled: true,
             discv5_enabled: true,
             network: Default::default(),

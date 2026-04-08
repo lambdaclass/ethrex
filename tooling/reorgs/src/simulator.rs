@@ -94,7 +94,7 @@ impl Simulator {
         // These are one TCP and one UDP
         let p2p_port = get_next_port();
         opts.p2p_port = p2p_port.to_string();
-        opts.discovery_port = p2p_port.to_string();
+        opts.discovery_port = Some(p2p_port.to_string());
 
         opts.syncmode = SyncMode::Full;
 
@@ -122,7 +122,10 @@ impl Simulator {
             format!("--authrpc.addr={}", opts.authrpc_addr),
             format!("--authrpc.port={}", opts.authrpc_port),
             format!("--p2p.port={}", opts.p2p_port),
-            format!("--discovery.port={}", opts.discovery_port),
+            format!(
+                "--discovery.port={}",
+                opts.discovery_port.as_deref().unwrap_or(&opts.p2p_port)
+            ),
             format!("--datadir={}", opts.datadir.display()),
             format!("--network={}", self.genesis_path.display()),
             format!("--syncmode={:?}", opts.syncmode).to_lowercase(),

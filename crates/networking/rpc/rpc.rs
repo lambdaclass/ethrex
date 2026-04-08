@@ -503,6 +503,10 @@ pub async fn start_api(
         ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
     >,
 ) -> Result<(), RpcErr> {
+    // BSC uses embedded Parlia consensus — no external consensus client is expected.
+    // Compute this before storage is moved into the service context.
+    let bsc = ethrex_bsc::genesis::is_bsc_chain(storage.get_chain_config().chain_id);
+
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
@@ -565,14 +569,16 @@ pub async fn start_api(
 
     let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
 
-    tokio::spawn(async move {
-        loop {
-            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
-            if result.is_err() {
-                warn!("No messages from the consensus layer. Is the consensus client running?");
+    if !bsc {
+        tokio::spawn(async move {
+            loop {
+                let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+                if result.is_err() {
+                    warn!("No messages from the consensus layer. Is the consensus client running?");
+                }
             }
-        }
-    });
+        });
+    }
 
     let authrpc_handler = move |ctx, auth, body| async move {
         let _ = timer_sender.send(());
