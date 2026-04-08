@@ -130,9 +130,7 @@ pub async fn get_l2_gas_limit(
     bridge_address: Address,
 ) -> Result<u64, EthClientError> {
     if bridge_address == Address::zero() {
-        warn!(
-            "Bridge address is zero, using default L2 gas limit: {DEFAULT_L2_GAS_LIMIT}"
-        );
+        warn!("Bridge address is zero, using default L2 gas limit: {DEFAULT_L2_GAS_LIMIT}");
         return Ok(DEFAULT_L2_GAS_LIMIT);
     }
     let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
