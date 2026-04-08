@@ -233,7 +233,7 @@ impl Decoder for RLPxCodec {
             .eth_version
             .read()
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
-        tracing::trace!(msg_id, ?version, "Decoding RLPx message");
+        tracing::trace!(msg_id, ?version, data_len = msg_data.len(), first_bytes = ?&msg_data[..msg_data.len().min(32)], "Decoding RLPx message");
         Ok(Some(rlpx::Message::decode(
             msg_id,
             msg_data,
