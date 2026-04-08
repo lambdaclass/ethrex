@@ -2236,6 +2236,7 @@ pub fn polygon_system_call_levm(
         timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         difficulty: block_header.difficulty,
+        chain_id: U256::from(chain_config.chain_id),
         base_fee_per_gas: U256::zero(),
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas,
