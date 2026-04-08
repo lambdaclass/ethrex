@@ -86,8 +86,9 @@ is evicted from memory.
 
 **Why a BTreeMap instead of a fixed-size array?** A naive `[Option<[u8;32]>; 256]`
 array takes ~8.5KB per StemNode even if only 1 or 2 slots are used, and most
-StemNodes in practice hold 1-5 values. The NodeStore keeps up to 2M nodes in
-its LRU cache, so fixed arrays would need ~8GB of RAM just for that cache.
+StemNodes in practice hold 1-5 values. The NodeStore (explained later) keeps
+up to 2M nodes in its LRU cache, so fixed arrays would need ~8GB of RAM just
+for that cache.
 Using a sparse BTreeMap brings a typical StemNode down to ~200 bytes, fitting
 the same cache in ~260MB. About a 40x memory reduction.
 
@@ -566,3 +567,94 @@ The binary trie replaces only the MPT merkleization tables
 | Block/header/receipt DB| Unchanged.                                         |
 | P2P, RPC, mempool      | Unchanged.                                         |
 | Consensus validation   | Unchanged (except state root check is skipped).    |
+
+## FAQ
+
+**Why do we keep both FKV and the trie? Can't we just use one?**
+
+They serve different purposes. FKV is optimized for fast O(1) reads during EVM
+execution (the VM needs to look up balances, storage slots, etc. millions of
+times per block). The trie is optimized for computing a cryptographic
+commitment to the entire state (the state root). The trie's tree structure
+makes it expensive to do random key lookups, and FKV's flat structure can't
+produce a Merkle root. Both are persisted to disk, so there is storage
+duplication, but eliminating either would mean either slow execution (no FKV)
+or no state roots (no trie).
+
+**What happens if the node crashes mid-flush?**
+
+Trie node flushes use RocksDB's atomic `WriteBatch`, so a crash mid-flush
+means the entire batch is discarded. On restart, the node detects the last
+successful checkpoint (block number + hash stored in `BINARY_TRIE_NODES`
+metadata) and resumes from there, re-executing any blocks after the
+checkpoint.
+
+**The state root check is skipped. Is that a security concern?**
+
+The block header's `state_root` field is an MPT root, which is meaningless to
+the binary trie. The binary trie computes its own root per block. Equivalence
+between the two is proven externally by the zkVM proving layer (the EF Privacy
+team's scope), not by direct comparison. For the binary trie node itself,
+correctness is validated by replaying real chain blocks and checking that gas
+usage and receipts match.
+
+**What's the `storage_root` sentinel? Is it fragile?**
+
+The MPT stores a `storage_root` (hash of the account's storage sub-trie) in
+each account's FKV entry. The VM uses `storage_root != EMPTY_TRIE_HASH` to
+check if an account has storage, which affects gas costs and account emptiness.
+The binary trie has no per-account storage sub-trie, so there's no natural
+value for this field. We synthesize a sentinel: `EMPTY_TRIE_HASH` for no
+storage, `H256(1)` for has storage. It works but it's a known piece of tech debt. The clean fix would be to add an
+explicit `has_storage: bool` to the VM's account representation, removing the
+dependency on `storage_root` entirely. We opted for the sentinel to avoid
+refactoring `AccountState` usage across storage, blockchain, VM, and RPC code.
+
+**How long does a full replay from genesis take?**
+
+This depends on the chain. On Hoodi (test network), 10k+ blocks replay in
+minutes. Mainnet would take significantly longer since we re-execute every
+block from genesis (there's no bulk state conversion because the MPT stores
+`keccak(address)` as keys and keccak is irreversible, so we don't have the
+original addresses to compute binary trie keys). The binary trie itself is
+fast (~4% of total replay time); LEVM execution dominates at ~65%.
+
+**What happens on a reorg?**
+
+The current implementation has limited reorg support. FKV only stores the
+latest state and has no undo log, so a reorg requires reloading the trie from
+the last disk checkpoint and re-executing the new fork's blocks. This works for
+shallow reorgs (a few blocks) but is expensive for deeper ones. A proper FKV
+undo log is planned but not yet implemented.
+
+**How does performance compare to the MPT?**
+
+We don't have direct head-to-head benchmarks yet. What we know from profiling
+the binary trie in isolation: it accounts for ~4% of total block processing
+time during replay, while LEVM (EVM execution) dominates at ~65%. The
+incremental merkleization means per-block cost scales with the number of
+modified accounts, not the total trie size. The trie is not the bottleneck.
+
+**Why BLAKE3 and not Poseidon2?**
+
+BLAKE3 was chosen to match the EIP-7864 reference implementation. Poseidon2
+would be ~50-200x cheaper inside ZK circuits (SP1, RISC Zero), but BLAKE3 is
+much faster in native execution. For this prototype, native performance matters
+more. If ZK proving cost becomes a bottleneck, the hash function can be swapped
+later (it's isolated in `hash.rs` and `merkle.rs`).
+
+**What's the proof size improvement over MPT?**
+
+An MPT proof is ~8-10 RLP-encoded nodes (1-4KB). A binary trie proof is ~25
+sibling hashes (~800 bytes). The binary structure (2 children per node instead
+of 16) means more levels but each level only needs one sibling hash (32 bytes)
+instead of up to 15.
+
+**Can two different accounts end up on the same stem?**
+
+The stem is `BLAKE3(zero_padded_address || tree_index)[0..31]`. For different
+addresses with the same `tree_index`, a collision would require a BLAKE3
+collision on the first 31 bytes (248 bits). This is astronomically unlikely
+and treated as impossible. If it did happen, the second account's insert would
+trigger a stem split, creating InternalNodes to distinguish them, but with
+248-bit stems this would mean diverging at a very deep level.
