@@ -46,7 +46,7 @@ jobs:
     strategy:
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
-        backend: ["sp1", "risc0", "zisk"]
+        backend: ["sp1", "risc0", "zisk", "airbender"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -75,6 +75,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
         uses: ./.github/actions/install-zisk
+
+      - name: Install Airbender
+        if: matrix.backend == 'airbender'
+        uses: ./.github/actions/install-airbender
 
       - name: RISC-V OpenVM toolchain install
         if: matrix.backend == 'openvm'
