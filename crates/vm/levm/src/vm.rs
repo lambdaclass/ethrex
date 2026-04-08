@@ -474,17 +474,16 @@ impl<'a> VM<'a> {
         let mut substate = Substate::initialize(&env, tx)?;
 
         if matches!(vm_type, VMType::Polygon(_)) {
-            // Polygon: add P256Verify (0x100) to warm set.
+            // Polygon warm set adjustments to match Bor:
+            // - Add P256Verify (0x100) — always active on Polygon.
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
-            // Polygon: remove coinbase from warm set (no EIP-3651 on Bor).
+            // - Remove coinbase — Bor doesn't implement EIP-3651 (warm coinbase).
             substate.accessed_addresses.remove(&env.coinbase);
-            // Polygon: remove precompile addresses 10-17 from warm set.
-            // Bor warms only Cancun precompiles (1-9), not Prague (10-17).
-            // initialize() warmed 1-17 because fork=Prague, but Polygon's
-            // precompile warm set matches Cancun, not Prague.
-            for i in 0x0a..=0x11u64 {
+            // - Remove BLS precompiles (0x0b-0x11) — Bor warms Cancun set (1-10),
+            //   not Prague (1-17). Address 0x0a (KZG) stays warm as part of 1-10.
+            for i in 0x0b..=0x11u64 {
                 substate
                     .accessed_addresses
                     .remove(&Address::from_low_u64_be(i));
