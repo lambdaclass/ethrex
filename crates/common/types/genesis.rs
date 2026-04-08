@@ -244,6 +244,35 @@ pub struct ChainConfig {
     pub gray_glacier_block: Option<u64>,
     pub merge_netsplit_block: Option<u64>,
 
+    // BSC-specific block-number forks
+    // These are ignored on non-BSC networks because they default to None.
+    #[serde(default)]
+    pub ramanujan_block: Option<u64>,
+    #[serde(default)]
+    pub niels_block: Option<u64>,
+    #[serde(default)]
+    pub mirror_sync_block: Option<u64>,
+    #[serde(default)]
+    pub bruno_block: Option<u64>,
+    #[serde(default)]
+    pub euler_block: Option<u64>,
+    #[serde(default)]
+    pub gibbs_block: Option<u64>,
+    #[serde(default)]
+    pub nano_block: Option<u64>,
+    #[serde(default)]
+    pub moran_block: Option<u64>,
+    #[serde(default)]
+    pub planck_block: Option<u64>,
+    #[serde(default)]
+    pub luban_block: Option<u64>,
+    #[serde(default)]
+    pub plato_block: Option<u64>,
+    #[serde(default)]
+    pub hertz_block: Option<u64>,
+    #[serde(default, alias = "hertzfixBlock")]
+    pub hertzfix_block: Option<u64>,
+
     /// Timestamp at which each fork was activated
     /// (None = no fork, 0 = fork is already active)
     pub shanghai_time: Option<u64>,
@@ -258,6 +287,31 @@ pub struct ChainConfig {
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
     pub amsterdam_time: Option<u64>,
+
+    // BSC-specific timestamp forks
+    // These are ignored on non-BSC networks because they default to None.
+    #[serde(default)]
+    pub kepler_time: Option<u64>,
+    #[serde(default)]
+    pub feynman_time: Option<u64>,
+    #[serde(default, alias = "feynmanFixTime")]
+    pub feynman_fix_time: Option<u64>,
+    #[serde(default)]
+    pub haber_time: Option<u64>,
+    #[serde(default, alias = "haberFixTime")]
+    pub haber_fix_time: Option<u64>,
+    #[serde(default)]
+    pub bohr_time: Option<u64>,
+    #[serde(default)]
+    pub pascal_time: Option<u64>,
+    #[serde(default)]
+    pub lorentz_time: Option<u64>,
+    #[serde(default)]
+    pub maxwell_time: Option<u64>,
+    #[serde(default)]
+    pub fermi_time: Option<u64>,
+    #[serde(default)]
+    pub mendel_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -625,6 +679,20 @@ impl ChainConfig {
             self.arrow_glacier_block,
             self.gray_glacier_block,
             self.merge_netsplit_block,
+            // BSC-specific block-number forks
+            self.ramanujan_block,
+            self.niels_block,
+            self.mirror_sync_block,
+            self.bruno_block,
+            self.euler_block,
+            self.gibbs_block,
+            self.nano_block,
+            self.moran_block,
+            self.planck_block,
+            self.luban_block,
+            self.plato_block,
+            self.hertz_block,
+            self.hertzfix_block,
         ]
         .into_iter()
         .flatten()
@@ -646,6 +714,18 @@ impl ChainConfig {
             self.bpo5_time,
             self.amsterdam_time,
             self.verkle_time,
+            // BSC-specific timestamp forks
+            self.kepler_time,
+            self.feynman_time,
+            self.feynman_fix_time,
+            self.haber_time,
+            self.haber_fix_time,
+            self.bohr_time,
+            self.pascal_time,
+            self.lorentz_time,
+            self.maxwell_time,
+            self.fermi_time,
+            self.mendel_time,
         ]
         .into_iter()
         .flatten()
