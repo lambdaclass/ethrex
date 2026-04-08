@@ -473,13 +473,10 @@ impl<'a> VM<'a> {
 
         let mut substate = Substate::initialize(&env, tx)?;
 
-        if matches!(vm_type, VMType::Polygon(_)) {
-            // Polygon: add P256Verify (0x100) to warm set.
-            // All other addresses (1-17 + coinbase + origin) are from initialize().
-            substate
-                .accessed_addresses
-                .insert(Address::from_low_u64_be(0x100));
-        }
+        // Polygon: no warm set adjustments needed.
+        // Bor warms the same Prague precompile set (1-17) + coinbase + origin.
+        // P256Verify (0x100) is NOT warmed initially — it's warmed on first access
+        // like any other address, matching Bor's behavior.
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
