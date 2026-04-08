@@ -933,10 +933,21 @@ impl PeerTableServer {
     /// into the main list, false if the node went to the replacement list or is
     /// the local node.
     fn insert_contact(&mut self, node_id: H256, contact: Contact) -> bool {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+
         let Some(idx) = self.bucket_for(&node_id) else {
             return false;
         };
-        self.buckets[idx].insert(node_id, contact)
+        let result = self.buckets[idx].insert(node_id, contact);
+
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.observe_insert_contact_duration(start.elapsed().as_secs_f64());
+        }
+
+        result
     }
 
     /// Look up a contact by node ID in either the main or replacement list.
@@ -965,6 +976,25 @@ impl PeerTableServer {
         self.buckets
             .iter()
             .flat_map(|bucket| bucket.contacts.iter().map(|(id, c)| (id, c)))
+    }
+
+    /// Collect all contacts into a Vec, recording the scan duration as a metric.
+    fn collect_contacts(&self) -> Vec<(H256, Contact)> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+
+        let result: Vec<(H256, Contact)> = self
+            .iter_contacts()
+            .map(|(id, c)| (*id, c.clone()))
+            .collect();
+
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.observe_iter_contacts_duration(start.elapsed().as_secs_f64());
+        }
+
+        result
     }
 
     // --- Peer selection ---
@@ -1100,8 +1130,8 @@ impl PeerTableServer {
     fn do_get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
         let mut nodes: Vec<(Node, H256)> = vec![];
 
-        for (contact_id, contact) in self.iter_contacts() {
-            let dist = xor_distance(&node_id, contact_id);
+        for (contact_id, contact) in self.collect_contacts() {
+            let dist = xor_distance(&node_id, &contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), dist));
             } else if let Some((farthest_idx, _)) =
