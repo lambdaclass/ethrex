@@ -504,8 +504,11 @@ pub async fn start_api(
     >,
 ) -> Result<(), RpcErr> {
     // BSC uses embedded Parlia consensus — no external consensus client is expected.
-    // Compute this before storage is moved into the service context.
-    let bsc = ethrex_bsc::genesis::is_bsc_chain(storage.get_chain_config().chain_id);
+    let chain_id = storage.get_chain_config().chain_id;
+    let bsc = ethrex_bsc::genesis::is_bsc_chain(chain_id);
+    if bsc {
+        tracing::info!("BSC mode detected (chain_id={chain_id}), skipping consensus layer health check");
+    }
 
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
