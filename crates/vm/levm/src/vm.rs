@@ -475,22 +475,12 @@ impl<'a> VM<'a> {
 
         if matches!(vm_type, VMType::Polygon(_)) {
             // Polygon: add P256Verify (0x100) to warm set.
+            // All Prague precompile addresses (1-17) are kept warm from initialize().
+            // Even if some (KZG, BLS) are not active as precompiles on Polygon,
+            // they must stay in the initial warm set to match Bor's behavior.
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
-            // Polygon: remove non-active precompile addresses from warm set.
-            // Bor only warms precompiles 1-9 + P256Verify. The initialize() method
-            // warms all Prague precompiles (1-17), so we remove the inactive ones:
-            // - 0x0a (KZG): not available on Polygon
-            // - 0x0b-0x11 (BLS): executed as precompiles but not pre-warmed in Bor
-            substate
-                .accessed_addresses
-                .remove(&Address::from_low_u64_be(0x0a));
-            for i in 0x0b..=0x11u64 {
-                substate
-                    .accessed_addresses
-                    .remove(&Address::from_low_u64_be(i));
-            }
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;

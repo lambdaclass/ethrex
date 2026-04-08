@@ -1145,15 +1145,6 @@ impl<'a> VM<'a> {
 
         old_callframe_memory.clean_from_base();
 
-        // Trace subcall gas for specific tx (temporary debugging)
-        if self.env.origin == Address::from_slice(&[0x59, 0xd8, 0xb2, 0xa5, 0x53, 0xe6, 0x7a, 0x9b, 0xab, 0x18, 0x56, 0x47, 0x0e, 0xba, 0x2e, 0x01, 0x27, 0xc3, 0xe3, 0xa5]) {
-            eprintln!(
-                "SUBCALL_GAS to={:?} depth={} ok={} limit={} used={}",
-                executed_call_frame.to, executed_call_frame.depth,
-                ctx_result.is_success(), gas_limit, ctx_result.gas_used,
-            );
-        }
-
         let parent_call_frame = &mut self.current_call_frame;
         let child_unused_gas = gas_limit
             .checked_sub(ctx_result.gas_used)
