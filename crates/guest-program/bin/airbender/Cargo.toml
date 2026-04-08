@@ -13,9 +13,8 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
-airbender = { git = "https://github.com/matter-labs/airbender-platform.git", package = "airbender-sdk", features = ["std"] }
+airbender = { git = "https://github.com/matter-labs/airbender-platform.git", package = "airbender-sdk", features = ["std", "crypto"] }
 sha2 = "0.10.9"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 ethrex-guest-program = { path = "../../", default-features = false, features = ["airbender"] }
-

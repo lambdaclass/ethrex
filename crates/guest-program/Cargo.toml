@@ -52,7 +52,7 @@ zisk = [
     "ethrex-crypto/kzg-rs",
 ]
 openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]
-airbender = ["dep:airbender-crypto", "ethrex-crypto/kzg-rs"]
+airbender = ["dep:airbender-crypto"]
 
 # Build-ELF features: base + build tooling for compiling guest ELFs.
 # Used by the prover host. Enabling these triggers the build script which
