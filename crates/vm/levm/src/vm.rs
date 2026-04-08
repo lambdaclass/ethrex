@@ -473,9 +473,18 @@ impl<'a> VM<'a> {
 
         let mut substate = Substate::initialize(&env, tx)?;
 
-        // Polygon: warm set = Prague defaults (1-17 + coinbase + origin).
-        // Do NOT add P256Verify (0x100) — Bor doesn't include it in the initial warm set.
-        // P256Verify is executed as a precompile but accessed cold on first call.
+        if matches!(vm_type, VMType::Polygon(_)) {
+            // Polygon: add P256Verify (0x100) to warm set.
+            substate
+                .accessed_addresses
+                .insert(Address::from_low_u64_be(0x100));
+            // Remove ONLY address 0x0a (KZG point evaluation) from warm set.
+            // Bor's Cancun-equivalent fork warms 1-9 but NOT 0x0a (KZG is not
+            // active on Polygon). BLS addresses 0x0b-0x11 stay warm.
+            substate
+                .accessed_addresses
+                .remove(&Address::from_low_u64_be(0x0a));
+        }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
