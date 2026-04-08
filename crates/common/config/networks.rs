@@ -192,12 +192,13 @@ impl Network {
                 serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
             }
             Network::PublicNetwork(PublicNetwork::BscTestnet) => {
-                // BSC Chapel testnet bootnodes (port 30311)
+                // BSC Chapel testnet static nodes (port 30311)
+                // Source: bnb-chain/bsc testnet.zip config.toml StaticNodes
                 let enodes: &[&str] = &[
-                    "enode://db1e2c76cbeb72e0b1a6e27bd78a8e594aa498d3a2792e0f1fa5e3748728a2e3d14bf0bdd8be8a3fec3ad0a13a3e3d69a05abec33bfac9dcbc0afaafba32e5301@52.199.214.252:30311",
-                    "enode://e5c4320e7c3ad28ac6e61a6126e5e9c9c0bca6d7b36f7ed74f76ad404bbbe09a6e0ad59d7eb9f56d6a33e4e40d3e7fbd19c59c7c2fd44b04c29b2e23c1ba4eae9@52.51.80.128:30311",
-                    "enode://7560180973a5fa2e8b76e4d0a94e2c7fe4e7eaceb93dbd2215be2dba5d6c59073c7b78e06d1c6ddb2d0236e67c80d6be14c42fcb2d99af91dd30eb1c5969c07c0@3.209.122.123:30311",
-                    "enode://665cf77ca950e41223547a8153b9a33b3acd6e24f91cca37f44fd1e8d14e58599e38434e9a0964e32d4a03109a94a3f56e7bae4c67c7fce32d45e3d791d4d9cd7@52.72.123.113:30311",
+                    "enode://db1e2c76e34f85b75fdc2460aad25a64947acc4adabb60b4c95f50c03066a4884f44f2d4d4c1607190712a0315681d30caa8a1c7d850e7aa643e29a6c1692739@52.199.214.252:30311",
+                    "enode://e5c4320eaa3357286cdde303df8b5b84f81013d86a72f91ecb2efc59b48a376bf16904d0a4e8ca44981c8d201bef439e1fb91c551d24aa39b65d930f03fc1823@52.51.80.128:30311",
+                    "enode://75601809401e4dedf6477fa9b74170d932b76aba0d1de1c19b27ff0a424ede294b5fc235af64f41dd4003a43793f63f321082b4de6d6a0588b5c84215f909af9@3.209.122.123:30311",
+                    "enode://665cf77ca26a8421cfe61a52ac312958308d4912e78ce8e0f61d6902e4494d4cc38f9b0dd1b23a427a7a5734e27e5d9729231426b06bb9c73b56a142f83f6b68@52.72.123.113:30311",
                 ];
                 enodes
                     .iter()
@@ -322,5 +323,11 @@ mod tests {
         Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+    }
+
+    #[test]
+    fn test_bsc_testnet_bootnodes_parse() {
+        let bootnodes = Network::PublicNetwork(PublicNetwork::BscTestnet).get_bootnodes();
+        assert_eq!(bootnodes.len(), 4, "BSC Chapel should have 4 bootnodes");
     }
 }
