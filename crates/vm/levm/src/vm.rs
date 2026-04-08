@@ -479,8 +479,14 @@ impl<'a> VM<'a> {
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
             // Polygon: remove coinbase from warm set — Bor doesn't implement EIP-3651.
-            // On Amoy, coinbase=0x0; on mainnet, coinbase=BorConfig fee address.
             substate.accessed_addresses.remove(&env.coinbase);
+
+            // TEMP: dump initial warm set for debugging
+            if env.origin == Address::from_slice(&[0x59, 0xd8, 0xb2, 0xa5, 0x53, 0xe6, 0x7a, 0x9b, 0xab, 0x18, 0x56, 0x47, 0x0e, 0xba, 0x2e, 0x01, 0x27, 0xc3, 0xe3, 0xa5]) {
+                let mut addrs: Vec<_> = substate.accessed_addresses.iter().map(|a| format!("{a:?}")).collect();
+                addrs.sort();
+                eprintln!("WARM_SET count={} addrs={}", addrs.len(), addrs.join(","));
+            }
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
