@@ -162,8 +162,60 @@ impl PeerHandler {
 
         while sync_head_number == 0 {
             if retries > MAX_RETRIES {
-                // sync_head is unknown to our peers
-                return Ok(None);
+                // sync_head hash is unknown to our peers — this can happen on
+                // BSC where the hash becomes stale within seconds.
+                // Fall back: ask a peer for header at block 0 (reverse=true, limit=1)
+                // to get their latest block number from their status.
+                debug!("sync_head hash not found by peers, falling back to peer latest block");
+                let peer_connection = self
+                    .peer_table
+                    .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                    .await?;
+                for (peer_id, mut connection) in
+                    peer_connection.into_iter().take(MAX_PEERS_TO_ASK)
+                {
+                    // Request 1 header starting from block number 0, reversed = true
+                    // This asks the peer for their latest block header
+                    let request_id = rand::random();
+                    let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                        id: request_id,
+                        startblock: HashOrNumber::Number(0),
+                        limit: 1,
+                        skip: 0,
+                        reverse: true,
+                    });
+                    match PeerHandler::make_request(
+                        &self.peer_table,
+                        peer_id,
+                        &mut connection,
+                        request,
+                        PEER_REPLY_TIMEOUT,
+                    )
+                    .await
+                    {
+                        Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                            id: _,
+                            block_headers,
+                        })) => {
+                            if let Some(header) = block_headers.first() {
+                                sync_head_number = header.number;
+                                debug!(
+                                    "Fallback: peer {peer_id} reports latest block {}",
+                                    sync_head_number
+                                );
+                                break;
+                            }
+                        }
+                        _ => {
+                            debug!("Fallback: peer {peer_id} did not respond");
+                        }
+                    }
+                }
+                if sync_head_number == 0 {
+                    // Even fallback failed — no peers available
+                    return Ok(None);
+                }
+                break;
             }
             let peer_connection = self
                 .peer_table
