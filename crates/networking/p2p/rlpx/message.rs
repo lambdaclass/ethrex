@@ -36,17 +36,21 @@ const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
 
-// When the bsc/1 capability is negotiated alongside eth/68, capabilities are sorted
-// alphabetically: bsc < eth < snap.  The bsc sub-protocol uses exactly 2 message
-// slots (BscCapMsg=0x00, VotesMsg=0x01), so every subsequent offset shifts by 2.
-// bsc:  0x10-0x11  (2 messages)
-// eth:  0x12       (was 0x10)
-// snap: 0x23       (was 0x21)
-// based:0x32       (was 0x30)
-const BSC_PROTOCOL_LENGTH: u8 = 2;
-const ETH_CAPABILITY_OFFSET_WITH_BSC: u8 = ETH_CAPABILITY_OFFSET + BSC_PROTOCOL_LENGTH; // 0x12
-const SNAP_CAPABILITY_OFFSET_ETH_68_BSC: u8 = SNAP_CAPABILITY_OFFSET_ETH_68 + BSC_PROTOCOL_LENGTH; // 0x23
-const BASED_CAPABILITY_OFFSET_ETH_68_BSC: u8 = BASED_CAPABILITY_OFFSET_ETH_68 + BSC_PROTOCOL_LENGTH; // 0x32
+// When the bsc capability is negotiated alongside eth/68, capabilities are sorted
+// alphabetically: bsc < eth < snap.  The bsc sub-protocol message count depends on
+// version: bsc/1 = 2 messages, bsc/2 = 4, bsc/3 = 4.
+// BSC peers advertise bsc/1,2,3 and we negotiate bsc/1, but go-ethereum computes
+// offsets using the MAXIMUM message count across all versions of the protocol
+// advertised by the peer (not just the negotiated version).  The peer advertises
+// bsc/3 which has 4 messages, so the offset shift is always 4.
+// bsc:  0x10-0x13  (4 message slots reserved)
+// eth:  0x14       (was 0x10)
+// snap: 0x25       (was 0x21)
+// based:0x34       (was 0x30)
+const BSC_PROTOCOL_LENGTH: u8 = 4;
+const ETH_CAPABILITY_OFFSET_WITH_BSC: u8 = ETH_CAPABILITY_OFFSET + BSC_PROTOCOL_LENGTH; // 0x14
+const SNAP_CAPABILITY_OFFSET_ETH_68_BSC: u8 = SNAP_CAPABILITY_OFFSET_ETH_68 + BSC_PROTOCOL_LENGTH; // 0x25
+const BASED_CAPABILITY_OFFSET_ETH_68_BSC: u8 = BASED_CAPABILITY_OFFSET_ETH_68 + BSC_PROTOCOL_LENGTH; // 0x34
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
