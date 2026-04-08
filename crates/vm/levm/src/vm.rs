@@ -697,9 +697,20 @@ impl<'a> VM<'a> {
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
+        // System call trace: ring buffer of last N opcodes for debugging REVERTs
+        let trace_syscall = self.env.gas_price.is_zero() && matches!(self.vm_type, VMType::Polygon(_));
+        let mut trace_buf: Vec<(u8, usize, u32)> = if trace_syscall { Vec::with_capacity(200) } else { Vec::new() };
+
         loop {
             let opcode = self.current_call_frame.next_opcode();
+            let pc_before = self.current_call_frame.pc;
+            let depth = self.current_call_frame.depth;
             self.advance_pc(1)?;
+
+            if trace_syscall {
+                if trace_buf.len() >= 200 { trace_buf.remove(0); }
+                trace_buf.push((opcode, pc_before, depth as u32));
+            }
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
@@ -721,6 +732,15 @@ impl<'a> VM<'a> {
                     Some(error) => self.handle_opcode_error(error)?,
                 },
             };
+
+            // Dump opcode trace for the FIRST system call revert only (deepest)
+            if trace_syscall && !result.is_success() && !trace_buf.is_empty() && depth >= 5 {
+                let trace_str: String = trace_buf.iter()
+                    .map(|(op, pc, d)| format!("{d}:{pc:04x}:{op:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                eprintln!("SYSCALL_REVERT depth={} trace={}", depth, trace_str);
+            }
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
