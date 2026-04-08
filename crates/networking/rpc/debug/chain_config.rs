@@ -6,13 +6,13 @@ pub struct ChainConfigRequest;
 
 impl RpcHandler for ChainConfigRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        if let Some(params) = params {
-            if !params.is_empty() {
-                return Err(RpcErr::BadParams(format!(
-                    "Expected no params and {} were provided",
-                    params.len()
-                )));
-            }
+        if let Some(params) = params
+            && !params.is_empty()
+        {
+            return Err(RpcErr::BadParams(format!(
+                "Expected no params and {} were provided",
+                params.len()
+            )));
         }
         Ok(ChainConfigRequest)
     }
