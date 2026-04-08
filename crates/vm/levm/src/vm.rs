@@ -478,11 +478,17 @@ impl<'a> VM<'a> {
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
-            // Polygon: remove coinbase from warm set.
-            // Bor doesn't implement EIP-3651 (warm coinbase). The coinbase was
-            // added by Substate::initialize() because fork >= Shanghai, but Polygon's
-            // Shanghai-equivalent fork doesn't include EIP-3651.
+            // Polygon: remove coinbase from warm set (no EIP-3651 on Bor).
             substate.accessed_addresses.remove(&env.coinbase);
+            // Polygon: remove precompile addresses 10-17 from warm set.
+            // Bor warms only Cancun precompiles (1-9), not Prague (10-17).
+            // initialize() warmed 1-17 because fork=Prague, but Polygon's
+            // precompile warm set matches Cancun, not Prague.
+            for i in 0x0a..=0x11u64 {
+                substate
+                    .accessed_addresses
+                    .remove(&Address::from_low_u64_be(i));
+            }
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
