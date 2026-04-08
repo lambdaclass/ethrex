@@ -2557,6 +2557,7 @@ impl Blockchain {
     /// Only the most-recent peer head is kept; the previous value is overwritten.
     pub fn set_bsc_sync_head(&self, head: H256) {
         if let Ok(mut target) = self.bsc_sync_head.lock() {
+            info!("BSC sync head set by peer status: {head:?}");
             *target = Some(head);
         }
     }
