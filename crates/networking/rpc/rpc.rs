@@ -493,7 +493,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncManager,
+    syncer: Arc<SyncManager>,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -507,7 +507,9 @@ pub async fn start_api(
     let chain_id = storage.get_chain_config().chain_id;
     let bsc = ethrex_bsc::genesis::is_bsc_chain(chain_id);
     if bsc {
-        tracing::info!("BSC mode detected (chain_id={chain_id}), skipping consensus layer health check");
+        tracing::info!(
+            "BSC mode detected (chain_id={chain_id}), skipping consensus layer health check"
+        );
     }
 
     // TODO: Refactor how filters are handled,
@@ -518,7 +520,7 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Some(Arc::new(syncer)),
+        syncer: Some(syncer),
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,

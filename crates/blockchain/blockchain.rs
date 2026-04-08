@@ -215,6 +215,11 @@ pub struct Blockchain {
     /// Parlia consensus engine for BSC chains.
     /// Present only when `options.type == BlockchainType::Bsc`.
     pub parlia_engine: Option<Arc<ethrex_bsc::consensus::engine::ParliaEngine>>,
+    /// Sync target for BSC chains (set by P2P after status exchange).
+    ///
+    /// BSC has no Engine API so the sync bridge polls this field instead
+    /// of waiting for a forkchoiceUpdated call.
+    bsc_sync_head: std::sync::Mutex<Option<H256>>,
 }
 
 /// Configuration options for the blockchain.
@@ -332,6 +337,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             parlia_engine: None,
+            bsc_sync_head: std::sync::Mutex::new(None),
         }
     }
 
@@ -343,6 +349,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             parlia_engine: None,
+            bsc_sync_head: std::sync::Mutex::new(None),
         }
     }
 
@@ -2543,6 +2550,20 @@ impl Blockchain {
     /// The node should accept incoming p2p transactions if this method returns true
     pub fn is_synced(&self) -> bool {
         self.is_synced.load(Ordering::Relaxed)
+    }
+
+    /// Sets a sync target for BSC chains (called by P2P after status exchange).
+    ///
+    /// Only the most-recent peer head is kept; the previous value is overwritten.
+    pub fn set_bsc_sync_head(&self, head: H256) {
+        if let Ok(mut target) = self.bsc_sync_head.lock() {
+            *target = Some(head);
+        }
+    }
+
+    /// Takes the BSC sync target (returns and clears it atomically).
+    pub fn take_bsc_sync_head(&self) -> Option<H256> {
+        self.bsc_sync_head.lock().ok()?.take()
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {

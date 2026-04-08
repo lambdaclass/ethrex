@@ -1,13 +1,14 @@
-use ethrex_common::types::ForkId;
+use ethrex_common::types::{BlockHash, ForkId};
 use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{error::PeerConnectionError, eth::status::StatusMessage, p2p::Capability};
 
+/// Validates a remote status message and returns the remote peer's best block hash.
 pub async fn validate_status<ST: StatusMessage>(
     msg_data: ST,
     storage: &Store,
     eth_capability: &Capability,
-) -> Result<(), PeerConnectionError> {
+) -> Result<BlockHash, PeerConnectionError> {
     //Check networkID
     let chain_config = storage.get_chain_config();
     if msg_data.get_network_id() != chain_config.chain_id {
@@ -37,7 +38,7 @@ pub async fn validate_status<ST: StatusMessage>(
             "Invalid Fork Id".to_string(),
         ));
     }
-    Ok(())
+    Ok(msg_data.get_best_hash())
 }
 
 /// Validates the fork id from a remote node is valid.

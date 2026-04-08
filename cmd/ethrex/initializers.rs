@@ -183,7 +183,7 @@ pub async fn init_rpc_api(
     local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
-    cancel_token: CancellationToken,
+    syncer: Arc<SyncManager>,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     #[cfg(feature = "eip-8025")] proof_coordinator: Option<
@@ -193,23 +193,6 @@ pub async fn init_rpc_api(
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
-
-    let syncmode = if opts.dev {
-        &SyncMode::Full
-    } else {
-        &opts.syncmode
-    };
-
-    // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        syncmode,
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-        datadir.to_path_buf(),
-    )
-    .await;
 
     let ws_socket_opts = if opts.ws_enabled {
         Some(get_ws_socket_addr(opts))
@@ -554,6 +537,75 @@ pub async fn init_l1(
         }
     };
 
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
+    let syncer = Arc::new(
+        SyncManager::new(
+            peer_handler.clone(),
+            syncmode,
+            cancel_token.clone(),
+            blockchain.clone(),
+            store.clone(),
+            datadir.to_path_buf(),
+        )
+        .await,
+    );
+
+    // BSC sync bridge: BSC uses Parlia consensus and has no Engine API, so
+    // sync must be driven by P2P rather than forkchoiceUpdated.  The bridge
+    // polls `blockchain.take_bsc_sync_head()` which is set by the P2P layer
+    // after each successful status exchange, then triggers the sync manager.
+    // A fallback timer also fires if no blocks have arrived for several seconds
+    // so that an initial snap/full sync can begin without waiting for a second
+    // peer status exchange.
+    if network.is_bsc() {
+        info!("Running in BSC mode — sync driven by P2P (no Engine API)");
+        let syncer_bridge = syncer.clone();
+        let blockchain_bridge = blockchain.clone();
+        let store_bridge = store.clone();
+        tracker.spawn(async move {
+            let mut pending_head: Option<ethrex_common::H256> = None;
+
+            // If we are already post-snap (full sync mode) and have blocks, trigger
+            // forward sync immediately without waiting for a new peer status hash.
+            if matches!(syncer_bridge.sync_mode(), SyncMode::Full) {
+                let latest = store_bridge.get_latest_block_number().await.unwrap_or(0);
+                if latest > 0 {
+                    info!(
+                        latest,
+                        "BSC bridge: post-snap full sync mode, triggering immediate forward sync"
+                    );
+                    // Use a sentinel hash — full sync ignores it and syncs by number.
+                    pending_head = Some(ethrex_common::H256::from_low_u64_be(1));
+                }
+            }
+
+            loop {
+                // Check for a new head signalled by P2P (status exchange).
+                if let Some(new_head) = blockchain_bridge.take_bsc_sync_head() {
+                    pending_head = Some(new_head);
+                }
+
+                // If we have a target and the syncer is idle, kick off a sync cycle.
+                if let Some(head) = pending_head.take() {
+                    if !syncer_bridge.is_active() {
+                        info!(?head, "BSC sync bridge: triggering sync");
+                        syncer_bridge.sync_to_head(head);
+                    } else {
+                        // Syncer is busy — hold onto the head for the next iteration.
+                        pending_head = Some(head);
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        });
+    }
+
     init_rpc_api(
         &opts,
         &datadir,
@@ -562,7 +614,7 @@ pub async fn init_l1(
         local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
-        cancel_token.clone(),
+        syncer,
         tracker.clone(),
         log_filter_handler,
         #[cfg(feature = "eip-8025")]
@@ -572,14 +624,6 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
-    }
-
-    // BSC sync bridge stub: BSC uses Parlia consensus and has no Engine API.
-    // Block ingestion is driven by P2P (NewBlock / snap sync) rather than FCU.
-    // TODO: implement the full BSC sync bridge that polls P2P for new blocks and
-    // triggers the sync manager, analogous to the Polygon bridge.
-    if network.is_bsc() {
-        info!("Running in BSC mode — Engine API is disabled; sync driven by P2P");
     }
 
     if opts.dev {

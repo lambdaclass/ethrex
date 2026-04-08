@@ -825,19 +825,36 @@ where
             match msg {
                 Message::Status68(msg_data) => {
                     trace!(peer=%state.node, "Received Status(68)");
-                    backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    // BSC mainnet (56) and Chapel testnet (97) have no Engine API;
+                    // notify the sync bridge so it can trigger sync toward this peer's head.
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
                     status_received = true;
                     break;
                 }
                 Message::Status69(msg_data) => {
                     trace!(peer=%state.node, "Received Status(69)");
-                    backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
                     status_received = true;
                     break;
                 }
                 Message::Status70(msg_data) => {
                     trace!(peer=%state.node, "Received Status(70)");
-                    backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
                     status_received = true;
                     break;
                 }
@@ -1097,17 +1114,17 @@ async fn handle_incoming_message(
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::Status69(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::Status70(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::GetAccountRange(req) => {
