@@ -6,15 +6,19 @@
 use crate::error::BinaryTrieError;
 
 /// A single write operation in an atomic batch.
+///
+/// Keys are stored as `Box<[u8]>` (exact-size heap slice) to avoid the extra
+/// capacity word of `Vec<u8>` and to allow zero-copy construction from fixed-size
+/// arrays (e.g. `[u8; 8]` node keys via `Box::from`).
 pub enum WriteOp {
     Put {
         table: &'static str,
-        key: Vec<u8>,
+        key: Box<[u8]>,
         value: Vec<u8>,
     },
     Delete {
         table: &'static str,
-        key: Vec<u8>,
+        key: Box<[u8]>,
     },
 }
 

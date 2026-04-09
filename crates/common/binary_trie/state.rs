@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -51,9 +51,10 @@ pub struct BinaryTrieState {
     /// has no prefix-enumeration — we can't discover all storage keys
     /// for an address without this side structure.
     ///
-    /// Wrapped in a Mutex so `has_storage_keys` can populate the cache with
-    /// `&self` (concurrent reads from executor threads).
-    storage_keys: Mutex<FxHashMap<Address, FxHashSet<H256>>>,
+    /// Wrapped in a RwLock so `has_storage_keys` can populate the cache with
+    /// `&self` (concurrent reads from executor threads) while allowing
+    /// multiple simultaneous readers without contention.
+    storage_keys: RwLock<FxHashMap<Address, FxHashSet<H256>>>,
 
     /// Persistence backend (None for pure in-memory operation).
     backend: Option<Arc<dyn TrieBackend>>,
@@ -81,7 +82,7 @@ impl BinaryTrieState {
             trie: BinaryTrie::new(),
             current_block_diffs: Vec::new(),
             prev_state_root: [0u8; 32],
-            storage_keys: Mutex::new(FxHashMap::default()),
+            storage_keys: RwLock::new(FxHashMap::default()),
             backend: None,
             storage_keys_table: "",
             dirty_storage_keys: FxHashSet::default(),
@@ -124,7 +125,7 @@ impl BinaryTrieState {
             trie,
             current_block_diffs: Vec::new(),
             prev_state_root: [0u8; 32],
-            storage_keys: Mutex::new(storage_keys),
+            storage_keys: RwLock::new(storage_keys),
             backend: Some(backend),
             storage_keys_table,
             dirty_storage_keys: FxHashSet::default(),
@@ -191,7 +192,7 @@ impl BinaryTrieState {
 
         // 2. Write dirty storage_keys entries.
         {
-            let storage_keys = self.storage_keys.lock().unwrap();
+            let storage_keys = self.storage_keys.read().unwrap();
             for addr in &self.dirty_storage_keys {
                 if let Some(keys) = storage_keys.get(addr) {
                     let mut value = Vec::with_capacity(keys.len() * 32);
@@ -200,13 +201,13 @@ impl BinaryTrieState {
                     }
                     ops.push(WriteOp::Put {
                         table: storage_keys_table,
-                        key: addr.as_bytes().to_vec(),
+                        key: Box::from(addr.as_bytes()),
                         value,
                     });
                 } else {
                     ops.push(WriteOp::Delete {
                         table: storage_keys_table,
-                        key: addr.as_bytes().to_vec(),
+                        key: Box::from(addr.as_bytes()),
                     });
                 }
             }
@@ -215,12 +216,12 @@ impl BinaryTrieState {
         // 3. Write checkpoint metadata.
         ops.push(WriteOp::Put {
             table: nodes_table,
-            key: META_BLOCK_KEY.to_vec(),
+            key: Box::from(META_BLOCK_KEY),
             value: block_number.to_le_bytes().to_vec(),
         });
         ops.push(WriteOp::Put {
             table: nodes_table,
-            key: META_BASE_HASH_KEY.to_vec(),
+            key: Box::from(META_BASE_HASH_KEY),
             value: block_hash.as_bytes().to_vec(),
         });
 
@@ -300,7 +301,7 @@ impl BinaryTrieState {
         } else {
             FxHashMap::default()
         };
-        *self.storage_keys.lock().unwrap() = storage_keys;
+        *self.storage_keys.write().unwrap() = storage_keys;
         self.dirty_storage_keys.clear();
         self.blocks_since_flush = 0;
         self.current_block_diffs.clear();
@@ -323,9 +324,7 @@ impl BinaryTrieState {
     /// Subtree caches will be rebuilt on the next merkleization call, but
     /// the incremental update path runs in O(8) when cached_hash exists.
     pub fn state_root(&mut self) -> [u8; 32] {
-        let root = merkelize(&mut self.trie);
-        self.trie.store.strip_dirty_subtrees();
-        root
+        merkelize(&mut self.trie)
     }
 
     /// Drain and return the leaf diffs accumulated during the current block,
@@ -359,7 +358,7 @@ impl BinaryTrieState {
     /// Returns `Some(value)` if the leaf exists, `None` otherwise.
     /// Used by the storage layer's unified read path (`BinaryTrieWrapper`).
     pub fn trie_get(&self, tree_key: [u8; 32]) -> Option<[u8; 32]> {
-        self.trie.get(tree_key)
+        self.trie.get_shared(tree_key)
     }
 
     /// Read account state from the binary trie.
@@ -370,14 +369,14 @@ impl BinaryTrieState {
     ///   - A dummy non-empty hash (H256::from_low_u64_be(1)) otherwise
     pub fn get_account_state(&self, address: &Address) -> Option<AccountState> {
         let basic_data_key = get_tree_key_for_basic_data(address);
-        let basic_data = self.trie.get(basic_data_key)?;
+        let basic_data = self.trie.get_shared(basic_data_key)?;
 
         let (_version, _code_size, nonce, balance) = unpack_basic_data(&basic_data);
 
         let code_hash_key = get_tree_key_for_code_hash(address);
         let code_hash = self
             .trie
-            .get(code_hash_key)
+            .get_shared(code_hash_key)
             .map(H256)
             .unwrap_or(*EMPTY_KECCACK_HASH);
 
@@ -404,13 +403,15 @@ impl BinaryTrieState {
     pub fn get_storage_slot(&self, address: &Address, key: H256) -> Option<U256> {
         let storage_key = U256::from_big_endian(key.as_bytes());
         let tree_key = get_tree_key_for_storage_slot(address, storage_key);
-        self.trie.get(tree_key).map(|v| U256::from_big_endian(&v))
+        self.trie
+            .get_shared(tree_key)
+            .map(|v| U256::from_big_endian(&v))
     }
 
     /// Get code size from basic_data. Returns 0 if account doesn't exist.
     pub fn get_code_size(&self, address: &Address) -> u32 {
         let basic_data_key = get_tree_key_for_basic_data(address);
-        match self.trie.get(basic_data_key) {
+        match self.trie.get_shared(basic_data_key) {
             Some(data) => {
                 let (_version, code_size, _nonce, _balance) = unpack_basic_data(&data);
                 code_size
@@ -484,8 +485,8 @@ impl BinaryTrieState {
                 }
             }
 
-            // Batch-update storage_keys with a single lock acquisition.
-            let mut storage_keys = self.storage_keys.lock().unwrap();
+            // Batch-update storage_keys with a single write-lock acquisition.
+            let mut storage_keys = self.storage_keys.write().unwrap();
             for key in keys_to_remove {
                 if let Some(keys) = storage_keys.get_mut(address) {
                     keys.remove(&key);
@@ -535,19 +536,17 @@ impl BinaryTrieState {
             }
 
             // Write storage slots.
-            for (slot, value) in &genesis.storage {
-                if !value.is_zero() {
-                    let tree_key = get_tree_key_for_storage_slot(address, *slot);
-                    self.trie.insert(tree_key, value.to_big_endian())?;
+            if !genesis.storage.is_empty() {
+                let mut storage_keys = self.storage_keys.write().unwrap();
+                for (slot, value) in &genesis.storage {
+                    if !value.is_zero() {
+                        let tree_key = get_tree_key_for_storage_slot(address, *slot);
+                        self.trie.insert(tree_key, value.to_big_endian())?;
 
-                    let key_h256 = H256(slot.to_big_endian());
-                    self.storage_keys
-                        .lock()
-                        .unwrap()
-                        .entry(*address)
-                        .or_default()
-                        .insert(key_h256);
-                    self.dirty_storage_keys.insert(*address);
+                        let key_h256 = H256(slot.to_big_endian());
+                        storage_keys.entry(*address).or_default().insert(key_h256);
+                        self.dirty_storage_keys.insert(*address);
+                    }
                 }
             }
         }
@@ -563,7 +562,7 @@ impl BinaryTrieState {
             self.trie.store.warm_len(),
             self.trie.store.dirty_len(),
             self.trie.store.freed_len(),
-            self.storage_keys.lock().unwrap().len(),
+            self.storage_keys.read().unwrap().len(),
         )
     }
 
@@ -708,7 +707,7 @@ impl BinaryTrieState {
     /// Checks in-memory cache first; on a miss, reloads from backend.
     pub fn has_storage_keys(&self, address: &Address) -> bool {
         {
-            let cache = self.storage_keys.lock().unwrap();
+            let cache = self.storage_keys.read().unwrap();
             if let Some(keys) = cache.get(address) {
                 return !keys.is_empty();
             }
@@ -731,7 +730,7 @@ impl BinaryTrieState {
                     offset += 32;
                 }
                 let has = !keys.is_empty();
-                self.storage_keys.lock().unwrap().insert(*address, keys);
+                self.storage_keys.write().unwrap().insert(*address, keys);
                 return has;
             }
         }
@@ -824,11 +823,12 @@ impl BinaryTrieState {
 
     /// Clear all storage slots for an account using the tracked storage_keys.
     fn clear_account_storage(&mut self, address: &Address) -> Result<(), BinaryTrieError> {
-        // Ensure storage_keys are loaded if they were evicted.
-        if !self.storage_keys.lock().unwrap().contains_key(address) {
+        // Ensure storage_keys are loaded if they were evicted (reload acquires write lock internally).
+        if !self.storage_keys.read().unwrap().contains_key(address) {
             self.reload_storage_keys(address);
         }
-        let keys = self.storage_keys.lock().unwrap().remove(address);
+        // Single write-lock acquisition: remove and retrieve the key set atomically.
+        let keys = self.storage_keys.write().unwrap().remove(address);
         if let Some(keys) = keys {
             for key in keys {
                 let storage_key = U256::from_big_endian(key.as_bytes());
@@ -1412,7 +1412,7 @@ mod tests {
         /// Minimal in-memory TrieBackend for tests.
         #[derive(Default)]
         struct MemoryTrieBackend {
-            tables: Mutex<FxHashMap<String, FxHashMap<Vec<u8>, Vec<u8>>>>,
+            tables: Mutex<FxHashMap<String, FxHashMap<Box<[u8]>, Vec<u8>>>>,
         }
 
         impl TrieBackend for MemoryTrieBackend {
@@ -1437,7 +1437,7 @@ mod tests {
                         }
                         WriteOp::Delete { table, key } => {
                             if let Some(t) = tables.get_mut(table) {
-                                t.remove(&key);
+                                t.remove(key.as_ref());
                             }
                         }
                     }
@@ -1452,7 +1452,7 @@ mod tests {
                 let tables = self.tables.lock().unwrap();
                 let entries: Vec<(Vec<u8>, Vec<u8>)> = tables
                     .get(table)
-                    .map(|t| t.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .map(|t| t.iter().map(|(k, v)| (k.to_vec(), v.clone())).collect())
                     .unwrap_or_default();
                 Ok(Box::new(entries.into_iter()))
             }

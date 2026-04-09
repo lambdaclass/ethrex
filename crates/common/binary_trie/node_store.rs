@@ -52,20 +52,21 @@ fn serialize_node(node: &Node) -> Vec<u8> {
             buf
         }
         Node::Stem(stem) => {
-            // Build presence bitmap: 256 bits = 32 bytes.
+            // Single pass: build bitmap and collect values simultaneously.
+            // BTreeMap iterates in ascending key order, which matches the bitmap's
+            // bit order (bit i set iff values[i] is present).
             let mut bitmap = [0u8; 32];
-            for &idx in stem.values.keys() {
+            let mut values_buf: Vec<u8> = Vec::with_capacity(stem.values.len() * 32);
+            for (&idx, v) in stem.values.iter() {
                 bitmap[idx as usize / 8] |= 1 << (idx as usize % 8);
+                values_buf.extend_from_slice(v);
             }
 
-            let mut buf = Vec::with_capacity(1 + 31 + 32 + stem.values.len() * 32);
+            let mut buf = Vec::with_capacity(1 + 31 + 32 + values_buf.len());
             buf.push(0x02);
             buf.extend_from_slice(&stem.stem);
             buf.extend_from_slice(&bitmap);
-            // BTreeMap iterates in key order, matching bitmap bit order.
-            for v in stem.values.values() {
-                buf.extend_from_slice(v);
-            }
+            buf.extend_from_slice(&values_buf);
             buf
         }
     }
@@ -280,6 +281,35 @@ impl NodeStore {
         }
     }
 
+    /// Get a shared reference to a node without cloning.
+    ///
+    /// Checks dirty_nodes and warm_nodes (both plain HashMaps) first. On a miss,
+    /// loads from the LRU/backend into warm_nodes and returns a reference to it.
+    /// This avoids cloning on every step of a trie walk.
+    ///
+    /// Lookup order: dirty_nodes → warm_nodes → clean_cache → backend.
+    pub fn get_with_promotion(&mut self, id: NodeId) -> Result<&Node, BinaryTrieError> {
+        if self.dirty_nodes.contains_key(&id) {
+            return Ok(self.dirty_nodes.get(&id).unwrap());
+        }
+        if self.warm_nodes.contains_key(&id) {
+            return Ok(self.warm_nodes.get(&id).unwrap());
+        }
+        // Cache miss: load from LRU or backend, promote into warm_nodes so
+        // subsequent reads in the same traversal are reference-cheap without
+        // marking the node dirty.
+        let node = {
+            let cache = self.clean_cache.get_mut().unwrap();
+            if let Some(n) = cache.pop(&id) {
+                n
+            } else {
+                self.load_from_db(id)?
+            }
+        };
+        self.warm_nodes.insert(id, node);
+        Ok(self.warm_nodes.get(&id).unwrap())
+    }
+
     /// Get a shared reference to a node by ID, populating the cache on miss.
     ///
     /// Used by mutation paths (insert, remove, merkelize) where callers need
@@ -288,11 +318,11 @@ impl NodeStore {
     ///
     /// Lookup order: dirty_nodes → warm_nodes → clean_cache → backend.
     pub fn get_mut(&mut self, id: NodeId) -> Result<&Node, BinaryTrieError> {
-        if self.dirty_nodes.contains_key(&id) {
-            return Ok(self.dirty_nodes.get(&id).unwrap());
+        if let Some(node) = self.dirty_nodes.get(&id) {
+            return Ok(node);
         }
-        if self.warm_nodes.contains_key(&id) {
-            return Ok(self.warm_nodes.get(&id).unwrap());
+        if let Some(node) = self.warm_nodes.get(&id) {
+            return Ok(node);
         }
         // Check clean cache; on miss, load from backend.
         if !self.clean_cache.get_mut().unwrap().contains(&id) {
@@ -320,11 +350,15 @@ impl NodeStore {
 
     /// Put a node back (or update an existing one). Marks the node dirty.
     pub fn put(&mut self, id: NodeId, node: Node) {
-        self.warm_nodes.remove(&id);
-        self.clean_cache.get_mut().unwrap().pop(&id);
+        // If already dirty, it cannot be in warm or clean tiers — skip the
+        // hash lookups for those maps (common case during mutation).
+        if !self.dirty_ids.contains(&id) {
+            self.warm_nodes.remove(&id);
+            self.clean_cache.get_mut().unwrap().pop(&id);
+            self.freed.remove(&id);
+        }
         self.dirty_nodes.insert(id, node);
         self.dirty_ids.insert(id);
-        self.freed.remove(&id);
     }
 
     /// Put a node back without marking it dirty.
@@ -361,7 +395,7 @@ impl NodeStore {
         for (id, node) in &self.dirty_nodes {
             ops.push(WriteOp::Put {
                 table: self.nodes_table,
-                key: node_key(*id).to_vec(),
+                key: Box::from(node_key(*id)),
                 value: serialize_node(node),
             });
         }
@@ -370,21 +404,21 @@ impl NodeStore {
         for &id in &self.freed {
             ops.push(WriteOp::Delete {
                 table: self.nodes_table,
-                key: node_key(id).to_vec(),
+                key: Box::from(node_key(id)),
             });
         }
 
         // Write root metadata.
         ops.push(WriteOp::Put {
             table: self.nodes_table,
-            key: META_ROOT.to_vec(),
+            key: Box::from(META_ROOT),
             value: root.unwrap_or(0).to_le_bytes().to_vec(),
         });
 
         // Write next_id metadata.
         ops.push(WriteOp::Put {
             table: self.nodes_table,
-            key: META_NEXT_ID.to_vec(),
+            key: Box::from(META_NEXT_ID),
             value: self.next_id.to_le_bytes().to_vec(),
         });
 

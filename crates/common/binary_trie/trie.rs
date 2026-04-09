@@ -40,9 +40,21 @@ impl BinaryTrie {
     }
 
     /// Look up the value for a key, returning None if absent.
-    pub fn get(&self, key: [u8; 32]) -> Option<[u8; 32]> {
+    ///
+    /// Uses `get_with_promotion` internally: cold cache misses are promoted into
+    /// warm_nodes so subsequent reads in the same block avoid cloning.
+    pub fn get(&mut self, key: [u8; 32]) -> Option<[u8; 32]> {
         let (stem, sub_index) = split_key(&key);
-        get_node(&self.store, self.root, &stem, sub_index)
+        get_node(&mut self.store, self.root, &stem, sub_index)
+    }
+
+    /// Look up the value for a key using only shared references (no promotion).
+    ///
+    /// Falls back to the cloning path on cache misses. Used by read paths that
+    /// hold only a `&self` reference (e.g. `BinaryTrieWrapper` behind an RwLock).
+    pub fn get_shared(&self, key: [u8; 32]) -> Option<[u8; 32]> {
+        let (stem, sub_index) = split_key(&key);
+        get_node_shared(&self.store, self.root, &stem, sub_index)
     }
 
     /// Remove the value for a key, returning the previous value if it existed.
@@ -203,7 +215,7 @@ fn split_stems(
 // ---------------------------------------------------------------------------
 
 fn get_node(
-    store: &NodeStore,
+    store: &mut NodeStore,
     node_id: Option<NodeId>,
     stem: &[u8; 31],
     sub_index: u8,
@@ -212,6 +224,49 @@ fn get_node(
 }
 
 fn get_node_at_depth(
+    store: &mut NodeStore,
+    node_id: Option<NodeId>,
+    stem: &[u8; 31],
+    sub_index: u8,
+    depth: usize,
+) -> Option<[u8; 32]> {
+    let id = node_id?;
+    let node = store.get_with_promotion(id).ok()?;
+    match node {
+        Node::Stem(stem_node) => {
+            if &stem_node.stem == stem {
+                stem_node.get_value(sub_index)
+            } else {
+                None
+            }
+        }
+        Node::Internal(internal) => {
+            if depth >= MAX_DEPTH {
+                return None;
+            }
+            let bit = stem_bit(stem, depth);
+            let child = if bit == 0 {
+                internal.left
+            } else {
+                internal.right
+            };
+            get_node_at_depth(store, child, stem, sub_index, depth + 1)
+        }
+    }
+}
+
+// Shared (cloning) read path — used where only `&NodeStore` is available.
+
+fn get_node_shared(
+    store: &NodeStore,
+    node_id: Option<NodeId>,
+    stem: &[u8; 31],
+    sub_index: u8,
+) -> Option<[u8; 32]> {
+    get_node_shared_at_depth(store, node_id, stem, sub_index, 0)
+}
+
+fn get_node_shared_at_depth(
     store: &NodeStore,
     node_id: Option<NodeId>,
     stem: &[u8; 31],
@@ -238,7 +293,7 @@ fn get_node_at_depth(
             } else {
                 internal.right
             };
-            get_node_at_depth(store, child, stem, sub_index, depth + 1)
+            get_node_shared_at_depth(store, child, stem, sub_index, depth + 1)
         }
     }
 }

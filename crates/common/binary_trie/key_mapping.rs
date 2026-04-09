@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use ethrex_common::{Address, U256};
 
 use crate::hash::blake3_hash;
@@ -17,10 +19,11 @@ pub const CODE_OFFSET: u64 = 128;
 /// Number of leaf slots per stem subtree (one per sub-index byte value).
 pub const STEM_SUBTREE_WIDTH: u64 = 256;
 
-/// 2^248 — where main storage slots start.
-pub fn main_storage_offset() -> U256 {
-    U256::from(1) << 248
-}
+/// 2^248 — where main storage slots start (lazily initialized).
+static MAIN_STORAGE_OFFSET: LazyLock<U256> = LazyLock::new(|| U256::from(1) << 248);
+
+/// STEM_SUBTREE_WIDTH as U256 (lazily initialized).
+static STEM_SUBTREE_WIDTH_U256: LazyLock<U256> = LazyLock::new(|| U256::from(STEM_SUBTREE_WIDTH));
 
 /// Zero-pads a 20-byte Ethereum address to 32 bytes (12 zero bytes prefix + 20 address bytes).
 pub fn old_style_address_to_address32(address: &Address) -> [u8; 32] {
@@ -61,13 +64,37 @@ pub fn get_tree_key(address: &Address, tree_index: U256, sub_index: u8) -> [u8; 
 /// Returns the tree key for the basic_data leaf of an account.
 ///
 /// Stores: version (1B) + reserved (4B) + code_size (3B) + nonce (8B) + balance (16B).
+///
+/// tree_index is always 0, so we zero-fill the 32-byte buffer directly instead of
+/// going through U256.
 pub fn get_tree_key_for_basic_data(address: &Address) -> [u8; 32] {
-    get_tree_key(address, U256::zero(), BASIC_DATA_LEAF_KEY)
+    let address32 = old_style_address_to_address32(address);
+    // tree_index = 0 → last 32 bytes of the 64-byte input are all zeros.
+    let mut input = [0u8; 64];
+    input[..32].copy_from_slice(&address32);
+    // input[32..64] is already zero (tree_index = 0).
+    let hash = tree_hash(&input);
+    let mut key = [0u8; 32];
+    key[..31].copy_from_slice(&hash[..31]);
+    key[31] = BASIC_DATA_LEAF_KEY;
+    key
 }
 
 /// Returns the tree key for the code_hash leaf of an account.
+///
+/// tree_index is always 0, so we zero-fill the 32-byte buffer directly instead of
+/// going through U256.
 pub fn get_tree_key_for_code_hash(address: &Address) -> [u8; 32] {
-    get_tree_key(address, U256::zero(), CODE_HASH_LEAF_KEY)
+    let address32 = old_style_address_to_address32(address);
+    // tree_index = 0 → last 32 bytes of the 64-byte input are all zeros.
+    let mut input = [0u8; 64];
+    input[..32].copy_from_slice(&address32);
+    // input[32..64] is already zero (tree_index = 0).
+    let hash = tree_hash(&input);
+    let mut key = [0u8; 32];
+    key[..31].copy_from_slice(&hash[..31]);
+    key[31] = CODE_HASH_LEAF_KEY;
+    key
 }
 
 /// Returns the tree key for a code chunk by its chunk index.
@@ -76,9 +103,9 @@ pub fn get_tree_key_for_code_hash(address: &Address) -> [u8; 32] {
 /// Chunk 0 → sub_index 128, chunk 127 → sub_index 255, chunk 128 → tree_index 1, sub_index 0.
 pub fn get_tree_key_for_code_chunk(address: &Address, chunk_id: u64) -> [u8; 32] {
     let pos = U256::from(CODE_OFFSET) + U256::from(chunk_id);
-    let tree_index = pos / U256::from(STEM_SUBTREE_WIDTH);
+    let tree_index = pos / *STEM_SUBTREE_WIDTH_U256;
     // Safe: pos % 256 is always 0–255, fits in u8.
-    let sub_index = (pos % U256::from(STEM_SUBTREE_WIDTH)).as_u64() as u8;
+    let sub_index = (pos % *STEM_SUBTREE_WIDTH_U256).as_u64() as u8;
     get_tree_key(address, tree_index, sub_index)
 }
 
@@ -90,9 +117,9 @@ pub fn get_tree_key_for_storage_slot(address: &Address, storage_key: U256) -> [u
     let header_capacity = U256::from(CODE_OFFSET - HEADER_STORAGE_OFFSET); // 64
     if storage_key < header_capacity {
         let pos = U256::from(HEADER_STORAGE_OFFSET) + storage_key;
-        let tree_index = pos / U256::from(STEM_SUBTREE_WIDTH);
+        let tree_index = pos / *STEM_SUBTREE_WIDTH_U256;
         // Safe: pos % 256 is always 0–255, fits in u8.
-        let sub_index = (pos % U256::from(STEM_SUBTREE_WIDTH)).as_u64() as u8;
+        let sub_index = (pos % *STEM_SUBTREE_WIDTH_U256).as_u64() as u8;
         get_tree_key(address, tree_index, sub_index)
     } else {
         // pos = MAIN_STORAGE_OFFSET + storage_key = 2^248 + storage_key
@@ -107,9 +134,9 @@ pub fn get_tree_key_for_storage_slot(address: &Address, storage_key: U256) -> [u
         // But storage_key / 256 + 2^240 can also overflow if storage_key is huge.
         // Use overflowing_add for safety — the result is truncated to 256 bits,
         // which then gets hashed in get_tree_key anyway.
-        let sub_index = (storage_key % U256::from(STEM_SUBTREE_WIDTH)).as_u64() as u8;
-        let (tree_index, _) = (main_storage_offset() / U256::from(STEM_SUBTREE_WIDTH))
-            .overflowing_add(storage_key / U256::from(STEM_SUBTREE_WIDTH));
+        let sub_index = (storage_key % *STEM_SUBTREE_WIDTH_U256).as_u64() as u8;
+        let (tree_index, _) = (*MAIN_STORAGE_OFFSET / *STEM_SUBTREE_WIDTH_U256)
+            .overflowing_add(storage_key / *STEM_SUBTREE_WIDTH_U256);
         get_tree_key(address, tree_index, sub_index)
     }
 }
