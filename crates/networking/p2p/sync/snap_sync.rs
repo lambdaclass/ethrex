@@ -148,10 +148,10 @@ pub async fn sync_cycle_snap(
             }
         }
 
-        let pivot_header = pivot_header.ok_or_else(|| {
-            error!("BSC pivot: could not resolve sync_head hash to a header after 15 attempts");
-            SyncError::PeerHandler(crate::peer_handler::PeerHandlerError::BlockHeaders)
-        })?;
+        let Some(pivot_header) = pivot_header else {
+            warn!("BSC pivot: could not resolve sync_head hash after 15 attempts, will retry on next cycle");
+            return Ok(()); // Return success so the sync manager retries with a fresh head
+        };
 
         let mut block_sync_state = SnapBlockSyncState::new(store.clone());
         info!(

@@ -251,14 +251,21 @@ pub async fn request_account_range(
 
         if block_is_stale(pivot_header) {
             info!("request_account_range became stale, updating pivot");
-            *pivot_header = update_pivot(
+            match update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
             )
             .await
-            .expect("Should be able to update pivot")
+            {
+                Ok(new_pivot) => *pivot_header = new_pivot,
+                Err(e) => {
+                    warn!("Failed to update pivot: {e}, continuing with current pivot");
+                    // Continue with the current (stale) pivot — the state may
+                    // still be servable by peers within their pruning window.
+                }
+            }
         }
 
         // Reserve a request slot before spawning so get_best_peer sees
