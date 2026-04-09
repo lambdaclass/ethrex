@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, BufWriter, Read, Write},
     path::Path,
 };
 
@@ -8,8 +8,10 @@ use ethrex_binary_trie::key_mapping::{
     CODE_HASH_LEAF_KEY, chunkify_code, get_stem_for_base, get_tree_key_for_code_chunk,
     get_tree_key_for_storage_slot, pack_basic_data, tree_key_from_stem,
 };
+use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_common::{Address, H256, U256, types::Genesis};
-use rustc_hash::FxHashMap;
+use memmap2::Mmap;
+use rayon::prelude::*;
 use tracing::{info, warn};
 
 use crate::initializers::{init_binary_trie_state, init_store, open_store};
@@ -41,8 +43,8 @@ pub async fn migrate_with_preimages(
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)?;
     store.set_binary_trie_state(binary_trie_state.clone());
 
-    // Step 2: Parse preimage file into keccak_hash -> preimage map.
-    let preimages = parse_geth_dump(preimage_path, "preimage")?;
+    // Step 2: Parse preimage file, sort, write flat files, mmap for O(log n) lookups.
+    let preimages = parse_geth_dump(preimage_path, datadir)?;
     info!("{} unique preimages loaded", preimages.len());
 
     // Step 3: Stream the snapshot file and build the binary trie.
@@ -62,13 +64,164 @@ pub async fn migrate_with_preimages(
     let started = std::time::Instant::now();
     let mut last_log = std::time::Instant::now();
 
-    loop {
-        let Some((key, value, entry_bytes)) = read_gethdbdump_entry(&mut reader)? else {
-            break;
-        };
-        bytes_read += entry_bytes;
+    // Hold the write lock for the entire migration.
+    let mut state = binary_trie_state
+        .write()
+        .map_err(|e| eyre::eyre!("Binary trie lock error: {e}"))?;
 
-        // Log progress every 5 seconds
+    let mut bufs = EntryBufs::new();
+    let mut inserts_since_flush = 0u64;
+    const FLUSH_INTERVAL: u64 = 5_000_000;
+    const BATCH_SIZE: usize = 50_000;
+
+    // Raw entries read from the file, to be processed in parallel.
+    // Each entry: (entry_type, keccak_hashes, raw_value)
+    let mut raw_batch: Vec<RawEntry> = Vec::with_capacity(BATCH_SIZE);
+
+    loop {
+        // Phase 1: Read a batch of raw entries (sequential I/O).
+        raw_batch.clear();
+        while raw_batch.len() < BATCH_SIZE {
+            let Some((op, entry_bytes)) = read_gethdbdump_entry(&mut reader, &mut bufs)? else {
+                break;
+            };
+            bytes_read += entry_bytes;
+            if op != 0 {
+                continue;
+            }
+
+            if bufs.key.len() == 33 && bufs.key[0] == b'a' {
+                let mut keccak_addr = [0u8; 32];
+                keccak_addr.copy_from_slice(&bufs.key[1..33]);
+                raw_batch.push(RawEntry::Account {
+                    keccak_addr,
+                    slim_rlp: bufs.value.clone(),
+                });
+            } else if bufs.key.len() == 65 && bufs.key[0] == b'o' {
+                let mut keccak_addr = [0u8; 32];
+                keccak_addr.copy_from_slice(&bufs.key[1..33]);
+                let mut keccak_slot = [0u8; 32];
+                keccak_slot.copy_from_slice(&bufs.key[33..65]);
+                raw_batch.push(RawEntry::Storage {
+                    keccak_addr,
+                    keccak_slot,
+                    raw_value: bufs.value.clone(),
+                });
+            }
+        }
+
+        if raw_batch.is_empty() {
+            break;
+        }
+
+        // Phase 2: Process batch in parallel (preimage lookups, RLP decode, BLAKE3).
+        let processed: Vec<Option<ProcessedEntry>> = raw_batch
+            .par_iter()
+            .map(|entry| match entry {
+                RawEntry::Account {
+                    keccak_addr,
+                    slim_rlp,
+                } => {
+                    let addr_bytes = preimages.get_addr(keccak_addr)?;
+                    let address = Address::from_slice(&addr_bytes);
+                    let (nonce, balance, code_hash) = decode_slim_account(slim_rlp).ok()?;
+                    let code_size = 0u32;
+                    let stem = get_stem_for_base(&address);
+                    let basic_data_key = tree_key_from_stem(&stem, 0);
+                    let basic_data = pack_basic_data(0, code_size, nonce, balance);
+                    let code_hash_key = tree_key_from_stem(&stem, CODE_HASH_LEAF_KEY);
+                    Some(ProcessedEntry::Account {
+                        basic_data_key,
+                        basic_data,
+                        code_hash_key,
+                        code_hash,
+                    })
+                }
+                RawEntry::Storage {
+                    keccak_addr,
+                    keccak_slot,
+                    raw_value,
+                } => {
+                    let addr_bytes = preimages.get_addr(keccak_addr)?;
+                    let address = Address::from_slice(&addr_bytes);
+                    let slot_bytes = preimages.get_slot(keccak_slot)?;
+                    let storage_key = U256::from_big_endian(&slot_bytes);
+
+                    let value_u256 = if raw_value.is_empty() {
+                        U256::zero()
+                    } else if let Ok((inner, _)) = decode_rlp_item(raw_value) {
+                        if inner.is_empty() || inner.len() > 32 {
+                            U256::zero()
+                        } else {
+                            U256::from_big_endian(inner)
+                        }
+                    } else {
+                        U256::zero()
+                    };
+
+                    if value_u256.is_zero() {
+                        return None;
+                    }
+
+                    let tree_key = get_tree_key_for_storage_slot(&address, storage_key);
+                    let value_bytes = value_u256.to_big_endian();
+                    Some(ProcessedEntry::Storage {
+                        tree_key,
+                        value_bytes,
+                    })
+                }
+            })
+            .collect();
+
+        // Phase 3: Insert into trie (sequential).
+        for (raw, processed) in raw_batch.iter().zip(processed.iter()) {
+            match raw {
+                RawEntry::Account { .. } => {
+                    if let Some(ProcessedEntry::Account {
+                        basic_data_key,
+                        basic_data,
+                        code_hash_key,
+                        code_hash,
+                    }) = processed
+                    {
+                        state
+                            .trie_insert(*basic_data_key, *basic_data)
+                            .map_err(|e| eyre::eyre!("Failed to insert basic_data: {e}"))?;
+                        state
+                            .trie_insert(*code_hash_key, *code_hash)
+                            .map_err(|e| eyre::eyre!("Failed to insert code_hash: {e}"))?;
+                        account_count += 1;
+                        inserts_since_flush += 2;
+                    } else {
+                        skipped += 1;
+                    }
+                }
+                RawEntry::Storage { .. } => {
+                    if let Some(ProcessedEntry::Storage {
+                        tree_key,
+                        value_bytes,
+                    }) = processed
+                    {
+                        state
+                            .trie_insert(*tree_key, *value_bytes)
+                            .map_err(|e| eyre::eyre!("Failed to insert storage: {e}"))?;
+                        inserts_since_flush += 1;
+                    }
+                    storage_count += 1;
+                }
+            }
+        }
+
+        // Periodic flush.
+        if inserts_since_flush >= FLUSH_INTERVAL {
+            info!("Flushing trie to disk ({inserts_since_flush} inserts)...");
+            state
+                .flush(0, H256::zero())
+                .map_err(|e| eyre::eyre!("Flush error: {e}"))?;
+            inserts_since_flush = 0;
+        }
+
+        // Log progress.
         if last_log.elapsed().as_secs() >= 5 {
             let pct = if file_size > 0 {
                 (bytes_read as f64 / file_size as f64 * 100.0) as u32
@@ -88,107 +241,9 @@ pub async fn migrate_with_preimages(
             );
             last_log = std::time::Instant::now();
         }
-
-        // Account entry: key = "a" (1 byte) + keccak(address) (32 bytes) = 33 bytes
-        if key.len() == 33 && key[0] == b'a' {
-            let keccak_addr: [u8; 32] = key[1..33].try_into().unwrap();
-
-            let Some(addr_preimage) = preimages.get(&keccak_addr) else {
-                skipped += 1;
-                continue;
-            };
-            if addr_preimage.len() != 20 {
-                skipped += 1;
-                continue;
-            }
-            let address = Address::from_slice(addr_preimage);
-
-            // Decode slim RLP account: [nonce, balance, root?, codehash?]
-            let (nonce, balance, code_hash) = decode_slim_account(&value)?;
-
-            let code_size = 0u32; // TODO: resolve code from separate source if needed
-
-            let stem = get_stem_for_base(&address);
-            let basic_data_key = tree_key_from_stem(&stem, 0);
-            let basic_data = pack_basic_data(0, code_size, nonce, balance);
-
-            let mut state = binary_trie_state
-                .write()
-                .map_err(|e| eyre::eyre!("Binary trie lock error: {e}"))?;
-
-            state
-                .trie_insert(basic_data_key, basic_data)
-                .map_err(|e| eyre::eyre!("Failed to insert basic_data: {e}"))?;
-
-            let code_hash_key = tree_key_from_stem(&stem, CODE_HASH_LEAF_KEY);
-            state
-                .trie_insert(code_hash_key, code_hash)
-                .map_err(|e| eyre::eyre!("Failed to insert code_hash: {e}"))?;
-
-            drop(state);
-
-            account_count += 1;
-            if account_count % 100_000 == 0 {
-                info!("Processed {account_count} accounts, {storage_count} storage slots...");
-            }
-        }
-        // Storage entry: key = "o" (1 byte) + keccak(address) (32 bytes) + keccak(slot) (32 bytes) = 65 bytes
-        else if key.len() == 65 && key[0] == b'o' {
-            let keccak_addr: [u8; 32] = key[1..33].try_into().unwrap();
-            let keccak_slot: [u8; 32] = key[33..65].try_into().unwrap();
-
-            let Some(addr_preimage) = preimages.get(&keccak_addr) else {
-                skipped += 1;
-                continue;
-            };
-            if addr_preimage.len() != 20 {
-                skipped += 1;
-                continue;
-            }
-            let address = Address::from_slice(addr_preimage);
-
-            let Some(slot_preimage) = preimages.get(&keccak_slot) else {
-                skipped += 1;
-                continue;
-            };
-            if slot_preimage.len() != 32 {
-                skipped += 1;
-                continue;
-            }
-            let storage_key = U256::from_big_endian(slot_preimage);
-
-            // Storage value is RLP-encoded bytes (the raw trie value, not U256).
-            // In geth's snapshot, storage values are stored as trimmed big-endian bytes.
-            let value_u256 = if value.is_empty() {
-                U256::zero()
-            } else {
-                U256::from_big_endian(&value)
-            };
-
-            if value_u256.is_zero() {
-                storage_count += 1;
-                continue;
-            }
-
-            let tree_key = get_tree_key_for_storage_slot(&address, storage_key);
-            let value_bytes = value_u256.to_big_endian();
-
-            let mut state = binary_trie_state
-                .write()
-                .map_err(|e| eyre::eyre!("Binary trie lock error: {e}"))?;
-            state
-                .trie_insert(tree_key, value_bytes)
-                .map_err(|e| eyre::eyre!("Failed to insert storage slot: {e}"))?;
-            drop(state);
-
-            storage_count += 1;
-            if storage_count % 1_000_000 == 0 {
-                info!("Processed {account_count} accounts, {storage_count} storage slots...");
-            }
-        }
-        // First entry is a delete of SnapshotRootKey -- skip it.
-        // Any other key format -- skip.
     }
+
+    drop(state);
 
     if skipped > 0 {
         warn!("{skipped} entries skipped due to missing preimages");
@@ -218,6 +273,33 @@ pub async fn migrate_with_preimages(
     Ok(())
 }
 
+/// Raw entry read from the snapshot dump (before parallel processing).
+enum RawEntry {
+    Account {
+        keccak_addr: [u8; 32],
+        slim_rlp: Vec<u8>,
+    },
+    Storage {
+        keccak_addr: [u8; 32],
+        keccak_slot: [u8; 32],
+        raw_value: Vec<u8>,
+    },
+}
+
+/// Processed entry ready for trie insertion (after parallel processing).
+enum ProcessedEntry {
+    Account {
+        basic_data_key: [u8; 32],
+        basic_data: [u8; 32],
+        code_hash_key: [u8; 32],
+        code_hash: [u8; 32],
+    },
+    Storage {
+        tree_key: [u8; 32],
+        value_bytes: [u8; 32],
+    },
+}
+
 /// Decode a Geth "slim RLP" account: [nonce, balance, root?, codehash?]
 ///
 /// Returns (nonce, balance, code_hash_bytes).
@@ -234,8 +316,13 @@ fn decode_slim_account(data: &[u8]) -> eyre::Result<(u64, U256, [u8; 32])> {
     let (balance_bytes, consumed) = decode_rlp_item(&list_data[offset..])?;
     let balance = if balance_bytes.is_empty() {
         U256::zero()
-    } else {
+    } else if balance_bytes.len() <= 32 {
         U256::from_big_endian(balance_bytes)
+    } else {
+        return Err(eyre::eyre!(
+            "Balance too large: {} bytes",
+            balance_bytes.len()
+        ));
     };
     offset += consumed;
 
@@ -280,9 +367,15 @@ fn decode_rlp_list(data: &[u8]) -> eyre::Result<(&[u8], usize)> {
             len = (len << 8) | b as usize;
         }
         let start = 1 + len_of_len;
+        if data.len() < start + len {
+            return Err(eyre::eyre!("RLP list payload truncated"));
+        }
         Ok((&data[start..start + len], start + len))
     } else if prefix >= 0xc0 {
         let len = (prefix - 0xc0) as usize;
+        if data.len() < 1 + len {
+            return Err(eyre::eyre!("RLP list payload truncated"));
+        }
         Ok((&data[1..1 + len], 1 + len))
     } else {
         Err(eyre::eyre!("Expected RLP list, got 0x{prefix:02x}"))
@@ -302,16 +395,24 @@ fn decode_rlp_item(data: &[u8]) -> eyre::Result<(&[u8], usize)> {
         let len = (prefix - 0x80) as usize;
         if len == 0 {
             Ok((&[], 1))
+        } else if data.len() < 1 + len {
+            Err(eyre::eyre!("RLP string truncated"))
         } else {
             Ok((&data[1..1 + len], 1 + len))
         }
     } else if prefix <= 0xbf {
         let len_of_len = (prefix - 0xb7) as usize;
+        if data.len() < 1 + len_of_len {
+            return Err(eyre::eyre!("RLP long string header truncated"));
+        }
         let mut len = 0usize;
         for &b in &data[1..1 + len_of_len] {
             len = (len << 8) | b as usize;
         }
         let start = 1 + len_of_len;
+        if data.len() < start + len {
+            return Err(eyre::eyre!("RLP long string truncated"));
+        }
         Ok((&data[start..start + len], start + len))
     } else {
         Err(eyre::eyre!("Expected RLP string item, got 0x{prefix:02x}"))
@@ -334,35 +435,119 @@ fn bytes_to_u64(bytes: &[u8]) -> u64 {
 // gethdbdump format parsing (shared by preimage and snapshot files)
 // ---------------------------------------------------------------------------
 
-/// Parse a gethdbdump file into a map of key -> value.
-/// For preimage files: key = last 32 bytes of the DB key (keccak hash), value = preimage.
-fn parse_geth_dump(path: &str, kind: &str) -> eyre::Result<FxHashMap<[u8; 32], Vec<u8>>> {
-    info!("Reading {kind} file: {path}");
-    let file = File::open(path).map_err(|e| eyre::eyre!("Failed to open {kind} file: {e}"))?;
+/// Sorted memory-mapped preimage lookup. Two files: one for addresses (52 bytes/record),
+/// one for storage slots (64 bytes/record). Each record is [hash:32][preimage:20 or 32].
+/// Binary search for O(log n) lookups with zero RAM overhead beyond the mmap.
+struct Preimages {
+    addr_mmap: Mmap,
+    addr_count: usize,
+    slot_mmap: Mmap,
+    slot_count: usize,
+}
+
+const ADDR_RECORD_SIZE: usize = 32 + 20; // 52
+const SLOT_RECORD_SIZE: usize = 32 + 32; // 64
+
+impl Preimages {
+    fn get_addr(&self, hash: &[u8; 32]) -> Option<[u8; 20]> {
+        Self::binary_search(&self.addr_mmap, self.addr_count, ADDR_RECORD_SIZE, hash).map(
+            |offset| {
+                let mut arr = [0u8; 20];
+                arr.copy_from_slice(&self.addr_mmap[offset + 32..offset + 52]);
+                arr
+            },
+        )
+    }
+
+    fn get_slot(&self, hash: &[u8; 32]) -> Option<[u8; 32]> {
+        Self::binary_search(&self.slot_mmap, self.slot_count, SLOT_RECORD_SIZE, hash).map(
+            |offset| {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&self.slot_mmap[offset + 32..offset + 64]);
+                arr
+            },
+        )
+    }
+
+    fn binary_search(
+        mmap: &Mmap,
+        count: usize,
+        record_size: usize,
+        hash: &[u8; 32],
+    ) -> Option<usize> {
+        if count == 0 {
+            return None;
+        }
+        let mut lo = 0usize;
+        let mut hi = count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let offset = mid * record_size;
+            let key = &mmap[offset..offset + 32];
+            match key.cmp(hash.as_slice()) {
+                std::cmp::Ordering::Less => lo = mid + 1,
+                std::cmp::Ordering::Greater => hi = mid,
+                std::cmp::Ordering::Equal => return Some(offset),
+            }
+        }
+        None
+    }
+
+    fn len(&self) -> usize {
+        self.addr_count + self.slot_count
+    }
+}
+
+/// Parse a gethdbdump preimage file, stream directly to sorted flat files, then mmap.
+///
+/// Geth's PebbleDB stores keys in sorted order, so `geth db export preimage`
+/// outputs entries already sorted by keccak hash. We write them directly to
+/// flat files without loading into memory.
+fn parse_geth_dump(path: &str, datadir: &Path) -> eyre::Result<Preimages> {
+    info!("Reading preimage file: {path}");
+    let file = File::open(path).map_err(|e| eyre::eyre!("Failed to open preimage file: {e}"))?;
     let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-    info!("{kind} file size: {} MB", file_size / 1024 / 1024);
+    info!("Preimage file size: {} MB", file_size / 1024 / 1024);
 
     let mut reader = BufReader::with_capacity(8 * 1024 * 1024, file);
     skip_gethdbdump_header(&mut reader)?;
 
-    let mut map: FxHashMap<[u8; 32], Vec<u8>> = FxHashMap::default();
-    let mut count = 0u64;
+    let addr_path = datadir.join("preimage_addrs.bin");
+    let slot_path = datadir.join("preimage_slots.bin");
+    let mut addr_writer = BufWriter::with_capacity(8 * 1024 * 1024, File::create(&addr_path)?);
+    let mut slot_writer = BufWriter::with_capacity(8 * 1024 * 1024, File::create(&slot_path)?);
 
-    let mut bytes_read = 0u64;
+    let mut addr_count = 0usize;
+    let mut slot_count = 0usize;
+    let mut count = 0u64;
+    let mut bufs = EntryBufs::new();
     let started = std::time::Instant::now();
     let mut last_log = std::time::Instant::now();
+    let mut bytes_read = 0u64;
 
     loop {
-        let Some((key, value, entry_bytes)) = read_gethdbdump_entry(&mut reader)? else {
+        let Some((op, entry_bytes)) = read_gethdbdump_entry(&mut reader, &mut bufs)? else {
             break;
         };
         bytes_read += entry_bytes;
-        if key.len() < 32 {
+        if op != 0 || bufs.key.len() < 32 {
             continue;
         }
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&key[key.len() - 32..]);
-        map.insert(hash, value);
+        let hash = &bufs.key[bufs.key.len() - 32..];
+
+        match bufs.value.len() {
+            20 => {
+                addr_writer.write_all(hash)?;
+                addr_writer.write_all(&bufs.value)?;
+                addr_count += 1;
+            }
+            32 => {
+                slot_writer.write_all(hash)?;
+                slot_writer.write_all(&bufs.value)?;
+                slot_count += 1;
+            }
+            _ => {}
+        }
 
         count += 1;
         if last_log.elapsed().as_secs() >= 5 {
@@ -371,18 +556,36 @@ fn parse_geth_dump(path: &str, kind: &str) -> eyre::Result<FxHashMap<[u8; 32], V
             } else {
                 0
             };
-            info!("{pct}% | {count} {kind} entries parsed...");
+            info!("{pct}% | {count} preimage entries parsed...");
             last_log = std::time::Instant::now();
         }
     }
-    let elapsed = started.elapsed();
+
+    addr_writer.flush()?;
+    slot_writer.flush()?;
 
     info!(
-        "Parsed {count} {kind} entries ({} unique) in {:.1}s",
-        map.len(),
-        elapsed.as_secs_f64()
+        "Parsed {count} entries ({addr_count} addrs, {slot_count} slots) in {:.1}s",
+        started.elapsed().as_secs_f64()
     );
-    Ok(map)
+
+    let addr_file = File::open(&addr_path)?;
+    let slot_file = File::open(&slot_path)?;
+    let addr_mmap = unsafe { Mmap::map(&addr_file)? };
+    let slot_mmap = unsafe { Mmap::map(&slot_file)? };
+
+    info!(
+        "Preimage files mmapped ({addr_count} addrs = {} MB, {slot_count} slots = {} MB)",
+        addr_count * ADDR_RECORD_SIZE / 1024 / 1024,
+        slot_count * SLOT_RECORD_SIZE / 1024 / 1024,
+    );
+
+    Ok(Preimages {
+        addr_mmap,
+        addr_count,
+        slot_mmap,
+        slot_count,
+    })
 }
 
 /// Skip the gethdbdump RLP list header.
@@ -413,11 +616,27 @@ fn skip_gethdbdump_header(reader: &mut BufReader<File>) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Read one (op, key, value) entry from a gethdbdump stream.
-/// Returns None on EOF. Returns (key, value, bytes_consumed).
+/// Reusable buffers for reading gethdbdump entries without allocating.
+struct EntryBufs {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+impl EntryBufs {
+    fn new() -> Self {
+        Self {
+            key: Vec::with_capacity(65),    // max key: "o" + 32 + 32 = 65
+            value: Vec::with_capacity(128), // account RLP or storage value
+        }
+    }
+}
+
+/// Read one (op, key, value) entry from a gethdbdump stream into reusable buffers.
+/// Returns None on EOF. Returns (op, bytes_consumed). Key/value are in bufs.
 fn read_gethdbdump_entry(
     reader: &mut BufReader<File>,
-) -> eyre::Result<Option<(Vec<u8>, Vec<u8>, u64)>> {
+    bufs: &mut EntryBufs,
+) -> eyre::Result<Option<(u8, u64)>> {
     // Read op: first byte. Check for EOF.
     let mut first = [0u8; 1];
     match reader.read_exact(&mut first) {
@@ -427,55 +646,49 @@ fn read_gethdbdump_entry(
     }
 
     // Op is RLP-encoded: 0x80 = empty bytes = 0 (add), 0x01 = byte 1 (delete).
-    let (op, ob) = if first[0] == 0x80 {
-        (0u8, 1u64) // empty string = 0
-    } else if first[0] < 0x80 {
-        (first[0], 1u64) // single byte value
-    } else {
-        // Shouldn't happen for op, but handle gracefully
-        (first[0], 1u64)
-    };
+    let op = if first[0] == 0x80 { 0u8 } else { first[0] };
+    let mut total_bytes = 1u64;
 
-    let (key, kb) = read_rlp_bytes(reader)?;
-    let (value, vb) = read_rlp_bytes(reader)?;
-    let total_bytes = ob + kb + vb;
+    let kb = read_rlp_bytes_into(reader, &mut bufs.key)?;
+    total_bytes += kb;
+    let vb = read_rlp_bytes_into(reader, &mut bufs.value)?;
+    total_bytes += vb;
 
-    // op 0 = add, 1 = delete. Skip deletes.
-    if op != 0 {
-        return Ok(Some((vec![], vec![], total_bytes)));
-    }
-
-    Ok(Some((key, value, total_bytes)))
+    Ok(Some((op, total_bytes)))
 }
 
-/// Read a single RLP-encoded byte string from a buffered reader.
-/// Returns (data, bytes_consumed_from_stream).
-fn read_rlp_bytes(reader: &mut BufReader<File>) -> eyre::Result<(Vec<u8>, u64)> {
+/// Read a single RLP-encoded byte string into `dst`, reusing its allocation.
+/// Returns bytes consumed from the stream.
+fn read_rlp_bytes_into(reader: &mut BufReader<File>, dst: &mut Vec<u8>) -> eyre::Result<u64> {
     let mut buf1 = [0u8; 1];
     reader.read_exact(&mut buf1)?;
     let prefix = buf1[0];
 
     if prefix < 0x80 {
-        Ok((vec![prefix], 1))
+        dst.clear();
+        dst.push(prefix);
+        Ok(1)
     } else if prefix <= 0xb7 {
         let len = (prefix - 0x80) as usize;
+        dst.clear();
         if len == 0 {
-            return Ok((vec![], 1));
+            return Ok(1);
         }
-        let mut buf = vec![0u8; len];
-        reader.read_exact(&mut buf)?;
-        Ok((buf, 1 + len as u64))
+        dst.resize(len, 0);
+        reader.read_exact(dst)?;
+        Ok(1 + len as u64)
     } else if prefix <= 0xbf {
         let len_of_len = (prefix - 0xb7) as usize;
-        let mut len_bytes = vec![0u8; len_of_len];
-        reader.read_exact(&mut len_bytes)?;
+        let mut len_bytes = [0u8; 8];
+        reader.read_exact(&mut len_bytes[..len_of_len])?;
         let mut len = 0usize;
-        for &b in &len_bytes {
+        for &b in &len_bytes[..len_of_len] {
             len = (len << 8) | b as usize;
         }
-        let mut buf = vec![0u8; len];
-        reader.read_exact(&mut buf)?;
-        Ok((buf, 1 + len_of_len as u64 + len as u64))
+        dst.clear();
+        dst.resize(len, 0);
+        reader.read_exact(dst)?;
+        Ok(1 + len_of_len as u64 + len as u64)
     } else {
         Err(eyre::eyre!(
             "Expected RLP string in stream, got 0x{prefix:02x}"
