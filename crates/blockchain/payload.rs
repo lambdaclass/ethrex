@@ -9,7 +9,10 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
+    constants::{
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
+        TX_MAX_GAS_LIMIT_AMSTERDAM,
+    },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
@@ -38,7 +41,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Blockchain, BlockchainType, MAX_PAYLOADS,
-    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST, TX_MAX_GAS_LIMIT_AMSTERDAM},
+    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
