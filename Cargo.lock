@@ -4030,7 +4030,6 @@ dependencies = [
 name = "ethrex-blockchain"
 version = "9.0.0"
 dependencies = [
- "base64 0.22.1",
  "bytes",
  "crossbeam",
  "ethrex-common",
@@ -4043,7 +4042,6 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
- "hex",
  "reqwest",
  "rustc-hash 2.1.1",
  "serde",
@@ -4154,6 +4152,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
+ "ethrex-polygon",
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
