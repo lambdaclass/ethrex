@@ -178,7 +178,7 @@ impl RLPxMessage for GetBlockHeaders {
         let mut encoded_data = vec![];
         let limit = self.limit;
         let skip = self.skip;
-        let reverse = self.reverse as u8;
+        let reverse = self.reverse;
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&(self.startblock, limit, skip, reverse))
