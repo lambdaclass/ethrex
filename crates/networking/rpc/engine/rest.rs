@@ -193,7 +193,12 @@ pub async fn handle_new_payload_with_witness_v4(
         }
     };
 
-    let (exec_payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests) = match parse_params(params) {
+    let (
+        exec_payload,
+        expected_blob_versioned_hashes,
+        parent_beacon_block_root,
+        execution_requests,
+    ) = match parse_params(params) {
         Ok(res) => res,
         Err(e) => return json_error_response(-32602, &format!("Parse error: {e}")),
     };
@@ -292,7 +297,12 @@ pub async fn handle_new_payload_with_witness_v5(
         return json_error_response(-32602, "Invalid blockAccessList");
     };
 
-    let (exec_payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests) = match parse_params(params) {
+    let (
+        exec_payload,
+        expected_blob_versioned_hashes,
+        parent_beacon_block_root,
+        execution_requests,
+    ) = match parse_params(params) {
         Ok(res) => res,
         Err(e) => return json_error_response(-32602, &format!("Parse error: {e}")),
     };
@@ -377,7 +387,9 @@ fn ssz_response(resp: SszNewPayloadWithWitnessResponse) -> axum::response::Respo
 }
 
 /// Parse the parameters for the new payload with witness RPC methods.
-fn parse_params(params: Vec<Value>) -> Result<(ExecutionPayload, Vec<H256>, H256, Vec<EncodedRequests>), String> {
+fn parse_params(
+    params: Vec<Value>,
+) -> Result<(ExecutionPayload, Vec<H256>, H256, Vec<EncodedRequests>), String> {
     if params.len() != 4 {
         return Err(format!("Expected 4 params, got {}", params.len()));
     }
@@ -411,7 +423,10 @@ fn parse_params(params: Vec<Value>) -> Result<(ExecutionPayload, Vec<H256>, H256
         }
     };
 
-
-    Ok((exec_payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests))
+    Ok((
+        exec_payload,
+        expected_blob_versioned_hashes,
+        parent_beacon_block_root,
+        execution_requests,
+    ))
 }
-    

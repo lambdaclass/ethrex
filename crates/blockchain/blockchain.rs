@@ -97,13 +97,13 @@ use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::{LazyLock, Mutex};
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
@@ -1923,11 +1923,11 @@ impl Blockchain {
     > {
         // Wait for the previous block's background store to complete before
         // starting execution. This ensures trie state is consistent.
-        let _prev_store = self.store_lock.lock().map_err(|_| {
-            ChainError::Custom("store_lock poisoned".to_string())
-        })?;
+        let _prev_store = self
+            .store_lock
+            .lock()
+            .map_err(|_| ChainError::Custom("store_lock poisoned".to_string()))?;
         drop(_prev_store);
-
 
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -2019,7 +2019,6 @@ impl Blockchain {
         let storage = self.storage.clone();
         let perf_logs_enabled = self.options.perf_logs_enabled;
 
-
         std::thread::spawn(move || {
             let _lock = store_lock.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -2030,12 +2029,9 @@ impl Blockchain {
                 }
             }
 
-            if let Err(e) = Blockchain::store_block_static(
-                &storage,
-                block,
-                account_updates_list,
-                res,
-            ) {
+            if let Err(e) =
+                Blockchain::store_block_static(&storage, block, account_updates_list, res)
+            {
                 ::tracing::error!("Background store_block failed: {e}");
             }
 
@@ -2062,10 +2058,11 @@ impl Blockchain {
             }
         });
 
-        let witness = produced_witness.ok_or(ChainError::Custom("No witness produced".to_string()))?;
+        let witness =
+            produced_witness.ok_or(ChainError::Custom("No witness produced".to_string()))?;
         let rpc_witness = RpcExecutionWitness::try_from(witness)
-                    .map_err(|e| ChainError::Custom(format!("witness conversion failed: {e}")))?;
-            
+            .map_err(|e| ChainError::Custom(format!("witness conversion failed: {e}")))?;
+
         Ok((produced_bal, Ok(Some(rpc_witness))))
     }
 
