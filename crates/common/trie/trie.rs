@@ -29,57 +29,6 @@ mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
 
-// Conditional Mutex: std::sync::Mutex when std is available,
-// trivial single-threaded wrapper for no_std guest programs.
-#[cfg(feature = "std")]
-pub use std::sync::Mutex;
-
-#[cfg(not(feature = "std"))]
-mod nostd_mutex {
-    use core::cell::UnsafeCell;
-
-    /// Single-threaded Mutex shim for no_std environments (guest programs).
-    pub struct Mutex<T>(UnsafeCell<T>);
-
-    unsafe impl<T: Send> Send for Mutex<T> {}
-    unsafe impl<T: Send> Sync for Mutex<T> {}
-
-    impl<T> Mutex<T> {
-        pub const fn new(val: T) -> Self {
-            Self(UnsafeCell::new(val))
-        }
-
-        #[allow(clippy::result_unit_err)]
-        pub fn lock(&self) -> Result<MutexGuard<'_, T>, ()> {
-            Ok(MutexGuard(&self.0))
-        }
-    }
-
-    impl<T: Default> Default for Mutex<T> {
-        fn default() -> Self {
-            Self::new(T::default())
-        }
-    }
-
-    pub struct MutexGuard<'a, T>(&'a UnsafeCell<T>);
-
-    impl<T> core::ops::Deref for MutexGuard<'_, T> {
-        type Target = T;
-        fn deref(&self) -> &T {
-            unsafe { &*self.0.get() }
-        }
-    }
-
-    impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
-        fn deref_mut(&mut self) -> &mut T {
-            unsafe { &mut *self.0.get() }
-        }
-    }
-}
-
-#[cfg(not(feature = "std"))]
-pub use nostd_mutex::Mutex;
-
 use ethereum_types::H256;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::{constants::RLP_NULL, encode::RLPEncode};
@@ -87,7 +36,9 @@ use hex_literal::hex;
 #[cfg(feature = "std")]
 use rustc_hash::FxHashSet;
 
-pub use self::db::{InMemoryTrieDB, TrieDB};
+#[cfg(feature = "std")]
+pub use self::db::InMemoryTrieDB;
+pub use self::db::TrieDB;
 #[cfg(feature = "std")]
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
@@ -380,10 +331,11 @@ impl Trie {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn empty_in_memory() -> Self {
-        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            BTreeMap::new(),
-        )))))
+        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(
+            std::sync::Mutex::new(BTreeMap::new()),
+        ))))
     }
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
@@ -448,6 +400,7 @@ impl Trie {
     ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
+    #[cfg(feature = "std")]
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, Node>,
@@ -600,6 +553,7 @@ impl Trie {
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
+    #[cfg(feature = "std")]
     pub fn new_temp() -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
@@ -608,6 +562,7 @@ impl Trie {
     /// Creates a new Trie based on a temporary InMemory DB, with a specified root
     ///
     /// This is usually used to create a Trie from a root that was embedded with the rest of the nodes.
+    #[cfg(feature = "std")]
     pub fn new_temp_with_root(root: NodeRef) -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         let mut trie = Trie::new(Box::new(db));
