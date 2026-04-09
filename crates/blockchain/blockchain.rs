@@ -97,7 +97,7 @@ use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -211,6 +211,11 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
+    /// Lock to ensure the previous block's background store completes before the
+    /// next block's execution begins. Held by the background store thread during
+    /// `store_witness` + `store_block`, and acquired at the start of the next
+    /// `add_block_pipeline_inner` call.
+    store_lock: Arc<Mutex<()>>,
 }
 
 /// Configuration options for the blockchain.
@@ -342,6 +347,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            store_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -353,6 +359,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
+            store_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -1862,7 +1869,7 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<RpcExecutionWitness>, ChainError> {
-        let (_, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        let (_, result) = self.add_block_pipeline_with_witness_inner(block, bal, true)?;
         result
     }
 
@@ -1876,6 +1883,190 @@ impl Blockchain {
         let (produced_bal, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// A static version of `store_block` that can be used for background task and doesn't hold a reference to `self`.
+    fn store_block_static(
+        storage: &Store,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+    ) -> Result<(), ChainError> {
+        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+
+        let update_batch = UpdateBatch {
+            account_updates: account_updates_list.state_updates,
+            storage_updates: account_updates_list.storage_updates,
+            receipts: vec![(block.hash(), execution_result.receipts)],
+            blocks: vec![block],
+            code_updates: account_updates_list.code_updates,
+            batch_mode: false,
+        };
+
+        storage
+            .store_block_updates(update_batch)
+            .map_err(|e| e.into())
+    }
+
+    /// This is similar to `add_block_pipeline_inner` but optimized for witness generation.
+    fn add_block_pipeline_with_witness_inner(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+        compute_witness: bool,
+    ) -> Result<
+        (
+            Option<BlockAccessList>,
+            Result<Option<RpcExecutionWitness>, ChainError>,
+        ),
+        ChainError,
+    > {
+        // Wait for the previous block's background store to complete before
+        // starting execution. This ensures trie state is consistent.
+        let _prev_store = self.store_lock.lock().map_err(|_| {
+            ChainError::Custom("store_lock poisoned".to_string())
+        })?;
+        drop(_prev_store);
+
+
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block)?;
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let (mut vm, logger) =
+            if (self.options.precompute_witnesses || compute_witness) && self.is_synced() {
+                // If witness pre-generation is enabled, we wrap the db with a logger
+                // to track state access (block hashes, storage keys, codes) during execution
+                // avoiding the need to re-execute the block later.
+                let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
+                    self.storage.clone(),
+                    parent_header.clone(),
+                )?);
+
+                let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
+
+                let vm = match self.options.r#type.clone() {
+                    BlockchainType::L1 => {
+                        Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                    }
+                    BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
+                        logger.clone(),
+                        *l2_config.fee_config.read().map_err(|_| {
+                            EvmError::Custom("Fee config lock was poisoned".to_string())
+                        })?,
+                        Arc::new(NativeCrypto),
+                    ),
+                };
+                (vm, Some(logger))
+            } else {
+                let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+                let vm = self.new_evm(vm_db)?;
+                (vm, None)
+            };
+
+        let (
+            res,
+            account_updates_list,
+            accumulated_updates,
+            produced_bal,
+            merkle_queue_length,
+            instants,
+            warmer_duration,
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+
+        let (gas_used, gas_limit, block_number, transactions_count) = (
+            block.header.gas_used,
+            block.header.gas_limit,
+            block.header.number,
+            block.body.transactions.len(),
+        );
+
+        let mut produced_witness: Option<ExecutionWitness> = None;
+
+        if let Some(logger) = logger
+            && let Some(account_updates) = accumulated_updates
+        {
+            let witness = self.generate_witness_from_account_updates(
+                account_updates,
+                &block,
+                parent_header,
+                &logger,
+            )?;
+
+            if compute_witness {
+                // Convert to RPC format for returning over the wire.
+                let block_hash = block.hash();
+                self.storage
+                    .store_witness(block_hash, block_number, witness.clone())?;
+
+                produced_witness = Some(witness);
+            } else {
+                // Persist to DB for later retrieval via debug_executionWitness.
+                let block_hash = block.hash();
+                self.storage
+                    .store_witness(block_hash, block_number, witness)?;
+            }
+        };
+
+        // At this point the witness is ready to be returned, for the next set of actions, we would love to do a spawn and forget
+        // for - storing the witness
+        // for - storing the block (this is the most compute intensive part)
+        let store_lock = self.store_lock.clone();
+        let produced_witness_clone = produced_witness.clone();
+        let storage = self.storage.clone();
+        let perf_logs_enabled = self.options.perf_logs_enabled;
+
+
+        std::thread::spawn(move || {
+            let _lock = store_lock.lock().unwrap_or_else(|e| e.into_inner());
+
+            if let Some(ref witness) = produced_witness_clone {
+                let block_hash = block.hash();
+                if let Err(e) = storage.store_witness(block_hash, block_number, witness.clone()) {
+                    ::tracing::warn!("Background store_witness failed: {e}");
+                }
+            }
+
+            if let Err(e) = Blockchain::store_block_static(
+                &storage,
+                block,
+                account_updates_list,
+                res,
+            ) {
+                ::tracing::error!("Background store_block failed: {e}");
+            }
+
+            let stored = Instant::now();
+
+            let instants = std::array::from_fn(move |i| {
+                if i < instants.len() {
+                    instants[i]
+                } else {
+                    stored
+                }
+            });
+
+            if perf_logs_enabled {
+                Self::print_add_block_pipeline_logs(
+                    gas_used,
+                    gas_limit,
+                    block_number,
+                    transactions_count,
+                    merkle_queue_length,
+                    warmer_duration,
+                    instants,
+                );
+            }
+        });
+
+        let witness = produced_witness.ok_or(ChainError::Custom("No witness produced".to_string()))?;
+        let rpc_witness = RpcExecutionWitness::try_from(witness)
+                    .map_err(|e| ChainError::Custom(format!("witness conversion failed: {e}")))?;
+            
+        Ok((produced_bal, Ok(Some(rpc_witness))))
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
