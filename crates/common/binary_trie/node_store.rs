@@ -455,6 +455,13 @@ impl NodeStore {
         self.clean_cache.lock().unwrap().len()
     }
 
+    /// Drop all warm nodes, freeing memory. Use during bulk imports where
+    /// re-reads are rare and bounded memory matters more than cache hits.
+    pub fn clear_warm_nodes(&mut self) {
+        self.warm_nodes.clear();
+        self.warm_nodes.shrink_to_fit();
+    }
+
     /// Return the number of warm (recently flushed) nodes.
     pub fn warm_len(&self) -> usize {
         self.warm_nodes.len()

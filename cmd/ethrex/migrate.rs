@@ -323,6 +323,7 @@ pub async fn migrate_with_preimages(
             state
                 .flush(0, H256::zero())
                 .map_err(|e| eyre::eyre!("Flush error: {e}"))?;
+            state.clear_caches();
             inserts_since_flush = 0;
         }
 

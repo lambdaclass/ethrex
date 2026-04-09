@@ -279,6 +279,12 @@ impl BinaryTrieState {
         self.flush_threshold
     }
 
+    /// Drop in-memory caches to free RAM. Call after flush during bulk imports
+    /// where re-reads are rare and bounded memory is more important.
+    pub fn clear_caches(&mut self) {
+        self.trie.store.clear_warm_nodes();
+    }
+
     /// Reload the trie and storage keys from the last disk checkpoint,
     /// discarding all in-memory mutations since the last flush.
     ///

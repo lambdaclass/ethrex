@@ -17,6 +17,20 @@ indexed by keccak256 hashes. To build the binary trie we need:
 Both exports use Geth's `gethdbdump` format and are produced with the
 `geth db export` command.
 
+### Why preimages alone are not enough
+
+The preimage file only contains keccak hash mappings (keccak(x) -> x). It
+tells you the original address or storage key behind each hash, but it does
+not contain the actual state values (balances, nonces, code hashes, storage
+slot values). Without the snapshot export there is nothing to insert into the
+binary trie -- you would know *where* each account lives but not *what* it
+contains.
+
+Conversely, the snapshot alone is not enough either. The snapshot keys are
+keccak hashes, and the binary trie needs the original addresses to compute
+BLAKE3 tree keys. Keccak is a one-way function, so you cannot reverse the
+hash without the preimage database.
+
 ## Prerequisites
 
 - A Geth snapshot **with preimages enabled**. The snapshot must have been
