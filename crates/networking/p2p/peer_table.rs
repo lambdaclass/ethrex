@@ -1170,7 +1170,7 @@ impl PeerTableServer {
             }
             if self.contact_exists(&node_id) {
                 // Contact already exists (main or replacement list), update protocol
-                if let Some(contact) = self.get_contact_mut(&node_id) {
+                if let Some(contact) = self.get_contact_or_replacement_mut(&node_id) {
                     contact.add_protocol(protocol);
                 }
             } else {
