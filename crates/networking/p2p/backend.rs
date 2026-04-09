@@ -33,7 +33,12 @@ pub async fn validate_status<ST: StatusMessage>(
         ));
     }
     // Check ForkID
-    if !is_fork_id_valid(storage, &msg_data.get_fork_id()).await? {
+    let remote_fork_id = msg_data.get_fork_id();
+    if !is_fork_id_valid(storage, &remote_fork_id).await? {
+        tracing::debug!(
+            ?remote_fork_id,
+            "Rejecting peer: Invalid Fork Id"
+        );
         return Err(PeerConnectionError::HandshakeError(
             "Invalid Fork Id".to_string(),
         ));
