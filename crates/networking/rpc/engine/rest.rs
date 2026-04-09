@@ -14,6 +14,7 @@ use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
 };
+use bytes::Bytes;
 use libssz::SszEncode;
 use libssz_derive::SszEncode;
 use serde_json::Value;
@@ -192,37 +193,9 @@ pub async fn handle_new_payload_with_witness_v4(
         }
     };
 
-    if params.len() != 4 {
-        return json_error_response(-32602, &format!("Expected 4 params, got {}", params.len()));
-    }
-
-    let exec_payload: ExecutionPayload = match serde_json::from_value(params[0].clone()) {
-        Ok(p) => p,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid executionPayload");
-        }
-    };
-
-    let expected_blob_versioned_hashes: Vec<H256> = match serde_json::from_value(params[1].clone())
-    {
-        Ok(h) => h,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid expectedBlobVersionedHashes");
-        }
-    };
-
-    let parent_beacon_block_root: H256 = match serde_json::from_value(params[2].clone()) {
-        Ok(r) => r,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid parentBeaconBlockRoot");
-        }
-    };
-
-    let execution_requests: Vec<EncodedRequests> = match serde_json::from_value(params[3].clone()) {
-        Ok(r) => r,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid executionRequests");
-        }
+    let (exec_payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests) = match parse_params(params) {
+        Ok(res) => res,
+        Err(e) => return json_error_response(-32602, &format!("Parse error: {e}")),
     };
 
     if let Err(e) = payload::validate_execution_requests(&execution_requests) {
@@ -265,7 +238,7 @@ pub async fn handle_new_payload_with_witness_v4(
         &exec_payload,
         context,
         block,
-        expected_blob_versioned_hashes.clone(),
+        expected_blob_versioned_hashes,
         None,
     )
     .await;
@@ -301,10 +274,6 @@ pub async fn handle_new_payload_with_witness_v5(
         }
     };
 
-    if params.len() != 4 {
-        return json_error_response(-32602, &format!("Expected 4 params, got {}", params.len()));
-    }
-
     // Extract the raw BAL hash from the JSON payload before deserialization.
     // We hash the raw RLP bytes as-received to preserve the exact encoding
     // (including any ordering) for accurate block hash validation.
@@ -323,33 +292,9 @@ pub async fn handle_new_payload_with_witness_v5(
         return json_error_response(-32602, "Invalid blockAccessList");
     };
 
-    let exec_payload: ExecutionPayload = match serde_json::from_value(params[0].clone()) {
-        Ok(p) => p,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid executionPayload");
-        }
-    };
-
-    let expected_blob_versioned_hashes: Vec<H256> = match serde_json::from_value(params[1].clone())
-    {
-        Ok(h) => h,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid expectedBlobVersionedHashes");
-        }
-    };
-
-    let parent_beacon_block_root: H256 = match serde_json::from_value(params[2].clone()) {
-        Ok(r) => r,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid parentBeaconBlockRoot");
-        }
-    };
-
-    let execution_requests: Vec<EncodedRequests> = match serde_json::from_value(params[3].clone()) {
-        Ok(r) => r,
-        Err(_) => {
-            return json_error_response(-32602, "Invalid executionRequests");
-        }
+    let (exec_payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests) = match parse_params(params) {
+        Ok(res) => res,
+        Err(e) => return json_error_response(-32602, &format!("Parse error: {e}")),
     };
 
     if let Err(e) = validate_execution_payload_v4(&exec_payload) {
@@ -398,7 +343,7 @@ pub async fn handle_new_payload_with_witness_v5(
         &exec_payload,
         context,
         block,
-        expected_blob_versioned_hashes.clone(),
+        expected_blob_versioned_hashes,
         bal,
     )
     .await;
@@ -419,8 +364,10 @@ pub async fn handle_new_payload_with_witness_v5(
 
 /// Produce a `200 OK` response with `Content-Type: application/octet-stream`.
 fn ssz_response(resp: SszNewPayloadWithWitnessResponse) -> axum::response::Response {
-    let bytes = resp.to_ssz();
-    println!("SSZ response length: {:?}", bytes.len());
+    let mut buf = Vec::with_capacity(resp.encoded_len());
+    resp.ssz_append(&mut buf);
+    let bytes = Bytes::from(buf);
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -428,3 +375,43 @@ fn ssz_response(resp: SszNewPayloadWithWitnessResponse) -> axum::response::Respo
         .expect("failed to build SSZ response")
         .into_response()
 }
+
+/// Parse the parameters for the new payload with witness RPC methods.
+fn parse_params(params: Vec<Value>) -> Result<(ExecutionPayload, Vec<H256>, H256, Vec<EncodedRequests>), String> {
+    if params.len() != 4 {
+        return Err(format!("Expected 4 params, got {}", params.len()));
+    }
+
+    let exec_payload: ExecutionPayload = match serde_json::from_value(params[0].clone()) {
+        Ok(p) => p,
+        Err(_) => {
+            return Err(format!("Invalid executionPayload"));
+        }
+    };
+
+    let expected_blob_versioned_hashes: Vec<H256> = match serde_json::from_value(params[1].clone())
+    {
+        Ok(h) => h,
+        Err(_) => {
+            return Err(format!("Invalid expectedBlobVersionedHashes"));
+        }
+    };
+
+    let parent_beacon_block_root: H256 = match serde_json::from_value(params[2].clone()) {
+        Ok(r) => r,
+        Err(_) => {
+            return Err(format!("Invalid parentBeaconBlockRoot"));
+        }
+    };
+
+    let execution_requests: Vec<EncodedRequests> = match serde_json::from_value(params[3].clone()) {
+        Ok(r) => r,
+        Err(_) => {
+            return Err(format!("Invalid executionRequests"));
+        }
+    };
+
+
+    Ok((exec_payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests))
+}
+    
