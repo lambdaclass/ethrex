@@ -10,13 +10,11 @@ use crate::node::{InternalNode, Node, NodeId, STEM_VALUES, StemNode};
 
 /// Default maximum number of clean nodes kept in the LRU cache.
 ///
-/// With sparse StemNode values, node sizes are: InternalNode ≈ 65 bytes,
-/// Clean LRU cache capacity. Nodes vary widely in size (InternalNode ~100 bytes,
-/// StemNode with subtree cache up to ~10KB). Combined with dirty_nodes and
-/// warm_nodes (unbounded HashMaps), total memory is hard to predict.
-/// 100K entries keeps memory bounded (~500MB-1GB) while still caching
-/// the hot working set. Nodes evicted from the LRU are loaded from the backend
-/// on demand (only during merkleization, not EVM execution).
+/// Clean LRU cache capacity. InternalNode ~100 bytes, StemNode ~200 bytes
+/// with sparse values. Combined with dirty_nodes and warm_nodes (unbounded
+/// HashMaps), total memory is hard to predict. 100K entries keeps memory
+/// bounded while still caching the hot working set. Nodes evicted from the
+/// LRU are loaded from the backend on demand.
 const DEFAULT_CLEAN_CACHE_CAP: usize = 100_000;
 
 // Meta keys for storage (stored alongside nodes in BINARY_TRIE_NODES table).
@@ -41,7 +39,7 @@ fn node_key(id: NodeId) -> [u8; 8] {
 /// StemNode (tag 0x02): `[0x02, stem: 31 bytes, presence_bitmap: 32 bytes, values...]`
 ///   - `presence_bitmap`: bit i (0-indexed from the LSB of byte 0) is set if `values[i].is_some()`.
 ///   - Only present values are serialized, in order of index.
-///   - `cached_hash` and `cached_subtree` are not serialized (they are recomputed on demand).
+///   - `cached_hash` is not serialized (recomputed on demand).
 fn serialize_node(node: &Node) -> Vec<u8> {
     match node {
         Node::Internal(internal) => {
@@ -131,7 +129,6 @@ fn deserialize_node(bytes: &[u8]) -> Result<Node, BinaryTrieError> {
             Ok(Node::Stem(StemNode {
                 stem,
                 values,
-                cached_subtree: None,
                 cached_hash: None,
             }))
         }
@@ -426,19 +423,6 @@ impl NodeStore {
         self.freed.clear();
 
         ops
-    }
-
-    /// Strip subtree caches from all dirty nodes to reduce memory.
-    ///
-    /// Called after `state_root()` — the subtree caches are only needed during
-    /// merkelization and will be rebuilt on the next call if needed. This
-    /// reduces dirty StemNodes from ~25KB to ~8.5KB each.
-    pub fn strip_dirty_subtrees(&mut self) {
-        for node in self.dirty_nodes.values_mut() {
-            if let Node::Stem(stem) = node {
-                stem.cached_subtree = None;
-            }
-        }
     }
 
     /// Generational rotation: old warm → LRU, dirty → warm.

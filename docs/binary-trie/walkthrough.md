@@ -225,7 +225,12 @@ caches and only rehashes the dirty path.
 
 For StemNodes, the 511-entry subtree (the internal Merkle tree over 256 slots)
 is also cached. When one slot changes, only the 8 hashes along that slot's
-path through the subtree are recomputed, not all 511.
+path through the subtree are recomputed, not all 511. In single-block mode,
+subtree caches are preserved between blocks so that accounts touched in
+consecutive blocks benefit from O(8) incremental updates. In batch mode
+(import), caches are stripped after each merkleization since the flush
+happens immediately after and would discard them anyway. The caches are
+also stripped when nodes are demoted during the flush cycle's tier rotation.
 
 ## BinaryTrieState: The State Manager
 
@@ -239,7 +244,7 @@ struct BinaryTrieState {
     trie: BinaryTrie,
     current_block_diffs: Vec<([u8; 32], Option<[u8; 32]>)>,
     prev_state_root: [u8; 32],
-    storage_keys: Mutex<FxHashMap<Address, FxHashSet<H256>>>,
+    storage_keys: RwLock<FxHashMap<Address, FxHashSet<H256>>>,
     backend: Option<Arc<dyn TrieBackend>>,
     blocks_since_flush: u64,
     flush_threshold: u64,     // default 128
@@ -379,12 +384,18 @@ repeated reads don't go to disk again. When the cache is full, the
 least-recently-used entries are evicted.
 
 **Reading a node** checks the tiers in order: dirty, then warm, then clean
-LRU, then falls back to loading from RocksDB.
+LRU, then falls back to loading from RocksDB. The mutation path uses
+`get_with_promotion`, which returns a `&Node` reference from dirty/warm
+without cloning; on a cold miss, the node is loaded from LRU/backend into
+the warm tier and a reference is returned. The shared read path
+(`get_shared`) still clones, but this is only used for concurrent reads
+(e.g., RPC queries through `BinaryTrieWrapper`).
 
 **Creating a node** allocates the next ID and places it in dirty.
 
 **Mutating a node** requires `take(id)` (removes it from whatever tier it's
-in), then `put(id, node)` to return it as dirty.
+in), then `put(id, node)` to return it as dirty. When the node was already
+in the dirty tier, `put` skips redundant removals from warm/LRU.
 
 ### Flush cycle
 

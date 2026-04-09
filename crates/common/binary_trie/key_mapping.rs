@@ -61,40 +61,37 @@ pub fn get_tree_key(address: &Address, tree_index: U256, sub_index: u8) -> [u8; 
     key
 }
 
-/// Returns the tree key for the basic_data leaf of an account.
+/// Compute the 31-byte stem for an address at tree_index=0.
 ///
-/// Stores: version (1B) + reserved (4B) + code_size (3B) + nonce (8B) + balance (16B).
-///
-/// tree_index is always 0, so we zero-fill the 32-byte buffer directly instead of
-/// going through U256.
-pub fn get_tree_key_for_basic_data(address: &Address) -> [u8; 32] {
+/// This is the shared prefix for basic_data, code_hash, header storage,
+/// and the first 128 code chunks. Computing it once and reusing it avoids
+/// redundant BLAKE3 calls.
+pub fn get_stem_for_base(address: &Address) -> [u8; 31] {
     let address32 = old_style_address_to_address32(address);
-    // tree_index = 0 → last 32 bytes of the 64-byte input are all zeros.
     let mut input = [0u8; 64];
     input[..32].copy_from_slice(&address32);
-    // input[32..64] is already zero (tree_index = 0).
     let hash = tree_hash(&input);
+    let mut stem = [0u8; 31];
+    stem.copy_from_slice(&hash[..31]);
+    stem
+}
+
+/// Build a 32-byte tree key from a pre-computed 31-byte stem and a sub_index.
+pub fn tree_key_from_stem(stem: &[u8; 31], sub_index: u8) -> [u8; 32] {
     let mut key = [0u8; 32];
-    key[..31].copy_from_slice(&hash[..31]);
-    key[31] = BASIC_DATA_LEAF_KEY;
+    key[..31].copy_from_slice(stem);
+    key[31] = sub_index;
     key
 }
 
+/// Returns the tree key for the basic_data leaf of an account.
+pub fn get_tree_key_for_basic_data(address: &Address) -> [u8; 32] {
+    tree_key_from_stem(&get_stem_for_base(address), BASIC_DATA_LEAF_KEY)
+}
+
 /// Returns the tree key for the code_hash leaf of an account.
-///
-/// tree_index is always 0, so we zero-fill the 32-byte buffer directly instead of
-/// going through U256.
 pub fn get_tree_key_for_code_hash(address: &Address) -> [u8; 32] {
-    let address32 = old_style_address_to_address32(address);
-    // tree_index = 0 → last 32 bytes of the 64-byte input are all zeros.
-    let mut input = [0u8; 64];
-    input[..32].copy_from_slice(&address32);
-    // input[32..64] is already zero (tree_index = 0).
-    let hash = tree_hash(&input);
-    let mut key = [0u8; 32];
-    key[..31].copy_from_slice(&hash[..31]);
-    key[31] = CODE_HASH_LEAF_KEY;
-    key
+    tree_key_from_stem(&get_stem_for_base(address), CODE_HASH_LEAF_KEY)
 }
 
 /// Returns the tree key for a code chunk by its chunk index.

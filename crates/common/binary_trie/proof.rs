@@ -143,16 +143,9 @@ fn reconstruct_subtree_root(leaf_hash: [u8; 32], sub_index: u8, siblings: &[[u8;
 ///   - indices 255..=510 are the 256 leaf hashes
 ///   - index 0 is the subtree root
 ///
-/// If `cached_subtree` is populated, reads directly from it. Otherwise
-/// builds the full subtree temporarily to extract the siblings.
+/// Builds the full subtree from the StemNode's values each time (no cache).
 pub(crate) fn subtree_siblings(stem_node: &StemNode, sub_index: u8) -> Vec<[u8; 32]> {
-    let cache = if let Some(ref c) = stem_node.cached_subtree {
-        SubtreeRef::Borrowed(c)
-    } else {
-        SubtreeRef::Owned(build_subtree(stem_node))
-    };
-
-    let cache_slice: &[[u8; 32]; SUBTREE_SIZE] = cache.as_ref();
+    let cache = build_subtree(stem_node);
 
     let mut siblings = Vec::with_capacity(8);
     let mut flat_idx = 255 + sub_index as usize; // leaf index in flat tree
@@ -163,26 +156,11 @@ pub(crate) fn subtree_siblings(stem_node: &StemNode, sub_index: u8) -> Vec<[u8; 
         } else {
             flat_idx + 1 // left child → right sibling
         };
-        siblings.push(cache_slice[sibling_idx]);
+        siblings.push(cache[sibling_idx]);
         flat_idx = (flat_idx - 1) / 2; // move to parent
     }
 
     siblings
-}
-
-/// Helper: avoid cloning the subtree cache when it already exists.
-enum SubtreeRef<'a> {
-    Borrowed(&'a Box<[[u8; 32]; SUBTREE_SIZE]>),
-    Owned(Box<[[u8; 32]; SUBTREE_SIZE]>),
-}
-
-impl<'a> SubtreeRef<'a> {
-    fn as_ref(&self) -> &[[u8; 32]; SUBTREE_SIZE] {
-        match self {
-            SubtreeRef::Borrowed(b) => b,
-            SubtreeRef::Owned(o) => o,
-        }
-    }
 }
 
 /// Build the full 511-entry subtree from a StemNode's values (without caching).

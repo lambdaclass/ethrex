@@ -15,9 +15,9 @@ use crate::{
     db::{TrieBackend, WriteOp},
     error::BinaryTrieError,
     key_mapping::{
-        chunkify_code, get_tree_key_for_basic_data, get_tree_key_for_code_chunk,
-        get_tree_key_for_code_hash, get_tree_key_for_storage_slot, pack_basic_data,
-        unpack_basic_data,
+        BASIC_DATA_LEAF_KEY, CODE_HASH_LEAF_KEY, chunkify_code, get_stem_for_base,
+        get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
+        get_tree_key_for_storage_slot, pack_basic_data, tree_key_from_stem, unpack_basic_data,
     },
     merkle::merkelize,
     node_store::NodeStore,
@@ -314,15 +314,6 @@ impl BinaryTrieState {
     }
 
     /// Compute the binary trie state root via merkelization.
-    ///
-    /// Takes `&mut self` because computed hashes are cached back into the trie
-    /// nodes for incremental reuse on subsequent calls.
-    ///
-    /// After computing the root, strips subtree caches from dirty nodes to
-    /// reduce memory (~16KB per StemNode). The cached_hash is preserved so
-    /// merkleization doesn't re-hash the entire trie on subsequent blocks.
-    /// Subtree caches will be rebuilt on the next merkleization call, but
-    /// the incremental update path runs in O(8) when cached_hash exists.
     pub fn state_root(&mut self) -> [u8; 32] {
         merkelize(&mut self.trie)
     }
@@ -443,17 +434,21 @@ impl BinaryTrieState {
             return Ok(());
         }
 
+        // Pre-compute the stem once for this address (tree_index=0).
+        // Reused by write_code, write_account_info, and the code_hash fallback.
+        let base_stem = get_stem_for_base(address);
+
         // Write code BEFORE account info — write_code reads old code_size from
         // basic_data to know how many old chunks to evict. write_account_info
         // overwrites basic_data with the new code_size, so it must come after.
         if let Some(ref code) = update.code {
-            self.write_code(address, code)?;
+            self.write_code(address, code, &base_stem)?;
 
             // If code changed but info wasn't provided (defensive — LEVM always
             // sends both together), update the code_hash leaf directly so the trie
             // stays consistent.
             if update.info.is_none() {
-                let code_hash_key = get_tree_key_for_code_hash(address);
+                let code_hash_key = tree_key_from_stem(&base_stem, CODE_HASH_LEAF_KEY);
                 self.trie.insert(code_hash_key, code.hash.0)?;
                 self.record_insert(code_hash_key, code.hash.0);
             }
@@ -461,7 +456,7 @@ impl BinaryTrieState {
 
         // Apply account info changes (writes basic_data + code_hash).
         if let Some(ref info) = update.info {
-            self.write_account_info(address, info, update.code.as_ref())?;
+            self.write_account_info(info, update.code.as_ref(), &base_stem)?;
         }
 
         // Apply storage changes: trie mutations first, then update storage_keys.
@@ -743,20 +738,26 @@ impl BinaryTrieState {
     /// Otherwise preserves the existing code_size from the trie.
     fn write_account_info(
         &mut self,
-        address: &Address,
         info: &AccountInfo,
         new_code: Option<&Code>,
+        base_stem: &[u8; 31],
     ) -> Result<(), BinaryTrieError> {
         let code_size = new_code
             .map(|c| c.bytecode.len() as u32)
-            .unwrap_or_else(|| self.get_code_size(address));
+            .unwrap_or_else(|| {
+                let basic_data_key = tree_key_from_stem(base_stem, BASIC_DATA_LEAF_KEY);
+                match self.trie.get_shared(basic_data_key) {
+                    Some(data) => unpack_basic_data(&data).1,
+                    None => 0,
+                }
+            });
 
-        let basic_data_key = get_tree_key_for_basic_data(address);
+        let basic_data_key = tree_key_from_stem(base_stem, BASIC_DATA_LEAF_KEY);
         let basic_data = pack_basic_data(0, code_size, info.nonce, info.balance);
         self.trie.insert(basic_data_key, basic_data)?;
         self.record_insert(basic_data_key, basic_data);
 
-        let code_hash_key = get_tree_key_for_code_hash(address);
+        let code_hash_key = tree_key_from_stem(base_stem, CODE_HASH_LEAF_KEY);
         self.trie.insert(code_hash_key, info.code_hash.0)?;
         self.record_insert(code_hash_key, info.code_hash.0);
 
@@ -764,9 +765,18 @@ impl BinaryTrieState {
     }
 
     /// Write code: chunkify into trie leaves for merkleization.
-    fn write_code(&mut self, address: &Address, code: &Code) -> Result<(), BinaryTrieError> {
+    fn write_code(
+        &mut self,
+        address: &Address,
+        code: &Code,
+        base_stem: &[u8; 31],
+    ) -> Result<(), BinaryTrieError> {
         // Remove old code chunks if code_size changed.
-        let old_code_size = self.get_code_size(address);
+        let basic_data_key = tree_key_from_stem(base_stem, BASIC_DATA_LEAF_KEY);
+        let old_code_size = match self.trie.get_shared(basic_data_key) {
+            Some(data) => unpack_basic_data(&data).1,
+            None => 0,
+        };
         if old_code_size > 0 {
             let old_num_chunks = (old_code_size as u64).div_ceil(31);
             let new_num_chunks = if code.bytecode.is_empty() {

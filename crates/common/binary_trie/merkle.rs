@@ -1,4 +1,5 @@
 use crate::hash::blake3_hash;
+use crate::node::StemNode;
 use crate::node::{Node, NodeId, STEM_VALUES, SUBTREE_SIZE};
 use crate::node_store::NodeStore;
 use crate::trie::BinaryTrie;
@@ -38,11 +39,19 @@ pub fn merkle_hash_64_pub(data: &[u8; 64]) -> [u8; 32] {
 pub fn merkelize(trie: &mut BinaryTrie) -> [u8; 32] {
     match trie.root {
         None => ZERO_HASH,
-        Some(id) => hash_node_id(&mut trie.store, id),
+        Some(id) => {
+            // Allocate one shared subtree buffer, reused across all StemNodes.
+            let mut subtree_buf = Box::new([[0u8; 32]; SUBTREE_SIZE]);
+            hash_node_id(&mut trie.store, id, &mut subtree_buf)
+        }
     }
 }
 
-pub(crate) fn hash_node_id(store: &mut NodeStore, id: NodeId) -> [u8; 32] {
+pub(crate) fn hash_node_id(
+    store: &mut NodeStore,
+    id: NodeId,
+    subtree_buf: &mut [[u8; 32]; SUBTREE_SIZE],
+) -> [u8; 32] {
     // Take the node out so we can mutate it.
     let node = match store.take(id) {
         Ok(n) => n,
@@ -57,11 +66,11 @@ pub(crate) fn hash_node_id(store: &mut NodeStore, id: NodeId) -> [u8; 32] {
             }
             let left = internal
                 .left
-                .map(|lid| hash_node_id(store, lid))
+                .map(|lid| hash_node_id(store, lid, subtree_buf))
                 .unwrap_or(ZERO_HASH);
             let right = internal
                 .right
-                .map(|rid| hash_node_id(store, rid))
+                .map(|rid| hash_node_id(store, rid, subtree_buf))
                 .unwrap_or(ZERO_HASH);
             let mut buf = [0u8; 64];
             buf[..32].copy_from_slice(&left);
@@ -76,7 +85,7 @@ pub(crate) fn hash_node_id(store: &mut NodeStore, id: NodeId) -> [u8; 32] {
                 store.put_clean(id, Node::Stem(stem_node));
                 return h;
             }
-            let subtree_root = compute_subtree_root(&mut stem_node);
+            let subtree_root = compute_subtree_root(&stem_node, subtree_buf);
 
             // hash(stem || 0x00 || subtree_root)
             // stem is 31 bytes + 0x00 padding + 32-byte subtree_root = 64 bytes.
@@ -92,44 +101,32 @@ pub(crate) fn hash_node_id(store: &mut NodeStore, id: NodeId) -> [u8; 32] {
     }
 }
 
-/// Compute (and cache) the subtree root for a StemNode's 256 values.
+/// Compute the subtree root for a StemNode's 256 values using a shared buffer.
 ///
-/// The subtree is a complete binary Merkle tree of depth 8 with 256 leaves.
-/// It is represented as a flat array of 511 hashes (the same layout used by
-/// `StemNode::cached_subtree`).
-///
-/// If the cache is already populated (`Some`), return `cache[0]` directly.
-/// Otherwise, build the entire 511-entry cache from scratch and return its root.
-fn compute_subtree_root(stem_node: &mut crate::node::StemNode) -> [u8; 32] {
-    if let Some(ref cache) = stem_node.cached_subtree {
-        return cache[0];
-    }
-
-    // Build the full 511-entry flat binary tree.
-    let mut cache = Box::new([[0u8; 32]; SUBTREE_SIZE]);
-
+/// The subtree is a complete binary Merkle tree of depth 8 with 256 leaves,
+/// represented as a flat array of 511 hashes. The buffer is filled in-place
+/// and reused across all StemNode merkleizations.
+fn compute_subtree_root(stem_node: &StemNode, buf: &mut [[u8; 32]; SUBTREE_SIZE]) -> [u8; 32] {
     // Fill all leaves with ZERO_HASH (default for absent values).
     for i in 0..STEM_VALUES {
-        cache[255 + i] = ZERO_HASH;
+        buf[255 + i] = ZERO_HASH;
     }
     // Overwrite only present values (sparse — typically 1-5 hashes instead of 256).
     for (&idx, val) in &stem_node.values {
-        cache[255 + idx as usize] = blake3_hash(val);
+        buf[255 + idx as usize] = blake3_hash(val);
     }
 
     // Reduce bottom-up: for each internal node (index 254 down to 0), hash children.
     for parent in (0..255usize).rev() {
         let left_child = 2 * parent + 1;
         let right_child = 2 * parent + 2;
-        let mut buf = [0u8; 64];
-        buf[..32].copy_from_slice(&cache[left_child]);
-        buf[32..].copy_from_slice(&cache[right_child]);
-        cache[parent] = merkle_hash_64(&buf);
+        let mut hash_buf = [0u8; 64];
+        hash_buf[..32].copy_from_slice(&buf[left_child]);
+        hash_buf[32..].copy_from_slice(&buf[right_child]);
+        buf[parent] = merkle_hash_64(&hash_buf);
     }
 
-    let root = cache[0];
-    stem_node.cached_subtree = Some(cache);
-    root
+    buf[0]
 }
 
 #[cfg(test)]
@@ -141,7 +138,8 @@ mod tests {
     fn hash_stem(stem_node: StemNode) -> [u8; 32] {
         let mut store = NodeStore::new_memory();
         let id = store.create(Node::Stem(stem_node));
-        hash_node_id(&mut store, id)
+        let mut buf = Box::new([[0u8; 32]; SUBTREE_SIZE]);
+        hash_node_id(&mut store, id, &mut buf)
     }
 
     fn hash_internal_with_children(
@@ -152,7 +150,8 @@ mod tests {
         let id = store.create(Node::Internal(crate::node::InternalNode::new(
             left_id, right_id,
         )));
-        hash_node_id(store, id)
+        let mut buf = Box::new([[0u8; 32]; SUBTREE_SIZE]);
+        hash_node_id(store, id, &mut buf)
     }
 
     #[test]
@@ -318,55 +317,30 @@ mod tests {
     }
 
     #[test]
-    fn subtree_cache_incremental_matches_full_build() {
-        // Build a StemNode, compute its hash (this populates cached_subtree).
-        // Then mutate a value — the incremental update path runs.
-        // Verify the result matches a fresh StemNode with the same final values.
+    fn sequential_mutations_match_fresh_build() {
+        // Verify that applying values sequentially produces the same hash as
+        // building a fresh node with all values set at once.
         let stem = [0u8; 31];
 
-        // Build a node, hash it once (populates cache), then set another value
-        // (incremental update path) and compare with a freshly constructed node.
-        let mut sn_cached = StemNode::new(stem);
-        sn_cached.set_value(0, [1u8; 32]);
-        // Compute root on sn_cached (builds full cache).
-        let _ = hash_stem(sn_cached.clone());
+        let mut sn_sequential = StemNode::new(stem);
+        sn_sequential.set_value(0, [1u8; 32]);
+        sn_sequential.set_value(100, [2u8; 32]);
+        let r_sequential = hash_stem(sn_sequential);
 
-        // Now build fresh for incremental test.
-        let mut sn_for_incremental = StemNode::new(stem);
-        sn_for_incremental.set_value(0, [1u8; 32]);
-        // Force the subtree cache to be built by merkelizing.
-        {
-            let mut store = NodeStore::new_memory();
-            let id = store.create(Node::Stem(sn_for_incremental));
-            hash_node_id(&mut store, id);
-            let node = store.take(id).unwrap();
-            if let Node::Stem(mut sn) = node {
-                // Apply incremental mutation.
-                sn.set_value(100, [2u8; 32]);
-                let mut store2 = NodeStore::new_memory();
-                let id2 = store2.create(Node::Stem(sn));
-                let r_incremental = hash_node_id(&mut store2, id2);
+        let mut sn_fresh = StemNode::new(stem);
+        sn_fresh.set_value(0, [1u8; 32]);
+        sn_fresh.set_value(100, [2u8; 32]);
+        let r_fresh = hash_stem(sn_fresh);
 
-                // Reference: fresh node with both values set.
-                let mut sn_fresh = StemNode::new(stem);
-                sn_fresh.set_value(0, [1u8; 32]);
-                sn_fresh.set_value(100, [2u8; 32]);
-                let r_fresh = hash_stem(sn_fresh);
-
-                assert_eq!(r_incremental, r_fresh);
-            }
-        }
+        assert_eq!(r_sequential, r_fresh);
     }
 }
 
-// Implement Clone for StemNode so the test above can clone it.
-// (This is only needed because the test takes ownership before the incremental update.)
-impl Clone for crate::node::StemNode {
+impl Clone for StemNode {
     fn clone(&self) -> Self {
         Self {
             stem: self.stem,
             values: self.values.clone(),
-            cached_subtree: self.cached_subtree.clone(),
             cached_hash: self.cached_hash,
         }
     }

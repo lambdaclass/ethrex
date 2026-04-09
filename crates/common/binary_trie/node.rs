@@ -22,12 +22,10 @@ pub enum Node {
 pub const SUBTREE_SIZE: usize = 511;
 
 impl Node {
-    /// Strip cached hashes and subtree caches to reduce memory footprint.
-    /// Strip expensive caches to reduce memory, preserving `cached_hash`
-    /// so that merkleization doesn't re-hash the entire trie on every block.
+    /// Strip cached hashes to reduce memory footprint on demotion to warm/LRU tiers.
     pub fn strip_caches(&mut self) {
         if let Node::Stem(n) = self {
-            n.cached_subtree = None;
+            n.cached_hash = None;
         }
     }
 }
@@ -64,17 +62,6 @@ pub struct StemNode {
     /// Typical StemNodes have 1-5 entries (~100-200 bytes) instead of the
     /// previous fixed 256-slot array (~8.5KB).
     pub values: BTreeMap<u8, [u8; 32]>,
-    /// Cached intermediate hashes for the 256-value subtree (511 entries).
-    ///
-    /// Flat binary tree layout:
-    ///   - Index 0            = subtree root
-    ///   - Indices 1, 2       = children of root
-    ///   - ...
-    ///   - Indices 255..=510  = leaf hashes (hash of each value, or ZERO_HASH)
-    ///
-    /// `None` means the cache has never been built; it is populated on the first
-    /// `merkelize` call and updated incrementally on each `set_value`/`remove_value`.
-    pub cached_subtree: Option<Box<[[u8; 32]; SUBTREE_SIZE]>>,
     /// Cached overall StemNode hash: `merkle_hash_64(stem || 0x00 || subtree_root)`.
     /// Cleared whenever a value is set or removed.
     pub cached_hash: Option<[u8; 32]>,
@@ -86,7 +73,6 @@ impl StemNode {
         Self {
             stem,
             values: BTreeMap::new(),
-            cached_subtree: None,
             cached_hash: None,
         }
     }
@@ -96,10 +82,9 @@ impl StemNode {
         self.values.get(&sub_index).copied()
     }
 
-    /// Set the value at the given sub-index, updating the subtree cache incrementally.
+    /// Set the value at the given sub-index.
     pub fn set_value(&mut self, sub_index: u8, value: [u8; 32]) {
         self.values.insert(sub_index, value);
-        self.update_subtree_cache(sub_index);
         self.cached_hash = None;
     }
 
@@ -107,7 +92,6 @@ impl StemNode {
     pub fn remove_value(&mut self, sub_index: u8) -> Option<[u8; 32]> {
         let old = self.values.remove(&sub_index);
         if old.is_some() {
-            self.update_subtree_cache(sub_index);
             self.cached_hash = None;
         }
         old
@@ -116,45 +100,6 @@ impl StemNode {
     /// Returns true if all value slots are empty.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
-    }
-
-    /// Update the subtree cache for a single changed leaf at `sub_index`.
-    ///
-    /// If the cache has never been built (`None`), this is a no-op — the full
-    /// cache will be constructed lazily by `merkle::compute_subtree_root` on the
-    /// next merkelization call.
-    fn update_subtree_cache(&mut self, sub_index: u8) {
-        use crate::hash::blake3_hash;
-        use crate::merkle::ZERO_HASH;
-        use crate::merkle::merkle_hash_64_pub;
-
-        let cache = match self.cached_subtree.as_mut() {
-            Some(c) => c,
-            None => return, // Not yet built; full build will happen at merkelize time.
-        };
-
-        // Leaf index in the flat tree: leaves occupy indices 255..=510.
-        let leaf_flat = 255 + sub_index as usize;
-
-        // Recompute the leaf hash.
-        cache[leaf_flat] = self
-            .values
-            .get(&sub_index)
-            .map(|v| blake3_hash(v))
-            .unwrap_or(ZERO_HASH);
-
-        // Walk up from the leaf to the root, recomputing each parent.
-        let mut idx = leaf_flat;
-        while idx > 0 {
-            let parent = (idx - 1) / 2;
-            let left_child = 2 * parent + 1;
-            let right_child = 2 * parent + 2;
-            let mut buf = [0u8; 64];
-            buf[..32].copy_from_slice(&cache[left_child]);
-            buf[32..].copy_from_slice(&cache[right_child]);
-            cache[parent] = merkle_hash_64_pub(&buf);
-            idx = parent;
-        }
     }
 }
 
