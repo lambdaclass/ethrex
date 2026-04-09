@@ -624,8 +624,10 @@ where
     exchange_hello_messages(state, &mut stream).await?;
 
     // Update eth capability version to the negotiated version for further message decoding.
-    // When bsc/1 is also negotiated, use V68Bsc so that the message decoder accounts for
-    // the alphabetical offset shift (bsc/1 occupies 0x10-0x11, eth/68 starts at 0x12).
+    // BSC advertises a `bsc` capability for peer discovery, but does NOT use it
+    // for message offset calculations. BSC messages (BscCapMsg, VotesMsg, UpgradeStatusMsg)
+    // are sent within the eth message code range. Use V68Bsc which has the SAME
+    // offsets as V68 but with a BSC-specific catch-all for unknown eth-range codes.
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) && state.negotiated_bsc_capability.is_some() => {
             EthCapVersion::V68Bsc

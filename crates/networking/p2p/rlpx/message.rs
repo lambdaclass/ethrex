@@ -68,7 +68,8 @@ impl EthCapVersion {
         match self {
             // When bsc is negotiated, it sits before eth alphabetically.
             // bsc occupies 0x10-0x11 (2 messages), eth starts at 0x12.
-            EthCapVersion::V68Bsc => ETH_CAPABILITY_OFFSET_WITH_BSC,
+            // BSC does NOT shift offsets — bsc capability is for peer discovery only.
+            EthCapVersion::V68Bsc => ETH_CAPABILITY_OFFSET,
             _ => ETH_CAPABILITY_OFFSET,
         }
     }
@@ -78,7 +79,7 @@ impl EthCapVersion {
             EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => SNAP_CAPABILITY_OFFSET_ETH_70,
-            EthCapVersion::V68Bsc => SNAP_CAPABILITY_OFFSET_ETH_68_BSC,
+            EthCapVersion::V68Bsc => SNAP_CAPABILITY_OFFSET_ETH_68,
         }
     }
 
@@ -87,7 +88,7 @@ impl EthCapVersion {
             EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
-            EthCapVersion::V68Bsc => BASED_CAPABILITY_OFFSET_ETH_68_BSC,
+            EthCapVersion::V68Bsc => BASED_CAPABILITY_OFFSET_ETH_68,
         }
     }
 
@@ -244,13 +245,6 @@ impl Message {
                 PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
-        } else if matches!(eth_version, EthCapVersion::V68Bsc)
-            && msg_id < eth_version.eth_capability_offset()
-        {
-            // bsc sub-protocol range (0x10-0x11 for bsc/1 with 2 messages).
-            // We advertise bsc/1 so BSC peers keep the connection open, but we don't
-            // implement the bsc sub-protocol beyond silently consuming incoming messages.
-            Ok(Message::BscIgnored)
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
             match msg_id - eth_version.eth_capability_offset() {
@@ -309,6 +303,9 @@ impl Message {
                 UpgradeStatusMsg::CODE => {
                     Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
                 }
+                // BSC peers send additional messages (BscCapMsg=0x0c, VotesMsg=0x0d, etc.)
+                // within the eth code range. Silently consume them.
+                _ if matches!(eth_version, EthCapVersion::V68Bsc) => Ok(Message::BscIgnored),
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
