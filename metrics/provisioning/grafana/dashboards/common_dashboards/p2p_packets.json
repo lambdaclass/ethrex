@@ -458,8 +458,7 @@
           "refId": "B"
         }
       ]
-    }
-    ,
+    },
     {
       "title": "Kademlia Table",
       "type": "row",

@@ -999,21 +999,26 @@ impl PeerTableServer {
             #[cfg(feature = "metrics")]
             let insert_start = std::time::Instant::now();
 
-            match self.contacts.entry(node_id) {
+            let is_new = match self.contacts.entry(node_id) {
                 Entry::Vacant(vacant_entry) => {
                     vacant_entry.insert(Contact::new(node, protocol));
-                    METRICS.record_new_discovery().await;
+                    true
                 }
                 Entry::Occupied(mut occupied_entry) => {
                     // Contact already exists, just add the protocol
                     occupied_entry.get_mut().add_protocol(protocol);
+                    false
                 }
-            }
+            };
 
             #[cfg(feature = "metrics")]
             {
                 use ethrex_metrics::p2p::METRICS_P2P;
                 METRICS_P2P.observe_insert_contact_duration(insert_start.elapsed().as_secs_f64());
+            }
+
+            if is_new {
+                METRICS.record_new_discovery().await;
             }
         }
     }
