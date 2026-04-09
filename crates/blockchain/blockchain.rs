@@ -219,7 +219,7 @@ pub struct Blockchain {
     ///
     /// BSC has no Engine API so the sync bridge polls this field instead
     /// of waiting for a forkchoiceUpdated call.
-    bsc_sync_head: std::sync::Mutex<Option<H256>>,
+    pub bsc_sync_head: std::sync::Mutex<Option<H256>>,
     bsc_pivot_header: std::sync::Mutex<Option<ethrex_common::types::BlockHeader>>,
 }
 
