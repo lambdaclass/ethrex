@@ -38,7 +38,7 @@ use tokio::{
     net::{TcpSocket, TcpStream},
 };
 use tokio_util::codec::Framed;
-use tracing::{debug, trace};
+use tracing::{trace, warn};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
@@ -65,11 +65,13 @@ pub(crate) async fn perform(
     let (context, node, framed) = match state {
         ConnectionState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
+            if addr.is_ipv6() {
+                trace!(peer=%node, %addr, "Attempting outbound RLPx connection via IPv6");
+            }
             let mut stream = match tcp_stream(addr).await {
                 Ok(result) => result,
                 Err(error) => {
-                    // If we can't find a TCP connection it's an issue we should track in debug
-                    debug!(peer=%node, %error, "Error creating tcp connection");
+                    warn!(peer=%node, %addr, %error, "Error creating tcp connection");
                     return Err(error)?;
                 }
             };

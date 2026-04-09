@@ -412,29 +412,41 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         })
         .collect();
 
-    // Determine discovery bind address.
-    // --discovery.addr sets the UDP bind addr independently of RLPx.
-    // Defaults to the first RLPx bind addr so the two channels co-locate.
-    let default_discovery_bind = rlpx_bind_addrs
-        .first()
-        .copied()
-        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    let discovery_bind_addr: IpAddr = opts
-        .discovery_addr
-        .as_deref()
-        .map(|a| a.parse().expect("Failed to parse --discovery.addr address"))
-        .unwrap_or(default_discovery_bind);
-
-    // Discovery external address: use the explicit discovery bind addr when it
-    // is a specific (non-wildcard) IP; otherwise fall back to primary RLPx external addr.
-    let discovery_external_addr = if !discovery_bind_addr.is_unspecified() {
-        discovery_bind_addr
+    // Determine discovery bind addresses.
+    // --discovery.addr (comma-separated) sets the UDP bind addresses independently
+    // of RLPx. Defaults to the same set as rlpx_bind_addrs so discovery is
+    // automatically dual-stack when RLPx is dual-stack.
+    let discovery_bind_addrs: Vec<IpAddr> = if opts.discovery_addr.is_empty() {
+        rlpx_bind_addrs.clone()
     } else {
-        rlpx_external_addrs
-            .first()
-            .copied()
-            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        opts.discovery_addr
+            .iter()
+            .map(|a| a.parse().expect("Failed to parse --discovery.addr address"))
+            .collect()
     };
+
+    // For each discovery bind address derive the external (announced) address,
+    // using the same NAT / auto-detect logic as for RLPx.
+    let discovery_external_addrs: Vec<IpAddr> = discovery_bind_addrs
+        .iter()
+        .map(|bind| {
+            if !bind.is_unspecified() {
+                nat_extip
+                    .filter(|e| e.is_ipv4() == bind.is_ipv4())
+                    .unwrap_or(*bind)
+            } else {
+                nat_extip
+                    .filter(|e| e.is_ipv4() == bind.is_ipv4())
+                    .unwrap_or_else(|| {
+                        if bind.is_ipv4() {
+                            local_ip().unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+                        } else {
+                            local_ipv6().unwrap_or(IpAddr::V6(Ipv6Addr::UNSPECIFIED))
+                        }
+                    })
+            }
+        })
+        .collect();
 
     // Primary external address for the enode URL (first in the list).
     let primary_external_addr = rlpx_external_addrs
@@ -444,8 +456,8 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
 
     let node = Node::new(primary_external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
-        discovery_bind_addr,
-        discovery_external_addr,
+        discovery_bind_addrs,
+        discovery_external_addrs,
         rlpx_bind_addrs,
         rlpx_external_addrs,
         tcp_port,

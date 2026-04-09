@@ -286,12 +286,17 @@ pub struct Options {
     #[arg(
         long = "discovery.addr",
         value_name = "ADDRESS",
-        help = "Bind address for the UDP discovery socket.",
-        long_help = "The address to bind the discv4/discv5 UDP socket to. Defaults to --p2p.addr (or 0.0.0.0 if unset). Allows running discovery on a different interface than RLPx.",
+        value_delimiter = ',',
+        num_args = 0..,
+        help = "Bind address(es) for the UDP discovery socket(s).",
+        long_help = "One or two comma-separated addresses to bind discv4/discv5 UDP sockets to. \
+            Defaults to the same set as --p2p.addr, giving automatic dual-stack discovery \
+            when RLPx is dual-stack. Supply a single address to run discovery single-stack \
+            regardless of the RLPx configuration.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_DISCOVERY_ADDR"
     )]
-    pub discovery_addr: Option<String>,
+    pub discovery_addr: Vec<String>,
     #[arg(
         long = "discovery.port",
         default_value = "30303",
@@ -444,7 +449,7 @@ impl Default for Options {
             p2p_addr: vec![],
             nat_extip: None,
             p2p_port: Default::default(),
-            discovery_addr: None,
+            discovery_addr: vec![],
             discovery_port: Default::default(),
             discv4_enabled: true,
             discv5_enabled: true,

@@ -4245,6 +4245,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "snap",
+ "socket2 0.5.10",
  "spawned-concurrency",
  "spawned-rt",
  "thiserror 2.0.18",
