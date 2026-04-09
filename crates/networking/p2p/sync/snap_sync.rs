@@ -106,6 +106,34 @@ pub async fn sync_cycle_snap(
     store: Store,
     datadir: &Path,
 ) -> Result<(), SyncError> {
+    // BSC chains (chain ID 56 = mainnet, 97 = Chapel testnet) use pruned peers that
+    // do not serve ancient headers. Skip the full header download and instead find a
+    // recent pivot directly, then jump straight to snap state download.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_bsc = chain_id == 56 || chain_id == 97;
+
+    if is_bsc {
+        info!("BSC mode: skipping full header download, finding recent pivot for snap sync");
+        let mut block_sync_state = SnapBlockSyncState::new(store.clone());
+        let pivot_header = find_bsc_pivot(peers, &store).await?;
+        info!(
+            "BSC snap sync pivot: block {} ({})",
+            pivot_header.number,
+            pivot_header.hash()
+        );
+        // Store the pivot header so snap_sync can retrieve it by hash.
+        store
+            .add_block_header(pivot_header.hash(), pivot_header.clone())
+            .await?;
+        block_sync_state
+            .process_incoming_headers(std::iter::once(pivot_header))
+            .await?;
+        snap_sync(peers, &store, &mut block_sync_state, datadir).await?;
+        store.clear_snap_state().await?;
+        snap_enabled.store(false, Ordering::Relaxed);
+        return Ok(());
+    }
+
     // Request all block headers between the current head and the sync head
     // We will begin from the current head so that we download the earliest state first
     // This step is not parallelized
@@ -732,6 +760,142 @@ pub async fn update_pivot(
             .await?;
         *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
+    }
+}
+
+/// Finds a suitable snap sync pivot block for BSC chains.
+///
+/// BSC peers are pruned and won't serve headers from block 0, so we can't do a
+/// full header download. This function requests a recent header from a peer to use
+/// as the pivot. It tries a sequence of candidate block numbers (descending from a
+/// high estimated tip) until a peer returns a result. The pivot is set at
+/// `latest - 64` to provide a buffer behind the chain tip.
+async fn find_bsc_pivot(peers: &mut PeerHandler, store: &Store) -> Result<BlockHeader, SyncError> {
+    // BSC Chapel testnet produces blocks every ~3s. At time of writing it is past
+    // block 50_000_000. BSC mainnet is past 40_000_000. We start high and step
+    // down in large increments until a peer serves us a header.
+    //
+    // The pivot itself is set 64 blocks behind whatever the peer returns so that
+    // it is unlikely to be rolled back.
+    const BSC_PIVOT_LAG: u64 = 64;
+    const MAX_TOTAL_FAILURES: u64 = 20;
+    const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
+    const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+    // Candidate starting points: try from the store's latest known number first,
+    // then fall back to a hard-coded high estimate.
+    let store_head = store.get_latest_block_number().await.unwrap_or(0);
+    // If we have a local tip use it; otherwise assume a reasonable high number.
+    let estimate_tip: u64 = if store_head > BSC_PIVOT_LAG {
+        store_head
+    } else {
+        // BSC Chapel is well past 50M. This is a safe starting guess.
+        50_000_000_u64
+    };
+
+    let mut total_failures: u64 = 0;
+    let mut consecutive_failures: u64 = 0;
+    // Try descending candidate numbers so we find the chain tip quickly.
+    let step = 1_000_000_u64;
+    let mut candidate = estimate_tip;
+
+    loop {
+        if total_failures >= MAX_TOTAL_FAILURES {
+            return Err(SyncError::PeerHandler(
+                crate::peer_handler::PeerHandlerError::BlockHeaders,
+            ));
+        }
+
+        if consecutive_failures > 0 {
+            let delay = INITIAL_RETRY_DELAY
+                .saturating_mul(1 << consecutive_failures.saturating_sub(1).min(4));
+            let delay = delay.min(MAX_RETRY_DELAY);
+            tokio::time::sleep(delay).await;
+        }
+
+        let Some((peer_id, mut connection)) = peers
+            .peer_table
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await?
+        else {
+            debug!("find_bsc_pivot: no free peers available, retrying");
+            consecutive_failures = consecutive_failures.saturating_add(1);
+            total_failures = total_failures.saturating_add(1);
+            continue;
+        };
+
+        info!("find_bsc_pivot: trying block {candidate} with peer {peer_id}");
+        match peers
+            .get_block_header(peer_id, &mut connection, candidate)
+            .await
+        {
+            Ok(Some(header)) => {
+                // We got a header. The peer has at least this block. Use it as
+                // a tip estimate and request the pivot `BSC_PIVOT_LAG` behind it.
+                let tip = header.number;
+                let pivot_number = tip.saturating_sub(BSC_PIVOT_LAG);
+                info!(
+                    "find_bsc_pivot: peer {peer_id} has block {tip}, requesting pivot at {pivot_number}"
+                );
+                peers.peer_table.record_success(peer_id)?;
+
+                // Request the exact pivot block.
+                let Some((pivot_peer_id, mut pivot_conn)) = peers
+                    .peer_table
+                    .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                    .await?
+                else {
+                    debug!("find_bsc_pivot: no free peers for pivot request, retrying");
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    total_failures = total_failures.saturating_add(1);
+                    continue;
+                };
+                match peers
+                    .get_block_header(pivot_peer_id, &mut pivot_conn, pivot_number)
+                    .await
+                {
+                    Ok(Some(pivot)) => {
+                        peers.peer_table.record_success(pivot_peer_id)?;
+                        return Ok(pivot);
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "find_bsc_pivot: peer {pivot_peer_id} returned no header for pivot {pivot_number}"
+                        );
+                        peers.peer_table.record_failure(pivot_peer_id)?;
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        total_failures = total_failures.saturating_add(1);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "find_bsc_pivot: error requesting pivot from peer {pivot_peer_id}: {e}"
+                        );
+                        peers.peer_table.record_failure(pivot_peer_id)?;
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        total_failures = total_failures.saturating_add(1);
+                    }
+                }
+            }
+            Ok(None) => {
+                // Peer doesn't have this block — try a lower number.
+                warn!("find_bsc_pivot: peer {peer_id} has no header at {candidate}, trying lower");
+                peers.peer_table.record_failure(peer_id)?;
+                candidate = candidate.saturating_sub(step);
+                if candidate == 0 {
+                    return Err(SyncError::PeerHandler(
+                        crate::peer_handler::PeerHandlerError::BlockHeaders,
+                    ));
+                }
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                total_failures = total_failures.saturating_add(1);
+            }
+            Err(e) => {
+                warn!("find_bsc_pivot: error requesting header from peer {peer_id}: {e}");
+                peers.peer_table.record_failure(peer_id)?;
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                total_failures = total_failures.saturating_add(1);
+            }
+        }
     }
 }
 
