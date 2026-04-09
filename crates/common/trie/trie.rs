@@ -29,57 +29,6 @@ mod trie_iter;
 pub mod trie_sorted;
 mod verify_range;
 
-// Conditional Mutex: std::sync::Mutex when std is available,
-// trivial single-threaded wrapper for no_std guest programs.
-#[cfg(feature = "std")]
-pub use std::sync::Mutex;
-
-#[cfg(not(feature = "std"))]
-mod nostd_mutex {
-    use core::cell::UnsafeCell;
-
-    /// Single-threaded Mutex shim for no_std environments (guest programs).
-    pub struct Mutex<T>(UnsafeCell<T>);
-
-    unsafe impl<T: Send> Send for Mutex<T> {}
-    unsafe impl<T: Send> Sync for Mutex<T> {}
-
-    impl<T> Mutex<T> {
-        pub const fn new(val: T) -> Self {
-            Self(UnsafeCell::new(val))
-        }
-
-        #[allow(clippy::result_unit_err)]
-        pub fn lock(&self) -> Result<MutexGuard<'_, T>, ()> {
-            Ok(MutexGuard(&self.0))
-        }
-    }
-
-    impl<T: Default> Default for Mutex<T> {
-        fn default() -> Self {
-            Self::new(T::default())
-        }
-    }
-
-    pub struct MutexGuard<'a, T>(&'a UnsafeCell<T>);
-
-    impl<T> core::ops::Deref for MutexGuard<'_, T> {
-        type Target = T;
-        fn deref(&self) -> &T {
-            unsafe { &*self.0.get() }
-        }
-    }
-
-    impl<T> core::ops::DerefMut for MutexGuard<'_, T> {
-        fn deref_mut(&mut self) -> &mut T {
-            unsafe { &mut *self.0.get() }
-        }
-    }
-}
-
-#[cfg(not(feature = "std"))]
-pub use nostd_mutex::Mutex;
-
 use ethereum_types::H256;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::{constants::RLP_NULL, encode::RLPEncode};
@@ -381,9 +330,7 @@ impl Trie {
     }
 
     pub fn empty_in_memory() -> Self {
-        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            BTreeMap::new(),
-        )))))
+        Self::new(Box::new(InMemoryTrieDB::new(BTreeMap::new())))
     }
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.

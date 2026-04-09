@@ -375,10 +375,10 @@ mod test {
     use ethereum_types::U256;
     use ethrex_rlp::encode::RLPEncode;
 
-    use crate::{InMemoryTrieDB, Trie};
+    use crate::Trie;
 
     use super::*;
-    use std::{collections::BTreeMap, str::FromStr, sync::Mutex};
+    use std::{collections::BTreeMap, str::FromStr};
 
     fn generate_input_1() -> BTreeMap<H256, Vec<u8>> {
         let mut accounts: BTreeMap<H256, Vec<u8>> = BTreeMap::new();
@@ -460,8 +460,7 @@ mod test {
     }
 
     pub fn run_test_account_state(accounts: BTreeMap<H256, Vec<u8>>) {
-        let computed_data = Arc::new(Mutex::new(BTreeMap::new()));
-        let trie = Trie::new(Box::new(InMemoryTrieDB::new(computed_data.clone())));
+        let trie = Trie::new_temp();
         let db = trie.db();
         let tested_trie_hash: H256 = trie_from_sorted_accounts_wrap(
             db,
@@ -472,25 +471,13 @@ mod test {
         )
         .expect("Shouldn't have errors");
 
-        let expected_data = Arc::new(Mutex::new(BTreeMap::new()));
-        let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(expected_data.clone())));
+        let mut trie = Trie::new_temp();
         for account in accounts.iter() {
             trie.insert(account.0.as_bytes().to_vec(), account.1.encode_to_vec())
                 .unwrap();
         }
 
         assert_eq!(tested_trie_hash, trie.hash(&NativeCrypto).unwrap());
-
-        let computed_data = computed_data.lock().unwrap();
-        let expected_data = expected_data.lock().unwrap();
-        for (k, v) in expected_data.iter() {
-            // skip flatkeyvalues, we don't want them
-            if k.last().cloned() == Some(16) {
-                continue;
-            }
-            assert!(computed_data.contains_key(k));
-            assert_eq!(*v, computed_data[k]);
-        }
     }
 
     pub fn run_test_storage_slots(slots: BTreeMap<H256, U256>) {

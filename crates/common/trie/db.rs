@@ -1,14 +1,22 @@
-use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc, vec, vec::Vec};
-use core::fmt;
-use ethereum_types::H256;
+use alloc::{boxed::Box, vec, vec::Vec};
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Mutex, Nibbles, Node, Trie, error::TrieError};
+use crate::{Nibbles, Node, error::TrieError};
 
-// Nibbles -> encoded node
-pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+/// Conditional Send + Sync bound: required in std (for thread-pool trie
+/// generation in snap sync), not required in no_std (single-threaded guest
+/// programs).
+#[cfg(feature = "std")]
+pub trait MaybeSendSync: Send + Sync {}
+#[cfg(feature = "std")]
+impl<T: Send + Sync> MaybeSendSync for T {}
 
-pub trait TrieDB: Send + Sync {
+#[cfg(not(feature = "std"))]
+pub trait MaybeSendSync {}
+#[cfg(not(feature = "std"))]
+impl<T> MaybeSendSync for T {}
+
+pub trait TrieDB: MaybeSendSync {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError>;
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError>;
     // TODO: replace putbatch with this function.
@@ -34,89 +42,155 @@ pub trait TrieDB: Send + Sync {
     }
 }
 
-// TODO: we should replace this with BackendTrieDB
-/// InMemory implementation for the TrieDB trait, with get and put operations.
-#[derive(Default)]
-pub struct InMemoryTrieDB {
-    inner: NodeMap,
-    prefix: Option<Nibbles>,
+// std: InMemoryTrieDB backed by Arc<Mutex<BTreeMap>> for thread safety
+#[cfg(feature = "std")]
+mod in_memory_std {
+    use alloc::{collections::BTreeMap, sync::Arc, vec};
+    use ethereum_types::H256;
+    use std::sync::Mutex;
+
+    use super::TrieDB;
+    use crate::{Nibbles, Node, Trie, error::TrieError};
+
+    // TODO: we should replace this with BackendTrieDB
+    /// InMemory implementation for the TrieDB trait, with get and put operations.
+    pub struct InMemoryTrieDB {
+        inner: Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>,
+        prefix: Option<Nibbles>,
+    }
+
+    impl Default for InMemoryTrieDB {
+        fn default() -> Self {
+            Self {
+                inner: Arc::new(Mutex::new(BTreeMap::new())),
+                prefix: None,
+            }
+        }
+    }
+
+    impl InMemoryTrieDB {
+        pub fn new(map: BTreeMap<Vec<u8>, Vec<u8>>) -> Self {
+            Self {
+                inner: Arc::new(Mutex::new(map)),
+                prefix: None,
+            }
+        }
+
+        pub fn from_nodes(
+            root_hash: H256,
+            state_nodes: &BTreeMap<H256, Node>,
+        ) -> Result<Self, TrieError> {
+            let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
+            let mut hashed_nodes = vec![];
+            embedded_root.commit(
+                Nibbles::default(),
+                &mut hashed_nodes,
+                &ethrex_crypto::NativeCrypto,
+            );
+
+            let hashed_nodes = hashed_nodes
+                .into_iter()
+                .map(|(k, v)| (k.into_vec(), v))
+                .collect();
+
+            Ok(Self::new(hashed_nodes))
+        }
+
+        fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+            match &self.prefix {
+                Some(prefix) => prefix.concat(&path),
+                None => path,
+            }
+        }
+    }
+
+    impl TrieDB for InMemoryTrieDB {
+        fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+            Ok(self
+                .inner
+                .lock()
+                .map_err(|_| TrieError::LockError)?
+                .get(self.apply_prefix(key).as_ref())
+                .cloned())
+        }
+
+        fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+            let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
+
+            for (key, value) in key_values {
+                let prefixed_key = self.apply_prefix(key);
+                db.insert(prefixed_key.into_vec(), value);
+            }
+
+            Ok(())
+        }
+    }
 }
 
-impl InMemoryTrieDB {
-    pub const fn new(map: NodeMap) -> Self {
-        Self {
-            inner: map,
-            prefix: None,
+// no_std: InMemoryTrieDB backed by RefCell<BTreeMap> (single-threaded)
+#[cfg(not(feature = "std"))]
+mod in_memory_nostd {
+    use alloc::{collections::BTreeMap, vec::Vec};
+    use core::cell::RefCell;
+
+    use super::TrieDB;
+    use crate::{Nibbles, error::TrieError};
+
+    /// InMemory implementation for the TrieDB trait, for single-threaded
+    /// no_std environments (guest programs).
+    pub struct InMemoryTrieDB {
+        inner: RefCell<BTreeMap<Vec<u8>, Vec<u8>>>,
+        prefix: Option<Nibbles>,
+    }
+
+    impl Default for InMemoryTrieDB {
+        fn default() -> Self {
+            Self {
+                inner: RefCell::new(BTreeMap::new()),
+                prefix: None,
+            }
         }
     }
 
-    pub const fn new_with_prefix(map: NodeMap, prefix: Nibbles) -> Self {
-        Self {
-            inner: map,
-            prefix: Some(prefix),
+    impl InMemoryTrieDB {
+        pub fn new(map: BTreeMap<Vec<u8>, Vec<u8>>) -> Self {
+            Self {
+                inner: RefCell::new(map),
+                prefix: None,
+            }
+        }
+
+        fn apply_prefix(&self, path: Nibbles) -> Nibbles {
+            match &self.prefix {
+                Some(prefix) => prefix.concat(&path),
+                None => path,
+            }
         }
     }
 
-    pub fn new_empty() -> Self {
-        Self {
-            inner: Default::default(),
-            prefix: None,
+    impl TrieDB for InMemoryTrieDB {
+        fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+            Ok(self
+                .inner
+                .borrow()
+                .get(self.apply_prefix(key).as_ref())
+                .cloned())
         }
-    }
 
-    // Do not remove or make private as we use this in ethrex-replay
-    pub fn from_nodes(
-        root_hash: H256,
-        state_nodes: &BTreeMap<H256, Node>,
-    ) -> Result<Self, TrieError> {
-        let mut embedded_root = Trie::get_embedded_root(state_nodes, root_hash)?;
-        let mut hashed_nodes = vec![];
-        embedded_root.commit(
-            Nibbles::default(),
-            &mut hashed_nodes,
-            &ethrex_crypto::NativeCrypto,
-        );
+        fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+            let mut db = self.inner.borrow_mut();
 
-        let hashed_nodes = hashed_nodes
-            .into_iter()
-            .map(|(k, v)| (k.into_vec(), v))
-            .collect();
+            for (key, value) in key_values {
+                let prefixed_key = self.apply_prefix(key);
+                db.insert(prefixed_key.into_vec(), value);
+            }
 
-        let in_memory_trie = Arc::new(Mutex::new(hashed_nodes));
-        Ok(Self::new(in_memory_trie))
-    }
-
-    fn apply_prefix(&self, path: Nibbles) -> Nibbles {
-        match &self.prefix {
-            Some(prefix) => prefix.concat(&path),
-            None => path,
+            Ok(())
         }
-    }
-
-    // Do not remove or make private as we use this in ethrex-replay
-    pub fn inner(&self) -> NodeMap {
-        Arc::clone(&self.inner)
     }
 }
 
-impl TrieDB for InMemoryTrieDB {
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        Ok(self
-            .inner
-            .lock()
-            .map_err(|_| TrieError::LockError)?
-            .get(self.apply_prefix(key).as_ref())
-            .cloned())
-    }
-
-    fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        let mut db = self.inner.lock().map_err(|_| TrieError::LockError)?;
-
-        for (key, value) in key_values {
-            let prefixed_key = self.apply_prefix(key);
-            db.insert(prefixed_key.into_vec(), value);
-        }
-
-        Ok(())
-    }
-}
+#[cfg(not(feature = "std"))]
+pub use in_memory_nostd::InMemoryTrieDB;
+#[cfg(feature = "std")]
+pub use in_memory_std::InMemoryTrieDB;
