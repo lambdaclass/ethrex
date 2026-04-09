@@ -551,6 +551,12 @@ pub enum Subcommand {
             help = "Path to geth snapshot export (geth db export snapshot)"
         )]
         snapshot_path: String,
+        #[arg(
+            long = "fast",
+            action = clap::ArgAction::SetTrue,
+            help = "Load preimages into memory for faster lookups (uses ~10 GB+ RAM)"
+        )]
+        fast: bool,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -665,6 +671,7 @@ impl Subcommand {
             Subcommand::Migrate {
                 preimage_path,
                 snapshot_path,
+                fast,
             } => {
                 let genesis = network.get_genesis()?;
                 crate::migrate::migrate_with_preimages(
@@ -672,6 +679,7 @@ impl Subcommand {
                     &snapshot_path,
                     &effective_datadir,
                     genesis,
+                    fast,
                 )
                 .await?;
             }

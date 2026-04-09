@@ -5,17 +5,16 @@ use std::{
 };
 
 use ethrex_binary_trie::key_mapping::{
-    CODE_HASH_LEAF_KEY, chunkify_code, get_stem_for_base, get_tree_key_for_code_chunk,
-    get_tree_key_for_storage_slot, pack_basic_data, tree_key_from_stem,
+    CODE_HASH_LEAF_KEY, get_stem_for_base, get_tree_key_for_storage_slot, pack_basic_data,
+    tree_key_from_stem,
 };
-use ethrex_binary_trie::state::BinaryTrieState;
 use ethrex_common::{Address, H256, U256, types::Genesis};
 use memmap2::Mmap;
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 use tracing::{info, warn};
 
-use crate::initializers::{init_binary_trie_state, init_store, open_store};
-use crate::utils::is_memory_datadir;
+use crate::initializers::{init_binary_trie_state, init_store};
 
 // Geth's empty code hash: keccak256(b"")
 const EMPTY_CODE_HASH: [u8; 32] = [
@@ -34,6 +33,7 @@ pub async fn migrate_with_preimages(
     snapshot_path: &str,
     datadir: &Path,
     genesis: Genesis,
+    fast: bool,
 ) -> eyre::Result<()> {
     // Step 1: Open store and init binary trie state.
     let mut store = init_store(datadir, genesis.clone())
@@ -43,8 +43,8 @@ pub async fn migrate_with_preimages(
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)?;
     store.set_binary_trie_state(binary_trie_state.clone());
 
-    // Step 2: Parse preimage file, sort, write flat files, mmap for O(log n) lookups.
-    let preimages = parse_geth_dump(preimage_path, datadir)?;
+    // Step 2: Parse preimage file.
+    let preimages = parse_geth_dump(preimage_path, datadir, fast)?;
     info!("{} unique preimages loaded", preimages.len());
 
     // Step 3: Stream the snapshot file and build the binary trie.
@@ -435,38 +435,58 @@ fn bytes_to_u64(bytes: &[u8]) -> u64 {
 // gethdbdump format parsing (shared by preimage and snapshot files)
 // ---------------------------------------------------------------------------
 
-/// Sorted memory-mapped preimage lookup. Two files: one for addresses (52 bytes/record),
-/// one for storage slots (64 bytes/record). Each record is [hash:32][preimage:20 or 32].
-/// Binary search for O(log n) lookups with zero RAM overhead beyond the mmap.
-struct Preimages {
-    addr_mmap: Mmap,
-    addr_count: usize,
-    slot_mmap: Mmap,
-    slot_count: usize,
-}
-
 const ADDR_RECORD_SIZE: usize = 32 + 20; // 52
 const SLOT_RECORD_SIZE: usize = 32 + 32; // 64
 
+/// Preimage lookup: either in-memory HashMaps (fast, high RAM) or mmap binary search (slow, low RAM).
+enum Preimages {
+    /// In-memory: O(1) lookups, ~10 GB+ RAM for hoodi.
+    InMemory {
+        addrs: FxHashMap<[u8; 32], [u8; 20]>,
+        slots: FxHashMap<[u8; 32], [u8; 32]>,
+    },
+    /// Mmap: O(log n) binary search, constant RAM.
+    Mmap {
+        addr_mmap: Mmap,
+        addr_count: usize,
+        slot_mmap: Mmap,
+        slot_count: usize,
+    },
+}
+
 impl Preimages {
     fn get_addr(&self, hash: &[u8; 32]) -> Option<[u8; 20]> {
-        Self::binary_search(&self.addr_mmap, self.addr_count, ADDR_RECORD_SIZE, hash).map(
-            |offset| {
-                let mut arr = [0u8; 20];
-                arr.copy_from_slice(&self.addr_mmap[offset + 32..offset + 52]);
-                arr
-            },
-        )
+        match self {
+            Preimages::InMemory { addrs, .. } => addrs.get(hash).copied(),
+            Preimages::Mmap {
+                addr_mmap,
+                addr_count,
+                ..
+            } => {
+                Self::binary_search(addr_mmap, *addr_count, ADDR_RECORD_SIZE, hash).map(|offset| {
+                    let mut arr = [0u8; 20];
+                    arr.copy_from_slice(&addr_mmap[offset + 32..offset + 52]);
+                    arr
+                })
+            }
+        }
     }
 
     fn get_slot(&self, hash: &[u8; 32]) -> Option<[u8; 32]> {
-        Self::binary_search(&self.slot_mmap, self.slot_count, SLOT_RECORD_SIZE, hash).map(
-            |offset| {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&self.slot_mmap[offset + 32..offset + 64]);
-                arr
-            },
-        )
+        match self {
+            Preimages::InMemory { slots, .. } => slots.get(hash).copied(),
+            Preimages::Mmap {
+                slot_mmap,
+                slot_count,
+                ..
+            } => {
+                Self::binary_search(slot_mmap, *slot_count, SLOT_RECORD_SIZE, hash).map(|offset| {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&slot_mmap[offset + 32..offset + 64]);
+                    arr
+                })
+            }
+        }
     }
 
     fn binary_search(
@@ -494,17 +514,26 @@ impl Preimages {
     }
 
     fn len(&self) -> usize {
-        self.addr_count + self.slot_count
+        match self {
+            Preimages::InMemory { addrs, slots } => addrs.len() + slots.len(),
+            Preimages::Mmap {
+                addr_count,
+                slot_count,
+                ..
+            } => addr_count + slot_count,
+        }
     }
 }
 
-/// Parse a gethdbdump preimage file, stream directly to sorted flat files, then mmap.
+/// Parse a gethdbdump preimage file.
 ///
-/// Geth's PebbleDB stores keys in sorted order, so `geth db export preimage`
-/// outputs entries already sorted by keccak hash. We write them directly to
-/// flat files without loading into memory.
-fn parse_geth_dump(path: &str, datadir: &Path) -> eyre::Result<Preimages> {
-    info!("Reading preimage file: {path}");
+/// In fast mode: loads all preimages into in-memory HashMaps (O(1) lookup, high RAM).
+/// In normal mode: streams to sorted flat files on disk, then mmaps for O(log n) lookups.
+fn parse_geth_dump(path: &str, datadir: &Path, fast: bool) -> eyre::Result<Preimages> {
+    info!(
+        "Reading preimage file: {path} (mode: {})",
+        if fast { "in-memory" } else { "mmap" }
+    );
     let file = File::open(path).map_err(|e| eyre::eyre!("Failed to open preimage file: {e}"))?;
     let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
     info!("Preimage file size: {} MB", file_size / 1024 / 1024);
@@ -512,10 +541,27 @@ fn parse_geth_dump(path: &str, datadir: &Path) -> eyre::Result<Preimages> {
     let mut reader = BufReader::with_capacity(8 * 1024 * 1024, file);
     skip_gethdbdump_header(&mut reader)?;
 
+    // Fast mode: collect into HashMaps. Normal mode: stream to flat files.
+    let mut fast_addrs: FxHashMap<[u8; 32], [u8; 20]> = FxHashMap::default();
+    let mut fast_slots: FxHashMap<[u8; 32], [u8; 32]> = FxHashMap::default();
     let addr_path = datadir.join("preimage_addrs.bin");
     let slot_path = datadir.join("preimage_slots.bin");
-    let mut addr_writer = BufWriter::with_capacity(8 * 1024 * 1024, File::create(&addr_path)?);
-    let mut slot_writer = BufWriter::with_capacity(8 * 1024 * 1024, File::create(&slot_path)?);
+    let mut addr_writer = if !fast {
+        Some(BufWriter::with_capacity(
+            8 * 1024 * 1024,
+            File::create(&addr_path)?,
+        ))
+    } else {
+        None
+    };
+    let mut slot_writer = if !fast {
+        Some(BufWriter::with_capacity(
+            8 * 1024 * 1024,
+            File::create(&slot_path)?,
+        ))
+    } else {
+        None
+    };
 
     let mut addr_count = 0usize;
     let mut slot_count = 0usize;
@@ -537,13 +583,29 @@ fn parse_geth_dump(path: &str, datadir: &Path) -> eyre::Result<Preimages> {
 
         match bufs.value.len() {
             20 => {
-                addr_writer.write_all(hash)?;
-                addr_writer.write_all(&bufs.value)?;
+                if fast {
+                    let mut h = [0u8; 32];
+                    h.copy_from_slice(hash);
+                    let mut v = [0u8; 20];
+                    v.copy_from_slice(&bufs.value);
+                    fast_addrs.insert(h, v);
+                } else {
+                    addr_writer.as_mut().unwrap().write_all(hash)?;
+                    addr_writer.as_mut().unwrap().write_all(&bufs.value)?;
+                }
                 addr_count += 1;
             }
             32 => {
-                slot_writer.write_all(hash)?;
-                slot_writer.write_all(&bufs.value)?;
+                if fast {
+                    let mut h = [0u8; 32];
+                    h.copy_from_slice(hash);
+                    let mut v = [0u8; 32];
+                    v.copy_from_slice(&bufs.value);
+                    fast_slots.insert(h, v);
+                } else {
+                    slot_writer.as_mut().unwrap().write_all(hash)?;
+                    slot_writer.as_mut().unwrap().write_all(&bufs.value)?;
+                }
                 slot_count += 1;
             }
             _ => {}
@@ -561,31 +623,43 @@ fn parse_geth_dump(path: &str, datadir: &Path) -> eyre::Result<Preimages> {
         }
     }
 
-    addr_writer.flush()?;
-    slot_writer.flush()?;
-
     info!(
         "Parsed {count} entries ({addr_count} addrs, {slot_count} slots) in {:.1}s",
         started.elapsed().as_secs_f64()
     );
 
-    let addr_file = File::open(&addr_path)?;
-    let slot_file = File::open(&slot_path)?;
-    let addr_mmap = unsafe { Mmap::map(&addr_file)? };
-    let slot_mmap = unsafe { Mmap::map(&slot_file)? };
+    if fast {
+        info!(
+            "In-memory preimages: {} addrs, {} slots",
+            fast_addrs.len(),
+            fast_slots.len()
+        );
+        Ok(Preimages::InMemory {
+            addrs: fast_addrs,
+            slots: fast_slots,
+        })
+    } else {
+        addr_writer.unwrap().flush()?;
+        slot_writer.unwrap().flush()?;
 
-    info!(
-        "Preimage files mmapped ({addr_count} addrs = {} MB, {slot_count} slots = {} MB)",
-        addr_count * ADDR_RECORD_SIZE / 1024 / 1024,
-        slot_count * SLOT_RECORD_SIZE / 1024 / 1024,
-    );
+        let addr_file = File::open(&addr_path)?;
+        let slot_file = File::open(&slot_path)?;
+        let addr_mmap = unsafe { Mmap::map(&addr_file)? };
+        let slot_mmap = unsafe { Mmap::map(&slot_file)? };
 
-    Ok(Preimages {
-        addr_mmap,
-        addr_count,
-        slot_mmap,
-        slot_count,
-    })
+        info!(
+            "Preimage files mmapped ({addr_count} addrs = {} MB, {slot_count} slots = {} MB)",
+            addr_count * ADDR_RECORD_SIZE / 1024 / 1024,
+            slot_count * SLOT_RECORD_SIZE / 1024 / 1024,
+        );
+
+        Ok(Preimages::Mmap {
+            addr_mmap,
+            addr_count,
+            slot_mmap,
+            slot_count,
+        })
+    }
 }
 
 /// Skip the gethdbdump RLP list header.
