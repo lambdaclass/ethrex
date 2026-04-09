@@ -20,7 +20,6 @@ ethrex-l2-common = { workspace = true, optional = true }
 ethereum-types.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"], optional = true }
 
-async-trait.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "net"] }
@@ -42,8 +41,6 @@ prometheus = "0.14.0"
 
 tokio-stream = "0.1.17"
 
-serde_json = "1.0.117"
-
 # RLPx
 concat-kdf = "0.1.0"
 hmac = "0.12.1"
@@ -54,12 +51,14 @@ rand = "0.8.5"
 # discv5
 aes-gcm = "0.10.3"
 hkdf = "0.12.4"
+lru.workspace = true
 
 rayon = "1.10.0"
 crossbeam.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lib]
 path = "./p2p.rs"
@@ -75,3 +74,7 @@ metrics = ["dep:ethrex-metrics"]
 [lints.clippy]
 unwrap_used = "deny"
 redundant_clone = "warn"
+
+[[bench]]
+name = "decode"
+harness = false

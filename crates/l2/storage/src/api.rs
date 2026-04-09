@@ -9,7 +9,7 @@ use ethrex_common::{
         fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProverInputData, ProverOutput, ProverType};
 
 use crate::error::RollupStoreError;
 
@@ -168,14 +168,14 @@ pub trait StoreEngineRollup: Debug + Send + Sync {
         &self,
         batch_number: u64,
         proof_type: ProverType,
-        proof: BatchProof,
+        proof: ProverOutput,
     ) -> Result<(), RollupStoreError>;
 
     async fn get_proof_by_batch_and_type(
         &self,
         batch_number: u64,
         proof_type: ProverType,
-    ) -> Result<Option<BatchProof>, RollupStoreError>;
+    ) -> Result<Option<ProverOutput>, RollupStoreError>;
 
     async fn delete_proof_by_batch_and_type(
         &self,
