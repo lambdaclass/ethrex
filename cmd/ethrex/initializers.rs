@@ -374,11 +374,13 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     // --p2p.addr sets the RLPx TCP bind address (defaults to the auto-detected
     //   local IP when --nat.extip is not given, or to the unspecified address
     //   when it is: 0.0.0.0 for IPv4, :: for IPv6).
-    let (rlpx_bind_addr, rlpx_external_addr): (IpAddr, IpAddr) =
-        match (&opts.p2p_addr, &opts.nat_extip) {
-            (_, Some(extip)) => {
-                let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
-                let bind: IpAddr = opts
+    let (rlpx_bind_addr, rlpx_external_addr): (IpAddr, IpAddr) = match (
+        &opts.p2p_addr,
+        &opts.nat_extip,
+    ) {
+        (_, Some(extip)) => {
+            let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
+            let bind: IpAddr = opts
                     .p2p_addr
                     .as_deref()
                     .map(|a| {
@@ -396,19 +398,19 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
                             IpAddr::V4(Ipv4Addr::UNSPECIFIED)
                         }
                     });
-                (bind, external)
-            }
-            (Some(addr), None) => {
-                let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
-                (ip, ip)
-            }
-            (None, None) => {
-                let ip = local_ip().unwrap_or_else(|_| {
-                    local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
-                });
-                (ip, ip)
-            }
-        };
+            (bind, external)
+        }
+        (Some(addr), None) => {
+            let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
+            (ip, ip)
+        }
+        (None, None) => {
+            let ip = local_ip().unwrap_or_else(|_| {
+                local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
+            });
+            (ip, ip)
+        }
+    };
 
     // Determine discovery bind address.
     // --discovery.addr sets the UDP bind addr independently of RLPx.
