@@ -725,6 +725,16 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
             })
             .count();
         info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        #[cfg(feature = "metrics")]
+        {
+            ethrex_metrics::sync::METRICS_SYNC.set_snap_peers(snap_active_peers as i64);
+            // Compute eligible peers via diagnostics (which calls can_try_more_requests)
+            let diag = peer_table.get_peer_diagnostics().await.unwrap_or_default();
+            let eligible = diag.iter().filter(|p| p.eligible).count();
+            let inflight: i64 = diag.iter().map(|p| p.inflight_requests).sum();
+            ethrex_metrics::sync::METRICS_SYNC.set_eligible_peers(eligible as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_inflight_requests(inflight);
+        }
         interval.tick().await;
     }
 }

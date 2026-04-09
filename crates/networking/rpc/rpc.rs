@@ -890,6 +890,8 @@ pub async fn map_admin_requests(
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data).await,
         "admin_peers" => admin::peers(&mut context).await,
+        "admin_peerScores" => admin::peer_scores(&mut context).await,
+        "admin_syncStatus" => admin::sync_status(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
