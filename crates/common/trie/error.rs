@@ -17,9 +17,21 @@ pub enum TrieError {
     #[error("Lock Error: Panicked when trying to acquire a lock")]
     LockError,
     #[error("Database error: {0}")]
-    DbError(String),
+    DbError(#[from] DbError),
     #[error("Invalid trie input")]
     InvalidInput,
+}
+
+#[derive(Debug, Error)]
+pub enum DbError {
+    #[error("Failed to get from database: {0}")]
+    Get(String),
+    #[error("Failed to begin write transaction: {0}")]
+    BeginWrite(String),
+    #[error("Failed to write batch: {0}")]
+    Write(String),
+    #[error("Trie is read-only")]
+    ReadOnly,
 }
 
 #[derive(Debug, Error)]

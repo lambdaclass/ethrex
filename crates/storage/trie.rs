@@ -5,7 +5,10 @@ use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
 use crate::layering::apply_prefix;
 use ethrex_common::H256;
-use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
+use ethrex_trie::{
+    Nibbles, TrieDB,
+    error::{DbError, TrieError},
+};
 use std::sync::Arc;
 
 /// TrieDB implementation that holds a pre-acquired read view for the entire
@@ -131,24 +134,25 @@ impl TrieDB for BackendTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let prefixed_key = self.make_key(key);
         let table = self.table_for_key(&prefixed_key);
-        self.read_view
+        Ok(self
+            .read_view
             .get(table, prefixed_key.as_ref())
-            .map_err(|e| TrieError::DbError(format!("Failed to get from database: {}", e)))
+            .map_err(|e| DbError::Get(e.to_string()))?)
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let mut tx = self
             .db
             .begin_write()
-            .map_err(|e| TrieError::DbError(format!("Failed to begin write transaction: {}", e)))?;
+            .map_err(|e| DbError::BeginWrite(e.to_string()))?;
         for (key, value) in key_values {
             let prefixed_key = self.make_key(key);
             let table = self.table_for_key(&prefixed_key);
             tx.put_batch(table, vec![(prefixed_key, value)])
-                .map_err(|e| TrieError::DbError(format!("Failed to write batch: {}", e)))?;
+                .map_err(|e| DbError::Write(e.to_string()))?;
         }
-        tx.commit()
-            .map_err(|e| TrieError::DbError(format!("Failed to write batch: {}", e)))
+        tx.commit().map_err(|e| DbError::Write(e.to_string()))?;
+        Ok(())
     }
 }
 
@@ -203,12 +207,13 @@ impl TrieDB for BackendTrieDBLocked {
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.tx_for_key(&key);
-        tx.get(key.as_ref())
-            .map_err(|e| TrieError::DbError(format!("Failed to get from database: {}", e)))
+        Ok(tx
+            .get(key.as_ref())
+            .map_err(|e| DbError::Get(e.to_string()))?)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // Read-only locked storage, should not be used for puts
-        Err(TrieError::DbError(format!("trie is read-only")))
+        Err(DbError::ReadOnly.into())
     }
 }

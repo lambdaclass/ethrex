@@ -99,7 +99,7 @@ pub use self::{
     node_hash::NodeHash,
 };
 
-pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
+pub use self::error::{DbError, ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
