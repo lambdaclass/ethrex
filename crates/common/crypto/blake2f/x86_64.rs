@@ -1,4 +1,4 @@
-use std::arch::global_asm;
+use core::arch::global_asm;
 
 global_asm!(include_str!("x86_64.s"));
 

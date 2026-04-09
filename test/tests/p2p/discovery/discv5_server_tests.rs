@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_p2p::discv5::{messages::PongMessage, server::DiscoveryServer, session::Session};
-use ethrex_p2p::peer_table::PeerTable;
+use ethrex_p2p::peer_table::{PeerTable, PeerTableServer, PeerTableServerProtocol as _};
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::{EngineType, Store};
 use rand::{SeedableRng, rngs::StdRng};
@@ -21,7 +21,7 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
     let signer = SecretKey::new(&mut rand::rngs::OsRng);
     let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
     let peer_table = peer_table.unwrap_or_else(|| {
-        PeerTable::spawn(
+        PeerTableServer::spawn(
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         )
@@ -63,11 +63,12 @@ async fn test_whoareyou_rate_limiting() {
 
     let _ = server.send_who_are_you(nonce, src_id1, addr).await;
 
-    // Rate limit is now keyed by (IP, node_id)
+    // Rate limit is keyed by (IP, node_id)
     assert!(
         server
             .whoareyou_rate_limit
-            .contains_key(&(addr.ip(), src_id1))
+            .peek(&(addr.ip(), src_id1))
+            .is_some()
     );
     assert!(server.pending_challenges.contains_key(&src_id1));
 
@@ -88,6 +89,55 @@ async fn test_whoareyou_rate_limiting() {
 }
 
 #[tokio::test]
+async fn test_global_whoareyou_rate_limiting() {
+    let mut server = test_server(None).await;
+    let nonce = [0u8; 12];
+
+    // Pin the window start so the test doesn't flake on slow CI runners
+    server.whoareyou_global_window_start = Instant::now();
+
+    // Send 100 WHOAREYOU packets to different IPs (hits global limit)
+    for i in 0..100u32 {
+        let ip = format!("10.0.{}.{}", i / 256, i % 256);
+        let addr: SocketAddr = format!("{ip}:30303").parse().unwrap();
+        let src_id = H256::from_low_u64_be(i as u64 + 1);
+        let _ = server.send_who_are_you(nonce, src_id, addr).await;
+    }
+    assert_eq!(server.pending_challenges.len(), 100);
+
+    // The 101st packet from a new IP should be dropped by the global limit
+    let addr_over_limit: SocketAddr = "10.1.0.0:30303".parse().unwrap();
+    let src_id_over = H256::from_low_u64_be(1000);
+    let _ = server
+        .send_who_are_you(nonce, src_id_over, addr_over_limit)
+        .await;
+    assert!(!server.pending_challenges.contains_key(&src_id_over));
+    assert_eq!(server.pending_challenges.len(), 100);
+}
+
+#[tokio::test]
+async fn test_whoareyou_rate_limit_lru_cache_works() {
+    let mut server = test_server(None).await;
+    let nonce = [0u8; 12];
+
+    // Bypass the global rate limit so we can insert many entries
+    server.whoareyou_global_window_start = Instant::now() - std::time::Duration::from_secs(10);
+
+    for i in 0..200u32 {
+        server.whoareyou_global_count = 0; // reset global counter each iteration
+        let ip = format!("10.{}.{}.{}", i / 65536, (i / 256) % 256, i % 256);
+        let addr: SocketAddr = format!("{ip}:30303").parse().unwrap();
+        let src_id = H256::from_low_u64_be(i as u64 + 1);
+        let _ = server.send_who_are_you(nonce, src_id, addr).await;
+    }
+
+    // All 200 entries fit within the 10,000 LRU capacity
+    assert_eq!(server.whoareyou_rate_limit.len(), 200);
+    // The cache is bounded — can never exceed capacity
+    assert!(server.whoareyou_rate_limit.len() <= 10_000);
+}
+
+#[tokio::test]
 async fn test_enr_update_request_on_pong() {
     let local_node = Node::from_enode_url(
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
@@ -104,14 +154,13 @@ async fn test_enr_update_request_on_pong() {
     let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
     let remote_node_id = remote_node.node_id();
 
-    let mut peer_table = PeerTable::spawn(
+    let peer_table = PeerTableServer::spawn(
         10,
         Store::new("", EngineType::InMemory).expect("Failed to create store"),
     );
 
     peer_table
         .new_contact_records(vec![remote_record], local_node.node_id())
-        .await
         .unwrap();
 
     let session = Session {
@@ -120,7 +169,6 @@ async fn test_enr_update_request_on_pong() {
     };
     peer_table
         .set_session_info(remote_node_id, session)
-        .await
         .unwrap();
 
     let mut server = DiscoveryServer::new_for_test(
