@@ -31,7 +31,8 @@ pub enum BlockBodyWrapper {
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<H256>,
-    pub withdrawals: Vec<Withdrawal>,
+    #[serde(default)]
+    pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,7 +40,8 @@ pub struct OnlyHashesBlockBody {
     // Only tx hashes
     pub transactions: Vec<H256>,
     pub uncles: Vec<H256>,
-    pub withdrawals: Vec<Withdrawal>,
+    #[serde(default)]
+    pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
 impl TryInto<Block> for RpcBlock {
@@ -59,7 +61,7 @@ impl TryInto<Block> for RpcBlock {
             body: BlockBody {
                 transactions,
                 ommers: Vec::new(),
-                withdrawals: Some(block_body.withdrawals),
+                withdrawals: block_body.withdrawals,
             },
         })
     }
@@ -79,7 +81,7 @@ impl RpcBlock {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
                 transactions: body.transactions.iter().map(|t| t.hash()).collect(),
                 uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
-                withdrawals: body.withdrawals.unwrap_or_default(),
+                withdrawals: body.withdrawals,
             })
         };
 
@@ -110,7 +112,7 @@ impl FullBlockBody {
         Ok(FullBlockBody {
             transactions,
             uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
-            withdrawals: body.withdrawals.unwrap_or_default(),
+            withdrawals: body.withdrawals,
         })
     }
 }
