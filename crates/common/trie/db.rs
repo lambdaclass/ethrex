@@ -52,7 +52,7 @@ mod in_memory_std {
     use super::TrieDB;
     use crate::{Nibbles, Node, Trie, error::TrieError};
 
-    type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+    pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
     // TODO: we should replace this with BackendTrieDB
     /// InMemory implementation for the TrieDB trait, with get and put operations.
@@ -96,6 +96,11 @@ mod in_memory_std {
                 .collect();
 
             Ok(Self::new(hashed_nodes))
+        }
+
+        // Do not remove or make private as we use this in ethrex-replay
+        pub fn inner(&self) -> NodeMap {
+            Arc::clone(&self.inner)
         }
 
         fn apply_prefix(&self, path: Nibbles) -> Nibbles {
@@ -195,4 +200,4 @@ mod in_memory_nostd {
 #[cfg(not(feature = "std"))]
 pub use in_memory_nostd::InMemoryTrieDB;
 #[cfg(feature = "std")]
-pub use in_memory_std::InMemoryTrieDB;
+pub use in_memory_std::{InMemoryTrieDB, NodeMap};
