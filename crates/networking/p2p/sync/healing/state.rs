@@ -2,8 +2,8 @@
 
 use crate::peer_handler::PeerHandler;
 use crate::sync::AccountStorageRoots;
-use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::SyncError;
+use crate::sync::code_collector::CodeHashCollector;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 

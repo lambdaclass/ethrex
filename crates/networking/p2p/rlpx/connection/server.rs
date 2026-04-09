@@ -5,6 +5,7 @@ use crate::rlpx::l2::{
         self, L2Cast, L2ConnState, handle_based_capability_message, handle_l2_broadcast,
     },
 };
+use crate::snap::mpt_stubs::TrieError;
 use crate::{
     backend,
     metrics::METRICS,
@@ -45,7 +46,6 @@ use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
-use crate::snap::mpt_stubs::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
 use secp256k1::{PublicKey, SecretKey};

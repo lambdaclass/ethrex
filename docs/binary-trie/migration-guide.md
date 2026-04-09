@@ -113,13 +113,14 @@ ethrex --network hoodi migrate preimages.rlp snapshot.rlp
 
 The tool will:
 1. Create a new ethrex database with genesis state
-2. Load all preimages into memory (maps keccak hashes to original keys)
-3. Stream the snapshot file, and for each account/storage entry:
+2. Auto-tune memory mode and flush interval based on available RAM
+3. Parse preimages (into HashMaps or sorted flat files depending on mode)
+4. Stream the snapshot file in batches, processing entries in parallel:
    - Look up the original address/slot via the preimage map
    - Compute the BLAKE3 tree key
    - Insert into the binary trie
-4. Compute and log the final state root
-5. Flush the binary trie to disk
+5. Periodically flush the trie to disk and release cached nodes
+6. Compute and log the final state root
 
 Progress is logged every 5 seconds with percentage, entry counts, and
 throughput.
@@ -135,9 +136,12 @@ ethrex --network <network>
 
 ## Notes
 
-- **Memory usage**: The preimage map is held in memory during migration.
-  For Hoodi this is ~8-10 GB. For mainnet expect ~40-50 GB. Ensure your
-  machine has enough RAM.
+- **Memory usage**: The tool auto-tunes based on available RAM
+  (`/proc/meminfo`). If enough memory is available it loads preimages into
+  HashMaps for maximum throughput. Otherwise it falls back to memory-mapped
+  sorted files with binary search (constant RAM, slower lookups). The trie
+  node cache is cleared after each periodic flush to keep memory bounded.
+  Use `--fast` to force in-memory mode regardless of available RAM.
 - **Code chunks**: The snapshot export contains code hashes but not the
   actual bytecode. Code chunks in the binary trie are populated from
   genesis contracts only. Full code migration requires a separate code
@@ -147,3 +151,6 @@ ethrex --network <network>
 - **Snapshot freshness**: The Geth snapshot corresponds to a specific block.
   After migration, the node will need to sync forward from that block to
   reach the chain head.
+- **Flush interval**: The tool auto-tunes how often it flushes the trie to
+  disk (between 2M and 20M inserts) based on available RAM. More memory
+  allows larger batches, reducing RocksDB write amplification.

@@ -4,9 +4,9 @@
 //! for consistent error handling across server and client operations.
 
 use crate::rlpx::error::PeerConnectionError;
+use crate::snap::mpt_stubs::TrieError;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
-use crate::snap::mpt_stubs::TrieError;
 use spawned_concurrency::error::ActorError;
 use std::io::ErrorKind;
 use std::path::PathBuf;

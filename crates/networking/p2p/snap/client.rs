@@ -3,6 +3,7 @@
 //! This module contains all the client-side snap protocol request functions.
 
 use crate::rlpx::message::Message as RLPxMessage;
+use crate::snap::mpt_stubs::{Nibbles, Node, verify_range};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
@@ -31,7 +32,6 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
-use crate::snap::mpt_stubs::{Nibbles, Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
