@@ -13,7 +13,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::Node,
+    types::{NetworkConfig, Node},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -41,6 +41,8 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
+    /// Network addressing configuration: bind vs. external addresses.
+    pub network_config: NetworkConfig,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -52,6 +54,7 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         local_node: Node,
+        network_config: NetworkConfig,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -81,6 +84,7 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
+            network_config,
             tracker,
             signer,
             table: peer_table,
@@ -112,7 +116,7 @@ pub async fn start_network(
     config: DiscoveryConfig,
 ) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
-        UdpSocket::bind(context.local_node.udp_addr())
+        UdpSocket::bind(context.network_config.bind_udp_addr())
             .await
             .map_err(NetworkError::UdpSocketError)?,
     );
@@ -140,7 +144,8 @@ pub async fn start_network(
 }
 
 pub(crate) async fn serve_p2p_requests(context: P2PContext) {
-    let tcp_addr = context.local_node.tcp_addr();
+    let tcp_addr = context.network_config.bind_tcp_addr();
+    let external_tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {
@@ -157,7 +162,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        if tcp_addr == peer_addr {
+        if external_tcp_addr == peer_addr {
             // Ignore connections from self
             continue;
         }
