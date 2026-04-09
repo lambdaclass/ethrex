@@ -48,7 +48,6 @@ risc0 = ["dep:k256", "dep:substrate-bn", "ethrex-l2-common/secp256k1"]
 zisk = [
     "dep:k256", "dep:substrate-bn", "dep:ziskos",
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
-    "ethrex-crypto/kzg-rs",
 ]
 openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]
 
