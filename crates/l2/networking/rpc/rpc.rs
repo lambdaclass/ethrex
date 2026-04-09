@@ -49,6 +49,7 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
+    pub sponsored_gas_limit: u64,
 }
 
 pub trait RpcHandler: Sized {
@@ -86,10 +87,17 @@ pub async fn start_api(
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: u64,
+    l2_gas_limit: u64,
+    sponsored_gas_limit: u64,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
+    if sponsored_gas_limit == 0 {
+        tracing::warn!(
+            "sponsored_gas_limit is set to 0; all sponsored transactions will be rejected"
+        );
+    }
+
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
@@ -108,12 +116,15 @@ pub async fn start_api(
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
-            gas_ceil,
+            gas_ceil: l2_gas_limit,
             block_worker_channel,
+            #[cfg(feature = "eip-8025")]
+            proof_coordinator: None,
         },
         valid_delegation_addresses,
         sponsor_pk,
         rollup_store,
+        sponsored_gas_limit,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

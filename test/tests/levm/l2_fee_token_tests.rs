@@ -101,7 +101,7 @@ fn eoa(balance: U256, nonce: u64) -> Account {
 fn contract_account(code: Bytes) -> Account {
     Account::new(
         U256::zero(),
-        Code::from_bytecode(code),
+        Code::from_bytecode(code, &NativeCrypto),
         0,
         FxHashMap::default(),
     )

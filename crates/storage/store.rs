@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_PROOF_ROOTS,
+            EXECUTION_PROOFS, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -31,7 +32,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -56,6 +57,12 @@ use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
+
+/// Maximum number of blocks to retain execution proofs for (EIP-8025).
+/// Matches the witness retention window (`MAX_WITNESSES`). 128 blocks is
+/// well beyond the Ethereum finality depth (~2 epochs ≈ 64 slots), giving
+/// validators enough time to verify proofs before they are pruned.
+pub const MAX_PROOF_BLOCKS: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -1715,7 +1722,7 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1754,7 +1761,7 @@ impl Store {
                     }
                 }
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
@@ -1763,7 +1770,8 @@ impl Store {
                 account_state.encode_to_vec(),
             )?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -1785,7 +1793,7 @@ impl Store {
 
         let mut code_updates = Vec::new();
 
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -1846,7 +1854,7 @@ impl Store {
                 }
 
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
                 account_state.storage_root = storage_hash;
 
@@ -1856,7 +1864,8 @@ impl Store {
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         let account_updates_list = AccountUpdatesList {
             state_trie_hash,
@@ -1880,7 +1889,7 @@ impl Store {
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
-            let code = Code::from_bytecode(account.code);
+            let code = Code::from_bytecode(account.code, &NativeCrypto);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
 
@@ -1894,7 +1903,8 @@ impl Store {
                 }
             }
 
-            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
+            let (storage_root, storage_nodes) =
+                storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
             storage_trie_nodes.extend(
                 storage_nodes
@@ -1912,7 +1922,8 @@ impl Store {
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+        let (state_root, account_trie_nodes) =
+            genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
         let account_trie_nodes = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
@@ -2044,6 +2055,174 @@ impl Store {
             }
             None => Ok(None),
         }
+    }
+
+    // ── Execution proof storage (EIP-8025) ──────────────────────────────
+
+    /// Build the composite key for an execution proof.
+    /// Layout: `block_number (8 BE) || new_payload_request_root (32) || proof_type (8 BE)` = 48 bytes.
+    fn make_proof_key(
+        block_number: u64,
+        new_payload_request_root: &H256,
+        proof_type: u64,
+    ) -> Vec<u8> {
+        let mut key = Vec::with_capacity(48);
+        key.extend_from_slice(&block_number.to_be_bytes());
+        key.extend_from_slice(new_payload_request_root.as_bytes());
+        key.extend_from_slice(&proof_type.to_be_bytes());
+        key
+    }
+
+    /// Store a mapping from new_payload_request_root to block_number (EIP-8025).
+    /// Persists the root→block association so it survives node restarts.
+    pub fn store_root_to_block(&self, root: H256, block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            EXECUTION_PROOF_ROOTS,
+            root.as_bytes().to_vec(),
+            block_number.to_be_bytes().to_vec(),
+        )
+    }
+
+    /// Look up the block number for a given new_payload_request_root (EIP-8025).
+    pub fn get_block_number_by_root(&self, root: &H256) -> Result<Option<u64>, StoreError> {
+        let data: Option<Vec<u8>> = self.read(EXECUTION_PROOF_ROOTS, root.as_bytes().to_vec())?;
+        Ok(data.and_then(|bytes| {
+            if bytes.len() == 8 {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&bytes);
+                Some(u64::from_be_bytes(buf))
+            } else {
+                None
+            }
+        }))
+    }
+
+    /// Store a verified execution proof for a block (EIP-8025).
+    pub fn store_execution_proof(
+        &self,
+        block_number: u64,
+        new_payload_request_root: H256,
+        proof_type: u64,
+        proof_data: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        let key = Self::make_proof_key(block_number, &new_payload_request_root, proof_type);
+        self.write(EXECUTION_PROOFS, key, proof_data)?;
+        self.cleanup_old_proofs(block_number)
+    }
+
+    /// Retrieve a single execution proof by block number, root, and proof type.
+    pub fn get_execution_proof(
+        &self,
+        block_number: u64,
+        new_payload_request_root: &H256,
+        proof_type: u64,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let key = Self::make_proof_key(block_number, new_payload_request_root, proof_type);
+        self.read(EXECUTION_PROOFS, key)
+    }
+
+    /// Retrieve all execution proofs for a given block number + root.
+    /// Returns a Vec of `(proof_type, proof_data)` pairs.
+    pub fn get_execution_proofs(
+        &self,
+        block_number: u64,
+        new_payload_request_root: &H256,
+    ) -> Result<Vec<(u64, Vec<u8>)>, StoreError> {
+        let mut prefix = Vec::with_capacity(40);
+        prefix.extend_from_slice(&block_number.to_be_bytes());
+        prefix.extend_from_slice(new_payload_request_root.as_bytes());
+
+        let read_txn = self.backend.begin_read()?;
+        let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
+        let mut proofs = Vec::new();
+        for item in iter {
+            let (key, value) = item?;
+            if !key.starts_with(&prefix) {
+                break;
+            }
+            // Extract proof_type from the last 8 bytes of the key
+            if key.len() >= 48 {
+                let mut proof_type_bytes = [0u8; 8];
+                proof_type_bytes.copy_from_slice(&key[40..48]);
+                let proof_type = u64::from_be_bytes(proof_type_bytes);
+                proofs.push((proof_type, value.to_vec()));
+            }
+        }
+        Ok(proofs)
+    }
+
+    fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
+        if latest_block_number <= MAX_PROOF_BLOCKS {
+            return Ok(());
+        }
+
+        let threshold = latest_block_number - MAX_PROOF_BLOCKS;
+
+        if let Some(oldest_block_number) = self.get_oldest_proof_number()? {
+            let prefix = oldest_block_number.to_be_bytes();
+            let mut proof_keys_to_delete = Vec::new();
+            // Collect roots from deleted proofs so we can clean up their rtb: mappings.
+            let mut roots_to_delete = Vec::new();
+
+            {
+                let read_txn = self.backend.begin_read()?;
+                let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
+
+                for item in iter {
+                    let (key, _) = item?;
+                    if key.len() < 8 {
+                        continue;
+                    }
+                    let mut block_number_bytes = [0u8; 8];
+                    block_number_bytes.copy_from_slice(&key[0..8]);
+                    let block_number = u64::from_be_bytes(block_number_bytes);
+                    if block_number > threshold {
+                        break;
+                    }
+                    // Extract root (bytes 8..40) from the composite key to clean up rtb: mapping.
+                    if key.len() >= 40 {
+                        let mut root_bytes = [0u8; 32];
+                        root_bytes.copy_from_slice(&key[8..40]);
+                        roots_to_delete.push(root_bytes);
+                    }
+                    proof_keys_to_delete.push(key.to_vec());
+                }
+            }
+
+            for key in proof_keys_to_delete {
+                self.delete(EXECUTION_PROOFS, key)?;
+            }
+
+            // Clean up the corresponding root→block mappings.
+            for root_bytes in roots_to_delete {
+                // Ignore errors — the mapping may already be gone.
+                let _ = self.delete(EXECUTION_PROOF_ROOTS, root_bytes.to_vec());
+            }
+        };
+
+        self.update_oldest_proof_number(threshold + 1)?;
+
+        Ok(())
+    }
+
+    fn update_oldest_proof_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"oldest_proof_block_number".to_vec(),
+            oldest_block_number.to_le_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    fn get_oldest_proof_number(&self) -> Result<Option<u64>, StoreError> {
+        let Some(value) = self.read(MISC_VALUES, b"oldest_proof_block_number".to_vec())? else {
+            return Ok(None);
+        };
+
+        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
+            StoreError::Custom("Invalid oldest proof block number bytes".to_string())
+        })?;
+        Ok(Some(u64::from_le_bytes(array)))
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
@@ -2698,7 +2877,9 @@ impl Store {
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
-        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
+        let root_hash = ethrex_trie::Node::decode(&root)?
+            .compute_hash(&NativeCrypto)
+            .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
     }
 
@@ -2959,7 +3140,7 @@ fn flatkeyvalue_generator(
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
         let root: Node = ethrex_trie::Node::decode(&root)?;
-        let state_root = root.compute_hash().finalize();
+        let state_root = root.compute_hash(&NativeCrypto).finalize(&NativeCrypto);
 
         let last_written = read_tx
             .get(MISC_VALUES, "last_written".as_bytes())?

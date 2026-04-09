@@ -21,7 +21,7 @@ ethrex-l2-rpc = { workspace = true, optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
 ethrex-repl.workspace = true
-ethrex-prover = { workspace = true, optional = true, features = ["l2"] }
+ethrex-l2-prover = { workspace = true, optional = true, features = ["l2"] }
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-sdk = { workspace = true, optional = true }
@@ -37,7 +37,6 @@ hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["string"] }
-clap_complete.workspace = true
 eyre.workspace = true
 directories = "5.0.1"
 serde.workspace = true
@@ -112,7 +111,7 @@ l2 = [
   "ethrex-l2-rpc",
   "ethrex-sdk",
   "ethrex-p2p/l2",
-  "ethrex-prover",
+  "ethrex-l2-prover",
   "ethrex-storage-rollup",
   "dep:tui-logger",
   "dep:bytes",
@@ -121,9 +120,11 @@ l2 = [
   "dep:hex",
 ]
 l2-sql = ["ethrex-storage-rollup/sql"]
-sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
-gpu = ["ethrex-prover/gpu"]
-risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
+sp1 = ["ethrex-l2-prover/sp1", "ethrex-l2/sp1"]
+gpu = ["ethrex-l2-prover/gpu"]
+risc0 = ["ethrex-l2-prover/risc0", "ethrex-l2/risc0"]
+
+eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-rpc/eip-8025"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]

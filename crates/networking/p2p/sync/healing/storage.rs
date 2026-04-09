@@ -1,6 +1,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
+    peer_table::PeerTableServerProtocol as _,
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -19,6 +20,7 @@ use crate::{
 
 use bytes::Bytes;
 use ethrex_common::{H256, types::AccountState};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
@@ -181,7 +183,7 @@ pub async fn heal_storage_trie(
             state.last_update = Instant::now();
             let snap_peer_count = peers
                 .peer_table
-                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             debug!(
@@ -310,10 +312,7 @@ pub async fn heal_storage_trie(
                 state
                     .download_queue
                     .extend(inflight_request.requests.clone());
-                peers
-                    .peer_table
-                    .record_failure(&inflight_request.peer_id)
-                    .await?;
+                peers.peer_table.record_failure(inflight_request.peer_id)?;
             }
         }
     }
@@ -334,7 +333,7 @@ async fn ask_peers_for_nodes(
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
             .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)
@@ -439,10 +438,7 @@ async fn zip_requeue_node_responses_score_peer(
     let nodes_size = trie_nodes.nodes.len();
     if nodes_size == 0 {
         *failed_downloads += 1;
-        peer_handler
-            .peer_table
-            .record_failure(&request.peer_id)
-            .await?;
+        peer_handler.peer_table.record_failure(request.peer_id)?;
 
         download_queue.extend(request.requests);
         return Ok(None);
@@ -456,10 +452,7 @@ async fn zip_requeue_node_responses_score_peer(
             "Peer responded with more trie nodes than requested"
         );
         *failed_downloads += 1;
-        peer_handler
-            .peer_table
-            .record_failure(&request.peer_id)
-            .await?;
+        peer_handler.peer_table.record_failure(request.peer_id)?;
         download_queue.extend(request.requests);
         return Ok(None);
     }
@@ -479,7 +472,7 @@ async fn zip_requeue_node_responses_score_peer(
                 )
             })?;
 
-            if node.compute_hash().finalize() != node_request.hash {
+            if node.compute_hash(&NativeCrypto).finalize(&NativeCrypto) != node_request.hash {
                 trace!(
                     peer=?request.peer_id,
                     ?node_request,
@@ -500,17 +493,11 @@ async fn zip_requeue_node_responses_score_peer(
             download_queue.extend(request.requests.into_iter().skip(nodes_size));
         }
         *succesful_downloads += 1;
-        peer_handler
-            .peer_table
-            .record_success(&request.peer_id)
-            .await?;
+        peer_handler.peer_table.record_success(request.peer_id)?;
         Ok(Some(nodes))
     } else {
         *failed_downloads += 1;
-        peer_handler
-            .peer_table
-            .record_failure(&request.peer_id)
-            .await?;
+        peer_handler.peer_table.record_failure(request.peer_id)?;
         download_queue.extend(request.requests);
         Ok(None)
     }
@@ -661,7 +648,7 @@ pub fn determine_pending_children(
                     acc_path: node_response.node_request.acc_path.clone(),
                     storage_path: child_path,
                     parent: node_response.node_request.storage_path.clone(),
-                    hash: child.compute_hash().finalize(),
+                    hash: child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                 }]);
             }
         }
@@ -685,7 +672,10 @@ pub fn determine_pending_children(
                 acc_path: node_response.node_request.acc_path.clone(),
                 storage_path: child_path,
                 parent: node_response.node_request.storage_path.clone(),
-                hash: node.child.compute_hash().finalize(),
+                hash: node
+                    .child
+                    .compute_hash(&NativeCrypto)
+                    .finalize(&NativeCrypto),
             }]);
         }
         _ => {}

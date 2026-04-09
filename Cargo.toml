@@ -11,6 +11,7 @@ members = [
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
+  "crates/prover",
   "crates/guest-program",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
@@ -70,8 +71,9 @@ ethrex-metrics = { path = "./crates/blockchain/metrics" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
-ethrex-prover = { path = "./crates/l2/prover" }
-ethrex-guest-program = { path = "./crates/guest-program" }
+ethrex-l2-prover = { path = "./crates/l2/prover" }
+ethrex-prover = { path = "./crates/prover" }
+ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
@@ -93,6 +95,7 @@ hex = "0.4.3"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
+lru = "0.16.2"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
@@ -116,8 +119,8 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
-spawned-concurrency = "0.4.2"
-spawned-rt = "0.4.2"
+spawned-concurrency = "0.5.0"
+spawned-rt = "0.5.0"
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
@@ -134,6 +137,12 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
 ] }
+
+# libssz (EIP-8025 SSZ support) — pinned to latest commit
+libssz = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-types = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-merkle = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-derive = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"
