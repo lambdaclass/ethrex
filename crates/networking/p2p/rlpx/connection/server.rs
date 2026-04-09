@@ -897,49 +897,8 @@ where
         }
         let _ = received_upgrade_status;
 
-        // For BSC chains, immediately request the peer's head block header
-        // so we can use it as the snap sync pivot. This must happen NOW while
-        // the hash is still fresh (BSC produces blocks every ~3 seconds).
-        let chain_id = state.storage.get_chain_config().chain_id;
-        let bsc_head_hash = if chain_id == 56 || chain_id == 97 {
-            state.blockchain.bsc_sync_head.lock().ok().and_then(|g| *g)
-        } else {
-            None
-        };
-        if let Some(head_hash) = bsc_head_hash {
-            if state.blockchain.take_bsc_pivot_header().is_none() {
-                trace!(peer=%state.node, ?head_hash, "BSC: requesting head block header from this peer");
-                let request = Message::GetBlockHeaders(GetBlockHeaders {
-                    id: rand::random(),
-                    startblock: HashOrNumber::Hash(head_hash),
-                    limit: 1,
-                    skip: 0,
-                    reverse: false,
-                });
-                if send(state, request).await.is_ok() {
-                    // Read messages until we get BlockHeaders or give up after a few
-                    for _ in 0..5 {
-                        let msg = match receive(stream).await {
-                            Some(Ok(msg)) => msg,
-                            _ => break,
-                        };
-                        match msg {
-                            Message::BlockHeaders(bh) if !bh.block_headers.is_empty() => {
-                                let header = bh.block_headers.into_iter().next().unwrap();
-                                debug!(
-                                    number = header.number,
-                                    "BSC: got pivot header from peer during handshake"
-                                );
-                                state.blockchain.set_bsc_pivot_header(header);
-                                break;
-                            }
-                            Message::UpgradeStatus(_) | Message::BscIgnored => continue,
-                            _ => break,
-                        }
-                    }
-                }
-            }
-        }
+        // BSC pivot header fetching is done by the snap sync module
+        // after the peer connection is fully established, using PeerHandler.
     }
     Ok(())
 }

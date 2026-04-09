@@ -113,24 +113,43 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, using pivot from P2P handshake");
+        info!("BSC mode: skipping full header download, requesting pivot by sync_head hash");
 
-        // The pivot header was fetched during the status exchange with a BSC peer
-        // (immediately, while the hash was still fresh). Wait for it to arrive.
+        // Request the header for sync_head from connected peers.
+        // The sync_head hash was set during a recent status exchange.
+        // BSC peers stay connected now (bsc/1 capability), so they should
+        // still be able to serve this recent header.
         let mut pivot_header = None;
-        for attempt in 0..30 {
-            if let Some(header) = blockchain.take_bsc_pivot_header() {
-                pivot_header = Some(header);
-                break;
+        for attempt in 0..15 {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            if attempt % 5 == 0 {
-                info!("BSC pivot: waiting for P2P to fetch pivot header (attempt {})", attempt);
+            info!("BSC pivot: requesting sync_head {sync_head:?} from peers (attempt {attempt})");
+            match peers
+                .request_block_headers_from_hash(sync_head, crate::peer_handler::BlockRequestOrder::NewToOld)
+                .await
+            {
+                Ok(Some(headers)) if !headers.is_empty() => {
+                    let header = headers.into_iter().next().unwrap();
+                    info!(
+                        "BSC pivot found: block {} hash {:?}",
+                        header.number,
+                        header.hash()
+                    );
+                    pivot_header = Some(header);
+                    break;
+                }
+                Ok(_) => {
+                    warn!("BSC pivot: peers returned empty for sync_head hash");
+                }
+                Err(e) => {
+                    warn!("BSC pivot: error: {e}");
+                }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         let pivot_header = pivot_header.ok_or_else(|| {
-            error!("BSC pivot: no pivot header received from P2P within 30 seconds");
+            error!("BSC pivot: could not resolve sync_head hash to a header after 15 attempts");
             SyncError::PeerHandler(crate::peer_handler::PeerHandlerError::BlockHeaders)
         })?;
 
