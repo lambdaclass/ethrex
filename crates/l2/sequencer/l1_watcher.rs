@@ -148,7 +148,13 @@ impl L1Watcher {
                 chain_id,
             });
         }
-        let last_block_fetched = U256::zero();
+        let last_block_fetched = match watcher_config.start_l1_block {
+            Some(block) => {
+                info!("L1 Watcher starting from configured block {block}");
+                U256::from(block)
+            }
+            None => U256::zero(),
+        };
         let chain_id_topic = {
             let u256 = U256::from(store.get_chain_config().chain_id);
             let bytes = u256.to_big_endian();
