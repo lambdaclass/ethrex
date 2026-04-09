@@ -1029,14 +1029,15 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
-                    // bsc/1 is only advertised by us on BSC chains; accept any bsc version
-                    // the peer supports (we only negotiate version 1 from our side).
+                    // We only advertise bsc/1. Accept only bsc/1 from the peer
+                    // to ensure both sides agree on the same message count (2).
+                    // bsc/2 and bsc/3 have 4 messages which would shift offsets.
                     "bsc"
                         if (chain_id_for_hello == 56 || chain_id_for_hello == 97)
-                            && cap.version >= 1
-                            && cap.version > negotiated_bsc_version =>
+                            && cap.version == 1
+                            && negotiated_bsc_version == 0 =>
                     {
-                        negotiated_bsc_version = cap.version;
+                        negotiated_bsc_version = 1;
                     }
                     #[cfg(feature = "l2")]
                     "based" if state.l2_state.is_supported() => {
