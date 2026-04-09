@@ -61,25 +61,27 @@ fn auto_tune_config(preimage_file_size: u64) -> MigrateConfig {
     let trie_overhead = 6 * GB;
 
     let (in_memory, flush_interval) = if usable > preimage_ram + trie_overhead {
-        // Plenty of room: fast mode, large flush interval.
+        // Plenty of room: fast mode. Each insert re-dirties ancestors up to
+        // the root, so dirty_nodes grows much faster than the insert count.
+        // Keep the interval modest to bound peak memory.
         let remaining = usable - preimage_ram;
         let interval = if remaining > 10 * GB {
-            20_000_000
+            2_000_000
         } else if remaining > 6 * GB {
-            10_000_000
+            1_000_000
         } else {
-            5_000_000
+            500_000
         };
         (true, interval)
     } else if usable > preimage_ram + 3 * GB {
         // Tight but doable: fast mode, conservative flush.
-        (true, 2_000_000)
+        (true, 500_000)
     } else {
         // Not enough for in-memory: mmap mode.
         let interval = if usable > 4 * GB {
-            5_000_000
+            1_000_000
         } else {
-            2_000_000
+            500_000
         };
         (false, interval)
     };
@@ -137,7 +139,7 @@ pub async fn migrate_with_preimages(
         .unwrap_or(0);
     let config = if fast_override {
         // User explicitly requested fast mode.
-        let flush_interval = 10_000_000;
+        let flush_interval = 2_000_000;
         info!("Fast mode forced. Flush interval: {flush_interval}");
         MigrateConfig {
             in_memory: true,
@@ -319,7 +321,9 @@ pub async fn migrate_with_preimages(
 
         // Periodic flush.
         if inserts_since_flush >= flush_interval {
-            info!("Flushing trie to disk ({inserts_since_flush} inserts)...");
+            let dirty = state.dirty_node_count();
+            let warm = state.warm_node_count();
+            info!("Flushing trie to disk ({inserts_since_flush} inserts, {dirty} dirty nodes, {warm} warm nodes)...");
             state
                 .flush(0, H256::zero())
                 .map_err(|e| eyre::eyre!("Flush error: {e}"))?;
@@ -340,8 +344,15 @@ pub async fn migrate_with_preimages(
             } else {
                 0
             };
+            let eta = if mb_per_sec > 0 {
+                let remaining_mb = (file_size - bytes_read) / 1024 / 1024;
+                let secs = remaining_mb / mb_per_sec;
+                format!("{}m{}s", secs / 60, secs % 60)
+            } else {
+                "?".to_string()
+            };
             info!(
-                "{pct}% ({} MB / {} MB) | {account_count} accounts, {storage_count} storage | {mb_per_sec} MB/s",
+                "{pct}% ({} MB / {} MB) | {account_count} accounts, {storage_count} storage | {mb_per_sec} MB/s | ETA {eta}",
                 bytes_read / 1024 / 1024,
                 file_size / 1024 / 1024,
             );

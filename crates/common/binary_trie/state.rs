@@ -285,6 +285,16 @@ impl BinaryTrieState {
         self.trie.store.clear_warm_nodes();
     }
 
+    /// Number of dirty (modified, unflushed) nodes.
+    pub fn dirty_node_count(&self) -> usize {
+        self.trie.store.dirty_len()
+    }
+
+    /// Number of warm (recently flushed, cached) nodes.
+    pub fn warm_node_count(&self) -> usize {
+        self.trie.store.warm_len()
+    }
+
     /// Reload the trie and storage keys from the last disk checkpoint,
     /// discarding all in-memory mutations since the last flush.
     ///
