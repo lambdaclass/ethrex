@@ -220,6 +220,7 @@ pub struct Blockchain {
     /// BSC has no Engine API so the sync bridge polls this field instead
     /// of waiting for a forkchoiceUpdated call.
     bsc_sync_head: std::sync::Mutex<Option<H256>>,
+    bsc_pivot_header: std::sync::Mutex<Option<ethrex_common::types::BlockHeader>>,
 }
 
 /// Configuration options for the blockchain.
@@ -338,6 +339,7 @@ impl Blockchain {
             options: blockchain_opts,
             parlia_engine: None,
             bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_pivot_header: std::sync::Mutex::new(None),
         }
     }
 
@@ -350,6 +352,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             parlia_engine: None,
             bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_pivot_header: std::sync::Mutex::new(None),
         }
     }
 
@@ -2565,6 +2568,20 @@ impl Blockchain {
     /// Takes the BSC sync target (returns and clears it atomically).
     pub fn take_bsc_sync_head(&self) -> Option<H256> {
         self.bsc_sync_head.lock().ok()?.take()
+    }
+
+    /// Stores a BSC pivot header obtained from a peer's status exchange.
+    /// The snap sync can use this directly instead of guessing block numbers.
+    pub fn set_bsc_pivot_header(&self, header: ethrex_common::types::BlockHeader) {
+        if let Ok(mut target) = self.bsc_pivot_header.lock() {
+            info!(number = header.number, "BSC pivot header set from peer");
+            *target = Some(header);
+        }
+    }
+
+    /// Takes the BSC pivot header (returns and clears it atomically).
+    pub fn take_bsc_pivot_header(&self) -> Option<ethrex_common::types::BlockHeader> {
+        self.bsc_pivot_header.lock().ok()?.take()
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {

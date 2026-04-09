@@ -24,7 +24,7 @@ use ethrex_trie::Trie;
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
-use crate::peer_handler::PeerHandler;
+use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
@@ -113,15 +113,57 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, finding recent pivot for snap sync");
+        info!("BSC mode: skipping full header download, using sync_head hash as pivot");
+
+        // The sync_head hash was set by the P2P status exchange moments ago.
+        // Request the header by hash from a connected peer.
+        let mut pivot_header = None;
+        for attempt in 0..10 {
+            let Some((_peer_id, mut _connection)) = peers
+                .peer_table
+                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .await?
+            else {
+                info!("BSC pivot: waiting for peers (attempt {})", attempt);
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue;
+            };
+            info!("BSC pivot: requesting sync_head header from peers");
+            match peers
+                .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+                .await
+            {
+                Ok(Some(headers)) if !headers.is_empty() => {
+                    let header = headers.into_iter().next().unwrap();
+                    info!(
+                        "BSC pivot found: block {} hash {:?}",
+                        header.number,
+                        header.hash()
+                    );
+                    pivot_header = Some(header);
+                    break;
+                }
+                Ok(_) => {
+                    warn!("BSC pivot: peer returned empty for sync_head, retrying");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                Err(e) => {
+                    warn!("BSC pivot: error requesting header: {e}, retrying");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
+
+        let pivot_header = pivot_header.ok_or_else(|| {
+            SyncError::PeerHandler(crate::peer_handler::PeerHandlerError::BlockHeaders)
+        })?;
+
         let mut block_sync_state = SnapBlockSyncState::new(store.clone());
-        let pivot_header = find_bsc_pivot(peers, &store).await?;
         info!(
             "BSC snap sync pivot: block {} ({})",
             pivot_header.number,
             pivot_header.hash()
         );
-        // Store the pivot header so snap_sync can retrieve it by hash.
         store
             .add_block_header(pivot_header.hash(), pivot_header.clone())
             .await?;
@@ -763,106 +805,7 @@ pub async fn update_pivot(
     }
 }
 
-/// Finds a suitable snap sync pivot block for BSC chains.
-///
-/// BSC peers are pruned and won't serve headers from block 0, so we can't do a
-/// full header download. This function requests a recent header from a peer to use
-/// as the pivot. It tries a sequence of candidate block numbers (descending from a
-/// high estimated tip) until a peer returns a result. The pivot is set at
-/// `latest - 64` to provide a buffer behind the chain tip.
-async fn find_bsc_pivot(peers: &mut PeerHandler, store: &Store) -> Result<BlockHeader, SyncError> {
-    // BSC Chapel testnet produces blocks every ~3s. At time of writing it is past
-    // block 50_000_000. BSC mainnet is past 40_000_000. We start high and step
-    // down in large increments until a peer serves us a header.
-    //
-    // The pivot itself is set 64 blocks behind whatever the peer returns so that
-    // it is unlikely to be rolled back.
-    const BSC_PIVOT_LAG: u64 = 64;
-    const MAX_TOTAL_FAILURES: u64 = 20;
-    const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
-    const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-    // Candidate starting points: try from the store's latest known number first,
-    // then fall back to a hard-coded high estimate.
-    let store_head = store.get_latest_block_number().await.unwrap_or(0);
-    // If we have a local tip use it; otherwise assume a reasonable high number.
-    let estimate_tip: u64 = if store_head > BSC_PIVOT_LAG {
-        store_head
-    } else {
-        // BSC Chapel testnet is past 100M blocks. BSC mainnet is past 50M.
-        // Start high — peers will return empty for blocks they don't have.
-        100_000_000_u64
-    };
-
-    let mut total_failures: u64 = 0;
-    let mut consecutive_failures: u64 = 0;
-    // Try descending candidate numbers so we find the chain tip quickly.
-    let step = 1_000_000_u64;
-    let mut candidate = estimate_tip;
-
-    loop {
-        if total_failures >= MAX_TOTAL_FAILURES {
-            return Err(SyncError::PeerHandler(
-                crate::peer_handler::PeerHandlerError::BlockHeaders,
-            ));
-        }
-
-        if consecutive_failures > 0 {
-            let delay = INITIAL_RETRY_DELAY
-                .saturating_mul(1 << consecutive_failures.saturating_sub(1).min(4));
-            let delay = delay.min(MAX_RETRY_DELAY);
-            tokio::time::sleep(delay).await;
-        }
-
-        let Some((peer_id, mut connection)) = peers
-            .peer_table
-            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
-            .await?
-        else {
-            debug!("find_bsc_pivot: no free peers available, retrying");
-            consecutive_failures = consecutive_failures.saturating_add(1);
-            total_failures = total_failures.saturating_add(1);
-            continue;
-        };
-
-        info!("find_bsc_pivot: trying block {candidate} with peer {peer_id}");
-        match peers
-            .get_block_header(peer_id, &mut connection, candidate)
-            .await
-        {
-            Ok(Some(header)) => {
-                // We got a header — use it directly as the pivot. BSC pruned peers
-                // may only serve a narrow range of blocks, so requesting a different
-                // block 64 behind could fail. The header we have is good enough.
-                let pivot_number = header.number;
-                info!(
-                    "find_bsc_pivot: peer {peer_id} served block {pivot_number}, using as pivot"
-                );
-                peers.peer_table.record_success(peer_id)?;
-                return Ok(header);
-            }
-            Ok(None) => {
-                // Peer doesn't have this block — try a lower number.
-                warn!("find_bsc_pivot: peer {peer_id} has no header at {candidate}, trying lower");
-                peers.peer_table.record_failure(peer_id)?;
-                candidate = candidate.saturating_sub(step);
-                if candidate == 0 {
-                    return Err(SyncError::PeerHandler(
-                        crate::peer_handler::PeerHandlerError::BlockHeaders,
-                    ));
-                }
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                total_failures = total_failures.saturating_add(1);
-            }
-            Err(e) => {
-                warn!("find_bsc_pivot: error requesting header from peer {peer_id}: {e}");
-                peers.peer_table.record_failure(peer_id)?;
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                total_failures = total_failures.saturating_add(1);
-            }
-        }
-    }
-}
+// find_bsc_pivot was removed — BSC now uses the sync_head hash directly from the status exchange.
 
 pub fn block_is_stale(block_header: &BlockHeader) -> bool {
     calculate_staleness_timestamp(block_header.timestamp) < current_unix_time()
