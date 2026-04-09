@@ -3617,188 +3617,30 @@ fn execute_polygon_system_calls(
         }
     }
 
-    // 2. commitState for each state sync event
-    // Fetch complete EventRecords from Heimdall (has log_index + bor_chain_id
-    // that the block body's StateSyncData lacks).
+    // 2. commitState for each state sync event.
+    // Use the block body's StateSyncData directly — it's authoritative.
+    // No Heimdall fetch needed: the body has all event data.
     if !state_sync_data.is_empty() {
         let delay = bor_config.get_state_sync_delay(block_number);
         let sync_time = block.header.timestamp - delay;
+        let chain_id_str = chain_config.chain_id.to_string();
 
-        // Read lastStateId() from the StateReceiver contract (0x1001).
-        // Bor uses this to determine from_id = lastStateId + 1, NOT the block body.
-        // Selector: 0x5407ca67 = keccak256("lastStateId()")
-        let last_state_id_selector = bytes::Bytes::from_static(&[0x54, 0x07, 0xca, 0x67]);
-        let last_state_id = match vm.execute_polygon_system_call(
-            &block.header,
-            STATE_RECEIVER_CONTRACT,
-            SYSTEM_ADDRESS,
-            last_state_id_selector,
-            MAX_SYSTEM_CALL_GAS,
-        ) {
-            Ok(report) if report.is_success() && report.output.len() >= 32 => {
-                let bytes: [u8; 8] = report.output[24..32].try_into().expect("slice is 8 bytes");
-                u64::from_be_bytes(bytes)
-            }
-            Ok(report) => {
-                warn!(
-                    block_number,
-                    success = report.is_success(),
-                    output_len = report.output.len(),
-                    "lastStateId() call unexpected result — falling back to block body"
-                );
-                state_sync_data[0].id.saturating_sub(1)
-            }
-            Err(e) => {
-                warn!(block_number, error = %e, "lastStateId() call failed — falling back to block body");
-                state_sync_data[0].id.saturating_sub(1)
-            }
-        };
-        let from_id = last_state_id + 1;
-
-        debug!(
-            block_number,
-            body_event_count = state_sync_data.len(),
-            last_state_id,
-            from_id,
-            sync_time,
-            "Fetching state sync events from Heimdall"
-        );
-
-        let events = if let Some(engine) = bor_engine {
-            // Try pre-fetched events from poller cache, fall back to direct fetch.
-            rt_handle
-                .block_on(async {
-                    if let Some(cached) = engine.take_cached_state_sync_events(from_id).await {
-                        debug!(
-                            block_number,
-                            cached_count = cached.len(),
-                            "Using pre-fetched state sync events from poller cache"
-                        );
-                        Ok(cached)
-                    } else {
-                        engine
-                            .heimdall
-                            .fetch_state_sync_events(from_id, sync_time, 50)
-                            .await
-                    }
-                })
-                .map_err(|e| {
-                    ChainError::Custom(format!(
-                        "Failed to fetch state sync events from Heimdall: {e}"
-                    ))
-                })?
-        } else {
-            warn!(
-                block_number,
-                "No BorEngine available for state sync — skipping commitState"
-            );
-            Vec::new()
-        };
-
-        debug!(
-            block_number,
-            heimdall_event_count = events.len(),
-            body_event_count = state_sync_data.len(),
-            "State sync events fetched"
-        );
-
-        // Validate events before processing: sequential IDs and matching chain ID.
-        let local_chain_id = chain_config.chain_id.to_string();
-        let events: Vec<_> = events
-            .into_iter()
-            .enumerate()
-            .filter(|(i, event)| {
-                // Check that IDs are sequential: event[i].id == from_id + i.
-                let expected_id = from_id + *i as u64;
-                if event.id != expected_id {
-                    warn!(
-                        block_number,
-                        event_id = event.id,
-                        expected_id,
-                        "Skipping state sync event: non-sequential ID"
-                    );
-                    return false;
-                }
-                // Check that bor_chain_id matches the local chain.
-                if event.bor_chain_id != local_chain_id {
-                    warn!(
-                        block_number,
-                        event_id = event.id,
-                        event_chain_id = %event.bor_chain_id,
-                        local_chain_id = %local_chain_id,
-                        "Skipping state sync event: chain ID mismatch"
-                    );
-                    return false;
-                }
-                true
-            })
-            .map(|(_, event)| event)
-            .collect();
-
-        for (idx, event) in events.iter().enumerate() {
-            // Decode event data: Heimdall may return hex (0x-prefixed or plain)
-            // or base64-encoded bytes depending on the API version.
-            let raw = event.data.strip_prefix("0x").unwrap_or(&event.data);
-            let data_bytes = if let Ok(bytes) = hex::decode(raw) {
-                bytes
-            } else if let Ok(bytes) =
-                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw)
-            {
-                bytes
-            } else {
-                // Last resort: treat the string as raw UTF-8 bytes
-                event.data.as_bytes().to_vec()
-            };
-
+        for event in state_sync_data.iter() {
             // RLP-encode the full EventRecord matching Bor's format:
             // [id, contract, data, tx_hash, log_index, chain_id_string]
+            // log_index is not in the body — use 0 (Bor does the same).
             let mut record_bytes = Vec::new();
             ethrex_rlp::structs::Encoder::new(&mut record_bytes)
                 .encode_field(&event.id)
                 .encode_field(&event.contract)
-                .encode_field(&bytes::Bytes::from(data_bytes.clone()))
+                .encode_field(&event.data)
                 .encode_field(&event.tx_hash)
-                .encode_field(&event.log_index)
-                .encode_field(&event.bor_chain_id)
+                .encode_field(&0u64) // log_index
+                .encode_field(&chain_id_str)
                 .finish();
 
-            let calldata = encode_commit_state(sync_time, &record_bytes);
+            let calldata_bytes = bytes::Bytes::from(encode_commit_state(sync_time, &record_bytes));
 
-            // Debug logging for first event to compare bytes
-            if idx == 0 {
-                let data_hex: String = data_bytes
-                    .iter()
-                    .take(40)
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
-                let rlp_hex: String = record_bytes
-                    .iter()
-                    .take(100)
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
-                let calldata_hex: String = calldata
-                    .iter()
-                    .take(100)
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
-                let raw_preview: String = event.data.chars().take(100).collect();
-                debug!(
-                    block_number,
-                    event_id = event.id,
-                    log_index = event.log_index,
-                    bor_chain_id = %event.bor_chain_id,
-                    data_raw_preview = %raw_preview,
-                    data_decoded_hex = %data_hex,
-                    data_decoded_len = data_bytes.len(),
-                    rlp_hex = %rlp_hex,
-                    rlp_len = record_bytes.len(),
-                    calldata_hex = %calldata_hex,
-                    calldata_len = calldata.len(),
-                    "commitState debug: first event bytes"
-                );
-            }
-
-            let calldata_bytes = bytes::Bytes::from(calldata);
             match vm.execute_polygon_system_call(
                 &block.header,
                 STATE_RECEIVER_CONTRACT,
