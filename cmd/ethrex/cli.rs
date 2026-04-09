@@ -534,6 +534,24 @@ pub enum Subcommand {
         #[arg(short = 'x', long)]
         execute: Option<String>,
     },
+    #[command(
+        name = "migrate",
+        about = "Build binary trie from geth snapshot + preimage exports"
+    )]
+    Migrate {
+        #[arg(
+            required = true,
+            value_name = "PREIMAGE_FILE",
+            help = "Path to geth preimage export (geth db export preimage)"
+        )]
+        preimage_path: String,
+        #[arg(
+            required = true,
+            value_name = "SNAPSHOT_FILE",
+            help = "Path to geth snapshot export (geth db export snapshot)"
+        )]
+        snapshot_path: String,
+    },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
@@ -559,7 +577,8 @@ impl Subcommand {
         match &self {
             Subcommand::Import { .. }
             | Subcommand::ImportBench { .. }
-            | Subcommand::Export { .. } => {
+            | Subcommand::Export { .. }
+            | Subcommand::Migrate { .. } => {
                 crate::initializers::migrate_datadir_if_needed(
                     &opts.datadir,
                     &effective_datadir,
@@ -642,6 +661,19 @@ impl Subcommand {
                 execute,
             } => {
                 ethrex_repl::run(endpoint, history_file, execute).await;
+            }
+            Subcommand::Migrate {
+                preimage_path,
+                snapshot_path,
+            } => {
+                let genesis = network.get_genesis()?;
+                crate::migrate::migrate_with_preimages(
+                    &preimage_path,
+                    &snapshot_path,
+                    &effective_datadir,
+                    genesis,
+                )
+                .await?;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,

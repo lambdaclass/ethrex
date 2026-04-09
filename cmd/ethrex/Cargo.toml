@@ -53,6 +53,7 @@ secp256k1.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 itertools = "0.14.0"
+rustc-hash.workspace = true
 url.workspace = true
 tracing-appender = "0.2"
 pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], optional = true }

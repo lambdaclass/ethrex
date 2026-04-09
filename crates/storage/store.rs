@@ -2439,6 +2439,29 @@ impl Store {
         Ok(iter.next().is_none())
     }
 
+    /// Iterate all entries in a FKV table with the given prefix, collecting them eagerly.
+    ///
+    /// Returns a `Vec<(key, value)>` so callers do not need to hold a read transaction.
+    /// Use an empty prefix to scan the entire table.
+    /// Iterate all entries in a table with the given prefix, calling `f` for each.
+    ///
+    /// Streams entries without loading them all into memory.
+    pub fn fkv_for_each(
+        &self,
+        table: &'static str,
+        prefix: &[u8],
+        mut f: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+    ) -> Result<u64, StoreError> {
+        let read_tx = self.backend.begin_read()?;
+        let mut count = 0u64;
+        for result in read_tx.prefix_iterator(table, prefix)? {
+            let (key, value) = result?;
+            f(&key, &value)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     pub async fn load_initial_state(&self) -> Result<(), StoreError> {
         info!("Loading initial state from DB");
         let Some(number) = self.load_latest_block_number().await? else {

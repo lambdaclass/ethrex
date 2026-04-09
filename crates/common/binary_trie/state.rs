@@ -352,6 +352,19 @@ impl BinaryTrieState {
         self.trie.get_shared(tree_key)
     }
 
+    /// Insert a raw leaf into the binary trie by its 32-byte tree key.
+    ///
+    /// Used by bulk migration tools (e.g. migrate subcommand) that compute
+    /// keys externally and insert directly, bypassing the higher-level
+    /// account/storage update path.
+    pub fn trie_insert(
+        &mut self,
+        tree_key: [u8; 32],
+        value: [u8; 32],
+    ) -> Result<(), BinaryTrieError> {
+        self.trie.insert(tree_key, value)
+    }
+
     /// Read account state from the binary trie.
     ///
     /// Returns None if the account doesn't exist (no basic_data leaf).
