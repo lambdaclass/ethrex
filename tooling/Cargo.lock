@@ -3285,7 +3285,6 @@ dependencies = [
  "hex-literal",
  "hex-simd",
  "indexmap 2.13.0",
- "kzg-rs",
  "lazy_static",
  "libc",
  "lru 0.16.3",
