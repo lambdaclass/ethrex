@@ -554,7 +554,7 @@ pub enum Subcommand {
         #[arg(
             long = "fast",
             action = clap::ArgAction::SetTrue,
-            help = "Load preimages into memory for faster lookups (uses ~10 GB+ RAM)"
+            help = "Force in-memory preimage lookups (auto-detected by default based on available RAM)"
         )]
         fast: bool,
     },

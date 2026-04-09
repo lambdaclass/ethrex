@@ -16,6 +16,93 @@ use tracing::{info, warn};
 
 use crate::initializers::{init_binary_trie_state, init_store};
 
+struct MigrateConfig {
+    in_memory: bool,
+    flush_interval: u64,
+    preimage_file_size: u64,
+}
+
+/// Read available RAM from /proc/meminfo (Linux only).
+fn available_ram_bytes() -> Option<u64> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kb_str = rest.trim().strip_suffix("kB")?.trim();
+            let kb: u64 = kb_str.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
+}
+
+/// Auto-tune migration settings based on available RAM and preimage file size.
+fn auto_tune_config(preimage_file_size: u64) -> MigrateConfig {
+    let available = available_ram_bytes().unwrap_or(0);
+    let total_ram = {
+        // Read MemTotal for headroom calculation.
+        let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+        meminfo
+            .lines()
+            .find_map(|line| {
+                let rest = line.strip_prefix("MemTotal:")?;
+                let kb: u64 = rest.trim().strip_suffix("kB")?.trim().parse().ok()?;
+                Some(kb * 1024)
+            })
+            .unwrap_or(available)
+    };
+
+    // Reserve max(4 GB, 15% of total RAM) as headroom for OS + RocksDB + other.
+    let headroom = (total_ram * 15 / 100).max(4 * GB);
+    let usable = available.saturating_sub(headroom);
+
+    // Estimated RAM for in-memory preimages: ~1.1x file size.
+    let preimage_ram = preimage_file_size * 11 / 10;
+    // Trie working set: dirty + warm tiers during migration.
+    let trie_overhead = 6 * GB;
+
+    let (in_memory, flush_interval) = if usable > preimage_ram + trie_overhead {
+        // Plenty of room: fast mode, large flush interval.
+        let remaining = usable - preimage_ram;
+        let interval = if remaining > 10 * GB {
+            20_000_000
+        } else if remaining > 6 * GB {
+            10_000_000
+        } else {
+            5_000_000
+        };
+        (true, interval)
+    } else if usable > preimage_ram + 3 * GB {
+        // Tight but doable: fast mode, conservative flush.
+        (true, 2_000_000)
+    } else {
+        // Not enough for in-memory: mmap mode.
+        let interval = if usable > 4 * GB {
+            5_000_000
+        } else {
+            2_000_000
+        };
+        (false, interval)
+    };
+
+    info!(
+        "Auto-tune: available RAM {} GB, headroom {} GB, usable {} GB, preimage estimate {} GB -> {} mode, flush every {}",
+        available / GB,
+        headroom / GB,
+        usable / GB,
+        preimage_ram / GB,
+        if in_memory { "in-memory" } else { "mmap" },
+        flush_interval,
+    );
+
+    MigrateConfig {
+        in_memory,
+        flush_interval,
+        preimage_file_size,
+    }
+}
+
+const GB: u64 = 1024 * 1024 * 1024;
+
 // Geth's empty code hash: keccak256(b"")
 const EMPTY_CODE_HASH: [u8; 32] = [
     0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
@@ -28,12 +115,13 @@ const EMPTY_CODE_HASH: [u8; 32] = [
 /// - `snapshot_path`: geth db export of snapshot (accounts + storage with state values)
 ///
 /// No existing ethrex database needed. Creates the store and binary trie from scratch.
+/// Memory usage and flush interval are auto-tuned based on available RAM.
 pub async fn migrate_with_preimages(
     preimage_path: &str,
     snapshot_path: &str,
     datadir: &Path,
     genesis: Genesis,
-    fast: bool,
+    fast_override: bool,
 ) -> eyre::Result<()> {
     // Step 1: Open store and init binary trie state.
     let mut store = init_store(datadir, genesis.clone())
@@ -43,8 +131,25 @@ pub async fn migrate_with_preimages(
     let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)?;
     store.set_binary_trie_state(binary_trie_state.clone());
 
+    // Auto-tune based on available RAM.
+    let preimage_file_size = std::fs::metadata(preimage_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let config = if fast_override {
+        // User explicitly requested fast mode.
+        let flush_interval = 10_000_000;
+        info!("Fast mode forced. Flush interval: {flush_interval}");
+        MigrateConfig {
+            in_memory: true,
+            flush_interval,
+            preimage_file_size,
+        }
+    } else {
+        auto_tune_config(preimage_file_size)
+    };
+
     // Step 2: Parse preimage file.
-    let preimages = parse_geth_dump(preimage_path, datadir, fast)?;
+    let preimages = parse_geth_dump(preimage_path, datadir, config.in_memory)?;
     info!("{} unique preimages loaded", preimages.len());
 
     // Step 3: Stream the snapshot file and build the binary trie.
@@ -71,7 +176,7 @@ pub async fn migrate_with_preimages(
 
     let mut bufs = EntryBufs::new();
     let mut inserts_since_flush = 0u64;
-    const FLUSH_INTERVAL: u64 = 5_000_000;
+    let flush_interval = config.flush_interval;
     const BATCH_SIZE: usize = 50_000;
 
     // Raw entries read from the file, to be processed in parallel.
@@ -213,7 +318,7 @@ pub async fn migrate_with_preimages(
         }
 
         // Periodic flush.
-        if inserts_since_flush >= FLUSH_INTERVAL {
+        if inserts_since_flush >= flush_interval {
             info!("Flushing trie to disk ({inserts_since_flush} inserts)...");
             state
                 .flush(0, H256::zero())
@@ -542,8 +647,18 @@ fn parse_geth_dump(path: &str, datadir: &Path, fast: bool) -> eyre::Result<Preim
     skip_gethdbdump_header(&mut reader)?;
 
     // Fast mode: collect into HashMaps. Normal mode: stream to flat files.
-    let mut fast_addrs: FxHashMap<[u8; 32], [u8; 20]> = FxHashMap::default();
-    let mut fast_slots: FxHashMap<[u8; 32], [u8; 32]> = FxHashMap::default();
+    // Pre-size to avoid rehashing: ~70 bytes per RLP entry on average.
+    let estimated_entries = (file_size / 70) as usize;
+    let mut fast_addrs: FxHashMap<[u8; 32], [u8; 20]> = if fast {
+        FxHashMap::with_capacity_and_hasher(estimated_entries / 4, Default::default())
+    } else {
+        FxHashMap::default()
+    };
+    let mut fast_slots: FxHashMap<[u8; 32], [u8; 32]> = if fast {
+        FxHashMap::with_capacity_and_hasher(estimated_entries * 3 / 4, Default::default())
+    } else {
+        FxHashMap::default()
+    };
     let addr_path = datadir.join("preimage_addrs.bin");
     let slot_path = datadir.join("preimage_slots.bin");
     let mut addr_writer = if !fast {
@@ -612,7 +727,7 @@ fn parse_geth_dump(path: &str, datadir: &Path, fast: bool) -> eyre::Result<Preim
         }
 
         count += 1;
-        if last_log.elapsed().as_secs() >= 5 {
+        if count % 100_000 == 0 && last_log.elapsed().as_secs() >= 5 {
             let pct = if file_size > 0 {
                 (bytes_read as f64 / file_size as f64 * 100.0) as u32
             } else {
