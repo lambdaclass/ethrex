@@ -18,7 +18,6 @@ tracing.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 clap.workspace = true
-kzg-rs.workspace = true
 rkyv.workspace = true
 bincode = "1.3.3"
 anyhow = "1.0.86"
