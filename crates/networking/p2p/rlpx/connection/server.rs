@@ -836,6 +836,12 @@ where
                     let remote_head =
                         backend::validate_status(msg_data, &state.storage, &eth).await?;
                     let chain_id = state.storage.get_chain_config().chain_id;
+                    debug!(
+                        peer=%state.node,
+                        %chain_id,
+                        ?remote_head,
+                        "Status(68) validated, checking BSC sync head"
+                    );
                     // BSC mainnet (56) and Chapel testnet (97) have no Engine API;
                     // notify the sync bridge so it can trigger sync toward this peer's head.
                     if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
