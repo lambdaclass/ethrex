@@ -27,20 +27,35 @@ pub fn execution_program(
         execution_witness,
     } = input;
 
+    let chain_id = execution_witness.chain_config.chain_id;
+
     let BatchExecutionResult {
         receipts: _,
         initial_state_hash,
         final_state_hash,
         last_block_hash,
         non_privileged_count,
-        chain_id,
+        chain_id: result_chain_id,
     } = execute_blocks(
         &blocks,
         execution_witness,
         ELASTICITY_MULTIPLIER,
-        |db, _| {
-            // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
+        |db, block_idx| {
+            if ethrex_polygon::genesis::is_polygon_chain(chain_id) {
+                let block = &blocks[block_idx];
+                let author = ethrex_polygon::consensus::seal::recover_signer(&block.header)
+                    .unwrap_or(block.header.coinbase);
+                let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_id)
+                    .expect("bor config must exist for polygon chain");
+                let fee_config = ethrex_common::types::PolygonFeeConfig {
+                    burnt_contract: bor_config.get_burnt_contract(block.header.number),
+                    coinbase: bor_config.get_coinbase(block.header.number),
+                    author,
+                };
+                Ok(Evm::new_for_polygon(db.clone(), fee_config, crypto.clone()))
+            } else {
+                Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
+            }
         },
         crypto.clone(),
     )?;
@@ -49,7 +64,7 @@ pub fn execution_program(
         initial_state_hash,
         final_state_hash,
         last_block_hash,
-        chain_id: chain_id.into(),
+        chain_id: result_chain_id.into(),
         transaction_count: non_privileged_count,
     })
 }
