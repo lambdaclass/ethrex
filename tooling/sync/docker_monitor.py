@@ -61,6 +61,191 @@ PHASE_COMPLETION_PATTERNS = {
 }
 
 
+# Diagnostics polling configuration
+DIAGNOSTICS_NORMAL_INTERVAL = 30  # seconds between polls during normal operation
+DIAGNOSTICS_DEGRADED_INTERVAL = 5  # seconds between polls during degradation
+DIAGNOSTICS_NORMAL_BUFFER_SIZE = 20  # snapshots kept in normal mode
+DIAGNOSTICS_DEGRADED_BUFFER_SIZE = 60  # snapshots kept in degraded mode
+DEGRADATION_ELIGIBLE_PEERS_THRESHOLD = 5  # trigger if eligible peers below this
+DEGRADATION_STALL_TIMEOUT = 60  # trigger if zero progress for this many seconds
+DEGRADATION_STALENESS_RATIO = 0.8  # trigger if pivot age > 80% of threshold
+DEGRADATION_RECOVERY_TIMEOUT = 60  # seconds of health before leaving degraded mode
+
+
+class DiagnosticsTracker:
+    """Polls admin_peerScores and admin_syncStatus, keeps rolling buffer, dumps on degradation."""
+
+    def __init__(self, instances: list):
+        self.instances = instances
+        self.buffers: dict[str, list[dict]] = {inst.name: [] for inst in instances}
+        self.degraded: dict[str, bool] = {inst.name: False for inst in instances}
+        self.degraded_since: dict[str, float] = {inst.name: 0 for inst in instances}
+        self.healthy_since: dict[str, float] = {inst.name: 0 for inst in instances}
+        self.last_poll: dict[str, float] = {inst.name: 0 for inst in instances}
+        self.events: list[dict] = []  # degradation events across all networks
+        self.dumped_for_run: dict[str, bool] = {inst.name: False for inst in instances}
+        self._last_progress: dict[str, Optional[str]] = {inst.name: None for inst in instances}
+
+    def poll_interval(self, name: str) -> float:
+        return DIAGNOSTICS_DEGRADED_INTERVAL if self.degraded[name] else DIAGNOSTICS_NORMAL_INTERVAL
+
+    def buffer_limit(self, name: str) -> int:
+        return DIAGNOSTICS_DEGRADED_BUFFER_SIZE if self.degraded[name] else DIAGNOSTICS_NORMAL_BUFFER_SIZE
+
+    def should_poll(self, name: str) -> bool:
+        return (time.time() - self.last_poll[name]) >= self.poll_interval(name)
+
+    def poll(self, inst) -> None:
+        """Poll diagnostics RPC endpoints for a single instance."""
+        if inst.status in ("success", "failed", "waiting"):
+            return
+        if not self.should_poll(inst.name):
+            return
+
+        self.last_poll[inst.name] = time.time()
+        peer_scores = rpc_call(inst.rpc_url, "admin_peerScores")
+        sync_status = rpc_call(inst.rpc_url, "admin_syncStatus")
+
+        if peer_scores is None and sync_status is None:
+            return  # node not reachable, skip
+
+        snapshot = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "epoch": time.time(),
+            "peer_scores": peer_scores,
+            "sync_status": sync_status,
+        }
+
+        buf = self.buffers[inst.name]
+        buf.append(snapshot)
+        # Trim buffer to limit
+        limit = self.buffer_limit(inst.name)
+        while len(buf) > limit:
+            buf.pop(0)
+
+        self._check_degradation(inst, snapshot)
+
+    def _check_degradation(self, inst, snapshot: dict) -> None:
+        """Check for degradation conditions and trigger dump if needed."""
+        now = time.time()
+        name = inst.name
+        reasons = []
+
+        # Check eligible peers
+        if snapshot.get("peer_scores") and isinstance(snapshot["peer_scores"], dict):
+            summary = snapshot["peer_scores"].get("summary", {})
+            eligible = summary.get("eligible_peers", 999)
+            if eligible < DEGRADATION_ELIGIBLE_PEERS_THRESHOLD:
+                reasons.append(f"eligible_peers={eligible}")
+
+        # Check sync progress stall
+        if snapshot.get("sync_status") and isinstance(snapshot["sync_status"], dict):
+            phase = snapshot["sync_status"].get("current_phase", "idle")
+            progress_key = str(snapshot["sync_status"].get("phase_progress", {}))
+            if phase not in ("idle", ""):
+                if self._last_progress[name] is not None and self._last_progress[name] == progress_key:
+                    # No progress change — but we only flag after DEGRADATION_STALL_TIMEOUT
+                    pass  # tracked by the outer loop via last_block
+                self._last_progress[name] = progress_key
+
+            # Check staleness ratio
+            pivot_age = snapshot["sync_status"].get("pivot_age_seconds")
+            threshold = snapshot["sync_status"].get("staleness_threshold_seconds", 0)
+            if pivot_age and threshold and threshold > 0:
+                ratio = pivot_age / threshold
+                if ratio > DEGRADATION_STALENESS_RATIO:
+                    reasons.append(f"staleness_ratio={ratio:.2f}")
+
+        if reasons:
+            if not self.degraded[name]:
+                self.degraded[name] = True
+                self.degraded_since[name] = now
+                self.healthy_since[name] = 0
+                event = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "network": name,
+                    "event_type": "degradation_start",
+                    "reasons": reasons,
+                    "eligible_peers": snapshot.get("peer_scores", {}).get("summary", {}).get("eligible_peers"),
+                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                }
+                self.events.append(event)
+                print(f"⚠️  [{name}] Degradation detected: {', '.join(reasons)} — increasing poll frequency")
+            # Dump snapshots on degradation
+            if not self.dumped_for_run.get(name):
+                self._dump_snapshots(name)
+        else:
+            # Healthy — check if we can exit degraded mode
+            if self.degraded[name]:
+                if self.healthy_since[name] == 0:
+                    self.healthy_since[name] = now
+                elif (now - self.healthy_since[name]) >= DEGRADATION_RECOVERY_TIMEOUT:
+                    self.degraded[name] = False
+                    self.healthy_since[name] = 0
+                    event = {
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "network": name,
+                        "event_type": "degradation_end",
+                    }
+                    self.events.append(event)
+                    print(f"✅ [{name}] Degradation resolved — resuming normal poll frequency")
+
+    def on_failure(self, name: str) -> None:
+        """Called when a network fails — dump snapshots if not already dumped."""
+        if not self.dumped_for_run.get(name):
+            self._dump_snapshots(name)
+        event = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "network": name,
+            "event_type": "failure",
+        }
+        self.events.append(event)
+
+    def _dump_snapshots(self, name: str) -> None:
+        """Dump the rolling buffer to disk."""
+        self.dumped_for_run[name] = True
+        buf = self.buffers[name]
+        if not buf:
+            return
+        # Find the current run's log directory
+        run_dirs = sorted(LOGS_DIR.glob("run_*"), key=lambda p: p.name, reverse=True)
+        if not run_dirs:
+            return
+        out_path = run_dirs[0] / f"{name}_peer_snapshots.json"
+        try:
+            import json
+            out_path.write_text(json.dumps(buf, indent=2, default=str))
+            print(f"📸 [{name}] Dumped {len(buf)} diagnostic snapshots to {out_path}")
+        except Exception as e:
+            print(f"⚠️  [{name}] Failed to dump snapshots: {e}")
+
+    def format_degradation_events(self) -> str:
+        """Format degradation events for the summary.txt."""
+        if not self.events:
+            return ""
+        lines = ["\n  Degradation Events:"]
+        for ev in self.events:
+            ts = ev["timestamp"]
+            net = ev.get("network", "?")
+            evt = ev.get("event_type", "?")
+            reasons = ev.get("reasons", [])
+            detail = f" ({', '.join(reasons)})" if reasons else ""
+            lines.append(f"    {ts} [{net}] {evt}{detail}")
+        return "\n".join(lines)
+
+    def reset(self) -> None:
+        """Reset state for a new run."""
+        for name in self.buffers:
+            self.buffers[name] = []
+            self.degraded[name] = False
+            self.degraded_since[name] = 0
+            self.healthy_since[name] = 0
+            self.last_poll[name] = 0
+            self.dumped_for_run[name] = False
+            self._last_progress[name] = None
+        self.events = []
+
+
 @dataclass
 class Instance:
     name: str
@@ -421,7 +606,7 @@ def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
     print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
 
-def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str, build_profile: str = ""):
+def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str, build_profile: str = "", diagnostics_tracker: Optional['DiagnosticsTracker'] = None):
     """Append run result to the persistent log file."""
     ensure_logs_dir()
     all_success = all(i.status == "success" for i in instances)
@@ -476,6 +661,12 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
             max_name_len = max(len(name) for name, _, _ in phases)
             for name, count, duration in phases:
                 lines.append(f"      {name:<{max_name_len}}  {duration}  ({count})")
+
+    # Include degradation events if any
+    if diagnostics_tracker:
+        degradation_text = diagnostics_tracker.format_degradation_events()
+        if degradation_text:
+            lines.append(degradation_text)
 
     lines.append("")
     # Append to log file
@@ -699,7 +890,8 @@ def main():
     containers = [f"ethrex-{n}" for n in names]
     
     instances = [Instance(n, p, c) for n, p, c in zip(names, ports, containers)]
-    
+    tracker = DiagnosticsTracker(instances)
+
     # Detect state of already-running containers
     for inst in instances:
         if t := container_start_time(inst.container):
@@ -763,6 +955,7 @@ def main():
                 # Reset instances since we restarted
                 for inst in instances:
                     reset_instance(inst)
+                tracker.reset()
                 time.sleep(30)  # Wait for containers to start
                 print(f"{'='*60}\n")
 
@@ -770,6 +963,12 @@ def main():
             last_print = 0
             while True:
                 changed = any(update_instance(i, args.timeout) for i in instances)
+                # Poll diagnostics endpoints
+                for inst in instances:
+                    tracker.poll(inst)
+                    # Trigger dump on failure
+                    if inst.status == "failed" and changed:
+                        tracker.on_failure(inst.name)
                 if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
                     print_status(instances)
                     last_print = time.time()
@@ -779,7 +978,7 @@ def main():
                 time.sleep(CHECK_INTERVAL)
             # Log the run result and save container logs BEFORE any restart
             save_all_logs(instances, run_id, args.compose_file)
-            log_run_result(run_id, run_count, instances, hostname, branch, commit, args.build_profile)
+            log_run_result(run_id, run_count, instances, hostname, branch, commit, args.build_profile, tracker)
             # Send a single Slack summary notification for the run
             if not args.no_slack:
                 slack_notify(run_id, run_count, instances, hostname, branch, commit, args.build_profile)

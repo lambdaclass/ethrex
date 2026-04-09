@@ -187,6 +187,8 @@ pub struct PeerData {
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
+    /// Timestamp (seconds since UNIX epoch) of the last successful response from this peer
+    pub last_response_time: Option<u64>,
 }
 
 impl PeerData {
@@ -204,8 +206,23 @@ impl PeerData {
             connection,
             score: Default::default(),
             requests: Default::default(),
+            last_response_time: None,
         }
     }
+}
+
+/// Diagnostic snapshot of a peer's state, used by admin RPC endpoints.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PeerDiagnostics {
+    pub peer_id: H256,
+    pub score: i64,
+    pub inflight_requests: i64,
+    pub eligible: bool,
+    pub capabilities: Vec<String>,
+    pub ip: IpAddr,
+    pub client_version: String,
+    pub connection_direction: String,
+    pub last_response_time: Option<u64>,
 }
 
 /// Result of contact validation.
@@ -303,6 +320,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
         capabilities: Vec<Capability>,
     ) -> Response<Option<(H256, PeerConnection)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
+    fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
 }
 
 #[derive(Debug)]
@@ -451,9 +469,14 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordSuccess,
         _ctx: &Context<Self>,
     ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.peers.entry(msg.node_id).and_modify(|peer_data| {
+            peer_data.score = (peer_data.score + 1).min(MAX_SCORE);
+            peer_data.last_response_time = Some(now);
+        });
     }
 
     #[send_handler]
@@ -806,6 +829,36 @@ impl PeerTableServer {
             .get(&msg.node_id)
             .cloned()
             .or_else(|| self.contacts.get(&msg.node_id)?.session.clone())
+    }
+
+    #[request_handler]
+    async fn handle_get_peer_diagnostics(
+        &mut self,
+        _msg: peer_table_server_protocol::GetPeerDiagnostics,
+        _ctx: &Context<Self>,
+    ) -> Vec<PeerDiagnostics> {
+        self.peers
+            .iter()
+            .map(|(id, peer_data)| PeerDiagnostics {
+                peer_id: *id,
+                score: peer_data.score,
+                inflight_requests: peer_data.requests,
+                eligible: self.can_try_more_requests(&peer_data.score, &peer_data.requests),
+                capabilities: peer_data
+                    .supported_capabilities
+                    .iter()
+                    .map(|c| format!("{}/{}", c.protocol(), c.version))
+                    .collect(),
+                ip: peer_data.node.ip,
+                client_version: peer_data.node.version.clone().unwrap_or_default(),
+                connection_direction: if peer_data.is_connection_inbound {
+                    "inbound".to_string()
+                } else {
+                    "outbound".to_string()
+                },
+                last_response_time: peer_data.last_response_time,
+            })
+            .collect()
     }
 
     // === Private helper methods ===

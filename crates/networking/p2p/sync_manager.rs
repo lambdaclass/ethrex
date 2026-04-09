@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncMode, Syncer},
+    sync::{SyncDiagnostics, SyncMode, Syncer},
 };
 
 /// Abstraction to interact with the active sync process without disturbing it
@@ -30,6 +30,7 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
+    diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 }
 
 impl SyncManager {
@@ -76,18 +77,21 @@ impl SyncManager {
             }
         }
 
+        let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
             cancel_token,
             blockchain,
             datadir,
+            diagnostics.clone(),
         )));
         let sync_manager = Self {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
+            diagnostics,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -118,6 +122,16 @@ impl SyncManager {
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
         self.snap_enabled.store(false, Ordering::Relaxed);
+    }
+
+    /// Returns a snapshot of the current sync diagnostics.
+    pub async fn get_sync_diagnostics(&self) -> SyncDiagnostics {
+        self.diagnostics.read().await.clone()
+    }
+
+    /// Returns a reference to the diagnostics RwLock for updating from the sync code.
+    pub fn diagnostics(&self) -> &Arc<tokio::sync::RwLock<SyncDiagnostics>> {
+        &self.diagnostics
     }
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
