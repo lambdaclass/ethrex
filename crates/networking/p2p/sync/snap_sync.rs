@@ -789,8 +789,9 @@ async fn find_bsc_pivot(peers: &mut PeerHandler, store: &Store) -> Result<BlockH
     let estimate_tip: u64 = if store_head > BSC_PIVOT_LAG {
         store_head
     } else {
-        // BSC Chapel is well past 50M. This is a safe starting guess.
-        50_000_000_u64
+        // BSC Chapel testnet is past 100M blocks. BSC mainnet is past 50M.
+        // Start high — peers will return empty for blocks they don't have.
+        100_000_000_u64
     };
 
     let mut total_failures: u64 = 0;
@@ -830,51 +831,15 @@ async fn find_bsc_pivot(peers: &mut PeerHandler, store: &Store) -> Result<BlockH
             .await
         {
             Ok(Some(header)) => {
-                // We got a header. The peer has at least this block. Use it as
-                // a tip estimate and request the pivot `BSC_PIVOT_LAG` behind it.
-                let tip = header.number;
-                let pivot_number = tip.saturating_sub(BSC_PIVOT_LAG);
+                // We got a header — use it directly as the pivot. BSC pruned peers
+                // may only serve a narrow range of blocks, so requesting a different
+                // block 64 behind could fail. The header we have is good enough.
+                let pivot_number = header.number;
                 info!(
-                    "find_bsc_pivot: peer {peer_id} has block {tip}, requesting pivot at {pivot_number}"
+                    "find_bsc_pivot: peer {peer_id} served block {pivot_number}, using as pivot"
                 );
                 peers.peer_table.record_success(peer_id)?;
-
-                // Request the exact pivot block.
-                let Some((pivot_peer_id, mut pivot_conn)) = peers
-                    .peer_table
-                    .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
-                    .await?
-                else {
-                    debug!("find_bsc_pivot: no free peers for pivot request, retrying");
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    total_failures = total_failures.saturating_add(1);
-                    continue;
-                };
-                match peers
-                    .get_block_header(pivot_peer_id, &mut pivot_conn, pivot_number)
-                    .await
-                {
-                    Ok(Some(pivot)) => {
-                        peers.peer_table.record_success(pivot_peer_id)?;
-                        return Ok(pivot);
-                    }
-                    Ok(None) => {
-                        warn!(
-                            "find_bsc_pivot: peer {pivot_peer_id} returned no header for pivot {pivot_number}"
-                        );
-                        peers.peer_table.record_failure(pivot_peer_id)?;
-                        consecutive_failures = consecutive_failures.saturating_add(1);
-                        total_failures = total_failures.saturating_add(1);
-                    }
-                    Err(e) => {
-                        warn!(
-                            "find_bsc_pivot: error requesting pivot from peer {pivot_peer_id}: {e}"
-                        );
-                        peers.peer_table.record_failure(pivot_peer_id)?;
-                        consecutive_failures = consecutive_failures.saturating_add(1);
-                        total_failures = total_failures.saturating_add(1);
-                    }
-                }
+                return Ok(header);
             }
             Ok(None) => {
                 // Peer doesn't have this block — try a lower number.
