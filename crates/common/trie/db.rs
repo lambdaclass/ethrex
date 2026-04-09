@@ -52,10 +52,12 @@ mod in_memory_std {
     use super::TrieDB;
     use crate::{Nibbles, Node, Trie, error::TrieError};
 
+    type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
+
     // TODO: we should replace this with BackendTrieDB
     /// InMemory implementation for the TrieDB trait, with get and put operations.
     pub struct InMemoryTrieDB {
-        inner: Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>,
+        inner: NodeMap,
         prefix: Option<Nibbles>,
     }
 
