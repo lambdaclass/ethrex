@@ -1996,19 +1996,7 @@ impl Blockchain {
                 &logger,
             )?;
 
-            if compute_witness {
-                // Convert to RPC format for returning over the wire.
-                let block_hash = block.hash();
-                self.storage
-                    .store_witness(block_hash, block_number, witness.clone())?;
-
-                produced_witness = Some(witness);
-            } else {
-                // Persist to DB for later retrieval via debug_executionWitness.
-                let block_hash = block.hash();
-                self.storage
-                    .store_witness(block_hash, block_number, witness)?;
-            }
+            produced_witness = Some(witness);
         };
 
         // At this point the witness is ready to be returned, for the next set of actions, we would love to do a spawn and forget
