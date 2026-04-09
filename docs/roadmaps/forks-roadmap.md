@@ -253,7 +253,7 @@ Post-Glamsterdam fork, execution layer = **Bogota**
 ## Links
 
 - [EIP-7773 Meta Glamsterdam](https://eips.ethereum.org/EIPS/eip-7773)
-- [BAL Info](https://blockaccesslist.xyz)
+- [EIP-7928 Block-Level Access Lists](https://eips.ethereum.org/EIPS/eip-7928)
 - [ethrex docs/eip.md](../eip.md) - EIP tracking
 - [ethrex ROADMAP.md](../../ROADMAP.md) - General roadmap
 
