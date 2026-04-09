@@ -14,7 +14,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256,
+    Address, H160, H256, U256,
     types::{
         BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
         kzg_commitment_to_versioned_hash,
@@ -237,7 +237,7 @@ impl Mempool {
             }
 
             // Filter by tip & base_fee
-            if let Some(min_tip) = filter.min_tip {
+            if let Some(min_tip) = filter.min_tip.map(U256::from) {
                 if tx
                     .effective_gas_tip(filter.base_fee)
                     .is_none_or(|tip| tip < min_tip)

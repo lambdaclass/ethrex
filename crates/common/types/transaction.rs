@@ -1474,26 +1474,30 @@ impl Transaction {
         *inner_hash.get_or_init(|| self.compute_hash())
     }
 
-    pub fn gas_tip_cap(&self) -> Option<u64> {
-        Some(
-            self.max_priority_fee()
-                .unwrap_or(u64::try_from(self.gas_price()).ok()?),
-        )
+    pub fn gas_tip_cap(&self) -> U256 {
+        self.max_priority_fee()
+            .map(U256::from)
+            .unwrap_or_else(|| self.gas_price())
     }
 
-    pub fn gas_fee_cap(&self) -> Option<u64> {
-        Some(
-            self.max_fee_per_gas()
-                .unwrap_or(u64::try_from(self.gas_price()).ok()?),
-        )
+    pub fn gas_fee_cap(&self) -> U256 {
+        self.max_fee_per_gas()
+            .map(U256::from)
+            .unwrap_or_else(|| self.gas_price())
     }
 
-    pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<u64> {
+    /// Returns the effective tip per gas for this transaction.
+    /// Returns `None` if the transaction's fee cap is below the base fee (i.e. the
+    /// transaction cannot pay for its inclusion).
+    pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<U256> {
+        let tip_cap = self.gas_tip_cap();
         let Some(base_fee) = base_fee else {
-            return self.gas_tip_cap();
+            return Some(tip_cap);
         };
-        let tip = self.gas_fee_cap()?.checked_sub(base_fee)?;
-        Some(min(tip, self.gas_tip_cap()?))
+        let base_fee = U256::from(base_fee);
+        let fee_cap = self.gas_fee_cap();
+        let tip = fee_cap.checked_sub(base_fee)?;
+        Some(min(tip, tip_cap))
     }
 
     /// Returns whether the transaction is replay-protected.

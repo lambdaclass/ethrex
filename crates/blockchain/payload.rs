@@ -874,7 +874,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    pub tip: u64,
+    pub tip: U256,
 }
 
 impl std::ops::Deref for HeadTransaction {
