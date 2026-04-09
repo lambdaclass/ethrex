@@ -97,7 +97,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         use k256::{
             AffinePoint, ProjectivePoint, Scalar,
             elliptic_curve::{
-                PrimeField,
+                Group, PrimeField,
                 group::prime::PrimeCurveAffine,
                 ops::{Invert, LinearCombination, Reduce},
                 point::DecompressPoint,
@@ -139,7 +139,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         };
         let u1 = -(r_inv * z);
         let u2 = r_inv * s;
-        let pk = ProjectivePoint::lincomb(&ProjectivePoint::GENERATOR, &u1, &r_proj, &u2);
+        let pk = ProjectivePoint::lincomb(&Group::generator(), &u1, &r_proj, &u2);
 
         let pk_affine = pk.to_affine();
         if bool::from(pk_affine.is_identity()) {
