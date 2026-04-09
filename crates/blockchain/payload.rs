@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Blockchain, BlockchainType, MAX_PAYLOADS,
-    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, POST_OSAKA_GAS_LIMIT_CAP, TX_GAS_COST},
+    constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST, TX_MAX_GAS_LIMIT_AMSTERDAM},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
@@ -609,7 +609,7 @@ impl Blockchain {
             // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
             // remaining_gas tracks regular gas only.
             let tx_gas_reservation = if context.is_amsterdam {
-                head_tx.tx.gas_limit().min(POST_OSAKA_GAS_LIMIT_CAP)
+                head_tx.tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
             } else {
                 head_tx.tx.gas_limit()
             };
