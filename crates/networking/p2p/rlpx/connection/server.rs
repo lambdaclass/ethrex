@@ -1492,7 +1492,14 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
         state
             .requested_pooled_txs
             .insert(request.id, (announcement, chunk.to_vec(), Instant::now()));
-        send(state, Message::GetPooledTransactions(request)).await?;
+        if let Err(e) = send(state, Message::GetPooledTransactions(request)).await {
+            // Clear in-flight for all unsent hashes so they don't get permanently stuck.
+            let unsent = &all_hashes[offset + chunk.len()..];
+            if !unsent.is_empty() {
+                let _ = state.blockchain.mempool.clear_in_flight_txs(unsent);
+            }
+            return Err(e);
+        }
     }
 
     Ok(())
