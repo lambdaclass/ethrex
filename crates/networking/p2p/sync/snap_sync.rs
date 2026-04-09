@@ -119,6 +119,13 @@ pub async fn sync_cycle_snap(
         .get_block_number(current_head)
         .await?
         .ok_or(SyncError::BlockNumber(current_head))?;
+    {
+        let mut diag = diagnostics.write().await;
+        diag.current_phase = "headers".to_string();
+        diag.sync_mode = "snap".to_string();
+    }
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::sync::METRICS_SYNC.set_current_phase(1);
     info!(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
@@ -235,6 +242,15 @@ pub async fn sync_cycle_snap(
             block_sync_state
                 .process_incoming_headers(block_headers_iter)
                 .await?;
+        }
+
+        // Update diagnostics with header progress
+        {
+            let mut diag = diagnostics.write().await;
+            diag.phase_progress.insert(
+                "headers_downloaded".to_string(),
+                block_sync_state.block_hashes.len() as u64,
+            );
         }
 
         if sync_head_found {
