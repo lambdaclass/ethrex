@@ -62,7 +62,9 @@ impl RichAccountsTable {
             let get_balance = rollup_client
                 .get_balance(
                     address,
-                    BlockIdentifier::Number(last_block_fetched.as_u64()),
+                    BlockIdentifier::Number(u64::try_from(last_block_fetched).map_err(|_| {
+                        MonitorError::DecodingError("block number overflows u64".to_owned())
+                    })?),
                 )
                 .await?;
             accounts.push((address, secret_key, get_balance));
@@ -80,7 +82,12 @@ impl RichAccountsTable {
         }
         for (address, _private_key, balance) in self.items.iter_mut() {
             *balance = rollup_client
-                .get_balance(*address, BlockIdentifier::Number(latest_block.as_u64()))
+                .get_balance(
+                    *address,
+                    BlockIdentifier::Number(u64::try_from(latest_block).map_err(|_| {
+                        MonitorError::DecodingError("block number overflows u64".to_owned())
+                    })?),
+                )
                 .await?;
         }
         self.last_block_fetched = latest_block;

@@ -335,7 +335,7 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             from: overrides.from.unwrap_or_default(),
             gas: overrides.gas_limit,
-            gas_price: overrides.max_fee_per_gas.unwrap_or_default(),
+            gas_price: U256::from(overrides.max_fee_per_gas.unwrap_or_default()),
             ..Default::default()
         };
         let mut tx_json = json!({
