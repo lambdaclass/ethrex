@@ -131,7 +131,7 @@ pub async fn sync_cycle_snap(
             if let Ok(Some(headers)) = peers
                 .request_block_headers_from_number(
                     estimated_block,
-                    1,
+                    16,  // Request a small batch, not just 1
                     crate::peer_handler::BlockRequestOrder::OldToNew,
                 )
                 .await
