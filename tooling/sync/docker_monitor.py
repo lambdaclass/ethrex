@@ -70,6 +70,8 @@ DEGRADATION_ELIGIBLE_PEERS_THRESHOLD = 5  # trigger if eligible peers below this
 DEGRADATION_STALL_TIMEOUT = 60  # trigger if zero progress for this many seconds
 DEGRADATION_STALENESS_RATIO = 0.8  # trigger if pivot age > 80% of threshold
 DEGRADATION_RECOVERY_TIMEOUT = 60  # seconds of health before leaving degraded mode
+LOG_LEVEL_NORMAL = "info,ethrex_p2p::sync=debug"
+LOG_LEVEL_DEGRADED = "info,ethrex_p2p=trace"
 
 
 class DiagnosticsTracker:
@@ -171,6 +173,11 @@ class DiagnosticsTracker:
                 }
                 self.events.append(event)
                 print(f"⚠️  [{name}] Degradation detected: {', '.join(reasons)} — increasing poll frequency")
+                # Bump log level to TRACE for detailed peer comms
+                if rpc_set_log_level(inst.rpc_url, LOG_LEVEL_DEGRADED):
+                    print(f"🔍 [{name}] Log level bumped to TRACE for peer diagnostics")
+                else:
+                    print(f"⚠️  [{name}] Failed to bump log level")
             # Dump snapshots on degradation
             if not self.dumped_for_run.get(name):
                 self._dump_snapshots(name)
@@ -189,6 +196,11 @@ class DiagnosticsTracker:
                     }
                     self.events.append(event)
                     print(f"✅ [{name}] Degradation resolved — resuming normal poll frequency")
+                    # Restore log level to normal
+                    if rpc_set_log_level(inst.rpc_url, LOG_LEVEL_NORMAL):
+                        print(f"📝 [{name}] Log level restored to DEBUG")
+                    else:
+                        print(f"⚠️  [{name}] Failed to restore log level")
 
     def on_failure(self, name: str) -> None:
         """Called when a network fails — dump snapshots if not already dumped."""
@@ -457,6 +469,15 @@ def rpc_call(url: str, method: str) -> Optional[Any]:
         return requests.post(url, json={"jsonrpc": "2.0", "method": method, "params": [], "id": 1}, timeout=5).json().get("result")
     except Exception:
         return None
+
+
+def rpc_set_log_level(url: str, level: str) -> bool:
+    """Set the node's log level via admin_setLogLevel RPC."""
+    try:
+        resp = requests.post(url, json={"jsonrpc": "2.0", "method": "admin_setLogLevel", "params": [level], "id": 1}, timeout=5).json()
+        return resp.get("result") is not None and "error" not in resp
+    except Exception:
+        return False
 
 
 def parse_phase_timings(run_id: str, container: str) -> list[tuple[str, str, str]]:
