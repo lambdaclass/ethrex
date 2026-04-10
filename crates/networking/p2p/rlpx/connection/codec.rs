@@ -254,13 +254,21 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
-        message.encode(
-            &mut frame_data,
-            *self
-                .eth_version
-                .read()
-                .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
-        )?;
+        let version = *self
+            .eth_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+        let msg_code = message.code(version);
+        message.encode(&mut frame_data, version)?;
+        if matches!(message, rlpx::Message::GetBlockHeaders(_)) {
+            tracing::debug!(
+                msg_code,
+                frame_len = frame_data.len(),
+                first_bytes = ?&frame_data[..frame_data.len().min(20)],
+                ?version,
+                "Encoding GetBlockHeaders"
+            );
+        }
 
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 
