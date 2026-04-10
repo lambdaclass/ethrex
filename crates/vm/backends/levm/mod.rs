@@ -16,6 +16,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     types::{
@@ -1441,7 +1442,7 @@ impl LEVM {
 
             // Storage: for each slot in execution state, check it's expected
             for (key_h256, &value) in &account.storage {
-                let slot_u256 = U256::from_big_endian(key_h256.as_bytes());
+                let slot_u256 = u256_from_big_endian_const(key_h256.0);
                 // EIP-7928 requires storage_changes sorted by slot, so use binary search.
                 let pos = acct
                     .storage_changes
@@ -1611,6 +1612,22 @@ impl LEVM {
                          during withdrawal/request phase but is absent from BAL"
                     )));
                 }
+                // Also check storage: if any slot differs from pre-state,
+                // the account should have been in the BAL.
+                for (key_h256, &value) in &account.storage {
+                    let pre_value = db
+                        .store
+                        .get_storage_value(*addr, *key_h256)
+                        .unwrap_or_default();
+                    if value != pre_value {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for withdrawal: account {addr:?} storage \
+                             slot {} changed during withdrawal/request phase but is absent \
+                             from BAL",
+                            u256_from_big_endian_const(key_h256.0)
+                        )));
+                    }
+                }
                 continue;
             };
 
@@ -1686,6 +1703,41 @@ impl LEVM {
                          code change at index {withdrawal_idx}"
                     )));
                 }
+            }
+
+            // Storage: for each slot in the withdrawal/request-phase state,
+            // verify the BAL has a corresponding entry or the value is unchanged.
+            for (key_h256, &value) in &account.storage {
+                let slot_u256 = u256_from_big_endian_const(key_h256.0);
+                let pos = acct
+                    .storage_changes
+                    .partition_point(|sc| sc.slot < slot_u256);
+                if pos < acct.storage_changes.len() && acct.storage_changes[pos].slot == slot_u256 {
+                    let sc = &acct.storage_changes[pos];
+                    if !has_exact_change_storage(&sc.slot_changes, withdrawal_idx) {
+                        // No BAL entry at withdrawal_idx; compare against
+                        // last BAL entry (the seeded value).
+                        let seeded =
+                            sc.slot_changes
+                                .last()
+                                .map(|c| c.post_value)
+                                .unwrap_or_else(|| {
+                                    db.store
+                                        .get_storage_value(*addr, *key_h256)
+                                        .unwrap_or_default()
+                                });
+                        if value != seeded {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for withdrawal: account {addr:?} \
+                                 storage slot {slot_u256} changed during withdrawal/request \
+                                 phase ({value}) but BAL has no change at index \
+                                 {withdrawal_idx} (last_bal={seeded})"
+                            )));
+                        }
+                    }
+                }
+                // Slot not in BAL storage_changes at all: loaded from store
+                // during the withdrawal/request phase. Skip.
             }
         }
 
