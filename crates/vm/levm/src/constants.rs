@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
-pub const SUCCESS: U256 = U256::one();
-pub const FAIL: U256 = U256::zero();
+pub const SUCCESS: U256 = U256::ONE;
+pub const FAIL: U256 = U256::ZERO;
 pub const WORD_SIZE: usize = 32;
 
 pub const STACK_LIMIT: usize = 1024;
@@ -42,9 +42,9 @@ pub const EOF_PREFIX: u8 = 0xef;
 pub mod create_opcode {
     use ethrex_common::U256;
 
-    pub const INIT_CODE_WORD_COST: U256 = U256([2, 0, 0, 0]);
-    pub const CODE_DEPOSIT_COST: U256 = U256([200, 0, 0, 0]);
-    pub const CREATE_BASE_COST: U256 = U256([32000, 0, 0, 0]);
+    pub const INIT_CODE_WORD_COST: U256 = U256::from_limbs([2, 0, 0, 0]);
+    pub const CODE_DEPOSIT_COST: U256 = U256::from_limbs([200, 0, 0, 0]);
+    pub const CREATE_BASE_COST: U256 = U256::from_limbs([32000, 0, 0, 0]);
 }
 
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;

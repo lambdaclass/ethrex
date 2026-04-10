@@ -3,4 +3,5 @@ mod base64_tests;
 mod blobs_bundle_tests;
 mod rkyv_utils_tests;
 mod serde_utils_tests;
+mod uint_tests;
 mod utils_tests;

@@ -1,4 +1,4 @@
-use ethereum_types::U256;
+use ethrex_common::U256;
 use ethrex_common::utils::u256_to_big_endian;
 
 #[test]

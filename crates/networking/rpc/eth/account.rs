@@ -5,7 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_common::{Address, H256, U256, serde_utils};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -118,7 +118,7 @@ impl RpcHandler for GetStorageAtRequest {
         let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(params[1].clone())?;
         Ok(GetStorageAtRequest {
             address: serde_json::from_value(params[0].clone())?,
-            storage_slot: H256::from_uint(&storage_slot_u256),
+            storage_slot: storage_slot_u256.to_h256(),
             block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
         })
     }
@@ -138,7 +138,7 @@ impl RpcHandler for GetStorageAtRequest {
             .storage
             .get_storage_at(block_number, self.address, self.storage_slot)?
             .unwrap_or_default();
-        let storage_value = H256::from_uint(&storage_value);
+        let storage_value = storage_value.to_h256();
         serde_json::to_value(format!("{storage_value:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -201,7 +201,7 @@ impl RpcHandler for GetProofRequest {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         };
         let storage_keys: Vec<U256> = serde_json::from_value(params[1].clone())?;
-        let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
+        let storage_keys = storage_keys.iter().map(|k| k.to_h256()).collect();
         Ok(GetProofRequest {
             address: serde_json::from_value(params[0].clone())?,
             storage_keys,
@@ -232,7 +232,7 @@ impl RpcHandler for GetProofRequest {
             .storage_proof
             .into_iter()
             .map(|sp| StorageProof {
-                key: sp.key.into_uint(),
+                key: U256::from_h256(sp.key),
                 value: sp.value,
                 proof: sp.proof,
             })
@@ -270,7 +270,7 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(request.address, expected_address);
-        assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
+        assert_eq!(request.storage_slot, U256::from(1u64).to_h256());
         assert_eq!(request.block, BlockTag::Latest);
     }
 
@@ -288,7 +288,7 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(request.address, expected_address);
-        assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
+        assert_eq!(request.storage_slot, U256::from(1u64).to_h256());
         assert_eq!(request.block, BlockTag::Latest);
     }
 }

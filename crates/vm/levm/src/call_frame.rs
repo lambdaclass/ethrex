@@ -17,7 +17,7 @@ use std::{
 };
 
 /// [`u64`]s that make up a [`U256`]
-const U64_PER_U256: usize = U256::MAX.0.len();
+const U64_PER_U256: usize = 4;
 
 #[derive(Clone, PartialEq, Eq)]
 /// The EVM uses a stack-based architecture and does not use registers like some other VMs.
@@ -95,10 +95,10 @@ impl Stack {
         #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
         unsafe {
             let slot = self.values.get_unchecked_mut(next_offset);
-            slot.0[0] = value.0[0];
-            slot.0[1] = value.0[1];
-            slot.0[2] = value.0[2];
-            slot.0[3] = value.0[3];
+            slot.as_limbs_mut()[0] = value.as_limbs()[0];
+            slot.as_limbs_mut()[1] = value.as_limbs()[1];
+            slot.as_limbs_mut()[2] = value.as_limbs()[2];
+            slot.as_limbs_mut()[3] = value.as_limbs()[3];
         }
         self.offset = next_offset;
 
@@ -121,7 +121,7 @@ impl Stack {
             *self
                 .values
                 .get_unchecked_mut(next_offset)
-                .0
+                .as_limbs_mut()
                 .as_mut_ptr()
                 .cast() = [0u64; U64_PER_U256];
         }
@@ -192,8 +192,14 @@ impl Stack {
         #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
         unsafe {
             std::ptr::copy_nonoverlapping(
-                self.values.get_unchecked_mut(index).0.as_mut_ptr(),
-                self.values.get_unchecked_mut(self.offset).0.as_mut_ptr(),
+                self.values
+                    .get_unchecked_mut(index)
+                    .as_limbs_mut()
+                    .as_mut_ptr(),
+                self.values
+                    .get_unchecked_mut(self.offset)
+                    .as_limbs_mut()
+                    .as_mut_ptr(),
                 U64_PER_U256,
             );
         }
@@ -204,7 +210,7 @@ impl Stack {
 impl Default for Stack {
     fn default() -> Self {
         Self {
-            values: Box::new([U256::zero(); STACK_LIMIT]),
+            values: Box::new([U256::ZERO; STACK_LIMIT]),
             offset: STACK_LIMIT,
         }
     }

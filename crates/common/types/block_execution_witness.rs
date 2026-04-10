@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
 
+use crate::U256;
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
@@ -10,7 +11,7 @@ use crate::{
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::keccak,
 };
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
