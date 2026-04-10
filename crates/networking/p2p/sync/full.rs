@@ -325,7 +325,9 @@ async fn add_blocks_in_batch(
 
 /// Executes the given blocks and stores them
 /// If sync_head_found is true, they will be executed one by one
-/// If sync_head_found is false, they will be executed in a single batch
+/// If sync_head_found is false, they will be executed in a single batch,
+/// falling back to one-by-one pipeline execution if the batch fails with
+/// an InvalidBlock error (works around batch-mode state corruption bugs).
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
@@ -334,26 +336,49 @@ async fn add_blocks(
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     // If we found the sync head, run the blocks sequentially to store all the blocks's state
     if sync_head_found {
-        tokio::task::spawn_blocking(move || {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block, None).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|e| (ChainError::Custom(e.to_string()), None))?
-    } else {
-        blockchain.add_blocks_in_batch(blocks, cancel_token).await
+        return run_blocks_pipeline(blockchain, blocks).await;
     }
+
+    // Try batch execution first (faster)
+    match blockchain
+        .add_blocks_in_batch(blocks.clone(), cancel_token)
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err((ChainError::InvalidBlock(ref err), _)) => {
+            // Batch execution can produce incorrect results due to cross-block
+            // state cache pollution (e.g. `mark_modified` setting `exists = true`).
+            // Fall back to single-block pipeline execution which uses fresh state per block.
+            warn!(
+                "Batch execution failed with InvalidBlock ({err}), retrying batch with per-block pipeline execution"
+            );
+            run_blocks_pipeline(blockchain, blocks).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn run_blocks_pipeline(
+    blockchain: Arc<Blockchain>,
+    blocks: Vec<Block>,
+) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+    tokio::task::spawn_blocking(move || {
+        let mut last_valid_hash = H256::default();
+        for block in blocks {
+            let block_hash = block.hash();
+            blockchain.add_block_pipeline(block, None).map_err(|e| {
+                (
+                    e,
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash,
+                        failed_block_hash: block_hash,
+                    }),
+                )
+            })?;
+            last_valid_hash = block_hash;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| (ChainError::Custom(e.to_string()), None))?
 }
