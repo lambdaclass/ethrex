@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
-use ethrex_common::{H256, types::Block};
+use ethrex_common::{H256, types::{Block, BlockHeader}};
 use ethrex_storage::Store;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -47,10 +47,41 @@ pub async fn sync_cycle_full(
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
-    let mut start_block_number;
-    let mut end_block_number = 0;
+    let mut start_block_number = 0u64;
+    let mut end_block_number = 0u64;
     let mut headers = vec![];
     let mut single_batch = true;
+
+    // BSC (fast block times): the sync_head hash from peer Status is always stale.
+    // Skip hash-based lookup entirely and go straight to forward sync by block number.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_bsc = chain_id == 56 || chain_id == 97;
+
+    if is_bsc {
+        let latest = store.get_latest_block_number().await.unwrap_or(0);
+        if latest == 0 {
+            warn!("BSC forward sync: no local blocks, aborting");
+            return Ok(());
+        }
+        info!(
+            latest,
+            "BSC: skipping hash lookup, starting forward sync from latest block"
+        );
+        if !request_forward_headers(
+            peers,
+            &store,
+            latest,
+            &mut start_block_number,
+            &mut end_block_number,
+            &mut headers,
+        )
+        .await?
+        {
+            warn!("BSC forward sync exhausted all attempts, aborting");
+            return Ok(());
+        }
+        single_batch = true;
+    } else {
 
     let mut attempts = 0;
 
@@ -113,6 +144,7 @@ pub async fn sync_cycle_full(
         store.add_fullsync_batch(block_headers).await?;
         single_batch = false;
     }
+    } // end else (non-BSC hash-based download)
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
 
@@ -264,6 +296,70 @@ async fn add_blocks_in_batch(
         blocks_per_second
     );
     Ok(())
+}
+
+/// Max request failures before giving up on forward sync.
+const MAX_FORWARD_SYNC_FAILURES: u64 = 10;
+
+/// Max time to wait for peers.
+const FORWARD_SYNC_PEER_WAIT: Duration = Duration::from_secs(300);
+
+/// Requests block headers forward from `latest + 1` by block number.
+async fn request_forward_headers(
+    peers: &mut PeerHandler,
+    store: &Store,
+    latest: u64,
+    start_block_number: &mut u64,
+    end_block_number: &mut u64,
+    headers: &mut Vec<BlockHeader>,
+) -> Result<bool, SyncError> {
+    let mut failures = 0u64;
+    let wait_start = Instant::now();
+
+    loop {
+        let peer_count = peers.count_total_peers().await.unwrap_or(0);
+        if peer_count == 0 {
+            if wait_start.elapsed() > FORWARD_SYNC_PEER_WAIT {
+                warn!("Forward sync: no peers after {:?}, giving up", FORWARD_SYNC_PEER_WAIT);
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        }
+
+        let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
+        info!(forward_start, peer_count, failures, "Forward sync: requesting headers by number");
+        match peers
+            .request_block_headers_from_number(
+                forward_start,
+                MAX_BLOCK_BODIES_TO_REQUEST as u64,
+                BlockRequestOrder::OldToNew,
+            )
+            .await?
+        {
+            Some(forward_headers) if !forward_headers.is_empty() => {
+                let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
+                let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
+                info!(
+                    "Forward sync: received {} headers from block {} to {}",
+                    forward_headers.len(), first.number, last.number,
+                );
+                *start_block_number = first.number;
+                *end_block_number = last.number;
+                *headers = forward_headers;
+                return Ok(true);
+            }
+            _ => {
+                failures += 1;
+                if failures >= MAX_FORWARD_SYNC_FAILURES {
+                    warn!(failures, "Forward sync: too many failures, giving up");
+                    return Ok(false);
+                }
+                warn!(failures, "Forward sync: request failed, retrying...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
 }
 
 /// Executes the given blocks and stores them

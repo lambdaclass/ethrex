@@ -427,6 +427,47 @@ impl PeerHandler {
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// - No peer returned a valid response in the given time and retry limits
     ///   Since request_block_headers brought problems in cases of reorg seen in this pr https://github.com/lambdaclass/ethrex/pull/4028, we have this other function to request block headers only for full sync.
+    /// Request block headers starting from a block number.
+    pub async fn request_block_headers_from_number(
+        &mut self,
+        start: u64,
+        limit: u64,
+        order: BlockRequestOrder,
+    ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(start),
+            limit,
+            skip: 0,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
+        });
+        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection)) => {
+                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                    id: _,
+                    block_headers,
+                })) = PeerHandler::make_request(
+                    &self.peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
+                .await
+                {
+                    if !block_headers.is_empty()
+                        && are_block_headers_chained(&block_headers, &order)
+                    {
+                        return Ok(Some(block_headers));
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
+
     pub async fn request_block_headers_from_hash(
         &mut self,
         start: H256,
