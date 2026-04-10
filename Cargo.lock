@@ -3854,6 +3854,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "rayon",
  "reqwest",
  "rustc-hash 2.1.1",
  "serde",
