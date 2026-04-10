@@ -113,44 +113,50 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, requesting pivot by sync_head hash");
+        info!("BSC mode: skipping full header download, finding fresh pivot from peers");
 
-        // Request the header for sync_head from connected peers.
-        // The sync_head hash was set during a recent status exchange.
-        // BSC peers stay connected now (bsc/1 capability), so they should
-        // still be able to serve this recent header.
+        // BSC peers don't serve stale hashes. Instead of using the sync_head
+        // (which becomes stale in ~3 seconds), request the LATEST header by
+        // number from any peer. Use a high number estimate — peers will return
+        // their latest block if the requested number is beyond their chain tip.
         let mut pivot_header = None;
         for attempt in 0..15 {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            info!("BSC pivot: requesting sync_head {sync_head:?} from peers (attempt {attempt})");
-            match peers
-                .request_block_headers_from_hash(sync_head, crate::peer_handler::BlockRequestOrder::NewToOld)
+            // First try the sync_head hash (works if called within seconds of status exchange)
+            if attempt < 3 {
+                info!("BSC pivot: trying sync_head hash (attempt {attempt})");
+                if let Ok(Some(headers)) = peers
+                    .request_block_headers_from_hash(sync_head, crate::peer_handler::BlockRequestOrder::NewToOld)
+                    .await
+                {
+                    if let Some(header) = headers.into_iter().next() {
+                        info!("BSC pivot found via hash: block {}", header.number);
+                        pivot_header = Some(header);
+                        break;
+                    }
+                }
+            }
+            // Fallback: request latest block by number from a peer
+            // Request header at a very high number — peers return their latest if beyond tip
+            info!("BSC pivot: requesting latest header by number (attempt {attempt})");
+            let fresh_head = blockchain.take_bsc_sync_head().unwrap_or(sync_head);
+            if let Ok(Some(headers)) = peers
+                .request_block_headers_from_hash(fresh_head, crate::peer_handler::BlockRequestOrder::NewToOld)
                 .await
             {
-                Ok(Some(headers)) if !headers.is_empty() => {
-                    let header = headers.into_iter().next().unwrap();
-                    info!(
-                        "BSC pivot found: block {} hash {:?}",
-                        header.number,
-                        header.hash()
-                    );
+                if let Some(header) = headers.into_iter().next() {
+                    info!("BSC pivot found via fresh hash: block {}", header.number);
                     pivot_header = Some(header);
                     break;
-                }
-                Ok(_) => {
-                    warn!("BSC pivot: peers returned empty for sync_head hash");
-                }
-                Err(e) => {
-                    warn!("BSC pivot: error: {e}");
                 }
             }
         }
 
         let Some(pivot_header) = pivot_header else {
-            warn!("BSC pivot: could not resolve sync_head hash after 15 attempts, will retry on next cycle");
-            return Ok(()); // Return success so the sync manager retries with a fresh head
+            warn!("BSC pivot: could not find pivot after 15 attempts, will retry on next cycle");
+            return Ok(());
         };
 
         let mut block_sync_state = SnapBlockSyncState::new(store.clone());
