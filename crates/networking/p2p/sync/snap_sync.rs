@@ -113,49 +113,40 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, finding fresh pivot from peers");
+        info!("BSC mode: skipping full header download, requesting pivot by number from peers");
 
-        // BSC peers don't serve stale hashes. Instead of using the sync_head
-        // (which becomes stale in ~3 seconds), request the LATEST header by
-        // number from any peer. Use a high number estimate — peers will return
-        // their latest block if the requested number is beyond their chain tip.
+        // BSC peers don't serve stale block hashes (3-second block time).
+        // Instead, request headers by NUMBER from a recent estimated block.
+        // Peers respond to number-based requests even if the exact block
+        // is slightly behind their tip.
         let mut pivot_header = None;
-        for attempt in 0..15 {
+        for attempt in 0..10 {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
             }
-            // First try the sync_head hash (works if called within seconds of status exchange)
-            if attempt < 3 {
-                info!("BSC pivot: trying sync_head hash (attempt {attempt})");
-                if let Ok(Some(headers)) = peers
-                    .request_block_headers_from_hash(sync_head, crate::peer_handler::BlockRequestOrder::NewToOld)
-                    .await
-                {
-                    if let Some(header) = headers.into_iter().next() {
-                        info!("BSC pivot found via hash: block {}", header.number);
-                        pivot_header = Some(header);
-                        break;
-                    }
-                }
-            }
-            // Fallback: request latest block by number from a peer
-            // Request header at a very high number — peers return their latest if beyond tip
-            info!("BSC pivot: requesting latest header by number (attempt {attempt})");
-            let fresh_head = blockchain.take_bsc_sync_head().unwrap_or(sync_head);
+            // Estimate a recent block number: use a high number, peers will
+            // serve whatever they have at or near that number.
+            let estimated_block = 100_900_000u64.saturating_sub(attempt as u64 * 100);
+            info!("BSC pivot: requesting header at block {estimated_block} (attempt {attempt})");
             if let Ok(Some(headers)) = peers
-                .request_block_headers_from_hash(fresh_head, crate::peer_handler::BlockRequestOrder::NewToOld)
+                .request_block_headers_from_number(
+                    estimated_block,
+                    1,
+                    crate::peer_handler::BlockRequestOrder::OldToNew,
+                )
                 .await
             {
                 if let Some(header) = headers.into_iter().next() {
-                    info!("BSC pivot found via fresh hash: block {}", header.number);
+                    info!("BSC pivot found: block {} hash {:?}", header.number, header.hash());
                     pivot_header = Some(header);
                     break;
                 }
             }
+            warn!("BSC pivot: no response for block {estimated_block}");
         }
 
         let Some(pivot_header) = pivot_header else {
-            warn!("BSC pivot: could not find pivot after 15 attempts, will retry on next cycle");
+            warn!("BSC pivot: could not find pivot after 10 attempts, will retry on next cycle");
             return Ok(());
         };
 
