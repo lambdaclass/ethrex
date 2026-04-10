@@ -462,21 +462,26 @@ pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
 
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) -> eyre::Result<()> {
-    let block_number = env::var("SYNC_BLOCK_NUM")?;
-    let block_number: u64 = block_number.parse()
-        .map_err(|_| eyre::eyre!("SYNC_BLOCK_NUM environment variable is not a valid number"))?;
-    
-    let block_hash = store
-        .get_canonical_block_hash(block_number)
-        .await
-        .map_err(|e| eyre::eyre!("Failed to query block hash from store: {e}"))?
-        .ok_or_else(|| eyre::eyre!("Block hash not found for block number {block_number}"))?;
-    
-    store
-        .forkchoice_update(vec![], block_number, block_hash, None, None)
-        .await
-        .map_err(|e| eyre::eyre!("Failed to set sync block: {e}"))?;
-    
+    if let Ok(block_number_str) = env::var("SYNC_BLOCK_NUM") {
+        let block_number: u64 = block_number_str
+            .parse()
+            .map_err(|_| eyre::eyre!("Block number provided by environment is not numeric"))?;
+
+        let block_hash = store
+            .get_canonical_block_hash(block_number)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to query block hash from store: {e}"))?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "Could not get hash for block number provided by env variable {block_number}"
+                )
+            })?;
+
+        store
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
+            .await
+            .map_err(|e| eyre::eyre!("Could not set sync block: {e}"))?;
+    }
     Ok(())
 }
 
