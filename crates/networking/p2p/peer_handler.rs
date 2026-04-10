@@ -445,10 +445,7 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
-                    id: _,
-                    block_headers,
-                })) = PeerHandler::make_request(
+                match PeerHandler::make_request(
                     &self.peer_table,
                     peer_id,
                     &mut connection,
@@ -457,13 +454,21 @@ impl PeerHandler {
                 )
                 .await
                 {
-                    if !block_headers.is_empty()
-                        && are_block_headers_chained(&block_headers, &order)
+                    Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                        id: _,
+                        block_headers,
+                    })) if !block_headers.is_empty()
+                        && are_block_headers_chained(&block_headers, &order) =>
                     {
-                        return Ok(Some(block_headers));
+                        self.peer_table.record_success(peer_id)?;
+                        Ok(Some(block_headers))
+                    }
+                    _ => {
+                        // Penalize peer so get_random_peer picks a different one next time
+                        self.peer_table.record_failure(peer_id)?;
+                        Ok(None)
                     }
                 }
-                Ok(None)
             }
         }
     }
