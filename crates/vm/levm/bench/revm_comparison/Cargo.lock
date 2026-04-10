@@ -972,7 +972,6 @@ dependencies = [
  "hex-literal",
  "hex-simd",
  "indexmap",
- "kzg-rs",
  "lazy_static",
  "libc",
  "lru",
