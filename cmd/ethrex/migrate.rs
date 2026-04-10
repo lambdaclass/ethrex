@@ -5,8 +5,8 @@ use std::{
 };
 
 use ethrex_binary_trie::key_mapping::{
-    CODE_HASH_LEAF_KEY, get_stem_for_base, get_tree_key_for_storage_slot, pack_basic_data,
-    tree_key_from_stem,
+    CODE_HASH_LEAF_KEY, chunkify_code, get_stem_for_base, get_tree_key_for_code_chunk,
+    get_tree_key_for_storage_slot, pack_basic_data, tree_key_from_stem,
 };
 use ethrex_common::{Address, H256, U256, types::Genesis};
 use memmap2::Mmap;
@@ -121,6 +121,7 @@ const EMPTY_CODE_HASH: [u8; 32] = [
 pub async fn migrate_with_preimages(
     preimage_path: &str,
     snapshot_path: &str,
+    code_path: Option<&str>,
     datadir: &Path,
     genesis: Genesis,
     fast_override: bool,
@@ -153,6 +154,14 @@ pub async fn migrate_with_preimages(
     // Step 2: Parse preimage file.
     let preimages = parse_geth_dump(preimage_path, datadir, config.in_memory)?;
     info!("{} unique preimages loaded", preimages.len());
+
+    // Step 2b: Parse code file (code_hash -> bytecode).
+    let code_map: FxHashMap<[u8; 32], Vec<u8>> = if let Some(path) = code_path {
+        parse_code_dump(path)?
+    } else {
+        info!("No code file provided, code_size will be 0 and code chunks will be skipped");
+        FxHashMap::default()
+    };
 
     // Step 3: Stream the snapshot file and build the binary trie.
     info!("Streaming snapshot file: {snapshot_path}");
@@ -232,7 +241,27 @@ pub async fn migrate_with_preimages(
                     let addr_bytes = preimages.get_addr(keccak_addr)?;
                     let address = Address::from_slice(&addr_bytes);
                     let (nonce, balance, code_hash) = decode_slim_account(slim_rlp).ok()?;
-                    let code_size = 0u32;
+
+                    // Look up bytecode and compute code chunks.
+                    let (code_size, code_chunks) =
+                        if code_hash != EMPTY_CODE_HASH && !code_map.is_empty() {
+                            if let Some(bytecode) = code_map.get(&code_hash) {
+                                let chunks = chunkify_code(bytecode);
+                                let chunk_keys: Vec<([u8; 32], [u8; 32])> = chunks
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, chunk)| {
+                                        (get_tree_key_for_code_chunk(&address, i as u64), *chunk)
+                                    })
+                                    .collect();
+                                (bytecode.len() as u32, chunk_keys)
+                            } else {
+                                (0u32, Vec::new())
+                            }
+                        } else {
+                            (0u32, Vec::new())
+                        };
+
                     let stem = get_stem_for_base(&address);
                     let basic_data_key = tree_key_from_stem(&stem, 0);
                     let basic_data = pack_basic_data(0, code_size, nonce, balance);
@@ -242,6 +271,7 @@ pub async fn migrate_with_preimages(
                         basic_data,
                         code_hash_key,
                         code_hash,
+                        code_chunks,
                     })
                 }
                 RawEntry::Storage {
@@ -292,10 +322,14 @@ pub async fn migrate_with_preimages(
                         basic_data,
                         code_hash_key,
                         code_hash,
+                        code_chunks,
                     }) = processed
                     {
                         inserts.push((*basic_data_key, *basic_data));
                         inserts.push((*code_hash_key, *code_hash));
+                        for (key, chunk) in code_chunks {
+                            inserts.push((*key, *chunk));
+                        }
                         account_count += 1;
                     } else {
                         skipped += 1;
@@ -414,6 +448,8 @@ enum ProcessedEntry {
         basic_data: [u8; 32],
         code_hash_key: [u8; 32],
         code_hash: [u8; 32],
+        /// (tree_key, chunk_value) pairs for code chunks. Empty if no code.
+        code_chunks: Vec<([u8; 32], [u8; 32])>,
     },
     Storage {
         tree_key: [u8; 32],
@@ -644,6 +680,50 @@ impl Preimages {
             } => addr_count + slot_count,
         }
     }
+}
+
+/// Parse a gethdbdump code export file into a HashMap<code_hash, bytecode>.
+///
+/// Each entry has key = "c" + code_hash (33 bytes) and value = raw bytecode.
+fn parse_code_dump(path: &str) -> eyre::Result<FxHashMap<[u8; 32], Vec<u8>>> {
+    info!("Reading code file: {path}");
+    let file = File::open(path).map_err(|e| eyre::eyre!("Failed to open code file: {e}"))?;
+    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    info!("Code file size: {} MB", file_size / 1024 / 1024);
+
+    let mut reader = BufReader::with_capacity(8 * 1024 * 1024, file);
+    skip_gethdbdump_header(&mut reader)?;
+
+    // ~900 bytes average per code entry (estimate).
+    let estimated = (file_size / 900) as usize;
+    let mut map: FxHashMap<[u8; 32], Vec<u8>> =
+        FxHashMap::with_capacity_and_hasher(estimated, Default::default());
+
+    let mut bufs = EntryBufs::new();
+    let mut count = 0u64;
+    let started = std::time::Instant::now();
+
+    loop {
+        let Some((op, _)) = read_gethdbdump_entry(&mut reader, &mut bufs)? else {
+            break;
+        };
+        if op != 0 {
+            continue;
+        }
+        // Key is "c" (1 byte) + code_hash (32 bytes) = 33 bytes.
+        if bufs.key.len() == 33 && bufs.key[0] == b'c' {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&bufs.key[1..33]);
+            map.insert(hash, bufs.value.clone());
+            count += 1;
+        }
+    }
+
+    info!(
+        "Parsed {count} code entries in {:.1}s",
+        started.elapsed().as_secs_f64()
+    );
+    Ok(map)
 }
 
 /// Parse a gethdbdump preimage file.

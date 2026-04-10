@@ -552,6 +552,12 @@ pub enum Subcommand {
         )]
         snapshot_path: String,
         #[arg(
+            long = "code",
+            value_name = "CODE_FILE",
+            help = "Path to geth code export (geth db export code). Populates code chunks and code_size."
+        )]
+        code_path: Option<String>,
+        #[arg(
             long = "fast",
             action = clap::ArgAction::SetTrue,
             help = "Force in-memory preimage lookups (auto-detected by default based on available RAM)"
@@ -671,12 +677,14 @@ impl Subcommand {
             Subcommand::Migrate {
                 preimage_path,
                 snapshot_path,
+                code_path,
                 fast,
             } => {
                 let genesis = network.get_genesis()?;
                 crate::migrate::migrate_with_preimages(
                     &preimage_path,
                     &snapshot_path,
+                    code_path.as_deref(),
                     &effective_datadir,
                     genesis,
                     fast,
