@@ -416,6 +416,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
         )
         .await;
 
+        // Push snap sync metrics to Prometheus
+        #[cfg(feature = "metrics")]
+        push_snapsync_prometheus_metrics(current_step, phase_elapsed, &prev_interval);
+
         // Update previous interval counters for next rate calculation
         prev_interval = PhaseCounters::capture_current();
 
@@ -679,6 +683,92 @@ async fn log_phase_progress(
             let col1 = format!("Rate: {} codes/s", format_thousands(rate));
             info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
             info!("  Total time: {}", total_elapsed);
+        }
+        CurrentStepValue::None => {}
+    }
+}
+
+#[cfg(feature = "metrics")]
+fn push_snapsync_prometheus_metrics(
+    step: CurrentStepValue,
+    phase_elapsed: Duration,
+    prev_interval: &PhaseCounters,
+) {
+    use ethrex_metrics::snapsync::METRICS_SNAPSYNC;
+
+    let step_num: u8 = step.into();
+    METRICS_SNAPSYNC.set_stage(step_num as i64);
+    METRICS_SNAPSYNC.set_target_block(METRICS.sync_head_block.load(Ordering::Relaxed));
+
+    let interval_secs = PROGRESS_INTERVAL_SECS.max(1) as f64;
+
+    match step {
+        CurrentStepValue::DownloadingHeaders => {
+            let total = METRICS.sync_head_block.load(Ordering::Relaxed);
+            let downloaded = u64::min(METRICS.downloaded_headers.get(), total);
+            let interval = downloaded.saturating_sub(prev_interval.headers);
+            METRICS_SNAPSYNC.set_headers_downloaded(downloaded);
+            METRICS_SNAPSYNC.set_headers_total(total);
+            METRICS_SNAPSYNC.set_headers_per_second(interval as f64 / interval_secs);
+            if phase_elapsed.as_secs() < 2 {
+                METRICS_SNAPSYNC.set_headers_stage_start_now();
+            }
+        }
+        CurrentStepValue::RequestingAccountRanges => {
+            let downloaded = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
+            let interval = downloaded.saturating_sub(prev_interval.accounts);
+            METRICS_SNAPSYNC.set_accounts_downloaded(downloaded);
+            METRICS_SNAPSYNC.set_accounts_per_second(interval as f64 / interval_secs);
+            if phase_elapsed.as_secs() < 2 {
+                METRICS_SNAPSYNC.set_accounts_stage_start_now();
+            }
+        }
+        CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
+            let total = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
+            let inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
+            let interval = inserted.saturating_sub(prev_interval.accounts_inserted);
+            METRICS_SNAPSYNC.set_accounts_downloaded(total);
+            METRICS_SNAPSYNC.set_accounts_inserted(inserted);
+            METRICS_SNAPSYNC.set_accounts_per_second(interval as f64 / interval_secs);
+        }
+        CurrentStepValue::RequestingStorageRanges => {
+            let downloaded = METRICS.storage_leaves_downloaded.get();
+            let interval = downloaded.saturating_sub(prev_interval.storage);
+            METRICS_SNAPSYNC.set_storage_per_second(interval as f64 / interval_secs);
+            if phase_elapsed.as_secs() < 2 {
+                METRICS_SNAPSYNC.set_storage_stage_start_now();
+            }
+        }
+        CurrentStepValue::InsertingStorageRanges => {
+            let inserted = METRICS.storage_leaves_inserted.get();
+            let interval = inserted.saturating_sub(prev_interval.storage_inserted);
+            METRICS_SNAPSYNC.set_storage_per_second(interval as f64 / interval_secs);
+        }
+        CurrentStepValue::HealingState => {
+            let healed = METRICS.global_state_trie_leafs_healed.load(Ordering::Relaxed);
+            let interval = healed.saturating_sub(prev_interval.healed_accounts);
+            METRICS_SNAPSYNC.set_state_leaves_healed(healed);
+            METRICS_SNAPSYNC.set_healing_per_second(interval as f64 / interval_secs);
+            if phase_elapsed.as_secs() < 2 {
+                METRICS_SNAPSYNC.set_healing_stage_start_now();
+            }
+        }
+        CurrentStepValue::HealingStorage => {
+            let healed = METRICS.global_storage_tries_leafs_healed.load(Ordering::Relaxed);
+            let interval = healed.saturating_sub(prev_interval.healed_storage);
+            METRICS_SNAPSYNC.set_storage_leaves_healed(healed);
+            METRICS_SNAPSYNC.set_healing_per_second(interval as f64 / interval_secs);
+        }
+        CurrentStepValue::RequestingBytecodes => {
+            let total = METRICS.bytecodes_to_download.load(Ordering::Relaxed);
+            let downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
+            let interval = downloaded.saturating_sub(prev_interval.bytecodes);
+            METRICS_SNAPSYNC.set_bytecodes_downloaded(downloaded);
+            METRICS_SNAPSYNC.set_bytecodes_total(total);
+            METRICS_SNAPSYNC.set_bytecodes_per_second(interval as f64 / interval_secs);
+            if phase_elapsed.as_secs() < 2 {
+                METRICS_SNAPSYNC.set_bytecodes_stage_start_now();
+            }
         }
         CurrentStepValue::None => {}
     }

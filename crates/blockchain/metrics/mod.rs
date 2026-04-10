@@ -4,6 +4,8 @@ pub mod api;
 pub mod blocks;
 #[cfg(feature = "api")]
 pub mod l2;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod snapsync;
 #[cfg(feature = "api")]
 pub mod node;
 #[cfg(any(feature = "api", feature = "metrics"))]
