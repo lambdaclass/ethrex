@@ -2938,9 +2938,14 @@ impl Blockchain {
             engine.put_snapshot(snapshot);
             Ok(signer)
         } else {
-            Err(ChainError::Custom(
-                "BorEngine not configured — cannot verify Polygon block seal".to_string(),
-            ))
+            // No BorEngine: skip full seal verification but recover the signer.
+            // This is acceptable for replay / stateless execution where we trust
+            // the block data from the RPC.
+            ethrex_polygon::consensus::seal::recover_signer(header).map_err(|e| {
+                ChainError::Custom(format!(
+                    "Failed to recover Polygon block signer without BorEngine: {e}"
+                ))
+            })
         }
     }
 }

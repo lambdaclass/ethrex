@@ -109,16 +109,22 @@ where
                 .map_err(ExecutionError::BlockBodyValidation)
         })?;
 
-        // Validate the block header pre-execution
-        report_cycles("validate_block_pre_execution", || {
-            validate_block_pre_execution(
-                block,
-                parent_block_header,
-                &chain_config,
-                elasticity_multiplier,
-            )
-            .map_err(ExecutionError::BlockValidation)
-        })?;
+        // Validate the block header pre-execution.
+        // Skip for Polygon: Bor uses different EIP-1559 parameters (elasticity=4,
+        // denominator=16 post-Delhi) and different header rules (non-zero difficulty,
+        // extended extra_data with validator seal). The blockchain layer handles
+        // Polygon validation via verify_bor_header instead.
+        if !ethrex_polygon::genesis::is_polygon_chain(chain_id) {
+            report_cycles("validate_block_pre_execution", || {
+                validate_block_pre_execution(
+                    block,
+                    parent_block_header,
+                    &chain_config,
+                    elasticity_multiplier,
+                )
+                .map_err(ExecutionError::BlockValidation)
+            })?;
+        }
 
         // Create VM using the provided factory
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
@@ -167,10 +173,14 @@ where
                 .map_err(ExecutionError::ReceiptsRootValidation)
         })?;
 
-        report_cycles("validate_requests_hash", || {
-            validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(ExecutionError::RequestsRootValidation)
-        })?;
+        // Skip requests hash validation for Polygon — Polygon sets prague_time=0
+        // for EVM opcode gating but doesn't implement execution requests (EIP-7685).
+        if !ethrex_polygon::genesis::is_polygon_chain(chain_id) {
+            report_cycles("validate_requests_hash", || {
+                validate_requests_hash(&block.header, &chain_config, &result.requests)
+                    .map_err(ExecutionError::RequestsRootValidation)
+            })?;
+        }
 
         acc_receipts.push(receipts);
         parent_block_header = &block.header;
