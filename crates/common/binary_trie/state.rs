@@ -279,9 +279,10 @@ impl BinaryTrieState {
         self.flush_threshold
     }
 
-    /// Drop in-memory caches to free RAM. Call after flush during bulk imports
-    /// where re-reads are rare and bounded memory is more important.
+    /// Drop in-memory caches to free RAM, preserving the top levels of the trie
+    /// in the LRU so they don't need to be re-read from RocksDB on every insert.
     pub fn clear_caches(&mut self) {
+        self.trie.store.pin_top_levels(self.trie.root, 12);
         self.trie.store.clear_warm_nodes();
     }
 

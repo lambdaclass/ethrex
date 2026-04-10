@@ -89,74 +89,98 @@ impl Default for BinaryTrie {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive insert
+// Iterative insert
 // ---------------------------------------------------------------------------
 
+/// Walk down the trie to the insertion point, collecting the path of internal
+/// nodes. Then handle the leaf (create/update/split), and walk back up doing
+/// in-place mutations on the already-dirty ancestors.
+///
+/// Compared to the recursive version this avoids:
+/// - Recursive stack frames (depth can be 20-30+)
+/// - take+put round-trip on each ancestor during the return trip
+/// - Ancestor updates entirely when inserting into an existing same-stem node
 fn insert_node(
     store: &mut NodeStore,
-    node_id: Option<NodeId>,
+    root_id: Option<NodeId>,
     stem: [u8; 31],
     sub_index: u8,
     value: [u8; 32],
-    depth: usize,
+    _depth: usize,
 ) -> Result<NodeId, BinaryTrieError> {
-    match node_id {
-        // Empty slot — create a new StemNode here.
-        None => {
-            let mut stem_node = StemNode::new(stem);
-            stem_node.set_value(sub_index, value);
-            Ok(store.create(Node::Stem(stem_node)))
-        }
+    // Phase 1: Walk down, collecting (internal_node_id, bit_direction).
+    // Internal nodes are taken out and immediately put back (promoting them to
+    // dirty). We only read their child pointer - modification happens in phase 3.
+    let mut path: Vec<(NodeId, u8)> = Vec::new();
+    let mut current = root_id;
+    let mut depth = 0usize;
 
-        Some(id) => {
-            let existing = store.take(id)?;
-            match existing {
-                // StemNode at this location.
-                Node::Stem(mut stem_node) => {
-                    if stem_node.stem == stem {
-                        // Same stem: just update the value in place.
-                        stem_node.set_value(sub_index, value);
-                        store.put(id, Node::Stem(stem_node));
-                        Ok(id)
-                    } else {
-                        // Different stem: free the old ID and split by creating
-                        // InternalNodes until the stems diverge.
-                        if depth >= MAX_DEPTH {
+    let (leaf_id, child_changed) = loop {
+        match current {
+            None => {
+                // Empty slot: create a new StemNode.
+                let mut stem_node = StemNode::new(stem);
+                stem_node.set_value(sub_index, value);
+                break (store.create(Node::Stem(stem_node)), true);
+            }
+            Some(id) => {
+                let existing = store.take(id)?;
+                match existing {
+                    Node::Stem(mut stem_node) => {
+                        if stem_node.stem == stem {
+                            // Same stem: update value, ID unchanged.
+                            stem_node.set_value(sub_index, value);
                             store.put(id, Node::Stem(stem_node));
+                            break (id, false);
+                        } else {
+                            if depth >= MAX_DEPTH {
+                                store.put(id, Node::Stem(stem_node));
+                                return Err(BinaryTrieError::MaxDepthExceeded);
+                            }
+                            store.free(id);
+                            let new_id =
+                                split_stems(store, stem_node, stem, sub_index, value, depth)?;
+                            break (new_id, true);
+                        }
+                    }
+                    Node::Internal(internal) => {
+                        if depth >= MAX_DEPTH {
+                            store.put(id, Node::Internal(internal));
                             return Err(BinaryTrieError::MaxDepthExceeded);
                         }
-                        store.free(id);
-                        split_stems(store, stem_node, stem, sub_index, value, depth)
-                    }
-                }
-
-                // InternalNode: follow the bit for the new stem and recurse.
-                Node::Internal(mut internal) => {
-                    if depth >= MAX_DEPTH {
+                        let bit = stem_bit(&stem, depth);
+                        let next = if bit == 0 { internal.left } else { internal.right };
+                        // Put back immediately - promotes to dirty for in-place
+                        // mutation in phase 3.
                         store.put(id, Node::Internal(internal));
-                        return Err(BinaryTrieError::MaxDepthExceeded);
+                        path.push((id, bit));
+                        current = next;
+                        depth += 1;
                     }
-                    let bit = stem_bit(&stem, depth);
-                    let result = if bit == 0 {
-                        insert_node(store, internal.left, stem, sub_index, value, depth + 1)
-                            .map(|new_left| internal.left = Some(new_left))
-                    } else {
-                        insert_node(store, internal.right, stem, sub_index, value, depth + 1)
-                            .map(|new_right| internal.right = Some(new_right))
-                    };
-                    if let Err(e) = result {
-                        // Put node back before propagating error.
-                        store.put(id, Node::Internal(internal));
-                        return Err(e);
-                    }
-                    // Invalidate this node's cached hash — a descendant was mutated.
-                    internal.cached_hash = None;
-                    store.put(id, Node::Internal(internal));
-                    Ok(id)
                 }
             }
         }
+    };
+
+    // Phase 3: Walk back up, updating ancestors in-place.
+    if child_changed {
+        // The leaf has a new NodeId - update child pointers up the path.
+        let mut child_id = leaf_id;
+        for &(ancestor_id, bit) in path.iter().rev() {
+            store.update_dirty_child(ancestor_id, bit, child_id);
+            child_id = ancestor_id;
+        }
+    } else {
+        // Same-stem update: child pointers are correct, just invalidate hashes.
+        // Once we hit an ancestor whose hash is already None, all above are too.
+        for &(ancestor_id, _) in path.iter().rev() {
+            if !store.invalidate_dirty_hash(ancestor_id) {
+                break;
+            }
+        }
     }
+
+    Ok(if path.is_empty() { leaf_id } else { path[0].0 })
 }
 
 /// Create a chain of InternalNodes until the two stems diverge, then place each

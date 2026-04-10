@@ -280,7 +280,10 @@ pub async fn migrate_with_preimages(
             })
             .collect();
 
-        // Phase 3: Insert into trie (sequential).
+        // Phase 3: Flatten into (key, value) pairs, sort by key, then insert.
+        // Sorting by tree key means consecutive inserts share trie path prefixes,
+        // reusing dirty ancestors instead of touching random branches.
+        let mut inserts: Vec<([u8; 32], [u8; 32])> = Vec::with_capacity(raw_batch.len() * 2);
         for (raw, processed) in raw_batch.iter().zip(processed.iter()) {
             match raw {
                 RawEntry::Account { .. } => {
@@ -291,14 +294,9 @@ pub async fn migrate_with_preimages(
                         code_hash,
                     }) = processed
                     {
-                        state
-                            .trie_insert(*basic_data_key, *basic_data)
-                            .map_err(|e| eyre::eyre!("Failed to insert basic_data: {e}"))?;
-                        state
-                            .trie_insert(*code_hash_key, *code_hash)
-                            .map_err(|e| eyre::eyre!("Failed to insert code_hash: {e}"))?;
+                        inserts.push((*basic_data_key, *basic_data));
+                        inserts.push((*code_hash_key, *code_hash));
                         account_count += 1;
-                        inserts_since_flush += 2;
                     } else {
                         skipped += 1;
                     }
@@ -309,15 +307,21 @@ pub async fn migrate_with_preimages(
                         value_bytes,
                     }) = processed
                     {
-                        state
-                            .trie_insert(*tree_key, *value_bytes)
-                            .map_err(|e| eyre::eyre!("Failed to insert storage: {e}"))?;
-                        inserts_since_flush += 1;
+                        inserts.push((*tree_key, *value_bytes));
                     }
                     storage_count += 1;
                 }
             }
         }
+
+        inserts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        for (key, value) in &inserts {
+            state
+                .trie_insert(*key, *value)
+                .map_err(|e| eyre::eyre!("Failed to insert: {e}"))?;
+        }
+        inserts_since_flush += inserts.len() as u64;
 
         // Periodic flush.
         if inserts_since_flush >= flush_interval {

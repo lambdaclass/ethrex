@@ -455,6 +455,32 @@ impl NodeStore {
         self.clean_cache.lock().unwrap().len()
     }
 
+    /// Move the top `levels` of the trie from warm_nodes into the LRU cache
+    /// so they survive `clear_warm_nodes`. These nodes are touched by every
+    /// insert and re-reading them from RocksDB after each flush is wasteful.
+    pub fn pin_top_levels(&mut self, root: Option<NodeId>, levels: usize) {
+        let Some(root_id) = root else { return };
+        let cache = self.clean_cache.get_mut().unwrap();
+        let mut queue = vec![root_id];
+        for _ in 0..levels {
+            let mut next_level = Vec::new();
+            for id in queue {
+                if let Some(node) = self.warm_nodes.remove(&id) {
+                    if let Node::Internal(ref internal) = node {
+                        if let Some(left) = internal.left {
+                            next_level.push(left);
+                        }
+                        if let Some(right) = internal.right {
+                            next_level.push(right);
+                        }
+                    }
+                    cache.put(id, node);
+                }
+            }
+            queue = next_level;
+        }
+    }
+
     /// Drop all warm nodes, freeing memory. Use during bulk imports where
     /// re-reads are rare and bounded memory matters more than cache hits.
     pub fn clear_warm_nodes(&mut self) {
@@ -475,6 +501,41 @@ impl NodeStore {
     /// Return the number of freed nodes pending flush.
     pub fn freed_len(&self) -> usize {
         self.freed.len()
+    }
+
+    /// Update a dirty internal node's child pointer and clear its cached hash
+    /// in-place, without removing and reinserting into the HashMap.
+    ///
+    /// Returns `true` if the node was found in dirty_nodes and updated.
+    pub fn update_dirty_child(&mut self, id: NodeId, bit: u8, child_id: NodeId) -> bool {
+        if let Some(Node::Internal(internal)) = self.dirty_nodes.get_mut(&id) {
+            if bit == 0 {
+                internal.left = Some(child_id);
+            } else {
+                internal.right = Some(child_id);
+            }
+            internal.cached_hash = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clear the cached hash of a dirty internal node in-place.
+    ///
+    /// Returns `true` if the hash was present and cleared, `false` if already
+    /// `None` or the node was not found in dirty_nodes.
+    pub fn invalidate_dirty_hash(&mut self, id: NodeId) -> bool {
+        if let Some(Node::Internal(internal)) = self.dirty_nodes.get_mut(&id) {
+            if internal.cached_hash.is_some() {
+                internal.cached_hash = None;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     // -----------------------------------------------------------------------
