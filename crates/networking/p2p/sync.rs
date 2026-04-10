@@ -256,7 +256,6 @@ impl SyncError {
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
             | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_)
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -268,7 +267,8 @@ impl SyncError {
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
-            SyncError::Chain(_)
+            SyncError::PeerHandler(_) // Peer errors are recoverable — peers come and go
+            | SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
             | SyncError::Trie(_)
