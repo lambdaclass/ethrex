@@ -22,7 +22,7 @@ use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
     sync::atomic::Ordering,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use tracing::{debug, error, trace, warn};
 
@@ -114,8 +114,14 @@ impl PeerHandler {
         timeout: Duration,
     ) -> Result<RLPxMessage, PeerConnectionError> {
         peer_table.inc_requests(peer_id)?;
+        let start = Instant::now();
         let result = connection.outgoing_request(message, timeout).await;
+        let latency = start.elapsed();
         peer_table.dec_requests(peer_id)?;
+        // Record latency for successful responses (timeouts are already penalized via record_failure).
+        if result.is_ok() {
+            let _ = peer_table.record_response_latency(peer_id, latency);
+        }
         result
     }
 
@@ -233,8 +239,14 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+            Vec<BlockHeader>,
+            H256,
+            PeerConnection,
+            u64,
+            u64,
+            Duration,
+        )>(1000);
 
         let mut current_show = 0;
 
@@ -247,11 +259,21 @@ impl PeerHandler {
         let mut logged_no_free_peers_count = 0;
 
         loop {
-            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit, elapsed)) =
                 task_receiver.try_recv()
             {
                 // Release the reservation we made before spawning the task.
                 self.peer_table.dec_requests(peer_id)?;
+                // Feed transfer stats for latency/bandwidth scoring.
+                if !elapsed.is_zero() {
+                    let _ = self.peer_table.record_response_latency(peer_id, elapsed);
+                    if !headers.is_empty() {
+                        let approx_bytes = headers.len() as u64 * 500;
+                        let _ = self
+                            .peer_table
+                            .record_bandwidth(peer_id, approx_bytes, elapsed);
+                    }
+                }
 
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
@@ -352,6 +374,7 @@ impl PeerHandler {
                 trace!(
                     "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
                 );
+                let req_start = Instant::now();
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
@@ -361,12 +384,20 @@ impl PeerHandler {
                 .await
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
+                let req_elapsed = req_start.elapsed();
 
-                tx.send((headers, peer_id, connection, startblock, chunk_limit))
-                    .await
-                    .inspect_err(|err| {
-                        error!("Failed to send headers result through channel. Error: {err}")
-                    })
+                tx.send((
+                    headers,
+                    peer_id,
+                    connection,
+                    startblock,
+                    chunk_limit,
+                    req_elapsed,
+                ))
+                .await
+                .inspect_err(|err| {
+                    error!("Failed to send headers result through channel. Error: {err}")
+                })
             });
         }
 

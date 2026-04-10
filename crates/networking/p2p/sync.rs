@@ -11,6 +11,7 @@ mod snap_sync;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{PeerHandler, PeerHandlerError};
+use crate::peer_table::{PeerTableServerProtocol as _, ScoringConfig};
 use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
@@ -62,6 +63,8 @@ pub struct Syncer {
     peers: PeerHandler,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
+    /// Per-phase peer scoring configuration.
+    scoring_config: ScoringConfig,
     blockchain: Arc<Blockchain>,
     /// This string indicates a folder where the snap algorithm will store temporary files that are
     /// used during the syncing process
@@ -75,6 +78,7 @@ impl Syncer {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         datadir: PathBuf,
+        scoring_config: ScoringConfig,
     ) -> Self {
         Self {
             snap_enabled,
@@ -82,6 +86,7 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
+            scoring_config,
         }
     }
 
@@ -133,6 +138,11 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
+            // Switch to snap-phase scoring strategy.
+            let _ = self
+                .peers
+                .peer_table
+                .set_scoring_strategy(self.scoring_config.snap);
             METRICS.enable().await;
             // We validate that we have the folders that are being used empty, as we currently assume
             // they are. If they are not empty we empty the folder
@@ -149,6 +159,11 @@ impl Syncer {
             METRICS.disable().await;
             sync_cycle_result
         } else {
+            // Switch to live-phase scoring strategy.
+            let _ = self
+                .peers
+                .peer_table
+                .set_scoring_strategy(self.scoring_config.live);
             full::sync_cycle_full(
                 &mut self.peers,
                 self.blockchain.clone(),
