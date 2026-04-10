@@ -158,6 +158,10 @@ class DiagnosticsTracker:
                 if ratio > DEGRADATION_STALENESS_RATIO:
                     reasons.append(f"staleness_ratio={ratio:.2f}")
 
+            # Healing phase is high-risk for pivot failures — increase polling
+            if phase == "healing":
+                reasons.append("healing_phase")
+
         if reasons:
             if not self.degraded[name]:
                 self.degraded[name] = True
@@ -179,8 +183,7 @@ class DiagnosticsTracker:
                 else:
                     print(f"⚠️  [{name}] Failed to bump log level")
             # Dump snapshots on degradation
-            if not self.dumped_for_run.get(name):
-                self._dump_snapshots(name)
+            self._dump_snapshots(name)
         else:
             # Healthy — check if we can exit degraded mode
             if self.degraded[name]:
@@ -202,10 +205,15 @@ class DiagnosticsTracker:
                     else:
                         print(f"⚠️  [{name}] Failed to restore log level")
 
-    def on_failure(self, name: str) -> None:
-        """Called when a network fails — dump snapshots if not already dumped."""
-        if not self.dumped_for_run.get(name):
-            self._dump_snapshots(name)
+    def on_failure(self, inst, name: str) -> None:
+        """Called when a network fails — do a final poll and dump snapshots."""
+        # Do one last poll to capture the state at failure time
+        self.last_poll[name] = 0  # force immediate poll
+        self.poll(inst)
+        # Bump log level to capture any post-failure details
+        rpc_set_log_level(inst.rpc_url, LOG_LEVEL_DEGRADED)
+        # Always dump on failure, even if previously dumped for degradation
+        self._dump_snapshots(name, force=True)
         event = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "network": name,
@@ -213,8 +221,10 @@ class DiagnosticsTracker:
         }
         self.events.append(event)
 
-    def _dump_snapshots(self, name: str) -> None:
+    def _dump_snapshots(self, name: str, force: bool = False) -> None:
         """Dump the rolling buffer to disk."""
+        if not force and self.dumped_for_run.get(name):
+            return
         self.dumped_for_run[name] = True
         buf = self.buffers[name]
         if not buf:
@@ -989,7 +999,7 @@ def main():
                     tracker.poll(inst)
                     # Trigger dump on failure
                     if inst.status == "failed" and changed:
-                        tracker.on_failure(inst.name)
+                        tracker.on_failure(inst, inst.name)
                 if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
                     print_status(instances)
                     last_print = time.time()

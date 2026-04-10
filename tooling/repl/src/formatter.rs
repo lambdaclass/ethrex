@@ -70,42 +70,57 @@ fn format_object_box(map: &serde_json::Map<String, Value>, title: &str) -> Strin
 
     let rows = flatten_object(map, "");
 
-    let key_w = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    let val_w = rows
-        .iter()
-        .map(|(_, v)| v.len())
-        .max()
-        .unwrap_or(0)
-        .min(MAX_VALUE_DISPLAY_LEN);
-    let content_w = key_w + 3 + val_w;
-    let box_w = content_w + 4; // "│ " + content + " │"
+    // Separate scalar rows from table sections (arrays of objects rendered below the box)
+    let mut scalar_rows = Vec::new();
+    let mut table_sections: Vec<(String, String)> = Vec::new();
+    for (key, value) in rows {
+        if value.starts_with('\n') && value.contains("items)") {
+            table_sections.push((key, value));
+        } else {
+            scalar_rows.push((key, value));
+        }
+    }
 
     let mut out = String::new();
 
-    // Top border
-    if title.is_empty() {
-        out.push_str(&format!("┌{}┐\n", "─".repeat(box_w - 2)));
-    } else {
-        let fill = (box_w - 2).saturating_sub(title.len() + 1);
-        out.push_str(&format!("┌─{}{}┐\n", title.bold(), "─".repeat(fill)));
+    if !scalar_rows.is_empty() {
+        let key_w = scalar_rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+        let val_w = scalar_rows
+            .iter()
+            .map(|(_, v)| v.len())
+            .max()
+            .unwrap_or(0)
+            .min(MAX_VALUE_DISPLAY_LEN);
+        let content_w = key_w + 3 + val_w;
+        let box_w = content_w + 4;
+
+        if title.is_empty() {
+            out.push_str(&format!("┌{}┐\n", "─".repeat(box_w - 2)));
+        } else {
+            let fill = (box_w - 2).saturating_sub(title.len() + 1);
+            out.push_str(&format!("┌─{}{}┐\n", title.bold(), "─".repeat(fill)));
+        }
+
+        for (key, value) in &scalar_rows {
+            let display_val = truncate_middle(value, val_w);
+            let key_pad = " ".repeat(key_w.saturating_sub(key.len()));
+            let val_pad = " ".repeat(val_w.saturating_sub(display_val.len()));
+            out.push_str(&format!(
+                "│ {}{}   {}{} │\n",
+                key_pad,
+                key.cyan(),
+                colorize_inline(&display_val),
+                val_pad,
+            ));
+        }
+
+        out.push_str(&format!("└{}┘", "─".repeat(box_w - 2)));
     }
 
-    // Rows
-    for (key, value) in &rows {
-        let display_val = truncate_middle(value, val_w);
-        let key_pad = " ".repeat(key_w.saturating_sub(key.len()));
-        let val_pad = " ".repeat(val_w.saturating_sub(display_val.len()));
-        out.push_str(&format!(
-            "│ {}{}   {}{} │\n",
-            key_pad,
-            key.cyan(),
-            colorize_inline(&display_val),
-            val_pad,
-        ));
+    // Render table sections below the box
+    for (key, table) in &table_sections {
+        out.push_str(&format!("\n  {}:{}", key.cyan(), table));
     }
-
-    // Bottom border
-    out.push_str(&format!("└{}┘", "─".repeat(box_w - 2)));
 
     out
 }
