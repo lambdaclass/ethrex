@@ -1289,7 +1289,7 @@ async fn insert_storages(
         })
         .collect::<Vec<(H256, Trie)>>();
 
-    let (sender, receiver) = unbounded::<()>();
+    let (sender, receiver) = unbounded::<(std::time::Duration, u64)>();
     let mut counter = 0;
     let thread_count = std::thread::available_parallelism()
         .map(|num| num.into())
@@ -1300,16 +1300,41 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
+    // Profiling: track time distribution across storage tries
+    let total_accounts = account_with_storage_and_tries.len();
+    let insert_start = std::time::Instant::now();
+    let mut completed = 0_usize;
+    let mut total_trie_time = std::time::Duration::ZERO;
+    let mut total_wait_time = std::time::Duration::ZERO;
+    let mut max_trie_time = std::time::Duration::ZERO;
+    let mut max_trie_leaves: u64 = 0;
+    let mut total_leaves: u64 = 0;
+
+    info!(
+        "insert_storages: starting with {} accounts, {} threads, {} buffers",
+        total_accounts, thread_count, BUFFER_COUNT
+    );
+
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
+            let wait_start = std::time::Instant::now();
             if counter >= thread_count - 1 {
-                let _ = receiver.recv();
+                if let Ok((trie_time, leaves)) = receiver.recv() {
+                    completed += 1;
+                    total_trie_time += trie_time;
+                    total_leaves += leaves;
+                    if trie_time > max_trie_time {
+                        max_trie_time = trie_time;
+                        max_trie_leaves = leaves;
+                    }
+                }
                 counter -= 1;
             }
+            total_wait_time += wait_start.elapsed();
             counter += 1;
             let pool_clone = pool.clone();
             let mut iter = snapshot.raw_iterator();
@@ -1317,14 +1342,19 @@ async fn insert_storages(
                 let mut buffer: [u8; 64] = [0_u8; 64];
                 buffer[..32].copy_from_slice(&account_hash.0);
                 iter.seek(buffer);
+                let mut leaf_count: u64 = 0;
                 let iter = RocksDBIterator {
                     iter,
                     limit: *account_hash,
                 };
 
+                let trie_start = std::time::Instant::now();
                 let _ = trie_from_sorted_accounts(
                     trie.db(),
-                    &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
+                    &mut iter.inspect(|_| {
+                        leaf_count += 1;
+                        METRICS.storage_leaves_inserted.inc();
+                    }),
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
@@ -1335,11 +1365,52 @@ async fn insert_storages(
                     );
                 })
                 .map_err(SyncError::TrieGenerationError);
-                let _ = sender.send(());
+                let _ = sender.send((trie_start.elapsed(), leaf_count));
             });
             pool.execute(task);
         }
     });
+
+    // Drain remaining completions
+    while completed < total_accounts {
+        if let Ok((trie_time, leaves)) = receiver.try_recv() {
+            completed += 1;
+            total_trie_time += trie_time;
+            total_leaves += leaves;
+            if trie_time > max_trie_time {
+                max_trie_time = trie_time;
+                max_trie_leaves = leaves;
+            }
+        } else {
+            break;
+        }
+    }
+
+    let wall_time = insert_start.elapsed();
+    let avg_trie_ms = if completed > 0 {
+        total_trie_time.as_millis() / completed as u128
+    } else {
+        0
+    };
+    let parallelism_ratio = if !wall_time.is_zero() {
+        total_trie_time.as_secs_f64() / wall_time.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    info!(
+        "insert_storages profiling: wall={:.1}s, total_trie_cpu={:.1}s, parallelism={:.1}x, \
+         accounts={}, completed={}, total_leaves={}, avg_trie={avg_trie_ms}ms, \
+         max_trie={:.1}s ({max_trie_leaves} leaves), wait_time={:.1}s",
+        wall_time.as_secs_f64(),
+        total_trie_time.as_secs_f64(),
+        parallelism_ratio,
+        total_accounts,
+        completed,
+        total_leaves,
+        max_trie_time.as_secs_f64(),
+        total_wait_time.as_secs_f64(),
+    );
 
     // close db before removing directory
     drop(snapshot);
