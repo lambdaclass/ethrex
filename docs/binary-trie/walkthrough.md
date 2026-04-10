@@ -70,19 +70,17 @@ slots to read or write.
 ```rust
 struct StemNode {
     stem: [u8; 31],
-    values: BTreeMap<u8, [u8; 32]>,                    // only stores non-empty slots
-    cached_subtree: Option<Box<[[u8; 32]; 511]>>,      // internal Merkle tree over the 256 slots
-    cached_hash: Option<[u8; 32]>,                     // final hash of this node
+    values: BTreeMap<u8, [u8; 32]>,    // only stores non-empty slots
+    cached_hash: Option<[u8; 32]>,     // final hash of this node
 }
 ```
 
-**Why `cached_subtree`?** To compute a StemNode's hash, its 256 value slots
-are arranged into a small binary Merkle tree (256 leaves, 8 levels deep, 511
-nodes total). Without caching, every call to `merkelize()` would rebuild this
-entire subtree from scratch: 511 hashes. With the cache, when a single value
-changes only the 8 hashes along that value's path through the subtree are
-recomputed. The cache is allocated on first use and cleared when the StemNode
-is evicted from memory.
+To compute a StemNode's hash, its 256 value slots are arranged into a small
+binary Merkle tree (256 leaves, 8 levels deep, 511 nodes total). A single
+shared buffer (`Box<[[u8; 32]; 511]>`) is allocated once per `merkelize()`
+call and reused across all StemNodes, rather than caching per node. This
+avoids the 16KB-per-node memory overhead that per-node subtree caches would
+cause during large batch imports.
 
 **Why a BTreeMap instead of a fixed-size array?** A naive `[Option<[u8;32]>; 256]`
 array takes ~8.5KB per StemNode even if only 1 or 2 slots are used, and most
