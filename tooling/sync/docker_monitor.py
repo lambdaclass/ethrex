@@ -125,9 +125,9 @@ class DiagnosticsTracker:
         while len(buf) > limit:
             buf.pop(0)
 
-        self._check_degradation(inst, snapshot)
+        self._check_alert_conditions(inst, snapshot)
 
-    def _check_degradation(self, inst, snapshot: dict) -> None:
+    def _check_alert_conditions(self, inst, snapshot: dict) -> None:
         """Check for degradation conditions and trigger dump if needed."""
         now = time.time()
         name = inst.name
