@@ -1739,14 +1739,15 @@ impl Store {
         use crate::binary_trie_read::BinaryTrieWrapper;
 
         // Check in-memory binary trie state + layer cache.
+        // Lock order: BinaryTrieState before LayerCache (matches handle_merkleization).
         if let Some(bts) = &self.binary_trie_state {
+            let state = bts
+                .read()
+                .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
             let cache = self
                 .binary_trie_layer_cache
                 .read()
                 .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?;
-            let state = bts
-                .read()
-                .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
 
             // Use trie root from the root map if available (for layer cache lookups).
             // If not in the map (e.g., after restart), use a zero root — the wrapper
@@ -1785,14 +1786,15 @@ impl Store {
         use crate::binary_trie_read::BinaryTrieWrapper;
 
         // Check in-memory binary trie state + layer cache.
+        // Lock order: BinaryTrieState before LayerCache (matches handle_merkleization).
         if let Some(bts) = &self.binary_trie_state {
+            let state = bts
+                .read()
+                .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
             let cache = self
                 .binary_trie_layer_cache
                 .read()
                 .map_err(|_| StoreError::Custom("layer cache lock poisoned".to_string()))?;
-            let state = bts
-                .read()
-                .map_err(|_| StoreError::Custom("binary trie lock poisoned".to_string()))?;
 
             let trie_root = self.get_binary_trie_root(block_hash).unwrap_or([0u8; 32]);
 
