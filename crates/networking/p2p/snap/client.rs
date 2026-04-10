@@ -249,24 +249,11 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
-            info!("request_account_range became stale, updating pivot");
-            match update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-            )
-            .await
-            {
-                Ok(new_pivot) => *pivot_header = new_pivot,
-                Err(e) => {
-                    warn!("Failed to update pivot: {e}, continuing with current pivot");
-                    // Continue with the current (stale) pivot — the state may
-                    // still be servable by peers within their pruning window.
-                }
-            }
-        }
+        // Note: pivot staleness check removed here. For fast-block-time chains
+        // (BSC: 3s blocks), the pivot becomes "stale" instantly and updating it
+        // restarts the entire account download. The pivot's state root remains
+        // servable by peers within their pruning window. Staleness is handled
+        // after account download completes in snap_sync().
 
         // Reserve a request slot before spawning so get_best_peer sees
         // this peer as busy immediately, preventing spawn floods.

@@ -333,14 +333,22 @@ pub async fn snap_sync(
         .get_block_header_by_hash(*pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
-    while block_is_stale(&pivot_header) {
-        pivot_header = update_pivot(
-            pivot_header.number,
-            pivot_header.timestamp,
-            peers,
-            block_sync_state,
-        )
-        .await?;
+    // BSC: skip the initial stale-pivot update loop. BSC's 3-second block time
+    // makes every pivot "stale" within seconds, but the state root is still
+    // servable by peers within their pruning window (~128 blocks).
+    // Repeatedly updating the pivot restarts the entire state download.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_bsc = chain_id == 56 || chain_id == 97;
+    if !is_bsc {
+        while block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+            )
+            .await?;
+        }
     }
     debug!(
         "Selected block {} as pivot for snap sync",
