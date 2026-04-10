@@ -35,7 +35,10 @@ hash without the preimage database.
 
 - A Geth snapshot **with preimages enabled**. The snapshot must have been
   produced by a Geth node running with `--cache.preimages`.
-- The `geth` binary (v1.17+) installed locally.
+- A `geth` binary with the `code` exporter. Upstream Geth (v1.17+) supports
+  `preimage` and `snapshot` exports but not `code`. Use the patched fork at
+  https://github.com/edg-l/go-ethereum/tree/feat/export-code which adds
+  `geth db export code`.
 - Enough disk space for the exports (~10 GB for preimages, ~25 GB for
   snapshot on Hoodi; mainnet will be larger).
 
@@ -79,9 +82,28 @@ geth --datadir ~/data/geth-data --hoodi db export preimage preimages.rlp
 
 This takes ~7 minutes on Hoodi (~10 GB output, ~138M preimages).
 
-## Step 3: Export snapshot state
+## Step 3: Export contract code
 
-Export the account and storage state from the Geth snapshot:
+Export the contract bytecode from the Geth database:
+
+```bash
+geth --datadir <geth_datadir> --<network> db export code code.rlp
+```
+
+For example:
+
+```bash
+geth --datadir ~/data/geth-data --hoodi db export code code.rlp
+```
+
+Each entry is keyed by `"c" + keccak256(code)` with the raw bytecode as the
+value. This is needed to populate code chunks in the binary trie (the
+snapshot export only contains code hashes, not the actual bytecode).
+
+## Step 4: Export snapshot state
+
+Export the account and storage state from the Geth snapshot (unchanged from
+upstream Geth):
 
 ```bash
 geth --datadir <geth_datadir> --<network> db export snapshot snapshot.rlp
@@ -96,10 +118,11 @@ geth --datadir ~/data/geth-data --hoodi db export snapshot snapshot.rlp
 This takes ~15 minutes on Hoodi (~24 GB output). The file contains all
 account states (nonce, balance, code hash) and storage slot values.
 
-## Step 4: Run the migration
+## Step 5: Run the migration
 
-With both export files ready, run the ethrex migrate command. This creates a
-fresh ethrex database and builds the binary trie from the exported state:
+With all three export files ready, run the ethrex migrate command. This
+creates a fresh ethrex database and builds the binary trie from the exported
+state:
 
 ```bash
 ethrex --network <network> migrate <preimages.rlp> <snapshot.rlp>
@@ -125,7 +148,7 @@ The tool will:
 Progress is logged every 5 seconds with percentage, entry counts, and
 throughput.
 
-## Step 5: Start the node
+## Step 6: Start the node
 
 After migration completes, start the node normally. It will resume from the
 migrated state:
@@ -143,9 +166,10 @@ ethrex --network <network>
   node cache is cleared after each periodic flush to keep memory bounded.
   Use `--fast` to force in-memory mode regardless of available RAM.
 - **Code chunks**: The snapshot export contains code hashes but not the
-  actual bytecode. Code chunks in the binary trie are populated from
-  genesis contracts only. Full code migration requires a separate code
-  import step (not yet implemented).
+  actual bytecode. A separate `geth db export code` step (using the
+  patched Geth fork) provides the raw bytecode needed to populate code
+  chunks in the binary trie. Code chunk import is not yet integrated
+  into the migration tool.
 - **Disk space**: You need space for both export files plus the final ethrex
   database. Plan for ~3x the snapshot size as headroom.
 - **Snapshot freshness**: The Geth snapshot corresponds to a specific block.
