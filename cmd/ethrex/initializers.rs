@@ -461,21 +461,28 @@ pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
 }
 
 #[cfg(feature = "sync-test")]
-async fn set_sync_block(store: &Store) {
-    if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
-        let block_number = block_number
+async fn set_sync_block(store: &Store) -> eyre::Result<()> {
+    if let Ok(block_number_str) = env::var("SYNC_BLOCK_NUM") {
+        let block_number: u64 = block_number_str
             .parse()
-            .expect("Block number provided by environment is not numeric");
+            .map_err(|_| eyre::eyre!("Block number provided by environment is not numeric"))?;
+
         let block_hash = store
             .get_canonical_block_hash(block_number)
             .await
-            .expect("Could not get hash for block number provided by env variable")
-            .expect("Could not get hash for block number provided by env variable");
+            .map_err(|e| eyre::eyre!("Failed to query block hash from store: {e}"))?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "Could not get hash for block number provided by env variable {block_number}"
+                )
+            })?;
+
         store
             .forkchoice_update(vec![], block_number, block_hash, None, None)
             .await
-            .expect("Could not set sync block");
+            .map_err(|e| eyre::eyre!("Could not set sync block: {e}"))?;
     }
+    Ok(())
 }
 
 pub async fn init_l1(
@@ -514,7 +521,7 @@ pub async fn init_l1(
     }
 
     #[cfg(feature = "sync-test")]
-    set_sync_block(&store).await;
+    set_sync_block(&store).await?;
 
     let blockchain = init_blockchain(
         store.clone(),
