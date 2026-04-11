@@ -9,6 +9,17 @@ use std::time::Duration;
 
 use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
 use ethrex_common::{H256, types::Block};
+#[cfg(feature = "metrics")]
+use ethrex_metrics::fullsync::METRICS_FULLSYNC;
+
+macro_rules! fullsync_metrics {
+    ($($code:tt)*) => {
+        #[cfg(feature = "metrics")]
+        {
+            $($code)*
+        }
+    };
+}
 use ethrex_storage::Store;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -32,6 +43,12 @@ pub async fn sync_cycle_full(
     store: Store,
 ) -> Result<(), SyncError> {
     info!("Syncing to sync_head {:?}", sync_head);
+    fullsync_metrics!(
+        METRICS_FULLSYNC.reset_cycle();
+        METRICS_FULLSYNC.set_stage(1);
+        METRICS_FULLSYNC.set_header_stage_start_now();
+        METRICS_FULLSYNC.inc_cycles_started();
+    );
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
@@ -55,6 +72,8 @@ pub async fn sync_cycle_full(
     let mut attempts = 0;
 
     // Request and store all block headers from the advertised sync head
+    #[cfg(feature = "metrics")]
+    let mut header_batch_start = Instant::now();
     loop {
         let Some(mut block_headers) = peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
@@ -67,6 +86,7 @@ pub async fn sync_cycle_full(
                 return Ok(());
             }
             attempts += 1;
+            fullsync_metrics!(METRICS_FULLSYNC.inc_header_failures());
             warn!(
                 "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
             );
@@ -86,6 +106,15 @@ pub async fn sync_cycle_full(
         );
         end_block_number = end_block_number.max(first_header.number);
         start_block_number = last_header.number;
+
+        fullsync_metrics!(
+            let header_batch_secs = header_batch_start.elapsed().as_secs_f64().max(0.001);
+            METRICS_FULLSYNC.set_target_block(end_block_number);
+            METRICS_FULLSYNC.set_lowest_header(start_block_number);
+            METRICS_FULLSYNC.inc_headers_downloaded(block_headers.len() as u64);
+            METRICS_FULLSYNC.set_headers_per_second(block_headers.len() as f64 / header_batch_secs);
+            header_batch_start = Instant::now();
+        );
 
         sync_head = last_header.parent_hash;
         if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
@@ -115,6 +144,10 @@ pub async fn sync_cycle_full(
     }
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
+    fullsync_metrics!(
+        METRICS_FULLSYNC.set_blocks_total(end_block_number - start_block_number);
+        METRICS_FULLSYNC.set_execution_stage_start_now();
+    );
 
     // Download block bodies and execute full blocks in batches
     for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
@@ -131,13 +164,17 @@ pub async fn sync_cycle_full(
         }
         let mut blocks = Vec::new();
         // Request block bodies
-        // Download block bodies
+        fullsync_metrics!(METRICS_FULLSYNC.set_stage(2));
+        let body_download_start = Instant::now();
+        let mut body_request_count = 0u32;
         while !headers.is_empty() {
             let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
             let bodies = peers
                 .request_block_bodies(header_batch)
                 .await?
                 .ok_or(SyncError::BodiesNotFound)?;
+            body_request_count += 1;
+            fullsync_metrics!(METRICS_FULLSYNC.inc_bodies_downloaded(bodies.len() as u64));
             debug!("Obtained: {} block bodies", bodies.len());
             let block_batch = headers
                 .drain(..bodies.len())
@@ -145,13 +182,20 @@ pub async fn sync_cycle_full(
                 .map(|(header, body)| Block { header, body });
             blocks.extend(block_batch);
         }
+        let body_download_ms = body_download_start.elapsed().as_millis();
         if !blocks.is_empty() {
-            // Execute blocks
+            let body_download_secs = (body_download_ms as f64 / 1000.0).max(0.001);
             info!(
-                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
+                "[FULLSYNC TIMING] Body download: {}ms for {} blocks ({} requests, {:.0} blocks/s)",
+                body_download_ms,
                 blocks.len(),
-                blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
-                blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+                body_request_count,
+                blocks.len() as f64 / body_download_secs
+            );
+            fullsync_metrics!(
+                METRICS_FULLSYNC.set_batch_body_download_ms(body_download_ms as f64);
+                METRICS_FULLSYNC.set_bodies_per_second(blocks.len() as f64 / body_download_secs);
+                METRICS_FULLSYNC.set_stage(3);
             );
             add_blocks_in_batch(
                 blockchain.clone(),
@@ -183,6 +227,10 @@ pub async fn sync_cycle_full(
     }
 
     store.clear_fullsync_headers().await?;
+    fullsync_metrics!(
+        METRICS_FULLSYNC.set_stage(0);
+        METRICS_FULLSYNC.inc_cycles_completed();
+    );
     Ok(())
 }
 
@@ -248,7 +296,14 @@ async fn add_blocks_in_batch(
         .await?;
 
     let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
-    let blocks_per_second = blocks_len as f64 / execution_time;
+    let blocks_per_second = blocks_len as f64 / execution_time.max(0.001);
+
+    fullsync_metrics!(
+        METRICS_FULLSYNC.set_blocks_executed(last_block_number);
+        METRICS_FULLSYNC.set_blocks_per_second(blocks_per_second);
+        METRICS_FULLSYNC.set_batch_total_ms(execution_start.elapsed().as_millis() as f64);
+        METRICS_FULLSYNC.set_batch_size(blocks_len as i64);
+    );
 
     info!(
         "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
