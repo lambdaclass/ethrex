@@ -59,6 +59,15 @@ pub const SIZE_TO_WRITE_DB: u64 = 20_000;
 /// This number and SIZE_TO_WRITE_DB limits how much memory we use
 pub const BUFFER_COUNT: u64 = 32;
 
+/// Optional profiling stats for trie insertion.
+#[derive(Debug, Default)]
+pub struct TrieInsertStats {
+    /// Time spent waiting for a write buffer (I/O backpressure)
+    pub io_wait: std::time::Duration,
+    /// Number of flush operations dispatched
+    pub flush_count: u64,
+}
+
 impl CenterSide {
     fn from_value(tuple: (H256, Vec<u8>)) -> CenterSide {
         CenterSide {
@@ -174,6 +183,20 @@ pub fn trie_from_sorted_accounts<'scope, T>(
 where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
+    trie_from_sorted_accounts_with_stats(db, data_iter, scope, buffer_sender, buffer_receiver, None)
+}
+
+pub fn trie_from_sorted_accounts_with_stats<'scope, T>(
+    db: &'scope dyn TrieDB,
+    data_iter: &mut T,
+    scope: Arc<ThreadPool<'scope>>,
+    buffer_sender: Sender<Vec<(Nibbles, Node)>>,
+    buffer_receiver: Receiver<Vec<(Nibbles, Node)>>,
+    stats: Option<&mut TrieInsertStats>,
+) -> Result<H256, TrieGenerationError>
+where
+    T: Iterator<Item = (H256, Vec<u8>)> + Send,
+{
     let Some(initial_value) = data_iter.next() else {
         return Ok(*EMPTY_TRIE_HASH);
     };
@@ -194,16 +217,23 @@ where
     let mut current_node: CenterSide = CenterSide::from_value(initial_value);
     let mut next_value_opt: Option<(H256, Vec<u8>)> = data_iter.next();
 
+    // Local stats accumulator (avoids borrow issues with the Option<&mut>)
+    let mut local_io_wait = std::time::Duration::ZERO;
+    let mut local_flush_count: u64 = 0;
+
     while let Some(next_value) = next_value_opt {
         if nodes_to_write.len() as u64 > SIZE_TO_WRITE_DB {
+            local_flush_count += 1;
             let buffer_sender = buffer_sender.clone();
             scope.execute_priority(Box::new(move || {
                 let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
             }));
             // We wait to get a new buffer to avoid writing too much
+            let wait_start = std::time::Instant::now();
             nodes_to_write = buffer_receiver
                 .recv()
                 .expect("This channel shouldn't close");
+            local_io_wait += wait_start.elapsed();
         }
 
         let next_value_path = Nibbles::from_bytes(next_value.0.as_bytes());
@@ -336,6 +366,13 @@ where
     };
 
     let _ = flush_nodes_to_write(nodes_to_write, db, buffer_sender);
+
+    // Write back profiling stats if requested
+    if let Some(stats) = stats {
+        stats.io_wait = local_io_wait;
+        stats.flush_count = local_flush_count;
+    }
+
     Ok(hash)
 }
 
