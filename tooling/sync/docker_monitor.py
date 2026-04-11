@@ -221,6 +221,13 @@ class DiagnosticsTracker:
         }
         self.events.append(event)
 
+    def set_run_id(self, run_id: str) -> None:
+        """Set the current run ID so snapshots go to the right directory."""
+        self.run_id = run_id
+        # Ensure the directory exists now, not at the end of the run
+        run_dir = LOGS_DIR / f"run_{run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
     def _dump_snapshots(self, name: str, force: bool = False) -> None:
         """Dump the rolling buffer to disk."""
         if not force and self.dumped_for_run.get(name):
@@ -229,11 +236,11 @@ class DiagnosticsTracker:
         buf = self.buffers[name]
         if not buf:
             return
-        # Find the current run's log directory
-        run_dirs = sorted(LOGS_DIR.glob("run_*"), key=lambda p: p.name, reverse=True)
-        if not run_dirs:
+        if not hasattr(self, 'run_id') or not self.run_id:
             return
-        out_path = run_dirs[0] / f"{name}_peer_snapshots.json"
+        run_dir = LOGS_DIR / f"run_{self.run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        out_path = run_dir / f"{name}_peer_snapshots.json"
         try:
             import json
             out_path.write_text(json.dumps(buf, indent=2, default=str))
@@ -954,6 +961,7 @@ def main():
     # Get run count from existing logs (persists across restarts)
     run_count = get_next_run_count()
     run_id = generate_run_id()
+    tracker.set_run_id(run_id)
 
     print(f"📁 Logs will be saved to {LOGS_DIR.absolute()}")
     print(f"📝 Run history: {RUN_LOG_FILE.absolute()}")
@@ -1021,6 +1029,7 @@ def main():
                 # Prepare for another run
                 run_count += 1
                 run_id = generate_run_id()  # New run ID for the new cycle
+                tracker.set_run_id(run_id)
 
                 # If auto-update is enabled, the loop will pull/build/restart
                 # Otherwise, just restart containers now
