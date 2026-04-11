@@ -1224,7 +1224,9 @@ async fn insert_storages(
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_trie::{
         Nibbles, Node, ThreadPool,
-        trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
+        trie_sorted::{
+            BUFFER_COUNT, SIZE_TO_WRITE_DB, TrieInsertStats, trie_from_sorted_accounts_with_stats,
+        },
     };
     use std::thread::scope;
 
@@ -1349,7 +1351,8 @@ async fn insert_storages(
                 };
 
                 let trie_start = std::time::Instant::now();
-                let _ = trie_from_sorted_accounts(
+                let mut trie_stats = TrieInsertStats::default();
+                let _ = trie_from_sorted_accounts_with_stats(
                     trie.db(),
                     &mut iter.inspect(|_| {
                         leaf_count += 1;
@@ -1358,6 +1361,7 @@ async fn insert_storages(
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
+                    Some(&mut trie_stats),
                 )
                 .inspect_err(|err: &ethrex_trie::trie_sorted::TrieGenerationError| {
                     error!(
@@ -1365,6 +1369,18 @@ async fn insert_storages(
                     );
                 })
                 .map_err(SyncError::TrieGenerationError);
+                let elapsed = trie_start.elapsed();
+                if elapsed.as_secs() > 5 {
+                    let cpu_time = elapsed.saturating_sub(trie_stats.io_wait);
+                    info!(
+                        "insert_storages: large account {account_hash:x} took {:.1}s \
+                         (cpu={:.1}s, io_wait={:.1}s, flushes={}, leaves={leaf_count})",
+                        elapsed.as_secs_f64(),
+                        cpu_time.as_secs_f64(),
+                        trie_stats.io_wait.as_secs_f64(),
+                        trie_stats.flush_count,
+                    );
+                }
                 let _ = sender.send((trie_start.elapsed(), leaf_count));
             });
             pool.execute(task);
