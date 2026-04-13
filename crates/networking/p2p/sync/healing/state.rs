@@ -86,16 +86,6 @@ async fn heal_state_trie(
     storage_accounts: &mut AccountStorageRoots,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
-    // If the state root is already present in the local DB, healing is a no-op.
-    // This avoids querying peers for a root we already have, which is critical
-    // for chains where peers prune historical state quickly (e.g. BSC).
-    {
-        let trie = store.open_direct_state_trie(state_root)?;
-        if trie.root_node().ok().flatten().is_some() {
-            debug!("Skipping state healing: state root already present in local DB");
-            return Ok(true);
-        }
-    }
     // Add the current state trie root to the pending paths
     let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
         hash: state_root,
