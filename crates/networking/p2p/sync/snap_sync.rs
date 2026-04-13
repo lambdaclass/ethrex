@@ -991,11 +991,14 @@ pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
 // hardcoded here. Right now we keep two cases (Ethereum default 12s, BSC 3s) because
 // that's what the codebase actually targets, but adding more chains will become ugly.
 pub fn calculate_staleness_timestamp(timestamp: u64, chain_id: u64) -> u64 {
-    let block_time_secs: u64 = match chain_id {
-        56 | 97 => 3, // BSC mainnet / Chapel testnet
-        _ => 12,      // Ethereum and other 12s-block chains
-    };
-    timestamp + (SNAP_LIMIT as u64 * block_time_secs)
+    match chain_id {
+        // BSC peers (geth in snap mode) retain only ~100-150 blocks of state.
+        // At 3s blocks that's ~5 minutes, so the pivot must rotate well before
+        // then. 40 blocks = 120s gives us 3-4 rotations before the initial
+        // pivot is pruned, keeping the active pivot always in-window.
+        56 | 97 => timestamp + 40 * 3,
+        _ => timestamp + (SNAP_LIMIT as u64 * 12),
+    }
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
