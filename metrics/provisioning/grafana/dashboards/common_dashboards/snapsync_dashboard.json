@@ -1,0 +1,332 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "title": "Sync Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": {
+              "0": { "text": "None" }, "1": { "text": "Healing Storage" }, "2": { "text": "Healing State" },
+              "3": { "text": "Requesting Bytecodes" }, "4": { "text": "Requesting Accounts" },
+              "5": { "text": "Requesting Storage" }, "6": { "text": "Downloading Headers" },
+              "7": { "text": "Inserting Storage" }, "8": { "text": "Inserting Accounts" },
+              "9": { "text": "Inserting Accounts (no DB)" }
+            }, "type": "value" }
+          ],
+          "thresholds": { "steps": [
+            { "color": "green", "value": null }, { "color": "yellow", "value": 1 },
+            { "color": "orange", "value": 3 }, { "color": "blue", "value": 6 }
+          ]},
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "snapsync_stage{instance=~\"$instance\"}", "legendFormat": "Stage" }],
+      "title": "Sync Stage",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "snapsync_target_block{instance=~\"$instance\"}", "legendFormat": "Target Block" }],
+      "title": "Pivot Block",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "ethrex_p2p_peer_count{instance=~\"$instance\"}", "legendFormat": "Peers" }],
+      "title": "Peers",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2 } },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "gigagas{instance=~\"$instance\"}", "legendFormat": "Ggas/s" }],
+      "title": "Throughput (Ggas/s)",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "title": "Header Download",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 100, "unit": "percent", "decimals": 1, "thresholds": { "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 95 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 6 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_headers_downloaded{instance=~\"$instance\"} / clamp_min(snapsync_headers_total{instance=~\"$instance\"}, 1) * 100", "legendFormat": "Headers" }],
+      "title": "Header Progress",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "unit": "none", "decimals": 0, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 500 }, { "color": "green", "value": 1500 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 6 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_headers_per_second{instance=~\"$instance\"}", "legendFormat": "hdr/s" }],
+      "title": "Headers per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 6 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "(snapsync_headers_total{instance=~\"$instance\"} - snapsync_headers_downloaded{instance=~\"$instance\"}) / clamp_min(snapsync_headers_per_second{instance=~\"$instance\"}, 0.001) and snapsync_headers_per_second{instance=~\"$instance\"} > 0", "legendFormat": "ETA" }],
+      "title": "Header ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 6 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "time() - snapsync_headers_stage_start_timestamp{instance=~\"$instance\"} and snapsync_headers_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }],
+      "title": "Header Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "none" } },
+      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 11 },
+      "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" },
+      "targets": [
+        { "expr": "snapsync_headers_downloaded{instance=~\"$instance\"}", "legendFormat": "Downloaded" },
+        { "expr": "snapsync_headers_total{instance=~\"$instance\"}", "legendFormat": "Total" }
+      ],
+      "title": "",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "title": "Account Ranges",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 100, "unit": "percent", "decimals": 1, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 33 }, { "color": "green", "value": 66 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 14 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_accounts_inserted{instance=~\"$instance\"} / clamp_min(snapsync_accounts_downloaded{instance=~\"$instance\"}, 1) * 100", "legendFormat": "Accounts" }],
+      "title": "Account Progress",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "unit": "none", "decimals": 0, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 100 }, { "color": "green", "value": 500 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 14 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_accounts_per_second{instance=~\"$instance\"}", "legendFormat": "acc/s" }],
+      "title": "Accounts per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 14 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "(snapsync_accounts_downloaded{instance=~\"$instance\"} - snapsync_accounts_inserted{instance=~\"$instance\"}) / clamp_min(snapsync_accounts_per_second{instance=~\"$instance\"}, 0.001) and snapsync_accounts_per_second{instance=~\"$instance\"} > 0", "legendFormat": "ETA" }],
+      "title": "Account ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 14 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "time() - snapsync_accounts_stage_start_timestamp{instance=~\"$instance\"} and snapsync_accounts_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }],
+      "title": "Account Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "none" } },
+      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 19 },
+      "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" },
+      "targets": [
+        { "expr": "snapsync_accounts_inserted{instance=~\"$instance\"}", "legendFormat": "Inserted" },
+        { "expr": "snapsync_accounts_downloaded{instance=~\"$instance\"}", "legendFormat": "Downloaded" }
+      ],
+      "title": "",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "title": "Storage Ranges",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 22 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "snapsync_storage_downloaded{instance=~\"$instance\"}", "legendFormat": "Downloaded" },
+        { "expr": "snapsync_storage_inserted{instance=~\"$instance\"}", "legendFormat": "Inserted" }
+      ],
+      "title": "Storage Leaves",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "unit": "none", "decimals": 0, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 500 }, { "color": "green", "value": 2000 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 22 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_storage_per_second{instance=~\"$instance\"}", "legendFormat": "slots/s" }],
+      "title": "Storage Leaves per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 22 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "time() - snapsync_storage_stage_start_timestamp{instance=~\"$instance\"} and snapsync_storage_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }],
+      "title": "Storage Elapsed",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "title": "Healing",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 28 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "snapsync_state_leaves_healed{instance=~\"$instance\"}", "legendFormat": "State Healed" },
+        { "expr": "snapsync_storage_leaves_healed{instance=~\"$instance\"}", "legendFormat": "Storage Healed" }
+      ],
+      "title": "Leaves Healed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "unit": "none", "decimals": 0, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 100 }, { "color": "green", "value": 500 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 28 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_healing_per_second{instance=~\"$instance\"}", "legendFormat": "leaves/s" }],
+      "title": "Healing per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 28 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "time() - snapsync_healing_stage_start_timestamp{instance=~\"$instance\"} and snapsync_healing_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }],
+      "title": "Healing Elapsed",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "title": "Bytecodes",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 100, "unit": "percent", "decimals": 1, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 33 }, { "color": "green", "value": 66 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 34 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_bytecodes_downloaded{instance=~\"$instance\"} / clamp_min(snapsync_bytecodes_total{instance=~\"$instance\"}, 1) * 100", "legendFormat": "Bytecodes" }],
+      "title": "Bytecode Progress",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "min": 0, "unit": "none", "decimals": 0, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 50 }, { "color": "green", "value": 200 }] }, "color": { "mode": "thresholds" } } },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 34 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "snapsync_bytecodes_per_second{instance=~\"$instance\"}", "legendFormat": "codes/s" }],
+      "title": "Bytecodes per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 34 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "(snapsync_bytecodes_total{instance=~\"$instance\"} - snapsync_bytecodes_downloaded{instance=~\"$instance\"}) / clamp_min(snapsync_bytecodes_per_second{instance=~\"$instance\"}, 0.001) and snapsync_bytecodes_per_second{instance=~\"$instance\"} > 0", "legendFormat": "ETA" }],
+      "title": "Bytecode ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 34 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "time() - snapsync_bytecodes_stage_start_timestamp{instance=~\"$instance\"} and snapsync_bytecodes_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }],
+      "title": "Bytecode Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "none" } },
+      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 39 },
+      "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" },
+      "targets": [
+        { "expr": "snapsync_bytecodes_downloaded{instance=~\"$instance\"}", "legendFormat": "Downloaded" },
+        { "expr": "snapsync_bytecodes_total{instance=~\"$instance\"}", "legendFormat": "Total" }
+      ],
+      "title": "",
+      "type": "stat"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["ethrex", "snapsync"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "localhost:3701", "value": "localhost:3701" },
+        "datasource": { "type": "prometheus" },
+        "definition": "label_values(snapsync_stage, instance)",
+        "name": "instance",
+        "query": "label_values(snapsync_stage, instance)",
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "hide": 2,
+        "name": "DS_PROMETHEUS",
+        "query": "prometheus",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "ethrex Snap Sync",
+  "uid": "ethrex-snapsync"
+}
