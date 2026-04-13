@@ -28,7 +28,7 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         )
     });
-    DiscoveryServer::new_for_test(
+    DiscoveryServer::new_for_discv5_test(
         local_node,
         local_node_record,
         signer,
@@ -191,7 +191,7 @@ async fn test_enr_update_request_on_pong() {
         .set_session_info(remote_node_id, session)
         .unwrap();
 
-    let mut server = DiscoveryServer::new_for_test(
+    let mut server = DiscoveryServer::new_for_discv5_test(
         local_node,
         local_node_record,
         signer,

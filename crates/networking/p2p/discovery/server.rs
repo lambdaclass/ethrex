@@ -85,7 +85,6 @@ pub struct DiscoveryServer {
     pub(crate) udp_socket: Arc<UdpSocket>,
     pub(crate) store: Store,
     pub peer_table: PeerTable,
-    pub(crate) initial_lookup_interval: f64,
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
     pub discv5: Option<Discv5State>,
@@ -154,7 +153,6 @@ impl DiscoveryServer {
             None
         };
 
-        let initial_lookup_interval = config.initial_lookup_interval;
         let mut server = Self {
             local_node: local_node.clone(),
             local_node_record,
@@ -162,7 +160,6 @@ impl DiscoveryServer {
             udp_socket: udp_socket.clone(),
             store: storage,
             peer_table: peer_table.clone(),
-            initial_lookup_interval,
             config,
             discv4,
             discv5,
@@ -178,29 +175,6 @@ impl DiscoveryServer {
         server.start();
 
         Ok(())
-    }
-
-    pub fn new_for_test(
-        local_node: Node,
-        local_node_record: NodeRecord,
-        signer: SecretKey,
-        udp_socket: Arc<UdpSocket>,
-        peer_table: PeerTable,
-    ) -> Self {
-        use crate::discv5::server::Discv5State;
-        Self {
-            local_node,
-            local_node_record,
-            signer,
-            udp_socket,
-            store: Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to create store"),
-            peer_table,
-            initial_lookup_interval: 1000.0,
-            config: DiscoveryConfig::default(),
-            discv4: None,
-            discv5: Some(Discv5State::default()),
-        }
     }
 
     #[started]
@@ -456,7 +430,7 @@ impl DiscoveryServer {
             .unwrap_or_default();
         lookup_interval_function(
             peer_completion,
-            self.initial_lookup_interval,
+            self.config.initial_lookup_interval,
             super::LOOKUP_INTERVAL_MS,
         )
     }
@@ -470,4 +444,35 @@ pub fn is_discv4_packet(data: &[u8]) -> bool {
     let packet_hash = &data[0..32];
     let computed_hash = keccak(&data[32..]);
     packet_hash == computed_hash.as_bytes()
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl DiscoveryServer {
+    /// Builds a DiscoveryServer suitable for unit tests of discv5 handlers.
+    /// Only discv5 state is initialized; discv4 is disabled.
+    /// Uses an in-memory store and a dummy initial lookup interval.
+    pub fn new_for_discv5_test(
+        local_node: Node,
+        local_node_record: NodeRecord,
+        signer: SecretKey,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
+    ) -> Self {
+        Self {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            store: Store::new("", ethrex_storage::EngineType::InMemory)
+                .expect("Failed to create store"),
+            peer_table,
+            config: DiscoveryConfig {
+                discv4_enabled: false,
+                discv5_enabled: true,
+                initial_lookup_interval: 1000.0,
+            },
+            discv4: None,
+            discv5: Some(Discv5State::default()),
+        }
+    }
 }
