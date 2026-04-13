@@ -382,6 +382,15 @@ impl BinaryTrieState {
         self.trie.insert(tree_key, value)
     }
 
+    /// Insert multiple values sharing the same stem in a single trie walk.
+    pub fn trie_insert_multi(
+        &mut self,
+        stem: [u8; 31],
+        values: &[(u8, [u8; 32])],
+    ) -> Result<(), BinaryTrieError> {
+        self.trie.insert_multi(stem, values)
+    }
+
     /// Read account state from the binary trie.
     ///
     /// Returns None if the account doesn't exist (no basic_data leaf).

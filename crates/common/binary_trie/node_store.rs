@@ -503,6 +503,58 @@ impl NodeStore {
         self.freed.len()
     }
 
+    /// Read an internal node's child pointer and ensure the node is dirty.
+    ///
+    /// For already-dirty nodes this is a single HashMap lookup (no remove+reinsert).
+    /// For non-dirty nodes it loads and promotes to dirty.
+    ///
+    /// Returns:
+    /// - `Ok(Some(child_id))` if the node is Internal (child in direction `bit`)
+    /// - `Ok(None)` if the node is a Stem (caller should use `take` instead)
+    pub fn peek_internal_child_and_ensure_dirty(
+        &mut self,
+        id: NodeId,
+        bit: u8,
+    ) -> Result<Option<Option<NodeId>>, BinaryTrieError> {
+        // Fast path: already dirty, just read the child pointer.
+        if let Some(Node::Internal(internal)) = self.dirty_nodes.get(&id) {
+            let child = if bit == 0 {
+                internal.left
+            } else {
+                internal.right
+            };
+            return Ok(Some(child));
+        }
+        if self.dirty_ids.contains(&id) {
+            // Dirty but it's a Stem node.
+            return Ok(None);
+        }
+
+        // Not dirty: load from warm/clean/backend and promote.
+        let node = if let Some(node) = self.warm_nodes.remove(&id) {
+            node
+        } else if let Some(node) = self.clean_cache.get_mut().unwrap().pop(&id) {
+            node
+        } else {
+            self.load_from_db(id)?
+        };
+
+        let result = if let Node::Internal(ref internal) = node {
+            let child = if bit == 0 {
+                internal.left
+            } else {
+                internal.right
+            };
+            Some(child)
+        } else {
+            None
+        };
+
+        self.dirty_nodes.insert(id, node);
+        self.dirty_ids.insert(id);
+        Ok(result)
+    }
+
     /// Update a dirty internal node's child pointer and clear its cached hash
     /// in-place, without removing and reinserting into the HashMap.
     ///

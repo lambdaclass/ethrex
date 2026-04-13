@@ -39,6 +39,28 @@ impl BinaryTrie {
         Ok(())
     }
 
+    /// Insert multiple values that share the same 31-byte stem in a single trie walk.
+    ///
+    /// This avoids redundant path traversals when inserting several sub-indices
+    /// for the same stem (e.g. basic_data + code_hash for one account).
+    pub fn insert_multi(
+        &mut self,
+        stem: [u8; 31],
+        values: &[(u8, [u8; 32])],
+    ) -> Result<(), BinaryTrieError> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        self.root = Some(insert_node_multi(
+            &mut self.store,
+            self.root.take(),
+            stem,
+            values,
+            0,
+        )?);
+        Ok(())
+    }
+
     /// Look up the value for a key, returning None if absent.
     ///
     /// Uses `get_with_promotion` internally: cold cache misses are promoted into
@@ -124,6 +146,18 @@ fn insert_node(
                 break (store.create(Node::Stem(stem_node)), true);
             }
             Some(id) => {
+                // Fast path: peek at internal nodes without take/put round-trip.
+                let bit = stem_bit(&stem, depth);
+                if let Some(child) = store.peek_internal_child_and_ensure_dirty(id, bit)? {
+                    if depth >= MAX_DEPTH {
+                        return Err(BinaryTrieError::MaxDepthExceeded);
+                    }
+                    path.push((id, bit));
+                    current = child;
+                    depth += 1;
+                    continue;
+                }
+                // Stem node: need take/put for mutation.
                 let existing = store.take(id)?;
                 match existing {
                     Node::Stem(mut stem_node) => {
@@ -143,19 +177,10 @@ fn insert_node(
                             break (new_id, true);
                         }
                     }
-                    Node::Internal(internal) => {
-                        if depth >= MAX_DEPTH {
-                            store.put(id, Node::Internal(internal));
-                            return Err(BinaryTrieError::MaxDepthExceeded);
-                        }
-                        let bit = stem_bit(&stem, depth);
-                        let next = if bit == 0 { internal.left } else { internal.right };
-                        // Put back immediately - promotes to dirty for in-place
-                        // mutation in phase 3.
-                        store.put(id, Node::Internal(internal));
-                        path.push((id, bit));
-                        current = next;
-                        depth += 1;
+                    Node::Internal(_) => {
+                        unreachable!(
+                            "peek_internal_child_and_ensure_dirty returned None for Internal node"
+                        );
                     }
                 }
             }
@@ -173,6 +198,94 @@ fn insert_node(
     } else {
         // Same-stem update: child pointers are correct, just invalidate hashes.
         // Once we hit an ancestor whose hash is already None, all above are too.
+        for &(ancestor_id, _) in path.iter().rev() {
+            if !store.invalidate_dirty_hash(ancestor_id) {
+                break;
+            }
+        }
+    }
+
+    Ok(if path.is_empty() { leaf_id } else { path[0].0 })
+}
+
+/// Like `insert_node` but sets multiple (sub_index, value) pairs on the same stem
+/// in a single trie walk. Avoids redundant path traversals for same-stem inserts.
+fn insert_node_multi(
+    store: &mut NodeStore,
+    root_id: Option<NodeId>,
+    stem: [u8; 31],
+    values: &[(u8, [u8; 32])],
+    _depth: usize,
+) -> Result<NodeId, BinaryTrieError> {
+    debug_assert!(!values.is_empty());
+
+    // Phase 1: Walk down, collecting (internal_node_id, bit_direction).
+    let mut path: Vec<(NodeId, u8)> = Vec::new();
+    let mut current = root_id;
+    let mut depth = 0usize;
+
+    let (leaf_id, child_changed) = loop {
+        match current {
+            None => {
+                // Empty slot: create a new StemNode with all values.
+                let mut stem_node = StemNode::new(stem);
+                for &(sub_index, value) in values {
+                    stem_node.set_value(sub_index, value);
+                }
+                break (store.create(Node::Stem(stem_node)), true);
+            }
+            Some(id) => {
+                // Fast path: peek at internal nodes without take/put round-trip.
+                let bit = stem_bit(&stem, depth);
+                if let Some(child) = store.peek_internal_child_and_ensure_dirty(id, bit)? {
+                    if depth >= MAX_DEPTH {
+                        return Err(BinaryTrieError::MaxDepthExceeded);
+                    }
+                    path.push((id, bit));
+                    current = child;
+                    depth += 1;
+                    continue;
+                }
+                // Stem node: need take/put for mutation.
+                let existing = store.take(id)?;
+                match existing {
+                    Node::Stem(mut stem_node) => {
+                        if stem_node.stem == stem {
+                            // Same stem: set all values, ID unchanged.
+                            for &(sub_index, value) in values {
+                                stem_node.set_value(sub_index, value);
+                            }
+                            store.put(id, Node::Stem(stem_node));
+                            break (id, false);
+                        } else {
+                            if depth >= MAX_DEPTH {
+                                store.put(id, Node::Stem(stem_node));
+                                return Err(BinaryTrieError::MaxDepthExceeded);
+                            }
+                            store.free(id);
+                            let new_id = split_stems_multi(store, stem_node, stem, values, depth)?;
+                            break (new_id, true);
+                        }
+                    }
+                    Node::Internal(_) => {
+                        unreachable!(
+                            "peek_internal_child_and_ensure_dirty returned None for Internal node"
+                        );
+                    }
+                }
+            }
+        }
+    };
+
+    // Phase 3: Walk back up, updating ancestors in-place.
+    if child_changed {
+        let mut child_id = leaf_id;
+        for &(ancestor_id, bit) in path.iter().rev() {
+            store.update_dirty_child(ancestor_id, bit, child_id);
+            child_id = ancestor_id;
+        }
+    } else {
+        // Same-stem update: just invalidate hashes up the path.
         for &(ancestor_id, _) in path.iter().rev() {
             if !store.invalidate_dirty_hash(ancestor_id) {
                 break;
@@ -225,6 +338,48 @@ fn split_stems(
             new_value,
             depth + 1,
         )?;
+        let (left, right) = if new_bit == 0 {
+            (Some(inner), None)
+        } else {
+            (None, Some(inner))
+        };
+        Ok(store.create(Node::Internal(InternalNode::new(left, right))))
+    }
+}
+
+/// Like `split_stems` but the new stem gets multiple values set.
+fn split_stems_multi(
+    store: &mut NodeStore,
+    existing: StemNode,
+    new_stem: [u8; 31],
+    values: &[(u8, [u8; 32])],
+    depth: usize,
+) -> Result<NodeId, BinaryTrieError> {
+    if depth >= MAX_DEPTH {
+        return Err(BinaryTrieError::MaxDepthExceeded);
+    }
+
+    let existing_bit = stem_bit(&existing.stem, depth);
+    let new_bit = stem_bit(&new_stem, depth);
+
+    if existing_bit != new_bit {
+        let mut new_stem_node = StemNode::new(new_stem);
+        for &(sub_index, value) in values {
+            new_stem_node.set_value(sub_index, value);
+        }
+
+        let existing_id = store.create(Node::Stem(existing));
+        let new_id = store.create(Node::Stem(new_stem_node));
+
+        let (left, right) = if existing_bit == 0 {
+            (Some(existing_id), Some(new_id))
+        } else {
+            (Some(new_id), Some(existing_id))
+        };
+
+        Ok(store.create(Node::Internal(InternalNode::new(left, right))))
+    } else {
+        let inner = split_stems_multi(store, existing, new_stem, values, depth + 1)?;
         let (left, right) = if new_bit == 0 {
             (Some(inner), None)
         } else {
@@ -631,6 +786,124 @@ mod tests {
         assert_eq!(trie.get(k1), Some(val(20)));
         let root_id = trie.root.unwrap();
         assert!(matches!(trie.store.get(root_id).unwrap(), Node::Stem(_)));
+    }
+
+    #[test]
+    fn insert_multi_basic() {
+        let mut trie = BinaryTrie::new();
+        let stem = [0xAB; 31];
+        let v0 = [1u8; 32];
+        let v1 = [2u8; 32];
+        trie.insert_multi(stem, &[(0, v0), (1, v1)]).unwrap();
+
+        let mut key0 = [0u8; 32];
+        key0[..31].copy_from_slice(&stem);
+        key0[31] = 0;
+        let mut key1 = [0u8; 32];
+        key1[..31].copy_from_slice(&stem);
+        key1[31] = 1;
+
+        assert_eq!(trie.get(key0), Some(v0));
+        assert_eq!(trie.get(key1), Some(v1));
+    }
+
+    #[test]
+    fn insert_multi_into_existing_stem() {
+        let mut trie = BinaryTrie::new();
+        let stem = [0xCD; 31];
+        let v0 = [10u8; 32];
+        let v1 = [20u8; 32];
+        let v2 = [30u8; 32];
+
+        // Insert one value via regular insert.
+        let mut key0 = [0u8; 32];
+        key0[..31].copy_from_slice(&stem);
+        key0[31] = 0;
+        trie.insert(key0, v0).unwrap();
+
+        // Insert two more via insert_multi.
+        trie.insert_multi(stem, &[(1, v1), (2, v2)]).unwrap();
+
+        let mut key1 = [0u8; 32];
+        key1[..31].copy_from_slice(&stem);
+        key1[31] = 1;
+        let mut key2 = [0u8; 32];
+        key2[..31].copy_from_slice(&stem);
+        key2[31] = 2;
+
+        assert_eq!(trie.get(key0), Some(v0));
+        assert_eq!(trie.get(key1), Some(v1));
+        assert_eq!(trie.get(key2), Some(v2));
+    }
+
+    #[test]
+    fn insert_multi_causes_split() {
+        let mut trie = BinaryTrie::new();
+        let stem_a = [0x00; 31]; // bit 0 = 0
+        let stem_b = [0x80; 31]; // bit 0 = 1 (different at depth 0)
+
+        let va = [1u8; 32];
+        trie.insert_multi(stem_a, &[(0, va)]).unwrap();
+
+        let vb0 = [2u8; 32];
+        let vb1 = [3u8; 32];
+        trie.insert_multi(stem_b, &[(0, vb0), (1, vb1)]).unwrap();
+
+        let mut key_a0 = [0u8; 32];
+        key_a0[..31].copy_from_slice(&stem_a);
+        key_a0[31] = 0;
+        let mut key_b0 = [0u8; 32];
+        key_b0[..31].copy_from_slice(&stem_b);
+        key_b0[31] = 0;
+        let mut key_b1 = [0u8; 32];
+        key_b1[..31].copy_from_slice(&stem_b);
+        key_b1[31] = 1;
+
+        assert_eq!(trie.get(key_a0), Some(va));
+        assert_eq!(trie.get(key_b0), Some(vb0));
+        assert_eq!(trie.get(key_b1), Some(vb1));
+    }
+
+    #[test]
+    fn insert_multi_single_value() {
+        let mut trie_multi = BinaryTrie::new();
+        let mut trie_single = BinaryTrie::new();
+        let stem = [0x42; 31];
+        let v = [7u8; 32];
+
+        let mut key = [0u8; 32];
+        key[..31].copy_from_slice(&stem);
+        key[31] = 5;
+
+        trie_single.insert(key, v).unwrap();
+        trie_multi.insert_multi(stem, &[(5, v)]).unwrap();
+
+        assert_eq!(trie_multi.get(key), trie_single.get(key));
+    }
+
+    #[test]
+    fn insert_multi_overwrites() {
+        let mut trie = BinaryTrie::new();
+        let stem = [0x33; 31];
+        let old_v = [1u8; 32];
+        let new_v = [9u8; 32];
+
+        let mut key = [0u8; 32];
+        key[..31].copy_from_slice(&stem);
+        key[31] = 0;
+
+        trie.insert(key, old_v).unwrap();
+        trie.insert_multi(stem, &[(0, new_v)]).unwrap();
+
+        assert_eq!(trie.get(key), Some(new_v));
+    }
+
+    #[test]
+    fn insert_multi_empty_is_noop() {
+        let mut trie = BinaryTrie::new();
+        let stem = [0x11; 31];
+        trie.insert_multi(stem, &[]).unwrap();
+        assert!(trie.root.is_none());
     }
 
     #[test]

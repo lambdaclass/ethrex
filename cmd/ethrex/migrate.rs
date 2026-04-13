@@ -78,11 +78,7 @@ fn auto_tune_config(preimage_file_size: u64) -> MigrateConfig {
         (true, 500_000)
     } else {
         // Not enough for in-memory: mmap mode.
-        let interval = if usable > 4 * GB {
-            1_000_000
-        } else {
-            500_000
-        };
+        let interval = if usable > 4 * GB { 1_000_000 } else { 500_000 };
         (false, interval)
     };
 
@@ -188,7 +184,7 @@ pub async fn migrate_with_preimages(
     let mut bufs = EntryBufs::new();
     let mut inserts_since_flush = 0u64;
     let flush_interval = config.flush_interval;
-    const BATCH_SIZE: usize = 50_000;
+    const BATCH_SIZE: usize = 200_000;
 
     // Raw entries read from the file, to be processed in parallel.
     // Each entry: (entry_type, keccak_hashes, raw_value)
@@ -350,10 +346,22 @@ pub async fn migrate_with_preimages(
 
         inserts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
-        for (key, value) in &inserts {
+        // Group consecutive same-stem inserts and batch them.
+        let mut group: Vec<(u8, [u8; 32])> = Vec::new();
+        let mut i = 0;
+        while i < inserts.len() {
+            let stem: [u8; 31] = inserts[i].0[..31].try_into().unwrap();
+            group.clear();
+            group.push((inserts[i].0[31], inserts[i].1));
+            let mut j = i + 1;
+            while j < inserts.len() && inserts[j].0[..31] == stem[..] {
+                group.push((inserts[j].0[31], inserts[j].1));
+                j += 1;
+            }
             state
-                .trie_insert(*key, *value)
+                .trie_insert_multi(stem, &group)
                 .map_err(|e| eyre::eyre!("Failed to insert: {e}"))?;
+            i = j;
         }
         inserts_since_flush += inserts.len() as u64;
 
@@ -361,7 +369,9 @@ pub async fn migrate_with_preimages(
         if inserts_since_flush >= flush_interval {
             let dirty = state.dirty_node_count();
             let warm = state.warm_node_count();
-            info!("Flushing trie to disk ({inserts_since_flush} inserts, {dirty} dirty nodes, {warm} warm nodes)...");
+            info!(
+                "Flushing trie to disk ({inserts_since_flush} inserts, {dirty} dirty nodes, {warm} warm nodes)..."
+            );
             state
                 .flush(0, H256::zero())
                 .map_err(|e| eyre::eyre!("Flush error: {e}"))?;
