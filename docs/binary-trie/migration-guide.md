@@ -120,30 +120,36 @@ account states (nonce, balance, code hash) and storage slot values.
 
 ## Step 5: Run the migration
 
-With all three export files ready, run the ethrex migrate command. This
-creates a fresh ethrex database and builds the binary trie from the exported
-state:
+With all three export files ready, run the ethrex migrate command. You must
+specify `--at-block` with the block number the snapshot state corresponds to
+(the state is the result of executing that block). This is typically shown
+on the ethPandaOps snapshot page or in the Geth log when the snapshot was
+taken.
 
 ```bash
-ethrex --network <network> migrate <preimages.rlp> <snapshot.rlp>
+ethrex --network <network> migrate <preimages.rlp> <snapshot.rlp> --code <code.rlp> --at-block <BLOCK_NUMBER>
 ```
 
 For example:
 
 ```bash
-ethrex --network hoodi migrate preimages.rlp snapshot.rlp
+ethrex --network hoodi migrate preimages.rlp snapshot.rlp --code code.rlp --at-block 3456789
 ```
 
-The tool will:
-1. Create a new ethrex database with genesis state
-2. Auto-tune memory mode and flush interval based on available RAM
-3. Parse preimages (into HashMaps or sorted flat files depending on mode)
-4. Stream the snapshot file in batches, processing entries in parallel:
-   - Look up the original address/slot via the preimage map
-   - Compute the BLAKE3 tree key
-   - Insert into the binary trie
-5. Periodically flush the trie to disk and release cached nodes
-6. Compute and log the final state root
+The tool runs in two phases:
+
+**Phase 1 - Collection**: Streams the snapshot file, decodes entries in
+parallel (preimage lookups, RLP decode, BLAKE3 key computation), and writes
+all `(tree_key, value)` pairs to a temporary RocksDB column family. No trie
+is built during this phase.
+
+**Phase 2 - Build**: Iterates the collected entries in sorted key order and
+constructs the binary trie in a single left-to-right pass. Only a small
+"right spine" of internal nodes is kept in memory (~25 KB). Completed
+subtrees are flushed to disk immediately.
+
+After both phases, the block number is recorded so the node knows where to
+resume syncing from.
 
 Progress is logged every 5 seconds with percentage, entry counts, and
 throughput.
@@ -162,19 +168,20 @@ ethrex --network <network>
 - **Memory usage**: The tool auto-tunes based on available RAM
   (`/proc/meminfo`). If enough memory is available it loads preimages into
   HashMaps for maximum throughput. Otherwise it falls back to memory-mapped
-  sorted files with binary search (constant RAM, slower lookups). The trie
-  node cache is cleared after each periodic flush to keep memory bounded.
+  sorted files with binary search (constant RAM, slower lookups).
   Use `--fast` to force in-memory mode regardless of available RAM.
+  The build phase uses very little memory (only the open trie spine).
 - **Code chunks**: The snapshot export contains code hashes but not the
   actual bytecode. A separate `geth db export code` step (using the
   patched Geth fork) provides the raw bytecode needed to populate code
-  chunks in the binary trie. Code chunk import is not yet integrated
-  into the migration tool.
-- **Disk space**: You need space for both export files plus the final ethrex
-  database. Plan for ~3x the snapshot size as headroom.
-- **Snapshot freshness**: The Geth snapshot corresponds to a specific block.
-  After migration, the node will need to sync forward from that block to
-  reach the chain head.
-- **Flush interval**: The tool auto-tunes how often it flushes the trie to
-  disk (between 2M and 20M inserts) based on available RAM. More memory
-  allows larger batches, reducing RocksDB write amplification.
+  chunks and code_size in the binary trie.
+- **Disk space**: You need space for the export files, the temporary
+  collection CF (~same size as snapshot), plus the final ethrex database.
+  Plan for ~3x the snapshot size as headroom.
+- **Snapshot freshness**: The Geth snapshot corresponds to a specific block
+  (provided via `--at-block`). After migration, the node will need to sync
+  forward from that block to reach the chain head.
+- **Performance**: On Hoodi (~33M accounts, ~268M storage slots), the
+  collection phase runs at ~30 MB/s and the build phase processes ~5M
+  entries/sec. Total migration time is ~30 minutes on a server with 32 GB
+  RAM and SSD storage.

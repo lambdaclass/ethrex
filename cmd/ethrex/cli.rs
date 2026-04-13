@@ -563,6 +563,13 @@ pub enum Subcommand {
             help = "Force in-memory preimage lookups (auto-detected by default based on available RAM)"
         )]
         fast: bool,
+        #[arg(
+            long = "at-block",
+            required = true,
+            value_name = "BLOCK_NUMBER",
+            help = "Block number the snapshot state corresponds to (state is post-execution of this block)"
+        )]
+        at_block: u64,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -679,6 +686,7 @@ impl Subcommand {
                 snapshot_path,
                 code_path,
                 fast,
+                at_block,
             } => {
                 let genesis = network.get_genesis()?;
                 crate::migrate::migrate_with_preimages(
@@ -688,6 +696,7 @@ impl Subcommand {
                     &effective_datadir,
                     genesis,
                     fast,
+                    at_block,
                 )
                 .await?;
             }

@@ -1451,6 +1451,14 @@ impl Store {
         self.backend.drop_cf(table)
     }
 
+    /// Set the latest block number in chain data (used by migration).
+    pub fn set_latest_block_number(&self, block_number: u64) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        let mut tx = self.backend.begin_write()?;
+        tx.put(CHAIN_DATA, &key, &block_number.to_le_bytes())?;
+        tx.commit()
+    }
+
     pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         self.apply_updates(update_batch)
     }

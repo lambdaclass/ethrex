@@ -130,6 +130,7 @@ pub async fn migrate_with_preimages(
     datadir: &Path,
     genesis: Genesis,
     fast_override: bool,
+    at_block: u64,
 ) -> eyre::Result<()> {
     // Step 1: Open store.
     let store = init_store(datadir, genesis.clone())
@@ -184,7 +185,11 @@ pub async fn migrate_with_preimages(
     let state_root = build_phase(&store, total_inserts)?;
     info!("Binary trie state root: {:#x}", H256::from(state_root));
 
-    // Step 6: Clean up temp CF.
+    // Step 6: Record the block number the migrated state corresponds to.
+    store.set_latest_block_number(at_block)?;
+    info!("Recorded migrated state at block {at_block}");
+
+    // Step 7: Clean up temp CF.
     store.drop_cf(MIGRATION_TEMP)?;
     info!("Migration complete.");
 
