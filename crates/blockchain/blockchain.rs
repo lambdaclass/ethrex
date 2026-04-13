@@ -52,7 +52,7 @@ pub mod proof_coordinator;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, info, instrument, warn};
+use ::tracing::{debug, error, info, instrument, warn};
 use constants::{
     AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
     POST_OSAKA_GAS_LIMIT_CAP,
@@ -212,7 +212,7 @@ pub struct Blockchain {
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
-    merkle_pool: Arc<rayon::ThreadPool>,
+    merkle_pool: rayon::ThreadPool,
 }
 
 /// Configuration options for the blockchain.
@@ -322,14 +322,12 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    fn build_merkle_pool() -> Arc<rayon::ThreadPool> {
-        Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(17)
-                .thread_name(|i| format!("merkle-worker-{i}"))
-                .build()
-                .expect("Failed to create merkle thread pool"),
-        )
+    fn build_merkle_pool() -> rayon::ThreadPool {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(17)
+            .thread_name(|i| format!("merkle-worker-{i}"))
+            .build()
+            .expect("Failed to create merkle thread pool")
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
@@ -652,7 +650,9 @@ impl Blockchain {
                         Ok(r) => r,
                         Err(_) => Err(StoreError::Custom(format!("shard worker {i} panicked"))),
                     };
-                    let _ = done_tx.send(result);
+                    if let Err(cb::SendError(Err(e))) = done_tx.send(result) {
+                        error!("Failed to send worker {i} error to watcher: {e}");
+                    }
                 });
             }
             drop(done_tx); // Only workers hold senders
