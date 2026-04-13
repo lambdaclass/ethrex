@@ -124,9 +124,10 @@ pub async fn sync_cycle_snap(
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
-            // Estimate a recent block number: use a high number, peers will
-            // serve whatever they have at or near that number.
-            let estimated_block = 100_900_000u64.saturating_sub(attempt as u64 * 100);
+            // Estimate a recent block number. Chapel is past 101M blocks.
+            // Use a very recent block so peers (including snap-serving peers)
+            // still have the state for it.
+            let estimated_block = 101_450_000u64.saturating_sub(attempt as u64 * 100);
             info!("BSC pivot: requesting header at block {estimated_block} (attempt {attempt})");
             if let Ok(Some(headers)) = peers
                 .request_block_headers_from_number(
