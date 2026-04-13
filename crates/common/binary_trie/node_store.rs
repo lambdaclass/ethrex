@@ -11,11 +11,10 @@ use crate::node::{InternalNode, Node, NodeId, STEM_VALUES, StemNode};
 /// Default maximum number of clean nodes kept in the LRU cache.
 ///
 /// Clean LRU cache capacity. InternalNode ~100 bytes, StemNode ~200 bytes
-/// with sparse values. Combined with dirty_nodes and warm_nodes (unbounded
-/// HashMaps), total memory is hard to predict. 100K entries keeps memory
-/// bounded while still caching the hot working set. Nodes evicted from the
-/// LRU are loaded from the backend on demand.
-const DEFAULT_CLEAN_CACHE_CAP: usize = 100_000;
+/// with sparse values. At 2M entries this uses ~200-400 MB of RAM.
+/// (Previously reduced to 100K when StemNodes carried a per-node subtree
+/// cache of ~10-16 KB each; that cache has since been removed.)
+const DEFAULT_CLEAN_CACHE_CAP: usize = 2_000_000;
 
 // Meta keys for storage (stored alongside nodes in BINARY_TRIE_NODES table).
 // The 0xFF prefix ensures they don't collide with u64 node IDs (8 bytes, no prefix).
