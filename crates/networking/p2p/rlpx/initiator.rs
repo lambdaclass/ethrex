@@ -74,10 +74,19 @@ impl RLPxInitiator {
         _msg: rlpx_initiator_protocol::LookForPeer,
         ctx: &Context<Self>,
     ) {
-        let _ = self
-            .do_look_for_peer()
-            .await
-            .inspect_err(|e| error!(err=?e, "Error looking for peers"));
+        if let Err(e) = self.do_look_for_peer().await {
+            error!(err=?e, "Error looking for peers");
+            if matches!(
+                e,
+                RLPxInitiatorError::ActorError(ActorError::RequestTimeout)
+            ) {
+                crate::utils::log_actor_timeout_diagnostics(
+                    "PeerTable",
+                    "RLPxInitiator::do_look_for_peer",
+                )
+                .await;
+            }
+        }
 
         send_after(
             self.get_lookup_interval().await,
