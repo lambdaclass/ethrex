@@ -456,7 +456,7 @@ pub async fn snap_sync(
         loop {
             while block_is_stale(&pivot_header, chain_id) {
                 pivot_header = if is_bsc {
-                    update_pivot_bsc(&pivot_header, peers, &blockchain).await?
+                    update_pivot_bsc(&pivot_header, peers, &blockchain, block_sync_state).await?
                 } else {
                     update_pivot(
                         pivot_header.number,
@@ -567,7 +567,7 @@ pub async fn snap_sync(
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header, chain_id) {
             pivot_header = if is_bsc {
-                update_pivot_bsc(&pivot_header, peers, &blockchain).await?
+                update_pivot_bsc(&pivot_header, peers, &blockchain, block_sync_state).await?
             } else {
                 update_pivot(
                     pivot_header.number,
@@ -943,10 +943,16 @@ pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) 
 /// long-range header-by-hash requests, so that step always fails and restarts snap
 /// sync. Instead, we pick the freshest peer-status candidate (augmented with
 /// forward-probing) and swap it in as the new pivot.
+///
+/// The new pivot header is stored via `process_incoming_headers` so that
+/// downstream code (e.g. `get_account_state_by_acc_hash`) can resolve it.
+/// `update_pivot` does this implicitly by processing the whole header chain;
+/// here we just process the single new pivot header.
 pub async fn update_pivot_bsc(
     current_pivot: &BlockHeader,
     peers: &mut PeerHandler,
     blockchain: &std::sync::Arc<ethrex_blockchain::Blockchain>,
+    block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
     let mut best_pivot: Option<BlockHeader> = Some(current_pivot.clone());
     // Resolve all candidate hashes to headers, pick the highest-number one.
@@ -972,6 +978,11 @@ pub async fn update_pivot_bsc(
         best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
     }
     let new_pivot = best_pivot.ok_or(SyncError::NoBlockHeaders)?;
+    // Store the new pivot header in the DB so hash-based state lookups resolve.
+    // This mirrors what `update_pivot` does via its header-chain download path.
+    block_sync_state
+        .process_incoming_headers(std::iter::once(new_pivot.clone()))
+        .await?;
     info!(
         "BSC pivot refreshed: block {} -> {} (hash {:?})",
         current_pivot.number,
