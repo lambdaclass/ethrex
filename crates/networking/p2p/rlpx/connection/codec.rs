@@ -234,11 +234,20 @@ impl Decoder for RLPxCodec {
             .read()
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
         tracing::trace!(msg_id, ?version, data_len = msg_data.len(), first_bytes = ?&msg_data[..msg_data.len().min(32)], "Decoding RLPx message");
-        Ok(Some(rlpx::Message::decode(
-            msg_id,
-            msg_data,
-            version,
-        )?))
+        match rlpx::Message::decode(msg_id, msg_data, version) {
+            Ok(msg) => Ok(Some(msg)),
+            Err(err) => {
+                tracing::debug!(
+                    msg_id,
+                    ?version,
+                    data_len = msg_data.len(),
+                    first_bytes = ?&msg_data[..msg_data.len().min(64)],
+                    error = ?err,
+                    "Failed to decode RLPx message",
+                );
+                Err(err.into())
+            }
+        }
     }
 
     fn framed<S: AsyncRead + AsyncWrite + Sized>(self, io: S) -> Framed<S, Self>
