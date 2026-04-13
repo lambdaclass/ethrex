@@ -244,7 +244,9 @@ async fn heal_state_trie(
                 inflight_tasks += 1;
 
                 let peer_table = peers.peer_table.clone();
+                let batch_len = batch.len();
                 tokio::spawn(async move {
+                    debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
                     // TODO: check errors to determine whether the current block is stale
                     let response = request_state_trienodes(
                         peer_id,
@@ -254,6 +256,11 @@ async fn heal_state_trie(
                         batch.clone(),
                     )
                     .await;
+                    debug!(
+                        "HEAL WORKER returned: peer={peer_id} ok={} err={:?}",
+                        response.is_ok(),
+                        response.as_ref().err(),
+                    );
                     // TODO: add error handling
                     tx.send((peer_id, response, batch)).await.inspect_err(
                         |err| debug!(error=?err, "Failed to send state trie nodes response"),
