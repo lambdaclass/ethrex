@@ -534,8 +534,10 @@ pub async fn request_storage_ranges(
         .set(CurrentStepValue::RequestingStorageRanges);
     debug!("Starting request_storage_ranges function");
     let chain_id = store.get_chain_config().chain_id;
+    let is_bsc = chain_id == 56 || chain_id == 97;
     // 1) split the range in chunks of same length
     let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    let mut accounts_needing_heal: Vec<H256> = Vec::new();
     for (account, (maybe_root_hash, _)) in &account_storage_roots.accounts_with_storage_root {
         match maybe_root_hash {
             Some(root) => {
@@ -545,21 +547,34 @@ pub async fn request_storage_ranges(
                     .push(*account);
             }
             None => {
-                let root = store
-                    .get_account_state_by_acc_hash(pivot_header.hash(), *account)?
-                    .ok_or_else(|| {
-                        SnapError::InternalError(
+                match store.get_account_state_by_acc_hash(pivot_header.hash(), *account)? {
+                    Some(state) => {
+                        accounts_by_root_hash
+                            .entry(state.storage_root)
+                            .or_default()
+                            .push(*account);
+                    }
+                    None if is_bsc => {
+                        // After BSC pivot rotation, some accounts downloaded under the
+                        // previous pivot aren't indexed under the new pivot hash yet.
+                        // Defer them to storage healing rather than crashing.
+                        accounts_needing_heal.push(*account);
+                    }
+                    None => {
+                        return Err(SnapError::InternalError(
                             "Could not find account that should have been downloaded or healed"
                                 .to_string(),
-                        )
-                    })?
-                    .storage_root;
-                accounts_by_root_hash
-                    .entry(root)
-                    .or_default()
-                    .push(*account);
+                        ));
+                    }
+                }
             }
         }
+    }
+    for account in accounts_needing_heal {
+        account_storage_roots
+            .accounts_with_storage_root
+            .remove(&account);
+        account_storage_roots.healed_accounts.insert(account);
     }
     let mut accounts_by_root_hash = Vec::from_iter(accounts_by_root_hash);
     // TODO: Turn this into a stable sort for binary search.
