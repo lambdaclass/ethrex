@@ -390,6 +390,14 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     phase_elapsed_str,
                     &phase_metrics(previous_step, &phase_start).await,
                 );
+
+                // Emit final metrics for completed phase
+                #[cfg(feature = "metrics")]
+                push_snapsync_prometheus_metrics(
+                    previous_step,
+                    phase_start_time.elapsed(),
+                    &phase_start,
+                );
             }
 
             // Start new phase
@@ -734,6 +742,7 @@ fn push_snapsync_prometheus_metrics(
         CurrentStepValue::RequestingStorageRanges => {
             let downloaded = METRICS.storage_leaves_downloaded.get();
             let interval = downloaded.saturating_sub(prev_interval.storage);
+            METRICS_SNAPSYNC.set_storage_downloaded(downloaded);
             METRICS_SNAPSYNC.set_storage_per_second(interval as f64 / interval_secs);
             if phase_elapsed.as_secs() < 2 {
                 METRICS_SNAPSYNC.set_storage_stage_start_now();
@@ -742,6 +751,7 @@ fn push_snapsync_prometheus_metrics(
         CurrentStepValue::InsertingStorageRanges => {
             let inserted = METRICS.storage_leaves_inserted.get();
             let interval = inserted.saturating_sub(prev_interval.storage_inserted);
+            METRICS_SNAPSYNC.set_storage_inserted(inserted);
             METRICS_SNAPSYNC.set_storage_per_second(interval as f64 / interval_secs);
         }
         CurrentStepValue::HealingState => {

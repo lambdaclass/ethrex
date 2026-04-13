@@ -24,8 +24,8 @@ pub struct MetricsSnapSync {
     accounts_stage_start_timestamp: Gauge,
 
     // Storage
-    storage_downloaded: IntCounter,
-    storage_inserted: IntCounter,
+    storage_downloaded: IntGauge,
+    storage_inserted: IntGauge,
     storage_per_second: Gauge,
     storage_stage_start_timestamp: Gauge,
 
@@ -97,11 +97,11 @@ impl MetricsSnapSync {
             ).expect("Failed to create snapsync_accounts_stage_start_timestamp"),
 
             // Storage
-            storage_downloaded: IntCounter::new(
+            storage_downloaded: IntGauge::new(
                 "snapsync_storage_downloaded",
                 "Storage leaves downloaded",
             ).expect("Failed to create snapsync_storage_downloaded"),
-            storage_inserted: IntCounter::new(
+            storage_inserted: IntGauge::new(
                 "snapsync_storage_inserted",
                 "Storage leaves inserted to DB",
             ).expect("Failed to create snapsync_storage_inserted"),
@@ -169,8 +169,8 @@ impl MetricsSnapSync {
     pub fn set_accounts_stage_start_now(&self) { self.accounts_stage_start_timestamp.set(now_secs()); }
 
     // Storage
-    pub fn inc_storage_downloaded(&self, n: u64) { self.storage_downloaded.inc_by(n); }
-    pub fn inc_storage_inserted(&self, n: u64) { self.storage_inserted.inc_by(n); }
+    pub fn set_storage_downloaded(&self, n: u64) { self.storage_downloaded.set(n as i64); }
+    pub fn set_storage_inserted(&self, n: u64) { self.storage_inserted.set(n as i64); }
     pub fn set_storage_per_second(&self, r: f64) { self.storage_per_second.set(r); }
     pub fn set_storage_stage_start_now(&self) { self.storage_stage_start_timestamp.set(now_secs()); }
 
