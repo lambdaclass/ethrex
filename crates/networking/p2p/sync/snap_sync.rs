@@ -149,29 +149,10 @@ pub async fn sync_cycle_snap(
                     }
                 }
             }
-            // Probe forward from best known head: peers usually return their
-            // own tip when asked for a block they don't have. Walk up by 200
-            // until we stop getting responses; the last successful number is
-            // close to the actual current tip.
+            // Probe forward aggressively from best known head (exponential +
+            // binary search) to catch up to actual chain tip.
             if let Some(seed) = best_pivot.clone() {
-                let mut probe_number = seed.number + 200;
-                for _ in 0..20 {
-                    if let Ok(Some(headers)) = peers
-                        .request_block_headers_from_number(
-                            probe_number,
-                            1,
-                            crate::peer_handler::BlockRequestOrder::OldToNew,
-                        )
-                        .await
-                    {
-                        if let Some(header) = headers.into_iter().next() {
-                            if header.number > best_pivot.as_ref().map(|h| h.number).unwrap_or(0) {
-                                best_pivot = Some(header);
-                            }
-                        }
-                    }
-                    probe_number += 200;
-                }
+                best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
             }
             info!(
                 "BSC pivot: {} candidates seen, best so far: block {}",
@@ -873,6 +854,90 @@ pub async fn update_pivot(
 
 // find_bsc_pivot was removed — BSC now uses the sync_head hash directly from the status exchange.
 
+/// Finds the freshest known chain tip by probing peers. Starts from the given
+/// seed, jumps exponentially forward until a probe misses (beyond peers' tips),
+/// then binary-searches back to the real boundary. Designed for BSC where peer
+/// Status is only sent at handshake and quickly becomes stale.
+pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) -> BlockHeader {
+    const MAX_FORWARD_STEP: u64 = 1_000_000;
+    const EXP_ITER: usize = 25;
+    const BIN_ITER: usize = 15;
+    const PEERS_PER_PROBE: usize = 3;
+    let mut best_pivot = seed;
+    let mut low = best_pivot.number;
+    let mut step = 256u64;
+    let mut high: Option<u64> = None;
+    for _ in 0..EXP_ITER {
+        let probe_number = low + step;
+        let mut probe_header: Option<BlockHeader> = None;
+        for _ in 0..PEERS_PER_PROBE {
+            if let Ok(Some(headers)) = peers
+                .request_block_headers_from_number(
+                    probe_number,
+                    1,
+                    crate::peer_handler::BlockRequestOrder::OldToNew,
+                )
+                .await
+            {
+                if let Some(header) = headers.into_iter().next() {
+                    probe_header = Some(header);
+                    break;
+                }
+            }
+        }
+        match probe_header {
+            Some(header) => {
+                if header.number > best_pivot.number {
+                    best_pivot = header;
+                }
+                low = best_pivot.number;
+                step = (step * 2).min(MAX_FORWARD_STEP);
+            }
+            None => {
+                high = Some(probe_number);
+                break;
+            }
+        }
+    }
+    if let Some(mut hi) = high {
+        let mut lo = low;
+        for _ in 0..BIN_ITER {
+            if hi.saturating_sub(lo) < 16 {
+                break;
+            }
+            let mid = lo + (hi - lo) / 2;
+            let mut probe_header: Option<BlockHeader> = None;
+            for _ in 0..PEERS_PER_PROBE {
+                if let Ok(Some(headers)) = peers
+                    .request_block_headers_from_number(
+                        mid,
+                        1,
+                        crate::peer_handler::BlockRequestOrder::OldToNew,
+                    )
+                    .await
+                {
+                    if let Some(header) = headers.into_iter().next() {
+                        probe_header = Some(header);
+                        break;
+                    }
+                }
+            }
+            match probe_header {
+                Some(header) => {
+                    if header.number > best_pivot.number {
+                        best_pivot = header;
+                    }
+                    lo = mid;
+                }
+                None => {
+                    hi = mid;
+                }
+            }
+        }
+    }
+    best_pivot
+}
+
 /// BSC-specific pivot refresh. Unlike `update_pivot`, this does NOT download the
 /// intermediate header chain between old and new pivot — BSC peers refuse to serve
 /// long-range header-by-hash requests, so that step always fails and restarts snap
@@ -902,26 +967,9 @@ pub async fn update_pivot_bsc(
             }
         }
     }
-    // Probe forward from the best known head to get closer to the actual chain tip.
+    // Probe forward aggressively to catch up to actual chain tip.
     if let Some(seed) = best_pivot.clone() {
-        let mut probe_number = seed.number + 200;
-        for _ in 0..20 {
-            if let Ok(Some(headers)) = peers
-                .request_block_headers_from_number(
-                    probe_number,
-                    1,
-                    crate::peer_handler::BlockRequestOrder::OldToNew,
-                )
-                .await
-            {
-                if let Some(header) = headers.into_iter().next() {
-                    if header.number > best_pivot.as_ref().map(|h| h.number).unwrap_or(0) {
-                        best_pivot = Some(header);
-                    }
-                }
-            }
-            probe_number += 200;
-        }
+        best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
     }
     let new_pivot = best_pivot.ok_or(SyncError::NoBlockHeaders)?;
     info!(
