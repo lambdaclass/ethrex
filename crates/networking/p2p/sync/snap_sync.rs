@@ -113,66 +113,73 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, selecting highest pivot from peer status candidates");
+        info!("BSC mode: probing peers for current head, then jumping straight to snap state download");
 
-        // Wait for candidates to accumulate — peer handshakes arrive staggered.
-        // Pruned BSC nodes only retain ~128-256 blocks of state, so the pivot
-        // must be very recent (< 100 blocks old) for snap sync to succeed.
-        tokio::time::sleep(Duration::from_secs(10)).await;
-
-        // Collect candidates over time, resolve each to a header, pick highest block number.
-        // This avoids stale pivots from lagging peers whose Status arrived last.
+        // BSC peers (geth in snap mode) only retain ~100-500 blocks of state,
+        // so the pivot must be very close to the actual current tip. Status
+        // exchanges happen at handshake and become stale fast on a 3s-block
+        // chain. Strategy: take the highest-number peer-reported head and
+        // probe forward by requesting headers at a higher block number,
+        // walking up until peers stop responding (= we've found their tip).
         let mut best_pivot: Option<ethrex_common::types::BlockHeader> = None;
-        let mut tried: std::collections::HashSet<H256> = std::collections::HashSet::new();
-        for attempt in 0..30 {
+        for attempt in 0..15 {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
+            // Resolve all candidate hashes to their highest-number header.
             let mut candidates = blockchain.bsc_sync_head_candidates_snapshot();
             if candidates.is_empty() {
                 candidates.push(sync_head);
             }
-            // Sort for deterministic iteration order.
             candidates.sort();
-            let new_candidates: Vec<_> = candidates
-                .iter()
-                .copied()
-                .filter(|h| !tried.contains(h))
-                .collect();
-            info!(
-                "BSC pivot: {} total candidates, {} new to try (attempt {attempt})",
-                candidates.len(),
-                new_candidates.len()
-            );
-            for hash in new_candidates {
-                tried.insert(hash);
+            for hash in &candidates {
                 if let Ok(Some(headers)) = peers
                     .request_block_headers_from_hash(
-                        hash,
+                        *hash,
                         crate::peer_handler::BlockRequestOrder::NewToOld,
                     )
                     .await
                 {
                     if let Some(header) = headers.into_iter().next() {
-                        let improved = match &best_pivot {
-                            Some(existing) => header.number > existing.number,
-                            None => true,
-                        };
-                        if improved {
-                            info!(
-                                "BSC pivot candidate: block {} hash {:?} (improved)",
-                                header.number,
-                                header.hash()
-                            );
+                        if best_pivot.as_ref().is_none_or(|h| header.number > h.number) {
                             best_pivot = Some(header);
                         }
                     }
                 }
             }
+            // Probe forward from best known head: peers usually return their
+            // own tip when asked for a block they don't have. Walk up by 200
+            // until we stop getting responses; the last successful number is
+            // close to the actual current tip.
+            if let Some(seed) = best_pivot.clone() {
+                let mut probe_number = seed.number + 200;
+                for _ in 0..20 {
+                    if let Ok(Some(headers)) = peers
+                        .request_block_headers_from_number(
+                            probe_number,
+                            1,
+                            crate::peer_handler::BlockRequestOrder::OldToNew,
+                        )
+                        .await
+                    {
+                        if let Some(header) = headers.into_iter().next() {
+                            if header.number > best_pivot.as_ref().map(|h| h.number).unwrap_or(0) {
+                                best_pivot = Some(header);
+                            }
+                        }
+                    }
+                    probe_number += 200;
+                }
+            }
+            info!(
+                "BSC pivot: {} candidates seen, best so far: block {}",
+                candidates.len(),
+                best_pivot.as_ref().map(|h| h.number).unwrap_or(0),
+            );
         }
 
         let Some(pivot_header) = best_pivot else {
-            warn!("BSC pivot: could not find pivot after 20 attempts, will retry on next cycle");
+            warn!("BSC pivot: could not find pivot after 15 attempts, will retry on next cycle");
             return Ok(());
         };
         info!(
