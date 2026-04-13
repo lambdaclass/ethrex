@@ -113,27 +113,26 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, requesting pivot by number from peers");
+        info!("BSC mode: skipping full header download, using freshest sync_head from peer status");
 
-        // BSC peers don't serve stale block hashes (3-second block time).
-        // Instead, request headers by NUMBER from a recent estimated block.
-        // Peers respond to number-based requests even if the exact block
-        // is slightly behind their tip.
+        // Use the sync_head hash from the most recent peer status exchange.
+        // blockchain.bsc_sync_head is continuously updated as new peers connect,
+        // so we always have access to a fresh hash from a peer that just connected.
         let mut pivot_header = None;
-        for attempt in 0..10 {
+        for attempt in 0..15 {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            // Estimate a recent block number. Chapel is past 101M blocks.
-            // Use a very recent block so peers (including snap-serving peers)
-            // still have the state for it.
-            let estimated_block = 101_450_000u64.saturating_sub(attempt as u64 * 100);
-            info!("BSC pivot: requesting header at block {estimated_block} (attempt {attempt})");
+            // Get the FRESHEST sync_head at this moment (not the stale one passed in)
+            let fresh_head = {
+                let guard = blockchain.bsc_sync_head.lock().ok();
+                guard.and_then(|g| *g).unwrap_or(sync_head)
+            };
+            info!("BSC pivot: requesting header for {fresh_head:?} (attempt {attempt})");
             if let Ok(Some(headers)) = peers
-                .request_block_headers_from_number(
-                    estimated_block,
-                    16,  // Request a small batch, not just 1
-                    crate::peer_handler::BlockRequestOrder::OldToNew,
+                .request_block_headers_from_hash(
+                    fresh_head,
+                    crate::peer_handler::BlockRequestOrder::NewToOld,
                 )
                 .await
             {
@@ -143,11 +142,11 @@ pub async fn sync_cycle_snap(
                     break;
                 }
             }
-            warn!("BSC pivot: no response for block {estimated_block}");
+            warn!("BSC pivot: no response for {fresh_head:?}");
         }
 
         let Some(pivot_header) = pivot_header else {
-            warn!("BSC pivot: could not find pivot after 10 attempts, will retry on next cycle");
+            warn!("BSC pivot: could not find pivot after 15 attempts, will retry on next cycle");
             return Ok(());
         };
 
