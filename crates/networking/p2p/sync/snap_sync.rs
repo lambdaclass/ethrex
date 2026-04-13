@@ -202,7 +202,14 @@ pub async fn sync_cycle_snap(
         block_sync_state
             .process_incoming_headers(std::iter::once(pivot_header))
             .await?;
-        snap_sync(peers, &store, &mut block_sync_state, datadir).await?;
+        snap_sync(
+            peers,
+            &store,
+            &mut block_sync_state,
+            datadir,
+            blockchain.clone(),
+        )
+        .await?;
         store.clear_snap_state().await?;
         snap_enabled.store(false, Ordering::Relaxed);
         return Ok(());
@@ -343,7 +350,14 @@ pub async fn sync_cycle_snap(
         };
     }
 
-    snap_sync(peers, &store, &mut block_sync_state, datadir).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        datadir,
+        blockchain.clone(),
+    )
+    .await?;
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
@@ -357,6 +371,7 @@ pub async fn snap_sync(
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
+    blockchain: Arc<Blockchain>,
 ) -> Result<(), SyncError> {
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
@@ -459,13 +474,17 @@ pub async fn snap_sync(
         let mut storage_range_request_attempts = 0;
         loop {
             while block_is_stale(&pivot_header, chain_id) {
-                pivot_header = update_pivot(
-                    pivot_header.number,
-                    pivot_header.timestamp,
-                    peers,
-                    block_sync_state,
-                )
-                .await?;
+                pivot_header = if is_bsc {
+                    update_pivot_bsc(&pivot_header, peers, &blockchain).await?
+                } else {
+                    update_pivot(
+                        pivot_header.number,
+                        pivot_header.timestamp,
+                        peers,
+                        block_sync_state,
+                    )
+                    .await?
+                };
             }
             // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
             // We just need to update the pivot and start again
@@ -566,13 +585,17 @@ pub async fn snap_sync(
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header, chain_id) {
-            pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-            )
-            .await?;
+            pivot_header = if is_bsc {
+                update_pivot_bsc(&pivot_header, peers, &blockchain).await?
+            } else {
+                update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    peers,
+                    block_sync_state,
+                )
+                .await?
+            };
         }
         healing_done = heal_state_trie_wrap(
             pivot_header.state_root,
@@ -751,9 +774,12 @@ pub async fn update_pivot(
     const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
     const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
+    // TODO: should come from ChainSpec/Network; duplicated with
+    // calculate_staleness_timestamp for now.
+    let seconds_per_block = SECONDS_PER_BLOCK;
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
-        + ((current_unix_time().saturating_sub(block_timestamp) / SECONDS_PER_BLOCK) as f64
+        + ((current_unix_time().saturating_sub(block_timestamp) / seconds_per_block) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
     debug!(
         "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
@@ -846,6 +872,67 @@ pub async fn update_pivot(
 }
 
 // find_bsc_pivot was removed — BSC now uses the sync_head hash directly from the status exchange.
+
+/// BSC-specific pivot refresh. Unlike `update_pivot`, this does NOT download the
+/// intermediate header chain between old and new pivot — BSC peers refuse to serve
+/// long-range header-by-hash requests, so that step always fails and restarts snap
+/// sync. Instead, we pick the freshest peer-status candidate (augmented with
+/// forward-probing) and swap it in as the new pivot.
+pub async fn update_pivot_bsc(
+    current_pivot: &BlockHeader,
+    peers: &mut PeerHandler,
+    blockchain: &std::sync::Arc<ethrex_blockchain::Blockchain>,
+) -> Result<BlockHeader, SyncError> {
+    let mut best_pivot: Option<BlockHeader> = Some(current_pivot.clone());
+    // Resolve all candidate hashes to headers, pick the highest-number one.
+    let mut candidates = blockchain.bsc_sync_head_candidates_snapshot();
+    candidates.sort();
+    for hash in candidates.iter() {
+        if let Ok(Some(headers)) = peers
+            .request_block_headers_from_hash(
+                *hash,
+                crate::peer_handler::BlockRequestOrder::NewToOld,
+            )
+            .await
+        {
+            if let Some(header) = headers.into_iter().next() {
+                if best_pivot.as_ref().is_none_or(|h| header.number > h.number) {
+                    best_pivot = Some(header);
+                }
+            }
+        }
+    }
+    // Probe forward from the best known head to get closer to the actual chain tip.
+    if let Some(seed) = best_pivot.clone() {
+        let mut probe_number = seed.number + 200;
+        for _ in 0..20 {
+            if let Ok(Some(headers)) = peers
+                .request_block_headers_from_number(
+                    probe_number,
+                    1,
+                    crate::peer_handler::BlockRequestOrder::OldToNew,
+                )
+                .await
+            {
+                if let Some(header) = headers.into_iter().next() {
+                    if header.number > best_pivot.as_ref().map(|h| h.number).unwrap_or(0) {
+                        best_pivot = Some(header);
+                    }
+                }
+            }
+            probe_number += 200;
+        }
+    }
+    let new_pivot = best_pivot.ok_or(SyncError::NoBlockHeaders)?;
+    info!(
+        "BSC pivot refreshed: block {} -> {} (hash {:?})",
+        current_pivot.number,
+        new_pivot.number,
+        new_pivot.hash()
+    );
+    *METRICS.sync_head_hash.lock().await = new_pivot.hash();
+    Ok(new_pivot)
+}
 
 pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
     calculate_staleness_timestamp(block_header.timestamp, chain_id) < current_unix_time()
