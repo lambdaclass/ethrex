@@ -759,7 +759,7 @@ fn push_snapsync_prometheus_metrics(
             let interval = healed.saturating_sub(prev_interval.healed_accounts);
             METRICS_SNAPSYNC.set_state_leaves_healed(healed);
             METRICS_SNAPSYNC.set_healing_per_second(interval as f64 / interval_secs);
-            if phase_elapsed.as_secs() < 2 {
+            if METRICS_SNAPSYNC.get_healing_stage_start_timestamp() == 0.0 {
                 METRICS_SNAPSYNC.set_healing_stage_start_now();
             }
         }
@@ -768,13 +768,19 @@ fn push_snapsync_prometheus_metrics(
             let interval = healed.saturating_sub(prev_interval.healed_storage);
             METRICS_SNAPSYNC.set_storage_leaves_healed(healed);
             METRICS_SNAPSYNC.set_healing_per_second(interval as f64 / interval_secs);
+            if METRICS_SNAPSYNC.get_healing_stage_start_timestamp() == 0.0 {
+                METRICS_SNAPSYNC.set_healing_stage_start_now();
+            }
         }
         CurrentStepValue::RequestingBytecodes => {
             let total = METRICS.bytecodes_to_download.load(Ordering::Relaxed);
             let downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
             let interval = downloaded.saturating_sub(prev_interval.bytecodes);
             METRICS_SNAPSYNC.set_bytecodes_downloaded(downloaded);
-            METRICS_SNAPSYNC.set_bytecodes_total(total);
+            // Lock bytecodes_total when phase starts to prevent ETA bouncing
+            if METRICS_SNAPSYNC.get_bytecodes_total() == 0 {
+                METRICS_SNAPSYNC.set_bytecodes_total(total);
+            }
             METRICS_SNAPSYNC.set_bytecodes_per_second(interval as f64 / interval_secs);
             if phase_elapsed.as_secs() < 2 {
                 METRICS_SNAPSYNC.set_bytecodes_stage_start_now();

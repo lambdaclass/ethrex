@@ -1,4 +1,4 @@
-use prometheus::{Encoder, Gauge, IntCounter, IntGauge, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -178,10 +178,12 @@ impl MetricsSnapSync {
     pub fn set_state_leaves_healed(&self, n: u64) { self.state_leaves_healed.set(n.cast_signed()); }
     pub fn set_storage_leaves_healed(&self, n: u64) { self.storage_leaves_healed.set(n.cast_signed()); }
     pub fn set_healing_per_second(&self, r: f64) { self.healing_per_second.set(r); }
+    pub fn get_healing_stage_start_timestamp(&self) -> f64 { self.healing_stage_start_timestamp.get() }
     pub fn set_healing_stage_start_now(&self) { self.healing_stage_start_timestamp.set(now_secs()); }
 
     // Bytecodes
     pub fn set_bytecodes_downloaded(&self, n: u64) { self.bytecodes_downloaded.set(n.cast_signed()); }
+    pub fn get_bytecodes_total(&self) -> i64 { self.bytecodes_total.get() }
     pub fn set_bytecodes_total(&self, n: u64) { self.bytecodes_total.set(n.cast_signed()); }
     pub fn set_bytecodes_per_second(&self, r: f64) { self.bytecodes_per_second.set(r); }
     pub fn set_bytecodes_stage_start_now(&self) { self.bytecodes_stage_start_timestamp.set(now_secs()); }
