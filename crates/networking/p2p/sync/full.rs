@@ -251,6 +251,7 @@ async fn add_blocks_in_batch(
     let blocks_per_second = if execution_time > 0.0 {
         blocks_len as f64 / execution_time
     } else {
+        // Keep throughput finite if elapsed time resolves to zero.
         0.0
     };
 
