@@ -1316,6 +1316,14 @@ async fn handle_incoming_message(
                     DisconnectReason::SubprotocolError,
                 ));
             }
+            // On BSC chains, BlockRangeUpdate carries the peer's current tip hash.
+            // Feed it into the sync-head candidate set for fresher pivot selection.
+            let chain_id = state.storage.get_chain_config().chain_id;
+            if (chain_id == 56 || chain_id == 97) && !update.latest_block_hash.is_zero() {
+                state
+                    .blockchain
+                    .set_bsc_sync_head(update.latest_block_hash);
+            }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             let hashes =

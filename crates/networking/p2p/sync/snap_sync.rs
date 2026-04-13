@@ -115,13 +115,18 @@ pub async fn sync_cycle_snap(
     if is_bsc {
         info!("BSC mode: skipping full header download, selecting highest pivot from peer status candidates");
 
+        // Wait for candidates to accumulate — peer handshakes arrive staggered.
+        // Pruned BSC nodes only retain ~128-256 blocks of state, so the pivot
+        // must be very recent (< 100 blocks old) for snap sync to succeed.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
         // Collect candidates over time, resolve each to a header, pick highest block number.
         // This avoids stale pivots from lagging peers whose Status arrived last.
         let mut best_pivot: Option<ethrex_common::types::BlockHeader> = None;
         let mut tried: std::collections::HashSet<H256> = std::collections::HashSet::new();
-        for attempt in 0..20 {
+        for attempt in 0..30 {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
             }
             let mut candidates = blockchain.bsc_sync_head_candidates_snapshot();
             if candidates.is_empty() {
@@ -129,11 +134,18 @@ pub async fn sync_cycle_snap(
             }
             // Sort for deterministic iteration order.
             candidates.sort();
-            info!("BSC pivot: {} candidates to try (attempt {attempt})", candidates.len());
-            for hash in candidates {
-                if !tried.insert(hash) {
-                    continue;
-                }
+            let new_candidates: Vec<_> = candidates
+                .iter()
+                .copied()
+                .filter(|h| !tried.contains(h))
+                .collect();
+            info!(
+                "BSC pivot: {} total candidates, {} new to try (attempt {attempt})",
+                candidates.len(),
+                new_candidates.len()
+            );
+            for hash in new_candidates {
+                tried.insert(hash);
                 if let Ok(Some(headers)) = peers
                     .request_block_headers_from_hash(
                         hash,
@@ -155,13 +167,6 @@ pub async fn sync_cycle_snap(
                             best_pivot = Some(header);
                         }
                     }
-                }
-            }
-            // Once we have a pivot and exhausted known candidates, break.
-            if best_pivot.is_some() {
-                let known = blockchain.bsc_sync_head_candidates_snapshot().len();
-                if tried.len() >= known {
-                    break;
                 }
             }
         }
