@@ -106,16 +106,9 @@ impl ethrex_binary_trie::db::TrieBackend for StorageTrieBackend {
         table: &'static str,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, ethrex_binary_trie::BinaryTrieError>
     {
-        let read_view = self
-            .backend
-            .begin_read()
-            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))?;
-        let entries: Vec<(Vec<u8>, Vec<u8>)> = read_view
-            .prefix_iterator(table, &[])
-            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))?
-            .filter_map(|r| r.ok().map(|(k, v)| (k.to_vec(), v.to_vec())))
-            .collect();
-        Ok(Box::new(entries.into_iter()))
+        self.backend
+            .full_sorted_iterator(table)
+            .map_err(|e| ethrex_binary_trie::BinaryTrieError::StoreError(e.to_string()))
     }
 }
 
@@ -1441,6 +1434,21 @@ impl Store {
         let mut txn = self.backend.begin_write()?;
         txn.delete(table, &key)?;
         txn.commit()
+    }
+
+    /// Remove all entries from a table (synchronous).
+    pub fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
+        self.backend.clear_table(table)
+    }
+
+    /// Create a column family dynamically. No-op if it already exists.
+    pub fn create_cf(&self, table: &str) -> Result<(), StoreError> {
+        self.backend.create_cf(table)
+    }
+
+    /// Drop a column family. No-op if it doesn't exist.
+    pub fn drop_cf(&self, table: &str) -> Result<(), StoreError> {
+        self.backend.drop_cf(table)
     }
 
     pub fn store_block_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {

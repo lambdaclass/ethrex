@@ -74,6 +74,27 @@ impl StorageBackend for InMemoryBackend {
         // Silently ignoring the request to create a checkpoint is harmless
         Ok(())
     }
+
+    fn create_cf(&self, _table: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn drop_cf(&self, _table: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn full_sorted_iterator(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, StoreError> {
+        let db = self.inner.read().unwrap();
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = db
+            .get(table)
+            .map(|map| map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(Box::new(entries.into_iter()))
+    }
 }
 
 pub struct InMemoryLocked {

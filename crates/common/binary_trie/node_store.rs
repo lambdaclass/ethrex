@@ -18,11 +18,11 @@ const DEFAULT_CLEAN_CACHE_CAP: usize = 2_000_000;
 
 // Meta keys for storage (stored alongside nodes in BINARY_TRIE_NODES table).
 // The 0xFF prefix ensures they don't collide with u64 node IDs (8 bytes, no prefix).
-const META_ROOT: &[u8] = &[0xFF, b'R'];
-const META_NEXT_ID: &[u8] = &[0xFF, b'N'];
+pub const META_ROOT: &[u8] = &[0xFF, b'R'];
+pub const META_NEXT_ID: &[u8] = &[0xFF, b'N'];
 
 /// Returns an 8-byte key for a node: raw `id` as little-endian u64.
-fn node_key(id: NodeId) -> [u8; 8] {
+pub fn node_key(id: NodeId) -> [u8; 8] {
     id.to_le_bytes()
 }
 
@@ -39,7 +39,7 @@ fn node_key(id: NodeId) -> [u8; 8] {
 ///   - `presence_bitmap`: bit i (0-indexed from the LSB of byte 0) is set if `values[i].is_some()`.
 ///   - Only present values are serialized, in order of index.
 ///   - `cached_hash` is not serialized (recomputed on demand).
-fn serialize_node(node: &Node) -> Vec<u8> {
+pub fn serialize_node(node: &Node) -> Vec<u8> {
     match node {
         Node::Internal(internal) => {
             let mut buf = Vec::with_capacity(17);

@@ -8,13 +8,22 @@ use ethrex_binary_trie::key_mapping::{
     CODE_HASH_LEAF_KEY, chunkify_code, get_stem_for_base, get_tree_key_for_code_chunk,
     get_tree_key_for_storage_slot, pack_basic_data, tree_key_from_stem,
 };
-use ethrex_common::{Address, H256, U256, types::Genesis};
+use ethrex_common::{Address, U256, types::Genesis};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use tracing::{info, warn};
 
-use crate::initializers::{init_binary_trie_state, init_store};
+use std::collections::BTreeMap;
+
+use ethrex_common::H256;
+use ethrex_storage::{
+    Store,
+    api::tables::{BINARY_TRIE_NODES, MIGRATION_TEMP},
+};
+
+use crate::bulk_builder::BulkTrieBuilder;
+use crate::initializers::init_store;
 
 struct MigrateConfig {
     in_memory: bool,
@@ -122,13 +131,10 @@ pub async fn migrate_with_preimages(
     genesis: Genesis,
     fast_override: bool,
 ) -> eyre::Result<()> {
-    // Step 1: Open store and init binary trie state.
-    let mut store = init_store(datadir, genesis.clone())
+    // Step 1: Open store.
+    let store = init_store(datadir, genesis.clone())
         .await
         .map_err(|e| eyre::eyre!("Failed to open store: {e}"))?;
-
-    let binary_trie_state = init_binary_trie_state(&store, datadir, &genesis)?;
-    store.set_binary_trie_state(binary_trie_state.clone());
 
     // Auto-tune based on available RAM.
     let preimage_file_size = std::fs::metadata(preimage_path)
@@ -159,8 +165,119 @@ pub async fn migrate_with_preimages(
         FxHashMap::default()
     };
 
-    // Step 3: Stream the snapshot file and build the binary trie.
-    info!("Streaming snapshot file: {snapshot_path}");
+    // Step 3: Reset temp CF for collection phase (drop+recreate avoids OOM on large stale data).
+    store.drop_cf(MIGRATION_TEMP)?;
+    store.create_cf(MIGRATION_TEMP)?;
+
+    // Step 4: Collect phase - write all (tree_key, value) pairs to temp CF.
+    let (account_count, storage_count, skipped) =
+        collect_phase(&preimages, &code_map, snapshot_path, &store)?;
+
+    if skipped > 0 {
+        warn!("{skipped} entries skipped due to missing preimages");
+    }
+    info!("Collection complete: {account_count} accounts, {storage_count} storage slots");
+
+    // Step 5: Build phase - bulk build trie from sorted temp CF.
+    let state_root = build_phase(&store)?;
+    info!("Binary trie state root: {:#x}", H256::from(state_root));
+
+    // Step 6: Clean up temp CF.
+    store.drop_cf(MIGRATION_TEMP)?;
+    info!("Migration complete.");
+
+    Ok(())
+}
+
+/// Build phase: iterate sorted `(tree_key, value)` pairs from MIGRATION_TEMP and
+/// construct the binary trie using the bulk builder.
+///
+/// Returns the 32-byte state root hash.
+fn build_phase(store: &Store) -> eyre::Result<[u8; 32]> {
+    info!("Build phase: constructing binary trie from sorted entries...");
+    let started = std::time::Instant::now();
+
+    let backend = store.create_trie_backend();
+    let mut builder = BulkTrieBuilder::new(backend.clone(), BINARY_TRIE_NODES);
+
+    let iter = backend
+        .full_iterator(MIGRATION_TEMP)
+        .map_err(|e| eyre::eyre!("Failed to open MIGRATION_TEMP iterator: {e}"))?;
+
+    let mut count = 0u64;
+    let mut last_log = std::time::Instant::now();
+
+    let mut current_stem: Option<[u8; 31]> = None;
+    let mut current_values: BTreeMap<u8, [u8; 32]> = BTreeMap::new();
+
+    for (key_bytes, value_bytes) in iter {
+        if key_bytes.len() != 32 || value_bytes.len() != 32 {
+            continue;
+        }
+
+        let mut stem = [0u8; 31];
+        stem.copy_from_slice(&key_bytes[..31]);
+        let sub_index = key_bytes[31];
+        let mut value = [0u8; 32];
+        value.copy_from_slice(&value_bytes);
+
+        match current_stem {
+            Some(s) if s == stem => {
+                current_values.insert(sub_index, value);
+            }
+            _ => {
+                if let Some(s) = current_stem {
+                    builder
+                        .insert_stem(s, &current_values)
+                        .map_err(|e| eyre::eyre!("Failed to insert stem: {e}"))?;
+                }
+                current_stem = Some(stem);
+                current_values.clear();
+                current_values.insert(sub_index, value);
+            }
+        }
+
+        count += 1;
+        if last_log.elapsed().as_secs() >= 5 {
+            info!(
+                "Build phase: {} entries processed, {} nodes written",
+                count, builder.nodes_written
+            );
+            last_log = std::time::Instant::now();
+        }
+    }
+
+    // Flush last stem.
+    if let Some(s) = current_stem {
+        builder
+            .insert_stem(s, &current_values)
+            .map_err(|e| eyre::eyre!("Failed to insert stem: {e}"))?;
+    }
+
+    let (root_id, root_hash) = builder
+        .finish()
+        .map_err(|e| eyre::eyre!("Failed to finalize trie: {e}"))?;
+
+    let elapsed = started.elapsed().as_secs_f64();
+    info!(
+        "Build phase complete: {} entries, {} nodes written, root {:?} in {:.1}s",
+        count, builder.nodes_written, root_id, elapsed
+    );
+
+    Ok(root_hash)
+}
+
+/// Collect phase: reads the snapshot file and writes all `(tree_key, value)` pairs
+/// to the MIGRATION_TEMP column family. No trie insertions are performed here.
+///
+/// Returns `(account_count, storage_count, skipped)`.
+fn collect_phase(
+    preimages: &Preimages,
+    code_map: &FxHashMap<[u8; 32], Vec<u8>>,
+    snapshot_path: &str,
+    store: &Store,
+) -> eyre::Result<(u64, u64, u64)> {
+    info!("Collect phase: streaming snapshot file: {snapshot_path}");
     let file =
         File::open(snapshot_path).map_err(|e| eyre::eyre!("Failed to open snapshot file: {e}"))?;
     let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -176,22 +293,13 @@ pub async fn migrate_with_preimages(
     let started = std::time::Instant::now();
     let mut last_log = std::time::Instant::now();
 
-    // Hold the write lock for the entire migration.
-    let mut state = binary_trie_state
-        .write()
-        .map_err(|e| eyre::eyre!("Binary trie lock error: {e}"))?;
-
     let mut bufs = EntryBufs::new();
-    let mut inserts_since_flush = 0u64;
-    let flush_interval = config.flush_interval;
     const BATCH_SIZE: usize = 200_000;
 
-    // Raw entries read from the file, to be processed in parallel.
-    // Each entry: (entry_type, keccak_hashes, raw_value)
     let mut raw_batch: Vec<RawEntry> = Vec::with_capacity(BATCH_SIZE);
 
     loop {
-        // Phase 1: Read a batch of raw entries (sequential I/O).
+        // Read a batch of raw entries (sequential I/O).
         raw_batch.clear();
         while raw_batch.len() < BATCH_SIZE {
             let Some((op, entry_bytes)) = read_gethdbdump_entry(&mut reader, &mut bufs)? else {
@@ -226,7 +334,7 @@ pub async fn migrate_with_preimages(
             break;
         }
 
-        // Phase 2: Process batch in parallel (preimage lookups, RLP decode, BLAKE3).
+        // Process batch in parallel (preimage lookups, RLP decode, BLAKE3).
         let processed: Vec<Option<ProcessedEntry>> = raw_batch
             .par_iter()
             .map(|entry| match entry {
@@ -306,10 +414,8 @@ pub async fn migrate_with_preimages(
             })
             .collect();
 
-        // Phase 3: Flatten into (key, value) pairs, sort by key, then insert.
-        // Sorting by tree key means consecutive inserts share trie path prefixes,
-        // reusing dirty ancestors instead of touching random branches.
-        let mut inserts: Vec<([u8; 32], [u8; 32])> = Vec::with_capacity(raw_batch.len() * 2);
+        // Flatten into (key, value) pairs and write to MIGRATION_TEMP.
+        let mut inserts: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(raw_batch.len() * 2);
         for (raw, processed) in raw_batch.iter().zip(processed.iter()) {
             match raw {
                 RawEntry::Account { .. } => {
@@ -321,10 +427,10 @@ pub async fn migrate_with_preimages(
                         code_chunks,
                     }) = processed
                     {
-                        inserts.push((*basic_data_key, *basic_data));
-                        inserts.push((*code_hash_key, *code_hash));
+                        inserts.push((basic_data_key.to_vec(), basic_data.to_vec()));
+                        inserts.push((code_hash_key.to_vec(), code_hash.to_vec()));
                         for (key, chunk) in code_chunks {
-                            inserts.push((*key, *chunk));
+                            inserts.push((key.to_vec(), chunk.to_vec()));
                         }
                         account_count += 1;
                     } else {
@@ -337,47 +443,14 @@ pub async fn migrate_with_preimages(
                         value_bytes,
                     }) = processed
                     {
-                        inserts.push((*tree_key, *value_bytes));
+                        inserts.push((tree_key.to_vec(), value_bytes.to_vec()));
+                        storage_count += 1;
                     }
-                    storage_count += 1;
                 }
             }
         }
 
-        inserts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-
-        // Group consecutive same-stem inserts and batch them.
-        let mut group: Vec<(u8, [u8; 32])> = Vec::new();
-        let mut i = 0;
-        while i < inserts.len() {
-            let stem: [u8; 31] = inserts[i].0[..31].try_into().unwrap();
-            group.clear();
-            group.push((inserts[i].0[31], inserts[i].1));
-            let mut j = i + 1;
-            while j < inserts.len() && inserts[j].0[..31] == stem[..] {
-                group.push((inserts[j].0[31], inserts[j].1));
-                j += 1;
-            }
-            state
-                .trie_insert_multi(stem, &group)
-                .map_err(|e| eyre::eyre!("Failed to insert: {e}"))?;
-            i = j;
-        }
-        inserts_since_flush += inserts.len() as u64;
-
-        // Periodic flush.
-        if inserts_since_flush >= flush_interval {
-            let dirty = state.dirty_node_count();
-            let warm = state.warm_node_count();
-            info!(
-                "Flushing trie to disk ({inserts_since_flush} inserts, {dirty} dirty nodes, {warm} warm nodes)..."
-            );
-            state
-                .flush(0, H256::zero())
-                .map_err(|e| eyre::eyre!("Flush error: {e}"))?;
-            state.clear_caches();
-            inserts_since_flush = 0;
-        }
+        store.write_batch(MIGRATION_TEMP, inserts)?;
 
         // Log progress.
         if last_log.elapsed().as_secs() >= 5 {
@@ -408,34 +481,7 @@ pub async fn migrate_with_preimages(
         }
     }
 
-    drop(state);
-
-    if skipped > 0 {
-        warn!("{skipped} entries skipped due to missing preimages");
-    }
-    info!("Snapshot processing complete: {account_count} accounts, {storage_count} storage slots");
-
-    // Step 4: Compute state root and flush.
-    let state_root = {
-        let mut state = binary_trie_state
-            .write()
-            .map_err(|e| eyre::eyre!("Binary trie lock error: {e}"))?;
-        let root = state.state_root();
-        H256::from(root)
-    };
-    info!("Binary trie state root: {state_root:#x}");
-
-    {
-        let mut state = binary_trie_state
-            .write()
-            .map_err(|e| eyre::eyre!("Binary trie lock error: {e}"))?;
-        state
-            .flush(0, H256::zero())
-            .map_err(|e| eyre::eyre!("Failed to flush binary trie: {e}"))?;
-    }
-    info!("Binary trie flushed to disk. Migration complete.");
-
-    Ok(())
+    Ok((account_count, storage_count, skipped))
 }
 
 /// Raw entry read from the snapshot dump (before parallel processing).

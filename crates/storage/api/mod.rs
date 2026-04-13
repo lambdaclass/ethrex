@@ -51,6 +51,19 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Create a column family dynamically. No-op if it already exists.
+    fn create_cf(&self, table: &str) -> Result<(), StoreError>;
+
+    /// Drop a column family. No-op if it doesn't exist.
+    fn drop_cf(&self, table: &str) -> Result<(), StoreError>;
+
+    /// Returns a streaming iterator over all key-value pairs in sorted key order.
+    /// Unlike `prefix_iterator`, this does not collect into memory first.
+    fn full_sorted_iterator(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, StoreError>;
 }
 
 /// Read-only transaction interface.

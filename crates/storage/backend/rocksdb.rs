@@ -279,6 +279,126 @@ impl StorageBackend for RocksDBBackend {
 
         Ok(())
     }
+
+    fn create_cf(&self, table: &str) -> Result<(), StoreError> {
+        if self.db.cf_handle(table).is_some() {
+            return Ok(());
+        }
+        let opts = rocksdb::Options::default();
+        self.db
+            .create_cf(table, &opts)
+            .map_err(|e| StoreError::Custom(format!("Failed to create CF {table}: {e}")))
+    }
+
+    fn drop_cf(&self, table: &str) -> Result<(), StoreError> {
+        if self.db.cf_handle(table).is_none() {
+            return Ok(());
+        }
+        self.db
+            .drop_cf(table)
+            .map_err(|e| StoreError::Custom(format!("Failed to drop CF {table}: {e}")))
+    }
+
+    fn full_sorted_iterator(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        // RocksDB iterators borrow from DB, so we can't return a streaming iterator
+        // directly. Instead, use a chunked iterator that reads CHUNK_SIZE entries at
+        // a time via seek, keeping memory bounded.
+        Ok(Box::new(RocksDBChunkedIter {
+            db: self.db.clone(),
+            table,
+            next_seek: Some(Vec::new()), // Start from beginning
+            buffer: Vec::new(),
+            pos: 0,
+        }))
+    }
+}
+
+/// Chunked iterator that reads entries in sorted order from a RocksDB CF.
+/// Reads CHUNK_SIZE entries at a time to avoid holding a borrow on the DB.
+struct RocksDBChunkedIter {
+    db: Arc<DBWithThreadMode<MultiThreaded>>,
+    table: &'static str,
+    /// Key to seek to for the next chunk, or None if exhausted.
+    next_seek: Option<Vec<u8>>,
+    /// Current chunk of entries.
+    buffer: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Position within the current chunk.
+    pos: usize,
+}
+
+const CHUNK_SIZE: usize = 100_000;
+
+impl RocksDBChunkedIter {
+    fn load_chunk(&mut self) {
+        self.buffer.clear();
+        self.pos = 0;
+        let Some(seek_key) = self.next_seek.take() else {
+            return;
+        };
+        let Some(cf) = self.db.cf_handle(self.table) else {
+            return;
+        };
+        let mode = if seek_key.is_empty() {
+            rocksdb::IteratorMode::Start
+        } else {
+            rocksdb::IteratorMode::From(&seek_key, rocksdb::Direction::Forward)
+        };
+        let iter = self.db.iterator_cf(&cf, mode);
+        for result in iter {
+            let Ok((k, v)) = result else { break };
+            self.buffer.push((k.to_vec(), v.to_vec()));
+            if self.buffer.len() >= CHUNK_SIZE {
+                // Record the next key to seek from
+                let last_key = &self.buffer.last().unwrap().0;
+                let mut next = last_key.clone();
+                // Increment the key by 1 to skip past the last entry
+                increment_key(&mut next);
+                self.next_seek = Some(next);
+                return;
+            }
+        }
+        // Iterator exhausted - no more chunks
+        self.next_seek = None;
+    }
+}
+
+/// Increment a byte vector by 1 (big-endian). Used to seek past the last key.
+fn increment_key(key: &mut Vec<u8>) {
+    for byte in key.iter_mut().rev() {
+        if *byte < 0xFF {
+            *byte += 1;
+            return;
+        }
+        *byte = 0;
+    }
+    // All bytes were 0xFF - append a 0x00 byte to go past
+    key.push(0x00);
+}
+
+impl Iterator for RocksDBChunkedIter {
+    type Item = (Vec<u8>, Vec<u8>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.buffer.len() {
+            if self.next_seek.is_none() && !self.buffer.is_empty() {
+                return None;
+            }
+            self.load_chunk();
+            if self.buffer.is_empty() {
+                return None;
+            }
+        }
+        let idx = self.pos;
+        self.pos += 1;
+        Some(self.buffer[idx].clone())
+    }
 }
 
 /// Read-only view for RocksDB

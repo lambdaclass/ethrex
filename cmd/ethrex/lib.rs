@@ -1,3 +1,4 @@
+pub mod bulk_builder;
 pub mod cli;
 pub mod initializers;
 #[cfg(feature = "l2")]

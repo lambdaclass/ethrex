@@ -91,6 +91,10 @@ pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
+/// Temporary column family used during two-phase migration (collect phase).
+/// Stores `(tree_key: [u8; 32], value: [u8; 32])` pairs before bulk trie build.
+pub const MIGRATION_TEMP: &str = "migration_temp";
+
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
@@ -101,7 +105,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -121,4 +125,5 @@ pub const TABLES: [&str; 19] = [
     EXECUTION_WITNESSES,
     BINARY_TRIE_NODES,
     BINARY_TRIE_STORAGE_KEYS,
+    MIGRATION_TEMP,
 ];
