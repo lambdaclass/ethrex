@@ -310,6 +310,15 @@ impl Message {
                 UpgradeStatusMsg::CODE => {
                     Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
                 }
+                // NewBlockHashes (0x01) — deprecated in eth/68 but still sent by BSC peers.
+                // Silently consume to avoid MalformedData errors that cause peer disconnects.
+                0x01 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
+                    Ok(Message::BscIgnored)
+                }
+                // NewBlock (0x07) — deprecated in eth/68 but some BSC peers still send it.
+                0x07 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
+                    Ok(Message::BscIgnored)
+                }
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
