@@ -170,16 +170,18 @@ pub async fn migrate_with_preimages(
     store.create_cf(MIGRATION_TEMP)?;
 
     // Step 4: Collect phase - write all (tree_key, value) pairs to temp CF.
-    let (account_count, storage_count, skipped) =
+    let (account_count, storage_count, skipped, total_inserts) =
         collect_phase(&preimages, &code_map, snapshot_path, &store)?;
 
     if skipped > 0 {
         warn!("{skipped} entries skipped due to missing preimages");
     }
-    info!("Collection complete: {account_count} accounts, {storage_count} storage slots");
+    info!(
+        "Collection complete: {account_count} accounts, {storage_count} storage slots, {total_inserts} entries written"
+    );
 
     // Step 5: Build phase - bulk build trie from sorted temp CF.
-    let state_root = build_phase(&store)?;
+    let state_root = build_phase(&store, total_inserts)?;
     info!("Binary trie state root: {:#x}", H256::from(state_root));
 
     // Step 6: Clean up temp CF.
@@ -193,7 +195,7 @@ pub async fn migrate_with_preimages(
 /// construct the binary trie using the bulk builder.
 ///
 /// Returns the 32-byte state root hash.
-fn build_phase(store: &Store) -> eyre::Result<[u8; 32]> {
+fn build_phase(store: &Store, total_entries: u64) -> eyre::Result<[u8; 32]> {
     info!("Build phase: constructing binary trie from sorted entries...");
     let started = std::time::Instant::now();
 
@@ -238,10 +240,23 @@ fn build_phase(store: &Store) -> eyre::Result<[u8; 32]> {
         }
 
         count += 1;
-        if last_log.elapsed().as_secs() >= 5 {
+        if count & 0x7FFFF == 0 && last_log.elapsed().as_secs() >= 5 {
+            let pct = if total_entries > 0 {
+                (count as f64 / total_entries as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            let elapsed = started.elapsed().as_secs();
+            let eta = if count > 0 && elapsed > 0 {
+                let remaining = total_entries.saturating_sub(count);
+                let secs = remaining * elapsed / count;
+                format!("{}m{}s", secs / 60, secs % 60)
+            } else {
+                "?".to_string()
+            };
             info!(
-                "Build phase: {} entries processed, {} nodes written",
-                count, builder.nodes_written
+                "Build phase: {pct}% ({count} / {total_entries}) | {} nodes written | ETA {eta}",
+                builder.nodes_written
             );
             last_log = std::time::Instant::now();
         }
@@ -270,13 +285,13 @@ fn build_phase(store: &Store) -> eyre::Result<[u8; 32]> {
 /// Collect phase: reads the snapshot file and writes all `(tree_key, value)` pairs
 /// to the MIGRATION_TEMP column family. No trie insertions are performed here.
 ///
-/// Returns `(account_count, storage_count, skipped)`.
+/// Returns `(account_count, storage_count, skipped, total_inserts)`.
 fn collect_phase(
     preimages: &Preimages,
     code_map: &FxHashMap<[u8; 32], Vec<u8>>,
     snapshot_path: &str,
     store: &Store,
-) -> eyre::Result<(u64, u64, u64)> {
+) -> eyre::Result<(u64, u64, u64, u64)> {
     info!("Collect phase: streaming snapshot file: {snapshot_path}");
     let file =
         File::open(snapshot_path).map_err(|e| eyre::eyre!("Failed to open snapshot file: {e}"))?;
@@ -289,6 +304,7 @@ fn collect_phase(
     let mut account_count = 0u64;
     let mut storage_count = 0u64;
     let mut skipped = 0u64;
+    let mut total_inserts = 0u64;
     let mut bytes_read = 0u64;
     let started = std::time::Instant::now();
     let mut last_log = std::time::Instant::now();
@@ -344,7 +360,17 @@ fn collect_phase(
                 } => {
                     let addr_bytes = preimages.get_addr(keccak_addr)?;
                     let address = Address::from_slice(&addr_bytes);
-                    let (nonce, balance, code_hash) = decode_slim_account(slim_rlp).ok()?;
+                    let (nonce, balance, code_hash) = match decode_slim_account(slim_rlp) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to decode account {}: {e} (rlp: {:02x?})",
+                                address,
+                                &slim_rlp[..slim_rlp.len().min(64)]
+                            );
+                            return None;
+                        }
+                    };
 
                     // Look up bytecode and compute code chunks.
                     let (code_size, code_chunks) =
@@ -418,7 +444,7 @@ fn collect_phase(
         let mut inserts: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(raw_batch.len() * 2);
         for (raw, processed) in raw_batch.iter().zip(processed.iter()) {
             match raw {
-                RawEntry::Account { .. } => {
+                RawEntry::Account { keccak_addr, .. } => {
                     if let Some(ProcessedEntry::Account {
                         basic_data_key,
                         basic_data,
@@ -434,6 +460,13 @@ fn collect_phase(
                         }
                         account_count += 1;
                     } else {
+                        if skipped < 10 {
+                            warn!(
+                                "Skipped account with keccak {}, has_preimage={}",
+                                hex::encode(keccak_addr),
+                                preimages.get_addr(keccak_addr).is_some()
+                            );
+                        }
                         skipped += 1;
                     }
                 }
@@ -450,6 +483,7 @@ fn collect_phase(
             }
         }
 
+        total_inserts += inserts.len() as u64;
         store.write_batch(MIGRATION_TEMP, inserts)?;
 
         // Log progress.
@@ -481,7 +515,7 @@ fn collect_phase(
         }
     }
 
-    Ok((account_count, storage_count, skipped))
+    Ok((account_count, storage_count, skipped, total_inserts))
 }
 
 /// Raw entry read from the snapshot dump (before parallel processing).
