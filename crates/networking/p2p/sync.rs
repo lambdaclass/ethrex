@@ -256,7 +256,6 @@ impl SyncError {
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
             | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_)
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -264,7 +263,6 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
@@ -278,6 +276,8 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
+            | SyncError::PeerHandler(_)
+            | SyncError::PeerTableError(_)
             | SyncError::NoBlocks => true,
         }
     }
