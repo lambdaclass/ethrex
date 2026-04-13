@@ -1161,17 +1161,22 @@ async fn request_account_range_worker(
         limit_hash: chunk_end,
         response_bytes: MAX_RESPONSE_BYTES,
     });
+    let response = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await;
     if let Ok(RLPxMessage::AccountRange(AccountRange {
         id: _,
         accounts,
         proof,
         // The caller already holds a request reservation for this peer,
         // so call outgoing_request directly to avoid a double increment.
-    })) = connection
-        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
+    })) = response
     {
         if accounts.is_empty() {
+            debug!(
+                "Account range from peer {peer_id} was empty (proof_nodes={})",
+                proof.len()
+            );
             tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
                 .await
                 .ok();
@@ -1232,7 +1237,13 @@ async fn request_account_range_worker(
         .await
         .ok();
     } else {
-        tracing::debug!("Failed to get account range");
+        tracing::debug!(
+            "Failed to get account range from peer {peer_id}: {:?}",
+            response.as_ref().map(|m| match m {
+                RLPxMessage::AccountRange(_) => "AccountRange",
+                _ => "OtherMessage",
+            })
+        );
         tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
             .await
             .ok();
