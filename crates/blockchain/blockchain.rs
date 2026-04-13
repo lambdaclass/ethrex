@@ -2568,7 +2568,10 @@ impl Blockchain {
         }
         if let Ok(mut set) = self.bsc_sync_head_candidates.lock() {
             if set.insert(head) {
-                info!("BSC sync head candidate added: {head:?} (total: {})", set.len());
+                info!(
+                    "BSC sync head candidate added: {head:?} (total: {})",
+                    set.len()
+                );
             }
         }
     }

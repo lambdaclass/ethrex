@@ -113,7 +113,9 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: probing peers for current head, then jumping straight to snap state download");
+        info!(
+            "BSC mode: probing peers for current head, then jumping straight to snap state download"
+        );
 
         // BSC peers (geth in snap mode) only retain ~100-500 blocks of state,
         // so the pivot must be very close to the actual current tip. Status
@@ -375,7 +377,7 @@ pub async fn snap_sync(
     let chain_id = store.get_chain_config().chain_id;
     let is_bsc = chain_id == 56 || chain_id == 97;
     if !is_bsc {
-        while block_is_stale(&pivot_header) {
+        while block_is_stale(&pivot_header, chain_id) {
             pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
@@ -456,7 +458,7 @@ pub async fn snap_sync(
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
-            while block_is_stale(&pivot_header) {
+            while block_is_stale(&pivot_header, chain_id) {
                 pivot_header = update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
@@ -471,7 +473,7 @@ pub async fn snap_sync(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
-                calculate_staleness_timestamp(pivot_header.timestamp),
+                calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
                 &mut state_leafs_healed,
                 &mut storage_accounts,
                 &mut code_hash_collector,
@@ -529,7 +531,7 @@ pub async fn snap_sync(
                 // because we don't know if the storage root is still valid
                 storage_accounts.healed_accounts.len(),
             );
-            if !block_is_stale(&pivot_header) {
+            if !block_is_stale(&pivot_header, chain_id) {
                 break;
             }
             info!("We stopped because of staleness, restarting loop");
@@ -563,7 +565,7 @@ pub async fn snap_sync(
     let mut healing_done = false;
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
-        if block_is_stale(&pivot_header) {
+        if block_is_stale(&pivot_header, chain_id) {
             pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
@@ -576,7 +578,7 @@ pub async fn snap_sync(
             pivot_header.state_root,
             store.clone(),
             peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
             &mut global_state_leafs_healed,
             &mut storage_accounts,
             &mut code_hash_collector,
@@ -591,7 +593,7 @@ pub async fn snap_sync(
             peers,
             store.clone(),
             HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
             &mut global_storage_leafs_healed,
         )
         .await?;
@@ -845,12 +847,20 @@ pub async fn update_pivot(
 
 // find_bsc_pivot was removed — BSC now uses the sync_head hash directly from the status exchange.
 
-pub fn block_is_stale(block_header: &BlockHeader) -> bool {
-    calculate_staleness_timestamp(block_header.timestamp) < current_unix_time()
+pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
+    calculate_staleness_timestamp(block_header.timestamp, chain_id) < current_unix_time()
 }
 
-pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+// TODO: refactor to use a Network/ChainSpec abstraction instead of a chain_id match.
+// The block time should come from chain config (or a Network enum mapping), not be
+// hardcoded here. Right now we keep two cases (Ethereum default 12s, BSC 3s) because
+// that's what the codebase actually targets, but adding more chains will become ugly.
+pub fn calculate_staleness_timestamp(timestamp: u64, chain_id: u64) -> u64 {
+    let block_time_secs: u64 = match chain_id {
+        56 | 97 => 3, // BSC mainnet / Chapel testnet
+        _ => 12,      // Ethereum and other 12s-block chains
+    };
+    timestamp + (SNAP_LIMIT as u64 * block_time_secs)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {

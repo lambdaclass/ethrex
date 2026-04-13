@@ -533,6 +533,7 @@ pub async fn request_storage_ranges(
         .current_step
         .set(CurrentStepValue::RequestingStorageRanges);
     debug!("Starting request_storage_ranges function");
+    let chain_id = store.get_chain_config().chain_id;
     // 1) split the range in chunks of same length
     let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for (account, (maybe_root_hash, _)) in &account_storage_roots.accounts_with_storage_root {
@@ -942,7 +943,7 @@ pub async fn request_storage_ranges(
             }
         }
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, chain_id) {
             info!("request_storage_ranges became stale, breaking");
             break;
         }
