@@ -988,9 +988,7 @@ where
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
     }
-    // TEMPORARILY DISABLED: testing if bsc capability causes peer timeouts
     // BSC chains (mainnet 56 / Chapel 97) require the bsc capability in the Hello message.
-    let chain_id_for_hello = 0u64; // force-disable bsc capability
     // Without it, BSC peers classify us as a non-BSC peer and disconnect to free peer slots.
     let chain_id_for_hello = state.storage.get_chain_config().chain_id;
     if chain_id_for_hello == 56 || chain_id_for_hello == 97 {
