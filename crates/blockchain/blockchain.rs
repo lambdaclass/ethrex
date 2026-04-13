@@ -220,6 +220,8 @@ pub struct Blockchain {
     /// BSC has no Engine API so the sync bridge polls this field instead
     /// of waiting for a forkchoiceUpdated call.
     pub bsc_sync_head: std::sync::Mutex<Option<H256>>,
+    /// Set of all peer-head hashes we've seen. Used to select the highest pivot.
+    pub bsc_sync_head_candidates: std::sync::Mutex<std::collections::HashSet<H256>>,
     bsc_pivot_header: std::sync::Mutex<Option<ethrex_common::types::BlockHeader>>,
 }
 
@@ -339,6 +341,7 @@ impl Blockchain {
             options: blockchain_opts,
             parlia_engine: None,
             bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
         }
     }
@@ -352,6 +355,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             parlia_engine: None,
             bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
         }
     }
@@ -2560,9 +2564,21 @@ impl Blockchain {
     /// Only the most-recent peer head is kept; the previous value is overwritten.
     pub fn set_bsc_sync_head(&self, head: H256) {
         if let Ok(mut target) = self.bsc_sync_head.lock() {
-            info!("BSC sync head set by peer status: {head:?}");
             *target = Some(head);
         }
+        if let Ok(mut set) = self.bsc_sync_head_candidates.lock() {
+            if set.insert(head) {
+                info!("BSC sync head candidate added: {head:?} (total: {})", set.len());
+            }
+        }
+    }
+
+    /// Returns a snapshot of all known peer-head candidates. Does not clear the set.
+    pub fn bsc_sync_head_candidates_snapshot(&self) -> Vec<H256> {
+        self.bsc_sync_head_candidates
+            .lock()
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Takes the BSC sync target (returns and clears it atomically).

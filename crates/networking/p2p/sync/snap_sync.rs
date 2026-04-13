@@ -113,42 +113,68 @@ pub async fn sync_cycle_snap(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        info!("BSC mode: skipping full header download, using freshest sync_head from peer status");
+        info!("BSC mode: skipping full header download, selecting highest pivot from peer status candidates");
 
-        // Use the sync_head hash from the most recent peer status exchange.
-        // blockchain.bsc_sync_head is continuously updated as new peers connect,
-        // so we always have access to a fresh hash from a peer that just connected.
-        let mut pivot_header = None;
-        for attempt in 0..15 {
+        // Collect candidates over time, resolve each to a header, pick highest block number.
+        // This avoids stale pivots from lagging peers whose Status arrived last.
+        let mut best_pivot: Option<ethrex_common::types::BlockHeader> = None;
+        let mut tried: std::collections::HashSet<H256> = std::collections::HashSet::new();
+        for attempt in 0..20 {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            // Get the FRESHEST sync_head at this moment (not the stale one passed in)
-            let fresh_head = {
-                let guard = blockchain.bsc_sync_head.lock().ok();
-                guard.and_then(|g| *g).unwrap_or(sync_head)
-            };
-            info!("BSC pivot: requesting header for {fresh_head:?} (attempt {attempt})");
-            if let Ok(Some(headers)) = peers
-                .request_block_headers_from_hash(
-                    fresh_head,
-                    crate::peer_handler::BlockRequestOrder::NewToOld,
-                )
-                .await
-            {
-                if let Some(header) = headers.into_iter().next() {
-                    info!("BSC pivot found: block {} hash {:?}", header.number, header.hash());
-                    pivot_header = Some(header);
+            let mut candidates = blockchain.bsc_sync_head_candidates_snapshot();
+            if candidates.is_empty() {
+                candidates.push(sync_head);
+            }
+            // Sort for deterministic iteration order.
+            candidates.sort();
+            info!("BSC pivot: {} candidates to try (attempt {attempt})", candidates.len());
+            for hash in candidates {
+                if !tried.insert(hash) {
+                    continue;
+                }
+                if let Ok(Some(headers)) = peers
+                    .request_block_headers_from_hash(
+                        hash,
+                        crate::peer_handler::BlockRequestOrder::NewToOld,
+                    )
+                    .await
+                {
+                    if let Some(header) = headers.into_iter().next() {
+                        let improved = match &best_pivot {
+                            Some(existing) => header.number > existing.number,
+                            None => true,
+                        };
+                        if improved {
+                            info!(
+                                "BSC pivot candidate: block {} hash {:?} (improved)",
+                                header.number,
+                                header.hash()
+                            );
+                            best_pivot = Some(header);
+                        }
+                    }
+                }
+            }
+            // Once we have a pivot and exhausted known candidates, break.
+            if best_pivot.is_some() {
+                let known = blockchain.bsc_sync_head_candidates_snapshot().len();
+                if tried.len() >= known {
                     break;
                 }
             }
-            warn!("BSC pivot: no response for {fresh_head:?}");
         }
 
-        let Some(pivot_header) = pivot_header else {
-            warn!("BSC pivot: could not find pivot after 15 attempts, will retry on next cycle");
+        let Some(pivot_header) = best_pivot else {
+            warn!("BSC pivot: could not find pivot after 20 attempts, will retry on next cycle");
             return Ok(());
         };
+        info!(
+            "BSC pivot selected: block {} hash {:?}",
+            pivot_header.number,
+            pivot_header.hash()
+        );
 
         let mut block_sync_state = SnapBlockSyncState::new(store.clone());
         info!(
