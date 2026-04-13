@@ -54,7 +54,18 @@ def color_score(peer_id: str, score: int) -> str:
     return f"{color}{score:>4}  {RESET}"
 
 
-def render():
+def trim_client(client: str, width: int) -> str:
+    """Trim client/version string to width. When very tight, show just the client name."""
+    if len(client) <= width:
+        return client
+    if width < 10:
+        # Space is tight — drop version info, keep the client name
+        name = client.split("/")[0]
+        return name[:width]
+    return client[: width - 1] + "\u2026"
+
+
+def render(term_cols: int):
     global prev_scores
     lines = []
     elapsed = int(time.time() - start_time)
@@ -156,11 +167,23 @@ def render():
         f"{BOLD}Inflight:{RESET} {s['total_inflight_requests']}"
     )
     lines.append("")
+
+    # Column widths — fixed columns + dynamic Capabilities / Client
+    # Layout: PID  Score  Reqs  Elig  Caps  Dir  Client
+    W_PID, W_SCORE, W_REQS, W_ELIG, W_DIR = 14, 6, 5, 4, 4
+    SEPARATORS = 6  # one space between each of the 7 columns
+    fixed = W_PID + W_SCORE + W_REQS + W_ELIG + W_DIR + SEPARATORS  # = 39
+    # Budget for Caps + Client. Leave 1 char right-margin.
+    budget = max(20, term_cols - fixed - 1)
+    W_CAPS = max(12, min(22, budget - 10))  # caps capped at 22, min 12
+    W_CLIENT = max(8, budget - W_CAPS)
+
     lines.append(
-        f"{DIM}{'Peer ID':>14} {'Score':>6} {'Reqs':>5} {'Elig':>5}"
-        f" {'Capabilities':>22} {'Dir':>4} {'Client':>35}{RESET}"
+        f"{DIM}{'Peer ID':>{W_PID}} {'Score':>{W_SCORE}} {'Reqs':>{W_REQS}}"
+        f" {'Elig':>{W_ELIG}} {'Capabilities':<{W_CAPS}} {'Dir':>{W_DIR}}"
+        f" {'Client':<{W_CLIENT}}{RESET}"
     )
-    lines.append(f"{DIM}{'-' * 97}{RESET}")
+    lines.append(f"{DIM}{'-' * (fixed + W_CAPS + W_CLIENT)}{RESET}")
 
     new_scores = {}
     for p in sorted(peers, key=lambda x: x["score"], reverse=True):
@@ -179,20 +202,23 @@ def render():
             ver = parts[1] if len(parts) > 1 else "?"
             by_proto.setdefault(proto, []).append(ver)
         caps = " ".join(f"{k}/{','.join(vs)}" for k, vs in by_proto.items())
-        client = p["client_version"][:35]
+        if len(caps) > W_CAPS:
+            caps = caps[: W_CAPS - 1] + "\u2026"
+        client = trim_client(p["client_version"], W_CLIENT)
         d = p["connection_direction"][:3]
 
-        if p["eligible"]:
-            elig = f"{GREEN}\u2713{RESET}"
-        else:
-            elig = f"{RED}\u2717{RESET}"
+        elig_char = "\u2713" if p["eligible"] else "\u2717"
+        elig_col = GREEN if p["eligible"] else RED
+        # Visible-width 1, right-aligned in W_ELIG column
+        elig_str = f"{' ' * (W_ELIG - 1)}{elig_col}{elig_char}{RESET}"
 
         reqs = p["inflight_requests"]
-        reqs_str = f"{YELLOW}{reqs:>5}{RESET}" if reqs > 0 else f"{reqs:>5}"
+        reqs_str = f"{YELLOW}{reqs:>{W_REQS}}{RESET}" if reqs > 0 else f"{reqs:>{W_REQS}}"
 
         lines.append(
-            f"{pid:>14} {score_str} {reqs_str}"
-            f" {elig:>14} {caps:>22} {d:>4} {DIM}{client:>35}{RESET}"
+            f"{pid:>{W_PID}} {score_str} {reqs_str}"
+            f" {elig_str} {caps:<{W_CAPS}} {d:>{W_DIR}}"
+            f" {DIM}{client:<{W_CLIENT}}{RESET}"
         )
 
     prev_scores = new_scores
@@ -205,32 +231,40 @@ def cleanup(*_):
     sys.exit(0)
 
 
-signal.signal(signal.SIGINT, cleanup)
-signal.signal(signal.SIGTERM, cleanup)
+def main():
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
 
-sys.stdout.write("\033[?1049h\033[?25l\033[2J")
-sys.stdout.flush()
+    sys.stdout.write("\033[?1049h\033[?25l\033[2J")
+    sys.stdout.flush()
 
-try:
-    prev_line_count = 0
-    while True:
-        lines = render()
-        try:
-            term_rows = os.get_terminal_size().lines
-        except OSError:
-            term_rows = 40
-        if len(lines) > term_rows - 2:
-            hidden = len(lines) - term_rows + 3
-            lines = lines[: term_rows - 3]
-            lines.append(f"  {DIM}... {hidden} more peers (resize terminal to see all){RESET}")
-        buf = "\033[H"
-        for line in lines:
-            buf += f"{line}\033[K\n"
-        for _ in range(max(0, prev_line_count - len(lines))):
-            buf += "\033[K\n"
-        sys.stdout.write(buf)
-        sys.stdout.flush()
-        prev_line_count = len(lines)
-        time.sleep(INTERVAL)
-except Exception:
-    cleanup()
+    try:
+        prev_line_count = 0
+        while True:
+            try:
+                size = os.get_terminal_size()
+                term_rows, term_cols = size.lines, size.columns
+            except OSError:
+                term_rows, term_cols = 40, 120
+            lines = render(term_cols)
+            if len(lines) > term_rows - 2:
+                hidden = len(lines) - term_rows + 3
+                lines = lines[: term_rows - 3]
+                lines.append(
+                    f"  {DIM}... {hidden} more peers (resize terminal to see all){RESET}"
+                )
+            buf = "\033[H"
+            for line in lines:
+                buf += f"{line}\033[K\n"
+            for _ in range(max(0, prev_line_count - len(lines))):
+                buf += "\033[K\n"
+            sys.stdout.write(buf)
+            sys.stdout.flush()
+            prev_line_count = len(lines)
+            time.sleep(INTERVAL)
+    except Exception:
+        cleanup()
+
+
+if __name__ == "__main__":
+    main()
