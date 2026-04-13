@@ -35,4 +35,6 @@ jobs:
           targets: riscv64imac-unknown-none-elf
 
       - name: Check no_std crates
-        run: cargo check -p ethrex-rlp --no-default-features --target riscv64imac-unknown-none-elf
+        run: |
+          cargo check -p ethrex-rlp -p ethrex-crypto --no-default-features --target riscv64imac-unknown-none-elf
+          cargo check -p ethrex-crypto --no-default-features --features kzg-rs --target riscv64imac-unknown-none-elf
