@@ -133,9 +133,11 @@ impl PeerMetrics {
     }
 
     /// Peers with ≤50ms get MAX_SCORE, ≥5000ms get MIN_SCORE, linear interpolation.
+    /// Returns a neutral midpoint score for peers with no samples yet, so that
+    /// "unknown" is distinguishable from "measured-and-at-boundary".
     pub fn latency_score(&self) -> i64 {
         let Some(ema) = self.latency_ema_ms else {
-            return 0;
+            return (MAX_SCORE + MIN_SCORE) / 2;
         };
         let clamped = ema.clamp(50.0, 5000.0);
         let ratio = (clamped - 50.0) / (5000.0 - 50.0);
@@ -144,9 +146,11 @@ impl PeerMetrics {
     }
 
     /// Peers with ≥2MB/s get MAX_SCORE, ≤10KB/s get MIN_SCORE, log interpolation.
+    /// Returns a neutral midpoint score for peers with no samples yet, so that
+    /// "unknown" is distinguishable from "measured-and-at-boundary".
     pub fn bandwidth_score(&self) -> i64 {
         let Some(ema) = self.bandwidth_ema else {
-            return 0;
+            return (MAX_SCORE + MIN_SCORE) / 2;
         };
         let low = 10_000_f64;
         let high = 2_000_000_f64;
