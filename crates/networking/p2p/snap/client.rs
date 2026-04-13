@@ -1275,6 +1275,8 @@ async fn request_storage_ranges_worker(
         remaining_hash_range: (start_hash, task.end_hash),
     };
     let request_id = rand::random();
+    let account_hash_count = chunk_account_hashes.len();
+    let first_account = chunk_account_hashes.first().copied();
     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
         id: request_id,
         root_hash: state_root,
@@ -1283,23 +1285,31 @@ async fn request_storage_ranges_worker(
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
         response_bytes: MAX_RESPONSE_BYTES,
     });
+    let response = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await;
     let Ok(RLPxMessage::StorageRanges(StorageRanges {
         id: _,
         slots,
         proof,
         // The caller already holds a request reservation for this peer,
         // so call outgoing_request directly to avoid a double increment.
-    })) = connection
-        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
+    })) = response
     else {
-        tracing::debug!("Failed to get storage range");
+        tracing::debug!(
+            "Failed to get storage range from peer {peer_id}: err={:?}",
+            response.as_ref().err()
+        );
         tx.send(empty_task_result).await.ok();
         return Ok(());
     };
     if slots.is_empty() && proof.is_empty() {
         tx.send(empty_task_result).await.ok();
-        tracing::debug!("Received empty storage range");
+        tracing::debug!(
+            "Received empty storage range from peer {peer_id} (accounts={account_hash_count}, first={:?}, state_root={:?})",
+            first_account,
+            state_root,
+        );
         return Ok(());
     }
     // Check we got some data and no more than the requested amount
