@@ -1304,7 +1304,6 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
-            state.txs_sent_to_peer += response.pooled_transactions.len() as u64;
             send(state, Message::PooledTransactions(response)).await?;
             state.txs_sent_to_peer += batch_size;
         }
