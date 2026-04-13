@@ -22,8 +22,8 @@ use ethrex_common::{
     H256,
     types::{BlockBody, BlockHeader, block_access_list::BlockAccessList, validate_block_body},
 };
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::encode::RLPEncode;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
@@ -260,10 +260,8 @@ impl PeerHandler {
                 if !elapsed.is_zero() {
                     let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                     if !headers.is_empty() {
-                        let response_bytes: u64 = headers
-                            .iter()
-                            .map(|h| h.encode_to_vec().len() as u64)
-                            .sum();
+                        let response_bytes: u64 =
+                            headers.iter().map(|h| h.encode_to_vec().len() as u64).sum();
                         let _ = self
                             .peer_table
                             .record_bandwidth(peer_id, response_bytes, elapsed);
