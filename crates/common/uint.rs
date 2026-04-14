@@ -472,9 +472,18 @@ impl U256 {
 // ---- numeric conversion ----
 
 impl U256 {
-    /// Returns the low 64 bits.
+    /// Returns the value as u64.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the value does not fit in u64 (upper limbs are nonzero),
+    /// matching the behavior of `ethereum_types::U256::as_u64()`.
     #[inline]
     pub fn as_u64(&self) -> u64 {
+        assert!(
+            self.0[1] == 0 && self.0[2] == 0 && self.0[3] == 0,
+            "U256 value does not fit in u64"
+        );
         self.0[0]
     }
 
