@@ -4,7 +4,7 @@ use crate::{
         server::{Discv4Message, Discv4State},
     },
     discv5::{
-        messages::Packet as Discv5Packet,
+        messages::{Packet as Discv5Packet, PacketCodecError},
         server::{Discv5Message, Discv5State, update_local_ip},
     },
     peer_table::{DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
@@ -384,6 +384,14 @@ impl DiscoveryServer {
                 let _ = self.discv5_handle_packet(msg).await.inspect_err(
                     |e| trace!(protocol = "discv5", err=?e, "Error handling discovery message"),
                 );
+            }
+            Err(
+                PacketCodecError::InvalidProtocol(_)
+                | PacketCodecError::InvalidHeader
+                | PacketCodecError::InvalidSize
+                | PacketCodecError::CipherError(_),
+            ) => {
+                trace!(from=?from, "Dropping unrecognized UDP packet");
             }
             Err(e) => {
                 debug!(error=?e, "Failed to decode discv5 packet");
