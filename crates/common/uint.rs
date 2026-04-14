@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 /// Trait defining all U256/U512 operations that a backend must support.
 /// Every method has a default implementation using ethereum_types.
 /// Vendors override only the operations they want to accelerate.
+#[allow(clippy::wrong_self_convention)]
 pub trait Uint256Ops: Send + Sync + core::fmt::Debug {
     // ── U256 arithmetic ─────────────────────────────────────────────
 
@@ -524,6 +525,7 @@ impl U256 {
 
     /// Parse from hex or decimal string (tries hex with 0x prefix, otherwise decimal).
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, ParseU256Error> {
         if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
             Self::from_str_radix(hex, 16)
