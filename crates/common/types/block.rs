@@ -667,7 +667,13 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
     }
 
-    if header.timestamp <= parent_header.timestamp {
+    // BSC allows timestamp == parent (3s block time with potential equal timestamps).
+    // Ethereum requires strictly greater.
+    if chain_id == 56 || chain_id == 97 {
+        if header.timestamp < parent_header.timestamp {
+            return Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent);
+        }
+    } else if header.timestamp <= parent_header.timestamp {
         return Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent);
     }
 
