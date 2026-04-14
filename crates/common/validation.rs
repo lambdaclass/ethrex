@@ -50,7 +50,12 @@ pub fn validate_block_pre_execution(
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)?;
         verify_blob_gas_usage(block, chain_config)?;
-        if chain_config.is_osaka_activated(block.header.timestamp)
+        // EIP-7825: cap tx gas_limit. BSC doesn't enforce this — BSC allows
+        // transactions with gas_limit up to the block gas_limit (which can be
+        // much larger than POST_OSAKA_GAS_LIMIT_CAP).
+        let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
+        if !is_bsc
+            && chain_config.is_osaka_activated(block.header.timestamp)
             && !chain_config.is_amsterdam_activated(block.header.timestamp)
         {
             verify_transaction_max_gas_limit(block)?;
