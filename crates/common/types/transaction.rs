@@ -3641,7 +3641,7 @@ mod tests {
         let s = U256::from_big_endian(&sig_bytes[32..64]);
 
         // Ensure the generated signature was indeed low-s (standard requirement)
-        let half_n = n / 2;
+        let half_n = n / 2u64;
         assert!(
             s <= half_n,
             "Generated signature was not low-s, cannot test high-s rejection"
