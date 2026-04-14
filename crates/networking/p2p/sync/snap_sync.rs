@@ -367,21 +367,20 @@ pub async fn snap_sync(
         .ok_or(SyncError::CorruptDB)?;
 
     // BSC: skip the initial stale-pivot update loop. BSC's 3-second block time
-    // makes every pivot "stale" within seconds, but the state root is still
-    // servable by peers within their pruning window (~128 blocks).
-    // Repeatedly updating the pivot restarts the entire state download.
     let chain_id = store.get_chain_config().chain_id;
     let is_bsc = chain_id == 56 || chain_id == 97;
-    if !is_bsc {
-        while block_is_stale(&pivot_header, chain_id) {
-            pivot_header = update_pivot(
+    while block_is_stale(&pivot_header, chain_id) {
+        pivot_header = if is_bsc {
+            update_pivot_bsc(&pivot_header, peers, &blockchain, block_sync_state).await?
+        } else {
+            update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
             )
-            .await?;
-        }
+            .await?
+        };
     }
     debug!(
         "Selected block {} as pivot for snap sync",
@@ -468,25 +467,19 @@ pub async fn snap_sync(
                 };
             }
             // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
-            // We just need to update the pivot and start again.
-            // BSC: skip interleaved healing during the storage loop. BSC pivot rotation
-            // changes state_root, and healing sets account roots to None, which breaks
-            // the subsequent storage lookup under the new pivot hash. Healing runs
-            // separately after all storage is downloaded (the main healing loop below).
-            if !is_bsc {
-                if !heal_state_trie_wrap(
-                    pivot_header.state_root,
-                    store.clone(),
-                    peers,
-                    calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
-                    &mut state_leafs_healed,
-                    &mut storage_accounts,
-                    &mut code_hash_collector,
-                )
-                .await?
-                {
-                    continue;
-                }
+            // We just need to update the pivot and start again
+            if !heal_state_trie_wrap(
+                pivot_header.state_root,
+                store.clone(),
+                peers,
+                calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
+                &mut state_leafs_healed,
+                &mut storage_accounts,
+                &mut code_hash_collector,
+            )
+            .await?
+            {
+                continue;
             }
 
             info!(
@@ -984,17 +977,41 @@ pub async fn update_pivot_bsc(
         best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
     }
     let new_pivot = best_pivot.ok_or(SyncError::NoBlockHeaders)?;
-    // Store the new pivot header in the DB so hash-based state lookups resolve.
-    // This mirrors what `update_pivot` does via its header-chain download path.
-    block_sync_state
-        .process_incoming_headers(std::iter::once(new_pivot.clone()))
-        .await?;
     info!(
         "BSC pivot refreshed: block {} -> {} (hash {:?})",
         current_pivot.number,
         new_pivot.number,
         new_pivot.hash()
     );
+    // Download the header chain from old pivot to new pivot, by NUMBER
+    // (BSC peers don't serve hash-based header ranges reliably).
+    // This matches `update_pivot`'s contract: all intermediate headers
+    // are stored so that healing and storage lookups work correctly.
+    let old_number = current_pivot.number;
+    let new_number = new_pivot.number;
+    let mut current = old_number + 1;
+    while current <= new_number {
+        let batch_size = (new_number - current + 1).min(1024);
+        if let Ok(Some(headers)) = peers
+            .request_block_headers_from_number(
+                current,
+                batch_size,
+                crate::peer_handler::BlockRequestOrder::OldToNew,
+            )
+            .await
+        {
+            if !headers.is_empty() {
+                let last = headers.last().map(|h| h.number).unwrap_or(current);
+                block_sync_state
+                    .process_incoming_headers(headers.into_iter())
+                    .await?;
+                current = last + 1;
+                continue;
+            }
+        }
+        // Retry with different peer on failure
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     *METRICS.sync_head_hash.lock().await = new_pivot.hash();
     Ok(new_pivot)
 }
