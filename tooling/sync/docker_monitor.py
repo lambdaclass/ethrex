@@ -69,6 +69,7 @@ DIAGNOSTICS_DEGRADED_BUFFER_SIZE = 60  # snapshots kept in degraded mode
 DEGRADATION_ELIGIBLE_PEERS_THRESHOLD = 5  # trigger if eligible peers below this
 DEGRADATION_STALENESS_RATIO = 0.8  # trigger if pivot age > 80% of threshold
 DEGRADATION_RECOVERY_TIMEOUT = 60  # seconds of health before leaving degraded mode
+WATCHED_PHASES: set[str] = {"healing"}  # phases that warrant closer monitoring (TRACE + fast polling)
 LOG_LEVEL_NORMAL = "info,ethrex_p2p::sync=debug"
 LOG_LEVEL_DEGRADED = "info,ethrex_p2p=trace"
 
@@ -157,8 +158,8 @@ class DiagnosticsTracker:
                     reasons.append(f"staleness_ratio={ratio:.2f}")
 
             # Healing phase is high-risk for pivot failures — increase polling
-            if phase == "healing":
-                reasons.append("healing_phase")
+            if phase in WATCHED_PHASES:
+                reasons.append(f"watched_phase:{phase}")
 
         if reasons:
             if not self.degraded[name]:
@@ -911,7 +912,13 @@ def main():
                    help="Docker image tag to build")
     p.add_argument("--ethrex-dir", default=os.environ.get("ETHREX_DIR", "../.."),
                    help="Path to ethrex repository root")
+    p.add_argument("--watched-phases", default=",".join(WATCHED_PHASES),
+                   help="Comma-separated sync phases that trigger TRACE logging and fast polling (default: healing)")
     args = p.parse_args()
+
+    # Apply CLI override for watched phases
+    global WATCHED_PHASES
+    WATCHED_PHASES = {p.strip() for p in args.watched_phases.split(",") if p.strip()}
 
     # Resolve ethrex directory to absolute path
     ethrex_dir = os.path.abspath(args.ethrex_dir)
