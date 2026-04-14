@@ -261,8 +261,8 @@
           "sort": "desc"
         },
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
+          "displayMode": "list",
+          "placement": "bottom",
           "calcs": [
             "lastNotNull",
             "max"
