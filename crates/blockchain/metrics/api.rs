@@ -54,7 +54,7 @@ pub(crate) async fn get_metrics() -> String {
         Err(_) => tracing::error!("Failed to gather METRICS_P2P"),
     };
 
-    // METRICS_SYNC uses the default Prometheus registry (Pattern B),
+    // METRICS_SYNC registers into the default Prometheus registry at init,
     // so its metrics are already included in gather_default_metrics() above.
 
     ret_string.push('\n');
