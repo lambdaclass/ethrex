@@ -434,9 +434,21 @@ pub async fn periodically_show_peer_stats_during_syncing(
         )
         .await;
 
-        // Push progress to Prometheus
+        // Push progress + peer health to Prometheus
         #[cfg(feature = "metrics")]
-        push_sync_prometheus_metrics(current_step);
+        {
+            push_sync_prometheus_metrics(current_step);
+            let diag = peer_table.get_peer_diagnostics().await.unwrap_or_default();
+            let snap_peers = diag
+                .iter()
+                .filter(|p| p.capabilities.iter().any(|c| c.starts_with("snap/")))
+                .count();
+            let eligible = diag.iter().filter(|p| p.eligible).count();
+            let inflight: i64 = diag.iter().map(|p| p.inflight_requests).sum();
+            ethrex_metrics::sync::METRICS_SYNC.set_snap_peers(snap_peers as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_eligible_peers(eligible as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_inflight_requests(inflight);
+        }
 
         // Update previous interval counters for next rate calculation
         prev_interval = PhaseCounters::capture_current();
