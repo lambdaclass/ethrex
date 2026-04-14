@@ -69,7 +69,16 @@ DIAGNOSTICS_DEGRADED_BUFFER_SIZE = 60  # snapshots kept in degraded mode
 DEGRADATION_ELIGIBLE_PEERS_THRESHOLD = 5  # trigger if eligible peers below this
 DEGRADATION_STALENESS_RATIO = 0.8  # trigger if pivot age > 80% of threshold
 DEGRADATION_RECOVERY_TIMEOUT = 60  # seconds of health before leaving degraded mode
-WATCHED_PHASES: set[str] = {"healing"}  # phases that warrant closer monitoring (TRACE + fast polling)
+# Watched phases: sync phases that warrant closer monitoring.
+# When the node enters a watched phase, the monitor bumps the log level to
+# TRACE (via admin_setLogLevel) and switches to fast polling (5s intervals).
+# This is useful for investigating specific sync stages — e.g. "healing" is
+# where pivot-update failures tend to occur.
+#
+# Default: empty (no phases watched). Set via --watched-phases CLI flag:
+#   --watched-phases "healing"
+#   --watched-phases "healing,storage_insertion"
+WATCHED_PHASES: set[str] = set()
 LOG_LEVEL_NORMAL = "info,ethrex_p2p::sync=debug"
 LOG_LEVEL_DEGRADED = "info,ethrex_p2p=trace"
 
