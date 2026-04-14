@@ -19,7 +19,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
-kzg-rs = { workspace = true, optional = true }
 once_cell = "1.20.2"
 libc = "0.2"
 crc32fast.workspace = true
@@ -43,8 +42,7 @@ libssz-merkle = { workspace = true, optional = true }
 libssz-derive = { workspace = true, optional = true }
 
 [features]
-default = ["secp256k1", "kzg-rs"]
-kzg-rs = ["dep:kzg-rs"]
+default = ["secp256k1"]
 c-kzg = ["ethrex-crypto/c-kzg"]
 secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1"]
 eip-8025 = ["dep:libssz", "dep:libssz-types", "dep:libssz-merkle", "dep:libssz-derive"]
