@@ -32,11 +32,12 @@ pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 /// Polygon PoS maximum transaction gas limit (2^25 = 33,554,432).
 pub const POLYGON_MAX_TX_GAS: u64 = 1 << 25;
-/// Polygon PoS allows 32KB contract code (not 24KB like Ethereum mainnet).
+/// Polygon PoS allows 32KB deployed contract code (not 24KB like Ethereum mainnet).
 pub const POLYGON_MAX_CODE_SIZE: u64 = 0x8000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
-/// Polygon PoS init code max size (2 * POLYGON_MAX_CODE_SIZE).
-pub const POLYGON_INIT_CODE_MAX_SIZE: usize = 65536;
+/// Polygon PoS init code max size: Bor uses the standard EIP-3860 limit (2 * 24KB = 49152),
+/// NOT 2 * POLYGON_MAX_CODE_SIZE. Verified empirically on mainnet block 85497398.
+pub const POLYGON_INIT_CODE_MAX_SIZE: usize = INIT_CODE_MAX_SIZE;
 // EIP-7954 (Amsterdam): increased limits
 pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x8000;
 #[allow(clippy::as_conversions)]

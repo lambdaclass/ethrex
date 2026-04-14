@@ -413,30 +413,6 @@ impl Blockchain {
 
         let (mut execution_result, bal) = vm.execute_block(block)?;
 
-        // Temporary: dump per-tx gas for debugging gas mismatch at block 85497398
-        if block.header.number == 85497398 {
-            for (i, r) in execution_result.receipts.iter().enumerate() {
-                let tx_gas = if i == 0 {
-                    r.cumulative_gas_used
-                } else {
-                    r.cumulative_gas_used - execution_result.receipts[i - 1].cumulative_gas_used
-                };
-                warn!(
-                    tx_index = i,
-                    tx_gas,
-                    cumulative = r.cumulative_gas_used,
-                    succeeded = r.succeeded,
-                    "gas-debug tx"
-                );
-            }
-            warn!(
-                block_gas = execution_result.block_gas_used,
-                expected = block.header.gas_used,
-                delta = block.header.gas_used as i64 - execution_result.block_gas_used as i64,
-                "gas-debug block total"
-            );
-        }
-
         // For Polygon: execute Bor system calls (commitState) and create state sync receipt.
         // Must happen BEFORE get_state_transitions() so system call state changes are captured,
         // and BEFORE validate_receipts_root() since the receipt list is incomplete without it.
@@ -613,30 +589,6 @@ impl Blockchain {
                         let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (mut execution_result, produced_bal) = result?;
-
-                        // Temporary: dump per-tx gas for debugging gas mismatch at block 85497398
-                        if block.header.number == 85497398 {
-                            for (i, r) in execution_result.receipts.iter().enumerate() {
-                                let tx_gas = if i == 0 {
-                                    r.cumulative_gas_used
-                                } else {
-                                    r.cumulative_gas_used - execution_result.receipts[i - 1].cumulative_gas_used
-                                };
-                                warn!(
-                                    tx_index = i,
-                                    tx_gas,
-                                    cumulative = r.cumulative_gas_used,
-                                    succeeded = r.succeeded,
-                                    "gas-debug tx"
-                                );
-                            }
-                            warn!(
-                                block_gas = execution_result.block_gas_used,
-                                expected = block.header.gas_used,
-                                delta = block.header.gas_used as i64 - execution_result.block_gas_used as i64,
-                                "gas-debug block total"
-                            );
-                        }
 
                         // Polygon: execute Bor system calls and block alloc after pipeline
                         if let Some(polygon_tx) = polygon_tx {
