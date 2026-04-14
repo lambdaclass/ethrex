@@ -10,19 +10,22 @@ use airbender_crypto::k256::elliptic_curve::ops::Reduce;
 use airbender_crypto::k256::{Scalar, Secp256k1, U256};
 use airbender_crypto::ripemd160::{Digest as RipemdDigest, Ripemd160};
 use airbender_crypto::secp256k1::{SECP256K1N_HALF, recover};
-use airbender_crypto::sha256::{Digest as Sha2Digest, Sha256};
 use airbender_crypto::sha3::Keccak256;
+use airbender_crypto::sha256::{Digest as Sha2Digest, Sha256};
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
 // BLS12-381 types (delegated field arithmetic via ark_ff_delegation on riscv32)
+use airbender_crypto::ark_ec::AffineRepr;
 use airbender_crypto::bls12_381::{
-    curves::Bls12_381,
-    eip2537::{parse_fq_bytes, parse_fq2_bytes, parse_g1_bytes, parse_g2_bytes, serialize_fq_bytes, serialize_fq2_bytes},
     Fq as BlsFq, Fq2 as BlsFq2, G1Affine as BlsG1Affine, G1Projective as BlsG1Projective,
     G2Affine as BlsG2Affine, G2Projective as BlsG2Projective,
+    curves::Bls12_381,
+    eip2537::{
+        parse_fq_bytes, parse_fq2_bytes, parse_g1_bytes, parse_g2_bytes, serialize_fq_bytes,
+        serialize_fq2_bytes,
+    },
 };
-use airbender_crypto::ark_ec::AffineRepr;
 
 /// Airbender crypto provider using CSR-delegated operations.
 ///
@@ -304,9 +307,7 @@ fn serialize_bn254_g1(point: &G1Affine) -> [u8; 64] {
 
 // ── BLS12-381 helpers (EIP-2537 48-byte field elements) ───────────────
 
-fn parse_bls_g1_48(
-    (x_bytes, y_bytes): ([u8; 48], [u8; 48]),
-) -> Result<BlsG1Affine, CryptoError> {
+fn parse_bls_g1_48((x_bytes, y_bytes): ([u8; 48], [u8; 48])) -> Result<BlsG1Affine, CryptoError> {
     // EIP-2537 uses 64-byte padded field elements, but our Crypto trait
     // passes 48-byte unpadded. Pad to 64 bytes (16 zero bytes prefix).
     let mut x_padded = [0u8; 64];
@@ -314,10 +315,12 @@ fn parse_bls_g1_48(
     let mut y_padded = [0u8; 64];
     y_padded[16..].copy_from_slice(&y_bytes);
 
-    let x = parse_fq_bytes(&x_padded)
-        .ok_or(CryptoError::InvalidInput("G1 x coordinate >= field modulus"))?;
-    let y = parse_fq_bytes(&y_padded)
-        .ok_or(CryptoError::InvalidInput("G1 y coordinate >= field modulus"))?;
+    let x = parse_fq_bytes(&x_padded).ok_or(CryptoError::InvalidInput(
+        "G1 x coordinate >= field modulus",
+    ))?;
+    let y = parse_fq_bytes(&y_padded).ok_or(CryptoError::InvalidInput(
+        "G1 y coordinate >= field modulus",
+    ))?;
 
     if x.is_zero() && y.is_zero() {
         return Ok(BlsG1Affine::zero());
@@ -342,23 +345,20 @@ fn parse_bls_g2_192(
     let mut y1_padded = [0u8; 64];
     y1_padded[16..].copy_from_slice(&y1);
 
-    let x0_fq = parse_fq_bytes(&x0_padded)
-        .ok_or(CryptoError::InvalidInput("G2 x0 >= field modulus"))?;
-    let x1_fq = parse_fq_bytes(&x1_padded)
-        .ok_or(CryptoError::InvalidInput("G2 x1 >= field modulus"))?;
-    let y0_fq = parse_fq_bytes(&y0_padded)
-        .ok_or(CryptoError::InvalidInput("G2 y0 >= field modulus"))?;
-    let y1_fq = parse_fq_bytes(&y1_padded)
-        .ok_or(CryptoError::InvalidInput("G2 y1 >= field modulus"))?;
+    let x0_fq =
+        parse_fq_bytes(&x0_padded).ok_or(CryptoError::InvalidInput("G2 x0 >= field modulus"))?;
+    let x1_fq =
+        parse_fq_bytes(&x1_padded).ok_or(CryptoError::InvalidInput("G2 x1 >= field modulus"))?;
+    let y0_fq =
+        parse_fq_bytes(&y0_padded).ok_or(CryptoError::InvalidInput("G2 y0 >= field modulus"))?;
+    let y1_fq =
+        parse_fq_bytes(&y1_padded).ok_or(CryptoError::InvalidInput("G2 y1 >= field modulus"))?;
 
     if x0_fq.is_zero() && x1_fq.is_zero() && y0_fq.is_zero() && y1_fq.is_zero() {
         return Ok(BlsG2Affine::zero());
     }
 
-    let affine = BlsG2Affine::new_unchecked(
-        BlsFq2::new(x0_fq, x1_fq),
-        BlsFq2::new(y0_fq, y1_fq),
-    );
+    let affine = BlsG2Affine::new_unchecked(BlsFq2::new(x0_fq, x1_fq), BlsFq2::new(y0_fq, y1_fq));
     if !affine.is_on_curve() {
         return Err(CryptoError::InvalidPoint("G2 point not on curve"));
     }
