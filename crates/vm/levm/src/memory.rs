@@ -351,8 +351,8 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
     #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
     {
         let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
-        let words_squared = words.wrapping_mul(words) as u64;
-        let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * (words as u64);
+        let w = u64::from(words);
+        let gas_cost = w * w / MEMORY_EXPANSION_QUOTIENT + 3 * w;
 
         Ok(gas_cost)
     }
