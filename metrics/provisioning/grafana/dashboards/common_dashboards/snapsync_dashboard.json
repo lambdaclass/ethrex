@@ -357,31 +357,9 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.1
-              },
-              {
-                "color": "green",
-                "value": 0.5
-              }
-            ]
-          },
-          "unit": "Ggas/s"
-        },
-        "overrides": []
+          "unit": "s",
+          "decimals": 0
+        }
       },
       "gridPos": {
         "h": 4,
@@ -391,34 +369,24 @@
       },
       "id": 4,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
+          ]
+        }
       },
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "gigagas{instance=~\"$instance\"}",
-          "legendFormat": "Ggas/s",
-          "range": true,
-          "refId": "A"
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=~\".+\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=~\".+\",instance=~\"$instance\"} > 0",
+          "legendFormat": "{{phase}}"
         }
       ],
-      "title": "Throughput Ggas/s",
+      "title": "Phase Elapsed",
       "type": "stat"
     },
     {
@@ -896,6 +864,80 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 11
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_headers_total{instance=~\"$instance\"} - ethrex_sync_headers_downloaded{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ],
+      "title": "Header ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 11
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"BLOCK HEADERS\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"BLOCK HEADERS\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ],
+      "title": "Header Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
           "color": {
             "mode": "thresholds"
           },
@@ -1193,6 +1235,80 @@
       ],
       "title": "Accounts per Second",
       "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 19
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_accounts_downloaded{instance=~\"$instance\"} - ethrex_sync_accounts_inserted{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ],
+      "title": "Account ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 19
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"ACCOUNT RANGES\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"ACCOUNT RANGES\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ],
+      "title": "Account Elapsed",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -1772,6 +1888,43 @@
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 35
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"STATE HEALING\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"STATE HEALING\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ],
+      "title": "Healing Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
           "color": {
             "mode": "palette-classic"
           },
@@ -2030,6 +2183,80 @@
       ],
       "title": "Bytecodes per Second",
       "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 43
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_bytecodes_total{instance=~\"$instance\"} - ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ],
+      "title": "Bytecode ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 43
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"BYTECODES\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"BYTECODES\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ],
+      "title": "Bytecode Elapsed",
+      "type": "stat"
     },
     {
       "datasource": {

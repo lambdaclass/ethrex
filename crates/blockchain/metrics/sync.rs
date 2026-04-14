@@ -1,4 +1,7 @@
-use prometheus::{IntCounterVec, IntGauge, register_int_counter_vec, register_int_gauge};
+use prometheus::{
+    IntCounterVec, IntGauge, IntGaugeVec, register_int_counter_vec, register_int_gauge,
+    register_int_gauge_vec,
+};
 use std::sync::LazyLock;
 
 // Metrics defined in this module register into the Prometheus default registry.
@@ -16,6 +19,7 @@ pub struct MetricsSync {
     pub inflight_requests: IntGauge,
     pub pivot_age_seconds: IntGauge,
     pub pivot_timestamp: IntGauge,
+    pub phase_start_timestamp: IntGaugeVec,
 
     // --- Progress counters (gauges set from METRICS atomics) ---
     // Use rate() in Grafana to derive throughput.
@@ -81,6 +85,13 @@ impl MetricsSync {
                 "Unix timestamp of the current pivot block (use time() - this for age in Grafana)"
             )
             .expect("Failed to create ethrex_sync_pivot_timestamp"),
+
+            phase_start_timestamp: register_int_gauge_vec!(
+                "ethrex_sync_phase_start_timestamp",
+                "Unix timestamp when each phase began (use time() - this for elapsed in Grafana)",
+                &["phase"]
+            )
+            .expect("Failed to create ethrex_sync_phase_start_timestamp"),
 
             // Progress (set periodically from METRICS atomics)
             headers_downloaded: register_int_gauge!(

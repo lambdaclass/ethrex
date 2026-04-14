@@ -399,6 +399,20 @@ pub async fn periodically_show_peer_stats_during_syncing(
             // Start new phase
             phase_start_time = std::time::Instant::now();
 
+            // Record phase start timestamp for Grafana elapsed panels
+            #[cfg(feature = "metrics")]
+            {
+                let (_, phase_name) = phase_info(current_step);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                ethrex_metrics::sync::METRICS_SYNC
+                    .phase_start_timestamp
+                    .with_label_values(&[phase_name])
+                    .set(now as i64);
+            }
+
             // Capture metrics at phase start
             phase_start = PhaseCounters::capture_current();
             prev_interval = phase_start;
@@ -705,10 +719,20 @@ fn push_sync_prometheus_metrics(step: CurrentStepValue) {
         .pivot_block
         .set(METRICS.sync_head_block.load(Relaxed) as i64);
 
-    // Push raw pivot timestamp — Grafana computes age as time() - timestamp
+    // Push raw pivot timestamp — Grafana computes age via time() - timestamp
     let pivot_ts = METRICS.pivot_timestamp.load(Relaxed);
     if pivot_ts > 0 {
         METRICS_SYNC.pivot_timestamp.set(pivot_ts as i64);
+    }
+    // Also update pivot_age_seconds for RPC/peer_top consumers
+    if pivot_ts > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        METRICS_SYNC
+            .pivot_age_seconds
+            .set(now.saturating_sub(pivot_ts) as i64);
     }
 
     match step {
