@@ -1700,7 +1700,9 @@ impl LEVM {
                     return Err(EvmError::Custom(format!(
                         "BAL validation failed for withdrawal: account {addr:?} code \
                          changed during withdrawal/request phase but BAL has no \
-                         code change at index {withdrawal_idx}"
+                         code change at index {withdrawal_idx} \
+                         (actual={:?}, last_bal={seeded_hash:?})",
+                        account.info.code_hash
                     )));
                 }
             }
@@ -1735,9 +1737,22 @@ impl LEVM {
                             )));
                         }
                     }
+                } else {
+                    // Slot not in BAL storage_changes at all: verify it
+                    // wasn't actually mutated during the withdrawal/request phase.
+                    let pre_value = db
+                        .store
+                        .get_storage_value(*addr, *key_h256)
+                        .unwrap_or_default();
+                    if value != pre_value {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for withdrawal: account {addr:?} \
+                             storage slot {slot_u256} changed during withdrawal/request \
+                             phase ({value}) but slot is absent from BAL storage_changes \
+                             (pre={pre_value})"
+                        )));
+                    }
                 }
-                // Slot not in BAL storage_changes at all: loaded from store
-                // during the withdrawal/request phase. Skip.
             }
         }
 
