@@ -93,7 +93,8 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
                 test.env
                     .current_excess_blob_gas
                     .unwrap_or_default()
-                    .try_into().unwrap(),
+                    .try_into()
+                    .unwrap(),
             );
             let parent_beacon_block_root = Some(H256::zero());
             let requests_hash = if fork == Fork::Prague {

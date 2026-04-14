@@ -186,14 +186,20 @@ impl TestUnit {
                 .genesis_block_header
                 .base_fee_per_gas
                 .map(|v| v.try_into().unwrap()),
-            blob_gas_used: self.genesis_block_header.blob_gas_used.map(|v| v.try_into().unwrap()),
+            blob_gas_used: self
+                .genesis_block_header
+                .blob_gas_used
+                .map(|v| v.try_into().unwrap()),
             excess_blob_gas: self
                 .genesis_block_header
                 .excess_blob_gas
                 .map(|v| v.try_into().unwrap()),
             requests_hash: self.genesis_block_header.requests_hash,
             block_access_list_hash: self.genesis_block_header.block_access_list_hash,
-            slot_number: self.genesis_block_header.slot_number.map(|v| v.try_into().unwrap()),
+            slot_number: self
+                .genesis_block_header
+                .slot_number
+                .map(|v| v.try_into().unwrap()),
         }
     }
 }
@@ -430,13 +436,21 @@ impl From<Transaction> for EIP1559Transaction {
     fn from(val: Transaction) -> Self {
         EIP1559Transaction {
             // Note: gas_price is not used in this conversion as it is not part of EIP1559Transaction, this could be a problem
-            chain_id: val.chain_id.map(|id| id.try_into().unwrap()).unwrap_or(1 /*mainnet*/), // TODO: Consider converting this into Option
+            chain_id: val
+                .chain_id
+                .map(|id| id.try_into().unwrap())
+                .unwrap_or(1 /*mainnet*/), // TODO: Consider converting this into Option
             nonce: val.nonce.try_into().unwrap(),
-            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().try_into().unwrap(), // TODO: Consider converting this into Option
+            max_priority_fee_per_gas: val
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             max_fee_per_gas: val
                 .max_fee_per_gas
                 .unwrap_or(val.gas_price.unwrap_or_default())
-                .try_into().unwrap(), // TODO: Consider converting this into Option
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             gas_limit: val.gas_limit.try_into().unwrap(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
@@ -462,13 +476,21 @@ impl From<Transaction> for EIP1559Transaction {
 impl From<Transaction> for EIP4844Transaction {
     fn from(val: Transaction) -> Self {
         EIP4844Transaction {
-            chain_id: val.chain_id.map(|id: U256| id.try_into().unwrap()).unwrap_or(1), // TODO: Consider converting this into Option
+            chain_id: val
+                .chain_id
+                .map(|id: U256| id.try_into().unwrap())
+                .unwrap_or(1), // TODO: Consider converting this into Option
             nonce: val.nonce.try_into().unwrap(),
-            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().try_into().unwrap(), // TODO: Consider converting this into Option
+            max_priority_fee_per_gas: val
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             max_fee_per_gas: val
                 .max_fee_per_gas
                 .unwrap_or(val.gas_price.unwrap_or_default())
-                .try_into().unwrap(),
+                .try_into()
+                .unwrap(),
             gas: val.gas_limit.try_into().unwrap(),
             to: match val.to {
                 TxKind::Call(address) => address,
@@ -495,13 +517,21 @@ impl From<Transaction> for EIP4844Transaction {
 impl From<Transaction> for EIP7702Transaction {
     fn from(val: Transaction) -> Self {
         EIP7702Transaction {
-            chain_id: val.chain_id.map(|id: U256| id.try_into().unwrap()).unwrap_or(1), // TODO: Consider converting this into Option
+            chain_id: val
+                .chain_id
+                .map(|id: U256| id.try_into().unwrap())
+                .unwrap_or(1), // TODO: Consider converting this into Option
             nonce: val.nonce.try_into().unwrap(),
-            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().try_into().unwrap(), // TODO: Consider converting this into Option
+            max_priority_fee_per_gas: val
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             max_fee_per_gas: val
                 .max_fee_per_gas
                 .unwrap_or(val.gas_price.unwrap_or_default())
-                .try_into().unwrap(),
+                .try_into()
+                .unwrap(),
             gas_limit: val.gas_limit.try_into().unwrap(),
             to: match val.to {
                 TxKind::Call(address) => address,
@@ -560,7 +590,10 @@ impl From<Transaction> for LegacyTransaction {
 impl From<Transaction> for EIP2930Transaction {
     fn from(val: Transaction) -> Self {
         EIP2930Transaction {
-            chain_id: val.chain_id.map(|id: U256| id.try_into().unwrap()).unwrap_or(1),
+            chain_id: val
+                .chain_id
+                .map(|id: U256| id.try_into().unwrap())
+                .unwrap_or(1),
             nonce: val.nonce.try_into().unwrap(),
             gas_price: val.gas_price.unwrap_or_default(),
             gas_limit: val.gas_limit.try_into().unwrap(),

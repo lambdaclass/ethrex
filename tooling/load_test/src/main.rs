@@ -360,7 +360,8 @@ async fn main() {
         .get_chain_id()
         .await
         .expect("Failed to get chain id")
-        .try_into().unwrap();
+        .try_into()
+        .unwrap();
 
     let deployer = parse_private_key_into_local_signer(RICH_ACCOUNT);
 

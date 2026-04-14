@@ -192,7 +192,11 @@ pub fn prepare_revm_for_tx<'state>(
         None
     } else {
         Some(BlobExcessGasAndPrice::new(
-            test.env.current_excess_blob_gas.unwrap().try_into().unwrap(),
+            test.env
+                .current_excess_blob_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
             if fork >= &Fork::Prague {
                 BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
             } else {
