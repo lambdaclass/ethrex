@@ -550,26 +550,40 @@ impl core::str::FromStr for U256 {
 
 // ---- From impls ----
 
-macro_rules! impl_from_uint {
-    ($($t:ty),*) => {
-        $(
-            impl From<$t> for U256 {
-                #[inline]
-                fn from(v: $t) -> Self {
-                    let mut limbs = [0u64; 4];
-                    limbs[0] = v as u64;
-                    #[allow(unused_comparisons)]
-                    if core::mem::size_of::<$t>() > 8 {
-                        limbs[1] = ((v as u128) >> 64) as u64;
-                    }
-                    Self(limbs)
-                }
-            }
-        )*
-    };
+impl From<u8> for U256 {
+    #[inline]
+    fn from(v: u8) -> Self {
+        Self([v as u64, 0, 0, 0])
+    }
 }
 
-impl_from_uint!(u8, u16, u32, u64, usize);
+impl From<u16> for U256 {
+    #[inline]
+    fn from(v: u16) -> Self {
+        Self([v as u64, 0, 0, 0])
+    }
+}
+
+impl From<u32> for U256 {
+    #[inline]
+    fn from(v: u32) -> Self {
+        Self([v as u64, 0, 0, 0])
+    }
+}
+
+impl From<u64> for U256 {
+    #[inline]
+    fn from(v: u64) -> Self {
+        Self([v, 0, 0, 0])
+    }
+}
+
+impl From<usize> for U256 {
+    #[inline]
+    fn from(v: usize) -> Self {
+        Self([v as u64, 0, 0, 0])
+    }
+}
 
 impl From<u128> for U256 {
     #[inline]
@@ -733,73 +747,225 @@ impl core::ops::Shr<usize> for U256 {
 }
 
 // Cross-type arithmetic (U256 op primitive).
-macro_rules! impl_cross_binop {
-    ($prim:ty, $trait:ident, $method:ident) => {
-        impl core::ops::$trait<$prim> for U256 {
-            type Output = Self;
-            #[inline]
-            fn $method(self, rhs: $prim) -> Self {
-                core::ops::$trait::$method(self, U256::from(rhs as u64))
-            }
-        }
-    };
+// Converts the primitive to U256 then delegates to the U256 op.
+
+impl core::ops::Add<u64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: u64) -> Self {
+        self + U256::from(rhs)
+    }
 }
 
-impl_cross_binop!(u64, Add, add);
-impl_cross_binop!(u64, Sub, sub);
-impl_cross_binop!(u64, Mul, mul);
-impl_cross_binop!(u64, Div, div);
-impl_cross_binop!(usize, Add, add);
-impl_cross_binop!(usize, Sub, sub);
-impl_cross_binop!(usize, Mul, mul);
-impl_cross_binop!(usize, Div, div);
-// i32 cross-ops intentionally omitted: `rhs as u64` sign-extends negative
-// values (e.g. -1i32 becomes u64::MAX), producing silently wrong results.
-// Callers should cast explicitly: `u256 - U256::from(n as u64)`
-
-macro_rules! impl_assign_via_op {
-    ($trait:ident, $method:ident, $op_trait:ident, $op_method:ident) => {
-        impl core::ops::$trait for U256 {
-            #[inline]
-            fn $method(&mut self, rhs: Self) {
-                *self = core::ops::$op_trait::$op_method(*self, rhs);
-            }
-        }
-    };
+impl core::ops::Sub<u64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: u64) -> Self {
+        self - U256::from(rhs)
+    }
 }
 
-impl_assign_via_op!(AddAssign, add_assign, Add, add);
-impl_assign_via_op!(SubAssign, sub_assign, Sub, sub);
-impl_assign_via_op!(MulAssign, mul_assign, Mul, mul);
-impl_assign_via_op!(DivAssign, div_assign, Div, div);
-impl_assign_via_op!(RemAssign, rem_assign, Rem, rem);
-impl_assign_via_op!(BitAndAssign, bitand_assign, BitAnd, bitand);
-impl_assign_via_op!(BitOrAssign, bitor_assign, BitOr, bitor);
-impl_assign_via_op!(BitXorAssign, bitxor_assign, BitXor, bitxor);
-
-// Additional shift impls for common integer types
-macro_rules! impl_shift {
-    ($($t:ty),*) => {
-        $(
-            impl core::ops::Shl<$t> for U256 {
-                type Output = Self;
-                #[inline]
-                fn shl(self, rhs: $t) -> Self {
-                    Self(ops().shl(self.0, rhs as usize))
-                }
-            }
-            impl core::ops::Shr<$t> for U256 {
-                type Output = Self;
-                #[inline]
-                fn shr(self, rhs: $t) -> Self {
-                    Self(ops().shr(self.0, rhs as usize))
-                }
-            }
-        )*
-    };
+impl core::ops::Mul<u64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, rhs: u64) -> Self {
+        self * U256::from(rhs)
+    }
 }
 
-impl_shift!(u8, u16, u32, u64, i32, i64);
+impl core::ops::Div<u64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn div(self, rhs: u64) -> Self {
+        self / U256::from(rhs)
+    }
+}
+
+impl core::ops::Add<usize> for U256 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: usize) -> Self {
+        self + U256::from(rhs)
+    }
+}
+
+impl core::ops::Sub<usize> for U256 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: usize) -> Self {
+        self - U256::from(rhs)
+    }
+}
+
+impl core::ops::Mul<usize> for U256 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, rhs: usize) -> Self {
+        self * U256::from(rhs)
+    }
+}
+
+impl core::ops::Div<usize> for U256 {
+    type Output = Self;
+    #[inline]
+    fn div(self, rhs: usize) -> Self {
+        self / U256::from(rhs)
+    }
+}
+
+impl core::ops::AddAssign for U256 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl core::ops::SubAssign for U256 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl core::ops::MulAssign for U256 {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
+impl core::ops::DivAssign for U256 {
+    #[inline]
+    fn div_assign(&mut self, rhs: Self) {
+        *self = *self / rhs;
+    }
+}
+
+impl core::ops::RemAssign for U256 {
+    #[inline]
+    fn rem_assign(&mut self, rhs: Self) {
+        *self = *self % rhs;
+    }
+}
+
+impl core::ops::BitAndAssign for U256 {
+    #[inline]
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = *self & rhs;
+    }
+}
+
+impl core::ops::BitOrAssign for U256 {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = *self | rhs;
+    }
+}
+
+impl core::ops::BitXorAssign for U256 {
+    #[inline]
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = *self ^ rhs;
+    }
+}
+
+// Additional shift impls for common integer types.
+
+impl core::ops::Shl<u8> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: u8) -> Self {
+        Self(ops().shl(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shr<u8> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: u8) -> Self {
+        Self(ops().shr(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shl<u16> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: u16) -> Self {
+        Self(ops().shl(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shr<u16> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: u16) -> Self {
+        Self(ops().shr(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shl<u32> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: u32) -> Self {
+        Self(ops().shl(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shr<u32> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: u32) -> Self {
+        Self(ops().shr(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shl<u64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: u64) -> Self {
+        Self(ops().shl(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shr<u64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: u64) -> Self {
+        Self(ops().shr(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shl<i32> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: i32) -> Self {
+        Self(ops().shl(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shr<i32> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: i32) -> Self {
+        Self(ops().shr(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shl<i64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: i64) -> Self {
+        Self(ops().shl(self.0, rhs as usize))
+    }
+}
+
+impl core::ops::Shr<i64> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: i64) -> Self {
+        Self(ops().shr(self.0, rhs as usize))
+    }
+}
 
 impl core::ops::ShlAssign<usize> for U256 {
     #[inline]
