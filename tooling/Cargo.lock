@@ -3240,7 +3240,7 @@ dependencies = [
  "tracing-subscriber 0.3.23",
  "tui-logger",
  "url",
- "vergen-git2",
+ "vergen-git2 9.1.0",
 ]
 
 [[package]]
@@ -3444,7 +3444,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tui-logger",
- "vergen-git2",
+ "vergen-git2 1.0.7",
 ]
 
 [[package]]
@@ -10583,6 +10583,21 @@ dependencies = [
  "time",
  "vergen",
  "vergen-lib 0.1.6",
+]
+
+[[package]]
+name = "vergen-git2"
+version = "9.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d51ab55ddf1188c8d679f349775362b0fa9e90bd7a4ac69838b2a087623f0d57"
+dependencies = [
+ "anyhow",
+ "derive_builder",
+ "git2",
+ "rustversion",
+ "time",
+ "vergen",
+ "vergen-lib 9.1.0",
 ]
 
 [[package]]
