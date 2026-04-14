@@ -685,7 +685,7 @@ pub async fn update_pivot(
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<BlockHeader, SyncError> {
     const MAX_RETRIES_PER_PEER: u64 = 3;
-    const MAX_TOTAL_FAILURES: u64 = 15;
+    const MAX_TOTAL_FAILURES: u64 = 100;
     const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
     const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
@@ -698,9 +698,10 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
 
-    let mut consecutive_failures: u64 = 0;
     let mut total_failures: u64 = 0;
-    let mut last_failed_peer: Option<H256> = None;
+    // Track peers that already failed so we rotate through all eligible peers
+    // before retrying any. When all have been tried, clear and start over.
+    let mut excluded_peers: Vec<H256> = Vec::new();
 
     loop {
         if total_failures >= MAX_TOTAL_FAILURES {
@@ -721,13 +722,12 @@ pub async fn update_pivot(
             ));
         }
 
-        // Exponential backoff: 1s, 2s, 4s, ... capped at 30s
-        if consecutive_failures > 0 {
-            let delay = INITIAL_RETRY_DELAY
-                .saturating_mul(1 << consecutive_failures.saturating_sub(1).min(4));
+        // Exponential backoff based on how many full rotations we've done
+        if total_failures > 0 {
+            let delay = INITIAL_RETRY_DELAY.saturating_mul(1 << (total_failures / 10).min(4));
             let delay = delay.min(MAX_RETRY_DELAY);
             debug!(
-                "update_pivot: backing off for {}s after {consecutive_failures} consecutive failures",
+                "update_pivot: backing off for {}s (total_failures={total_failures})",
                 delay.as_secs()
             );
             tokio::time::sleep(delay).await;
@@ -735,32 +735,28 @@ pub async fn update_pivot(
 
         let Some((peer_id, mut connection)) = peers
             .peer_table
-            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .get_best_peer_excluding(SUPPORTED_ETH_CAPABILITIES.to_vec(), excluded_peers.clone())
             .await?
         else {
-            debug!("We tried to get peers during update_pivot, but we found no free peers");
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("no_peers");
-            consecutive_failures = consecutive_failures.saturating_add(1);
-            total_failures = total_failures.saturating_add(1);
+            if excluded_peers.is_empty() {
+                // Genuinely no peers at all
+                debug!("update_pivot: no free peers available");
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("no_peers");
+                total_failures = total_failures.saturating_add(1);
+            } else {
+                // Tried all peers, start a new rotation
+                debug!(
+                    "update_pivot: exhausted all {} peers, clearing exclude list for next rotation",
+                    excluded_peers.len()
+                );
+                excluded_peers.clear();
+                // Don't count rotation resets as failures
+            }
             continue;
         };
 
-        // If we keep failing with the same peer, skip it and wait for a different one.
-        // Keep incrementing so the backoff continues to grow.
-        if last_failed_peer == Some(peer_id) && consecutive_failures >= MAX_RETRIES_PER_PEER {
-            debug!(
-                "update_pivot: peer {peer_id} failed {consecutive_failures} times in a row, waiting for a different peer"
-            );
-            consecutive_failures = consecutive_failures.saturating_add(1);
-            total_failures = total_failures.saturating_add(1);
-            continue;
-        }
-
-        // New peer: reset consecutive failures to give it a fresh start.
-        if last_failed_peer != Some(peer_id) {
-            consecutive_failures = 0;
-        }
+        let mut consecutive_failures_on_current: u64 = 0;
 
         let peer_score = peers.peer_table.get_score(peer_id).await?;
         let diag = peers.read_peer_diagnostics().await;
@@ -771,62 +767,73 @@ pub async fn update_pivot(
             total_peers = total_count,
             selected_peer = %peer_id,
             peer_score = peer_score,
-            consecutive_failures = consecutive_failures,
+            excluded_count = excluded_peers.len(),
             total_failures = total_failures,
             "update_pivot: attempting with peer"
         );
         info!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
-        let Some(pivot) = peers
-            .get_block_header(peer_id, &mut connection, new_pivot_block_number)
-            .await
-            .map_err(SyncError::PeerHandler)?
-        else {
+
+        // Try up to MAX_RETRIES_PER_PEER times with this specific peer
+        for attempt in 0..MAX_RETRIES_PER_PEER {
+            let result = peers
+                .get_block_header(peer_id, &mut connection, new_pivot_block_number)
+                .await
+                .map_err(SyncError::PeerHandler)?;
+
+            if let Some(pivot) = result {
+                // Success — reward peer and return
+                peers.peer_table.record_success(peer_id)?;
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("success");
+                info!("Successfully updated pivot");
+
+                {
+                    let mut diag = diagnostics.write().await;
+                    diag.push_pivot_change(super::PivotChangeEvent {
+                        timestamp: current_unix_time(),
+                        old_pivot_number: block_number,
+                        new_pivot_number: pivot.number,
+                        outcome: "success".to_string(),
+                        failure_reason: None,
+                    });
+                    diag.pivot_block_number = Some(pivot.number);
+                    diag.pivot_timestamp = Some(pivot.timestamp);
+                    let pivot_age = current_unix_time().saturating_sub(pivot.timestamp);
+                    diag.pivot_age_seconds = Some(pivot_age);
+                    METRICS
+                        .pivot_timestamp
+                        .store(pivot.timestamp, std::sync::atomic::Ordering::Relaxed);
+                }
+                let block_headers = peers
+                    .request_block_headers(block_number + 1, pivot.hash())
+                    .await?
+                    .ok_or(SyncError::NoBlockHeaders)?;
+                block_sync_state
+                    .process_incoming_headers(block_headers.into_iter())
+                    .await?;
+                *METRICS.sync_head_hash.lock().await = pivot.hash();
+                return Ok(pivot);
+            }
+
             peers.peer_table.record_failure(peer_id)?;
+            consecutive_failures_on_current += 1;
+            total_failures = total_failures.saturating_add(1);
             let peer_score = peers.peer_table.get_score(peer_id).await?;
             warn!(
-                "Received None pivot from peer {peer_id} (score after penalizing: {peer_score}). Retrying"
+                "update_pivot: peer {peer_id} returned None (attempt {}/{MAX_RETRIES_PER_PEER}, score: {peer_score})",
+                attempt + 1
             );
             #[cfg(feature = "metrics")]
             ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("peer_none");
-            last_failed_peer = Some(peer_id);
-            consecutive_failures = consecutive_failures.saturating_add(1);
-            total_failures = total_failures.saturating_add(1);
-            continue;
-        };
-
-        // Reward peer
-        peers.peer_table.record_success(peer_id)?;
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("success");
-        info!("Succesfully updated pivot");
-        {
-            let mut diag = diagnostics.write().await;
-            diag.push_pivot_change(super::PivotChangeEvent {
-                timestamp: current_unix_time(),
-                old_pivot_number: block_number,
-                new_pivot_number: pivot.number,
-                outcome: "success".to_string(),
-                failure_reason: None,
-            });
-            diag.pivot_block_number = Some(pivot.number);
-            diag.pivot_timestamp = Some(pivot.timestamp);
-            let pivot_age = current_unix_time().saturating_sub(pivot.timestamp);
-            diag.pivot_age_seconds = Some(pivot_age);
-            METRICS
-                .pivot_timestamp
-                .store(pivot.timestamp, std::sync::atomic::Ordering::Relaxed);
         }
-        let block_headers = peers
-            .request_block_headers(block_number + 1, pivot.hash())
-            .await?
-            .ok_or(SyncError::NoBlockHeaders)?;
-        block_sync_state
-            .process_incoming_headers(block_headers.into_iter())
-            .await?;
-        *METRICS.sync_head_hash.lock().await = pivot.hash();
-        return Ok(pivot.clone());
+
+        // Peer exhausted its retries — exclude it and try the next one
+        debug!(
+            "update_pivot: excluding peer {peer_id} after {consecutive_failures_on_current} failures"
+        );
+        excluded_peers.push(peer_id);
     }
 }
 

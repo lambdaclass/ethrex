@@ -327,8 +327,6 @@ impl SyncError {
             | SyncError::AccountStoragesSnapshotsDirNotFound
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
-            | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_)
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -350,7 +348,9 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
-            | SyncError::NoBlocks => true,
+            | SyncError::NoBlocks
+            | SyncError::NoBlockHeaders
+            | SyncError::PeerHandler(_) => true,
         }
     }
 }

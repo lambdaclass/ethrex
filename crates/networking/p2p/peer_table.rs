@@ -298,6 +298,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
         &self,
         capabilities: Vec<Capability>,
     ) -> Response<Option<(H256, PeerConnection)>>;
+    fn get_best_peer_excluding(
+        &self,
+        capabilities: Vec<Capability>,
+        excluded: Vec<H256>,
+    ) -> Response<Option<(H256, PeerConnection)>>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
@@ -705,6 +710,15 @@ impl PeerTableServer {
     }
 
     #[request_handler]
+    async fn handle_get_best_peer_excluding(
+        &mut self,
+        msg: peer_table_server_protocol::GetBestPeerExcluding,
+        _ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection)> {
+        self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)
+    }
+
+    #[request_handler]
     async fn handle_get_score(
         &mut self,
         msg: peer_table_server_protocol::GetScore,
@@ -881,6 +895,32 @@ impl PeerTableServer {
             .iter()
             .filter_map(|(id, peer_data)| {
                 if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    let connection = peer_data.connection.clone()?;
+                    Some((*id, peer_data.score, peer_data.requests, connection))
+                }
+            })
+            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
+            .map(|(k, _, _, v)| (k, v))
+    }
+
+    /// Like `do_get_best_peer`, but excludes specific peers from selection.
+    /// Used by `update_pivot` to rotate through peers on repeated failures.
+    fn do_get_best_peer_excluding(
+        &self,
+        capabilities: &[Capability],
+        excluded: &[H256],
+    ) -> Option<(H256, PeerConnection)> {
+        self.peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                if excluded.contains(id)
+                    || !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))
