@@ -1,6 +1,8 @@
 # EIP-8025: Demo Guide
 
-This guide walks through the full EIP-8025 proof generation and verification flow using a local ethrex node, the `ethrex-repl`, and the L1 prover binary. It exercises all three Engine API endpoints and the coordinator-prover TCP protocol.
+> **Outdated**: This guide references the removed Engine API proof endpoints (`engine_requestProofsV1`, etc.) and internal proof coordinator. The current approach uses the **zkboost sidecar** which fetches witnesses via `debug_executionWitness`. This guide will be rewritten for the zkboost workflow.
+
+This guide previously walked through the EIP-8025 proof generation and verification flow using internal Engine API endpoints and a coordinator-prover TCP protocol. Those components have been replaced by the zkboost sidecar pattern.
 
 For architecture and implementation details, see [docs/eip-8025.md](eip-8025.md).
 
