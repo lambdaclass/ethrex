@@ -390,6 +390,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     phase_elapsed_str,
                     &phase_metrics(previous_step, &phase_start).await,
                 );
+
+                // Emit final metrics for completed phase
+                #[cfg(feature = "metrics")]
+                push_sync_prometheus_metrics(previous_step);
             }
 
             // Start new phase
@@ -415,6 +419,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
             &prev_interval,
         )
         .await;
+
+        // Push progress to Prometheus
+        #[cfg(feature = "metrics")]
+        push_sync_prometheus_metrics(current_step);
 
         // Update previous interval counters for next rate calculation
         prev_interval = PhaseCounters::capture_current();
@@ -679,6 +687,62 @@ async fn log_phase_progress(
             let col1 = format!("Rate: {} codes/s", format_thousands(rate));
             info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
             info!("  Total time: {}", total_elapsed);
+        }
+        CurrentStepValue::None => {}
+    }
+}
+
+/// Push snap sync progress to Prometheus gauges (from METRICS atomics).
+/// Called each polling cycle. Rates are NOT computed here — use rate() in Grafana.
+#[cfg(feature = "metrics")]
+fn push_sync_prometheus_metrics(step: CurrentStepValue) {
+    use ethrex_metrics::sync::METRICS_SYNC;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    let (phase_num, _) = phase_info(step);
+    METRICS_SYNC.stage.set(phase_num as i64);
+    METRICS_SYNC
+        .pivot_block
+        .set(METRICS.sync_head_block.load(Relaxed) as i64);
+
+    match step {
+        CurrentStepValue::DownloadingHeaders => {
+            let total = METRICS.sync_head_block.load(Relaxed);
+            let downloaded = u64::min(METRICS.downloaded_headers.get(), total);
+            METRICS_SYNC.headers_downloaded.set(downloaded as i64);
+            METRICS_SYNC.headers_total.set(total as i64);
+        }
+        CurrentStepValue::RequestingAccountRanges => {
+            let downloaded = METRICS.downloaded_account_tries.load(Relaxed);
+            METRICS_SYNC.accounts_downloaded.set(downloaded as i64);
+        }
+        CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
+            let total = METRICS.downloaded_account_tries.load(Relaxed);
+            let inserted = METRICS.account_tries_inserted.load(Relaxed);
+            METRICS_SYNC.accounts_downloaded.set(total as i64);
+            METRICS_SYNC.accounts_inserted.set(inserted as i64);
+        }
+        CurrentStepValue::RequestingStorageRanges => {
+            let downloaded = METRICS.storage_leaves_downloaded.get();
+            METRICS_SYNC.storage_downloaded.set(downloaded as i64);
+        }
+        CurrentStepValue::InsertingStorageRanges => {
+            let inserted = METRICS.storage_leaves_inserted.get();
+            METRICS_SYNC.storage_inserted.set(inserted as i64);
+        }
+        CurrentStepValue::HealingState => {
+            let healed = METRICS.global_state_trie_leafs_healed.load(Relaxed);
+            METRICS_SYNC.state_leaves_healed.set(healed as i64);
+        }
+        CurrentStepValue::HealingStorage => {
+            let healed = METRICS.global_storage_tries_leafs_healed.load(Relaxed);
+            METRICS_SYNC.storage_leaves_healed.set(healed as i64);
+        }
+        CurrentStepValue::RequestingBytecodes => {
+            let total = METRICS.bytecodes_to_download.load(Relaxed);
+            let downloaded = METRICS.downloaded_bytecodes.load(Relaxed);
+            METRICS_SYNC.bytecodes_downloaded.set(downloaded as i64);
+            METRICS_SYNC.bytecodes_total.set(total as i64);
         }
         CurrentStepValue::None => {}
     }

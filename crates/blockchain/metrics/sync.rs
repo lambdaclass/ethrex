@@ -8,17 +8,31 @@ pub static METRICS_SYNC: LazyLock<MetricsSync> = LazyLock::new(MetricsSync::defa
 
 #[derive(Debug, Clone)]
 pub struct MetricsSync {
-    // Gauges — current state
-    eligible_peers: IntGauge,
-    snap_peers: IntGauge,
-    inflight_requests: IntGauge,
-    pivot_age_seconds: IntGauge,
-    current_phase: IntGauge,
+    // --- Current state (gauges) ---
+    pub stage: IntGauge,
+    pub pivot_block: IntGauge,
+    pub eligible_peers: IntGauge,
+    pub snap_peers: IntGauge,
+    pub inflight_requests: IntGauge,
+    pub pivot_age_seconds: IntGauge,
 
-    // Counters — cumulative outcomes
-    pivot_updates: IntCounterVec,
-    storage_requests: IntCounterVec,
-    header_resolution: IntCounterVec,
+    // --- Progress counters (gauges set from METRICS atomics) ---
+    // Use rate() in Grafana to derive throughput.
+    pub headers_downloaded: IntGauge,
+    pub headers_total: IntGauge,
+    pub accounts_downloaded: IntGauge,
+    pub accounts_inserted: IntGauge,
+    pub storage_downloaded: IntGauge,
+    pub storage_inserted: IntGauge,
+    pub state_leaves_healed: IntGauge,
+    pub storage_leaves_healed: IntGauge,
+    pub bytecodes_downloaded: IntGauge,
+    pub bytecodes_total: IntGauge,
+
+    // --- Outcome counters (counter vecs) ---
+    pub pivot_updates: IntCounterVec,
+    pub storage_requests: IntCounterVec,
+    pub header_resolution: IntCounterVec,
 }
 
 impl Default for MetricsSync {
@@ -30,53 +44,113 @@ impl Default for MetricsSync {
 impl MetricsSync {
     pub fn new() -> Self {
         MetricsSync {
+            // Current state
+            stage: register_int_gauge!(
+                "ethrex_sync_stage",
+                "Current snap sync stage (0=idle, 1=headers, 2=account_ranges, 3=account_insertion, 4=storage_ranges, 5=storage_insertion, 6=state_healing, 7=storage_healing, 8=bytecodes)"
+            )
+            .expect("Failed to create ethrex_sync_stage"),
+            pivot_block: register_int_gauge!(
+                "ethrex_sync_pivot_block",
+                "Current pivot block number"
+            )
+            .expect("Failed to create ethrex_sync_pivot_block"),
             eligible_peers: register_int_gauge!(
                 "ethrex_sync_eligible_peers",
-                "Number of peers eligible for requests (passing can_try_more_requests)"
+                "Number of peers eligible for requests"
             )
-            .expect("Failed to create eligible_peers metric"),
+            .expect("Failed to create ethrex_sync_eligible_peers"),
             snap_peers: register_int_gauge!(
                 "ethrex_sync_snap_peers",
                 "Number of connected peers supporting the snap protocol"
             )
-            .expect("Failed to create snap_peers metric"),
+            .expect("Failed to create ethrex_sync_snap_peers"),
             inflight_requests: register_int_gauge!(
                 "ethrex_sync_inflight_requests",
                 "Total inflight requests across all peers"
             )
-            .expect("Failed to create inflight_requests metric"),
+            .expect("Failed to create ethrex_sync_inflight_requests"),
             pivot_age_seconds: register_int_gauge!(
                 "ethrex_sync_pivot_age_seconds",
                 "Age of the current pivot block in seconds"
             )
-            .expect("Failed to create pivot_age_seconds metric"),
-            current_phase: register_int_gauge!(
-                "ethrex_sync_current_phase",
-                "Current snap sync phase (0=idle, 1=headers, 2=account_ranges, 3=account_insertion, 4=storage_ranges, 5=storage_insertion, 6=healing, 7=bytecodes)"
+            .expect("Failed to create ethrex_sync_pivot_age_seconds"),
+
+            // Progress (set periodically from METRICS atomics)
+            headers_downloaded: register_int_gauge!(
+                "ethrex_sync_headers_downloaded",
+                "Headers downloaded so far"
             )
-            .expect("Failed to create current_phase metric"),
+            .expect("Failed to create ethrex_sync_headers_downloaded"),
+            headers_total: register_int_gauge!(
+                "ethrex_sync_headers_total",
+                "Total headers to download (pivot block number)"
+            )
+            .expect("Failed to create ethrex_sync_headers_total"),
+            accounts_downloaded: register_int_gauge!(
+                "ethrex_sync_accounts_downloaded",
+                "Account ranges downloaded from peers"
+            )
+            .expect("Failed to create ethrex_sync_accounts_downloaded"),
+            accounts_inserted: register_int_gauge!(
+                "ethrex_sync_accounts_inserted",
+                "Accounts inserted into storage"
+            )
+            .expect("Failed to create ethrex_sync_accounts_inserted"),
+            storage_downloaded: register_int_gauge!(
+                "ethrex_sync_storage_downloaded",
+                "Storage leaves downloaded from peers"
+            )
+            .expect("Failed to create ethrex_sync_storage_downloaded"),
+            storage_inserted: register_int_gauge!(
+                "ethrex_sync_storage_inserted",
+                "Storage leaves inserted into storage"
+            )
+            .expect("Failed to create ethrex_sync_storage_inserted"),
+            state_leaves_healed: register_int_gauge!(
+                "ethrex_sync_state_leaves_healed",
+                "State trie leaves healed"
+            )
+            .expect("Failed to create ethrex_sync_state_leaves_healed"),
+            storage_leaves_healed: register_int_gauge!(
+                "ethrex_sync_storage_leaves_healed",
+                "Storage trie leaves healed"
+            )
+            .expect("Failed to create ethrex_sync_storage_leaves_healed"),
+            bytecodes_downloaded: register_int_gauge!(
+                "ethrex_sync_bytecodes_downloaded",
+                "Bytecodes downloaded so far"
+            )
+            .expect("Failed to create ethrex_sync_bytecodes_downloaded"),
+            bytecodes_total: register_int_gauge!(
+                "ethrex_sync_bytecodes_total",
+                "Total bytecodes to download"
+            )
+            .expect("Failed to create ethrex_sync_bytecodes_total"),
+
+            // Outcome counters
             pivot_updates: register_int_counter_vec!(
                 "ethrex_sync_pivot_updates_total",
                 "Total pivot update attempts by outcome",
                 &["outcome"]
             )
-            .expect("Failed to create pivot_updates metric"),
+            .expect("Failed to create ethrex_sync_pivot_updates_total"),
             storage_requests: register_int_counter_vec!(
                 "ethrex_sync_storage_requests_total",
                 "Total storage range requests by outcome",
                 &["outcome"]
             )
-            .expect("Failed to create storage_requests metric"),
+            .expect("Failed to create ethrex_sync_storage_requests_total"),
             header_resolution: register_int_counter_vec!(
                 "ethrex_sync_header_resolution_total",
                 "Total header resolution attempts by outcome",
                 &["outcome"]
             )
-            .expect("Failed to create header_resolution metric"),
+            .expect("Failed to create ethrex_sync_header_resolution_total"),
         }
     }
 
-    // --- Gauge setters ---
+    // --- Gauge setters (used by p2p sync code directly) ---
 
     pub fn set_eligible_peers(&self, count: i64) {
         self.eligible_peers.set(count);
@@ -95,7 +169,7 @@ impl MetricsSync {
     }
 
     pub fn set_current_phase(&self, phase: i64) {
-        self.current_phase.set(phase);
+        self.stage.set(phase);
     }
 
     // --- Counter incrementers ---
