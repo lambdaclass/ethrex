@@ -903,6 +903,7 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
 
 
 def main():
+    global WATCHED_PHASES
     p = argparse.ArgumentParser(description="Monitor Docker snapsync instances")
     p.add_argument("--networks", default="hoodi,sepolia,mainnet")
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
@@ -926,8 +927,7 @@ def main():
     args = p.parse_args()
 
     # Apply CLI override for watched phases
-    global WATCHED_PHASES
-    WATCHED_PHASES = {p.strip() for p in args.watched_phases.split(",") if p.strip()}
+    WATCHED_PHASES = {ph.strip() for ph in args.watched_phases.split(",") if ph.strip()}
 
     # Resolve ethrex directory to absolute path
     ethrex_dir = os.path.abspath(args.ethrex_dir)
