@@ -44,8 +44,8 @@ spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
 # EIP-8025 dependencies (optional)
-ssz-merkle = { git = "https://github.com/lambdaclass/libssz", optional = true }
-ssz-types = { git = "https://github.com/lambdaclass/libssz", optional = true }
+libssz-merkle = { workspace = true, optional = true }
+libssz-types = { workspace = true, optional = true }
 
 # Clients
 envy = "0.4.2"
