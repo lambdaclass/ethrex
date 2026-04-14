@@ -2204,9 +2204,9 @@ pub fn extract_all_requests_levm(
 /// Calculating gas_price according to EIP-1559 rules
 /// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
 pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
-    if tx.gas_price != 0 {
+    if !tx.gas_price.is_zero() {
         // Legacy gas field was specified, use it
-        tx.gas_price.into()
+        tx.gas_price
     } else {
         // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
         min(
