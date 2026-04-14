@@ -145,6 +145,18 @@ impl std::fmt::Display for Message {
 }
 
 impl Message {
+    /// Returns a short, stable label suitable for use as a Prometheus metric label value.
+    pub fn metric_label(&self) -> &'static str {
+        match self {
+            Message::Ping(_) => "Ping",
+            Message::Pong(_) => "Pong",
+            Message::FindNode(_) => "FindNode",
+            Message::Neighbors(_) => "Neighbors",
+            Message::ENRRequest(_) => "ENRRequest",
+            Message::ENRResponse(_) => "ENRResponse",
+        }
+    }
+
     pub fn encode_with_header(&self, buf: &mut dyn BufMut, node_signer: &SecretKey) {
         let signature_size = 65_usize;
         let mut data: Vec<u8> = Vec::with_capacity(signature_size.next_power_of_two());

@@ -1267,6 +1267,13 @@ pub async fn get_last_fetched_l1_block(
     _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
 }
 
+pub async fn get_l2_gas_limit(
+    client: &EthClient,
+    common_bridge_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"l2GasLimit()", common_bridge_address).await
+}
+
 pub async fn get_pending_l1_messages(
     client: &EthClient,
     common_bridge_address: Address,

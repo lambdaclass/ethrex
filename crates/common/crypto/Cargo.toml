@@ -14,33 +14,42 @@ path = "./lib.rs"
 c-kzg = { version = "2.1.1", default-features = false, optional = true }
 kzg-rs = { workspace = true, optional = true }
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
-ethereum-types.workspace = true
-thiserror.workspace = true
+ethereum-types = { version = "0.15.1", default-features = false }
+thiserror = { version = "2.0.9", default-features = false }
 
-# Native crypto dependencies (always required — trait defaults call these)
-secp256k1 = { workspace = true, optional = true }
-sha2 = "0.10.9"
-ripemd = "0.1.3"
+# no_std-safe, always available
 hex-literal = "0.4.1"
-ark-bn254 = "0.5.0"
-ark-ec = "0.5.0"
-ark-ff = { version = "0.5.0", features = ["asm"] }
-malachite = "0.6.1"
-p256 = { version = "0.13.2", features = ["ecdsa", "arithmetic", "expose-field"] }
-bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-affine-constructors", features = ["groups", "bits", "pairings", "alloc", "experimental"] }
-ff = "0.13"
+sha2 = { version = "0.10.9", default-features = false }
+ripemd = { version = "0.1.3", default-features = false }
+ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-ff = { version = "0.5.0", default-features = false }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic", "expose-field"] }
+bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-affine-constructors", default-features = false, features = ["groups", "bits", "pairings", "alloc", "experimental"] }
+ff = { version = "0.13", default-features = false }
+k256 = { version = "0.13.4", default-features = false, features = ["ecdsa"] }
+num-bigint = { version = "0.4.6", default-features = false }
+
+# std-only deps (faster alternatives used when available)
+secp256k1 = { workspace = true, optional = true }
+malachite = { version = "0.6.1", optional = true }
 
 #[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = ["kzg-rs", "secp256k1"]
-secp256k1 = ["dep:secp256k1"]
-c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings"]
+default = ["std", "kzg-rs", "secp256k1"]
+std = [
+    "dep:malachite",
+    "ark-ff/asm",
+    "thiserror/std",
+]
+secp256k1 = ["dep:secp256k1", "std"]
+c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
 openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]
 
-risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable"]
+risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
 openvm = ["openvm-kzg"]
 
 [lints]

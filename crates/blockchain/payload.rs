@@ -9,7 +9,10 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
+    constants::{
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
+        TX_MAX_GAS_LIMIT_AMSTERDAM,
+    },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
@@ -605,8 +608,15 @@ impl Blockchain {
                 &mut plain_txs
             };
 
-            // Check if we have enough gas to run the transaction
-            if context.remaining_gas < head_tx.tx.gas_limit() {
+            // Check if we have enough gas to run the transaction.
+            // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
+            // remaining_gas tracks regular gas only.
+            let tx_gas_reservation = if context.is_amsterdam {
+                head_tx.tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+            } else {
+                head_tx.tx.gas_limit()
+            };
+            if context.remaining_gas < tx_gas_reservation {
                 debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
@@ -842,15 +852,15 @@ pub fn apply_plain_transaction(
     }
 
     // Update remaining_gas for block gas limit checks.
-    // EIP-8037 (Amsterdam+): block capacity is max(sum_regular, sum_state), so
-    // remaining_gas = gas_limit - max(block_regular, block_state). Using the sum
-    // would be overly conservative and skip transactions that actually fit.
+    // EIP-8037 (Amsterdam+): per-tx check only validates regular gas against block limit.
+    // State gas is NOT checked per-tx; block-end validation enforces
+    // max(block_regular, block_state) <= gas_limit.
     if context.is_amsterdam {
-        context.remaining_gas = context.payload.header.gas_limit.saturating_sub(
-            context
-                .block_regular_gas_used
-                .max(context.block_state_gas_used),
-        );
+        context.remaining_gas = context
+            .payload
+            .header
+            .gas_limit
+            .saturating_sub(context.block_regular_gas_used);
     } else {
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
     }

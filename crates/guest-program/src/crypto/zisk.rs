@@ -397,15 +397,21 @@ impl Crypto for ZiskCrypto {
             0 => Ok(true),
             1 => Ok(false),
             2 => Err(CryptoError::Other(
-                "bls12_381_pairing_check G1 inputs not in group".to_string(),
+                "bls12_381_pairing_check G1 inputs not in field".to_string(),
             )),
             3 => Err(CryptoError::Other(
-                "bls12_381_pairing_check G1 inputs not in subgroup".to_string(),
+                "bls12_381_pairing_check G1 inputs not on curve".to_string(),
             )),
             4 => Err(CryptoError::Other(
-                "bls12_381_pairing_check G2 inputs not in group".to_string(),
+                "bls12_381_pairing_check G1 inputs not in subgroup".to_string(),
             )),
             5 => Err(CryptoError::Other(
+                "bls12_381_pairing_check G2 inputs not in field".to_string(),
+            )),
+            6 => Err(CryptoError::Other(
+                "bls12_381_pairing_check G2 inputs not on curve".to_string(),
+            )),
+            7 => Err(CryptoError::Other(
                 "bls12_381_pairing_check G2 inputs not in subgroup".to_string(),
             )),
             _ => Err(CryptoError::Other(
