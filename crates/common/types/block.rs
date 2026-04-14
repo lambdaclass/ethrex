@@ -376,13 +376,15 @@ impl RLPDecode for BlockBody {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        // BSC block bodies may contain trailing optional fields (e.g. sidecars)
+        // that we don't decode. Use finish_unchecked to tolerate them.
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
             },
-            decoder.finish()?,
+            decoder.finish_unchecked(),
         ))
     }
 }
