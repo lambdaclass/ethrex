@@ -22,19 +22,17 @@ pub type RichAccountRow = (Address, SecretKey, U256);
 pub struct RichAccountsTable {
     pub state: TableState,
     pub items: Vec<RichAccountRow>,
-    last_block_fetched: U256,
+    last_block_fetched: u64,
 
     selected: bool,
 }
 
 impl RichAccountsTable {
     pub async fn new(rollup_client: &EthClient) -> Result<Self, MonitorError> {
-        let last_block_fetched = U256::from(
-            rollup_client
-                .get_block_number()
-                .await
-                .map_err(|_| MonitorError::GetLatestBlock)?,
-        );
+        let last_block_fetched = rollup_client
+            .get_block_number()
+            .await
+            .map_err(|_| MonitorError::GetLatestBlock)?;
         let items = Self::get_accounts(rollup_client, last_block_fetched).await?;
         Ok(Self {
             items,
@@ -45,7 +43,7 @@ impl RichAccountsTable {
     }
     async fn get_accounts(
         rollup_client: &EthClient,
-        last_block_fetched: U256,
+        last_block_fetched: u64,
     ) -> Result<Vec<RichAccountRow>, MonitorError> {
         // TODO: enable custom private keys
         let private_keys: Vec<String> = LOCAL_DEVNET_PRIVATE_KEYS
@@ -62,12 +60,7 @@ impl RichAccountsTable {
                 MonitorError::DecodingError(format!("Failed to get address from private key: {e}"))
             })?;
             let get_balance = rollup_client
-                .get_balance(
-                    address,
-                    BlockIdentifier::Number(u64::try_from(last_block_fetched).map_err(|_| {
-                        MonitorError::DecodingError("block number overflows u64".to_owned())
-                    })?),
-                )
+                .get_balance(address, BlockIdentifier::Number(last_block_fetched))
                 .await?;
             accounts.push((address, secret_key, get_balance));
         }
@@ -75,23 +68,16 @@ impl RichAccountsTable {
     }
 
     pub async fn on_tick(&mut self, rollup_client: &EthClient) -> Result<(), MonitorError> {
-        let latest_block = U256::from(
-            rollup_client
-                .get_block_number()
-                .await
-                .map_err(|_| MonitorError::GetLatestBlock)?,
-        );
+        let latest_block = rollup_client
+            .get_block_number()
+            .await
+            .map_err(|_| MonitorError::GetLatestBlock)?;
         if latest_block == self.last_block_fetched {
             return Ok(());
         }
         for (address, _private_key, balance) in self.items.iter_mut() {
             *balance = rollup_client
-                .get_balance(
-                    *address,
-                    BlockIdentifier::Number(u64::try_from(latest_block).map_err(|_| {
-                        MonitorError::DecodingError("block number overflows u64".to_owned())
-                    })?),
-                )
+                .get_balance(*address, BlockIdentifier::Number(latest_block))
                 .await?;
         }
         self.last_block_fetched = latest_block;
