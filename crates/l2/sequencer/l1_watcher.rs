@@ -366,10 +366,8 @@ impl L1Watcher {
         max_block_step: U256,
     ) -> Result<(U256, Vec<RpcLog>), L1WatcherError> {
         info!("Getting privileged transactions");
-        let Some(latest_block_to_check) = client
-            .get_block_number()
-            .await?
-            .checked_sub(block_delay.into())
+        let Some(latest_block_to_check) =
+            U256::from(client.get_block_number().await?).checked_sub(block_delay.into())
         else {
             warn!("Too close to genesis to request privileged transactions");
             return Ok((last_block_fetched, vec![]));

@@ -29,10 +29,12 @@ pub struct RichAccountsTable {
 
 impl RichAccountsTable {
     pub async fn new(rollup_client: &EthClient) -> Result<Self, MonitorError> {
-        let last_block_fetched = rollup_client
-            .get_block_number()
-            .await
-            .map_err(|_| MonitorError::GetLatestBlock)?;
+        let last_block_fetched = U256::from(
+            rollup_client
+                .get_block_number()
+                .await
+                .map_err(|_| MonitorError::GetLatestBlock)?,
+        );
         let items = Self::get_accounts(rollup_client, last_block_fetched).await?;
         Ok(Self {
             items,
@@ -73,10 +75,12 @@ impl RichAccountsTable {
     }
 
     pub async fn on_tick(&mut self, rollup_client: &EthClient) -> Result<(), MonitorError> {
-        let latest_block = rollup_client
-            .get_block_number()
-            .await
-            .map_err(|_| MonitorError::GetLatestBlock)?;
+        let latest_block = U256::from(
+            rollup_client
+                .get_block_number()
+                .await
+                .map_err(|_| MonitorError::GetLatestBlock)?,
+        );
         if latest_block == self.last_block_fetched {
             return Ok(());
         }

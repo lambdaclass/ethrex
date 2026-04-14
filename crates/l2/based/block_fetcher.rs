@@ -156,7 +156,7 @@ impl BlockFetcher {
     /// This function fetches logs, starting from the last fetched block number (aka the last block that was processed)
     /// and going up to the current block number.
     async fn get_logs(&mut self) -> Result<(Vec<RpcLog>, Vec<RpcLog>), BlockFetcherError> {
-        let last_l1_block_number = self.eth_client.get_block_number().await?;
+        let last_l1_block_number = U256::from(self.eth_client.get_block_number().await?);
 
         let mut batch_committed_logs = Vec::new();
         let mut batch_verified_logs = Vec::new();
