@@ -47,3 +47,4 @@ substrate-bn = { git = "https://github.com/risc0/paritytech-bn", tag = "v0.6.0-r
 
 [features]
 l2 = ["ethrex-guest-program/l2"]
+eip-8025 = ["ethrex-guest-program/eip-8025"]
