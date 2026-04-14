@@ -60,7 +60,11 @@ impl SyncManager {
         if snap_enabled.load(Ordering::Relaxed) {
             let latest_block = store.get_latest_block_number().await.unwrap_or(0);
             let chain_config = store.get_chain_config();
-            let is_synced = if chain_config.terminal_total_difficulty_passed {
+            // BSC (Parlia PoA) has no terminal_total_difficulty or merge_netsplit_block.
+            // Like polygon, treat any stored block > 0 as previously synced.
+            let is_bsc =
+                chain_config.chain_id == 56 || chain_config.chain_id == 97;
+            let is_synced = if is_bsc || chain_config.terminal_total_difficulty_passed {
                 latest_block > 0
             } else if let Some(merge_block) = chain_config.merge_netsplit_block {
                 latest_block > merge_block
