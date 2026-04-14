@@ -74,6 +74,7 @@ services:
     container_name: ethrex-hoodi
     ports:
       - "8545:8545"  # RPC
+      - "3702:3701"  # Metrics
     volumes:
       - secrets-hoodi:/secrets
       - ethrex-hoodi:/data
@@ -122,6 +123,7 @@ services:
     container_name: ethrex-sepolia
     ports:
       - "8546:8545"  # RPC on different host port
+      - "3703:3701"  # Metrics
     volumes:
       - secrets-sepolia:/secrets
       - ethrex-sepolia:/data
