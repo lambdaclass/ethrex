@@ -67,7 +67,6 @@ DIAGNOSTICS_DEGRADED_INTERVAL = 5  # seconds between polls during degradation
 DIAGNOSTICS_NORMAL_BUFFER_SIZE = 20  # snapshots kept in normal mode
 DIAGNOSTICS_DEGRADED_BUFFER_SIZE = 60  # snapshots kept in degraded mode
 DEGRADATION_ELIGIBLE_PEERS_THRESHOLD = 5  # trigger if eligible peers below this
-DEGRADATION_STALL_TIMEOUT = 60  # trigger if zero progress for this many seconds
 DEGRADATION_STALENESS_RATIO = 0.8  # trigger if pivot age > 80% of threshold
 DEGRADATION_RECOVERY_TIMEOUT = 60  # seconds of health before leaving degraded mode
 LOG_LEVEL_NORMAL = "info,ethrex_p2p::sync=debug"
@@ -97,11 +96,11 @@ class DiagnosticsTracker:
     def should_poll(self, name: str) -> bool:
         return (time.time() - self.last_poll[name]) >= self.poll_interval(name)
 
-    def poll(self, inst) -> None:
+    def poll(self, inst, force: bool = False) -> None:
         """Poll diagnostics RPC endpoints for a single instance."""
-        if inst.status in ("success", "failed", "waiting"):
+        if not force and inst.status in ("success", "failed", "waiting"):
             return
-        if not self.should_poll(inst.name):
+        if not force and not self.should_poll(inst.name):
             return
 
         self.last_poll[inst.name] = time.time()
@@ -146,8 +145,7 @@ class DiagnosticsTracker:
             progress_key = str(snapshot["sync_status"].get("phase_progress", {}))
             if phase not in ("idle", ""):
                 if self._last_progress[name] is not None and self._last_progress[name] == progress_key:
-                    # No progress change — but we only flag after DEGRADATION_STALL_TIMEOUT
-                    pass  # tracked by the outer loop via last_block
+                    pass  # stall detection not yet implemented
                 self._last_progress[name] = progress_key
 
             # Check staleness ratio
@@ -208,8 +206,7 @@ class DiagnosticsTracker:
     def on_failure(self, inst, name: str) -> None:
         """Called when a network fails — do a final poll and dump snapshots."""
         # Do one last poll to capture the state at failure time
-        self.last_poll[name] = 0  # force immediate poll
-        self.poll(inst)
+        self.poll(inst, force=True)
         # Bump log level to capture any post-failure details
         rpc_set_log_level(inst.rpc_url, LOG_LEVEL_DEGRADED)
         # Always dump on failure, even if previously dumped for degradation

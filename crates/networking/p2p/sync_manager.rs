@@ -141,11 +141,11 @@ impl SyncManager {
         }
 
         // Populate live progress from METRICS atomics
-        let headers = METRICS.downloaded_headers.get() as u64;
+        let headers = METRICS.downloaded_headers.get();
         let accounts_downloaded = METRICS.downloaded_account_tries.load(Relaxed);
         let accounts_inserted = METRICS.account_tries_inserted.load(Relaxed);
-        let storage_downloaded = METRICS.storage_leaves_downloaded.get() as u64;
-        let storage_inserted = METRICS.storage_leaves_inserted.get() as u64;
+        let storage_downloaded = METRICS.storage_leaves_downloaded.get();
+        let storage_inserted = METRICS.storage_leaves_inserted.get();
 
         if headers > 0 {
             diag.phase_progress

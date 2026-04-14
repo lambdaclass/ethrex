@@ -184,7 +184,7 @@ fn format_object_array_table(arr: &[Value]) -> String {
         .map(|item| {
             columns
                 .iter()
-                .map(|col| item.get(col).map(|v| inline_value(v)).unwrap_or_default())
+                .map(|col| item.get(col).map(inline_value).unwrap_or_default())
                 .collect()
         })
         .collect();

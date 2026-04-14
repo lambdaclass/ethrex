@@ -161,6 +161,7 @@ impl Syncer {
             // If the error is irrecoverable, we exit ethrex
             Err(error) => {
                 let recoverable = error.is_recoverable();
+                self.diagnostics.write().await.current_phase = "idle".to_string();
                 debug!(
                     error_type = %error,
                     recoverable = recoverable,
