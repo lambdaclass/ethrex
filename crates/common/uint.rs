@@ -744,10 +744,9 @@ impl_cross_binop!(usize, Add, add);
 impl_cross_binop!(usize, Sub, sub);
 impl_cross_binop!(usize, Mul, mul);
 impl_cross_binop!(usize, Div, div);
-impl_cross_binop!(i32, Add, add);
-impl_cross_binop!(i32, Sub, sub);
-impl_cross_binop!(i32, Mul, mul);
-impl_cross_binop!(i32, Div, div);
+// i32 cross-ops intentionally omitted: `rhs as u64` sign-extends negative
+// values (e.g. -1i32 becomes u64::MAX), producing silently wrong results.
+// Callers should cast explicitly: `u256 - U256::from(n as u64)`
 
 macro_rules! impl_assign_via_op {
     ($trait:ident, $method:ident, $op_trait:ident, $op_method:ident) => {

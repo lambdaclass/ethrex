@@ -378,7 +378,7 @@ impl EthClient {
     ) -> Result<U256, EthClientError> {
         let gas_price = self.get_gas_price().await?;
 
-        Ok((gas_price * (100 + bump_percent)) / 100)
+        Ok((gas_price * (100 + bump_percent)) / 100u64)
     }
 
     pub async fn get_nonce(
