@@ -55,7 +55,7 @@ impl AirbenderBackend {
         let output = Command::new("cargo-airbender")
             .args(args)
             .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .output()
             .map_err(BackendError::execution)?;
 
@@ -86,7 +86,7 @@ impl AirbenderBackend {
         let output = Command::new("cargo-airbender")
             .args(args)
             .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .output()
             .map_err(BackendError::proving)?;
 
