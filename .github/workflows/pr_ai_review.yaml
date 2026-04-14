@@ -1,7 +1,7 @@
 # AI Code Review using lambdaclass/actions reusable workflows
 #
 # Triggers:
-# - Automatically on PR open/ready_for_review
+# - Automatically when PR is marked as ready for review
 # - On-demand via PR comments: /kimi, /codex, /claude (requires write access)
 #
 # Custom prompt: .github/prompts/ai-review.md
@@ -15,7 +15,7 @@ name: AI Code Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [ready_for_review]
   issue_comment:
     types: [created]
 
