@@ -61,7 +61,7 @@ impl Crypto for AirbenderCrypto {
             .map_err(|_| CryptoError::RecoveryFailed)?;
 
         let pubkey_bytes = recovered.to_encoded_point(false);
-        let hash = Keccak256::digest(&pubkey_bytes.as_bytes()[1..]);
+        let hash = <Keccak256 as MiniDigest>::digest(&pubkey_bytes.as_bytes()[1..]);
         Ok(hash)
     }
 
@@ -79,7 +79,7 @@ impl Crypto for AirbenderCrypto {
     }
 
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
-        Keccak256::digest(input)
+        <Keccak256 as MiniDigest>::digest(input)
     }
 
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
