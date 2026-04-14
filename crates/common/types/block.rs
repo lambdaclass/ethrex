@@ -683,11 +683,14 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::ExtraDataTooLong);
     }
 
-    if !header.difficulty.is_zero() {
+    // BSC (Parlia) uses non-zero difficulty to encode in-turn/out-of-turn
+    // proposer info, and non-zero nonce as a vote mechanism.
+    let is_bsc = chain_id == 56 || chain_id == 97;
+    if !is_bsc && !header.difficulty.is_zero() {
         return Err(InvalidBlockHeaderError::DifficultyNotZero);
     }
 
-    if header.nonce != 0 {
+    if !is_bsc && header.nonce != 0 {
         return Err(InvalidBlockHeaderError::NonceNotZero);
     }
 
