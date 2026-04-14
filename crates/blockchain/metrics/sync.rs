@@ -15,6 +15,7 @@ pub struct MetricsSync {
     pub snap_peers: IntGauge,
     pub inflight_requests: IntGauge,
     pub pivot_age_seconds: IntGauge,
+    pub pivot_timestamp: IntGauge,
 
     // --- Progress counters (gauges set from METRICS atomics) ---
     // Use rate() in Grafana to derive throughput.
@@ -75,6 +76,11 @@ impl MetricsSync {
                 "Age of the current pivot block in seconds"
             )
             .expect("Failed to create ethrex_sync_pivot_age_seconds"),
+            pivot_timestamp: register_int_gauge!(
+                "ethrex_sync_pivot_timestamp",
+                "Unix timestamp of the current pivot block (use time() - this for age in Grafana)"
+            )
+            .expect("Failed to create ethrex_sync_pivot_timestamp"),
 
             // Progress (set periodically from METRICS atomics)
             headers_downloaded: register_int_gauge!(

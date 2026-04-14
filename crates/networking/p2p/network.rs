@@ -705,6 +705,12 @@ fn push_sync_prometheus_metrics(step: CurrentStepValue) {
         .pivot_block
         .set(METRICS.sync_head_block.load(Relaxed) as i64);
 
+    // Push raw pivot timestamp — Grafana computes age as time() - timestamp
+    let pivot_ts = METRICS.pivot_timestamp.load(Relaxed);
+    if pivot_ts > 0 {
+        METRICS_SYNC.pivot_timestamp.set(pivot_ts as i64);
+    }
+
     match step {
         CurrentStepValue::DownloadingHeaders => {
             let total = METRICS.sync_head_block.load(Relaxed);

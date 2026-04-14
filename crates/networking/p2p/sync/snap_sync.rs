@@ -308,6 +308,9 @@ pub async fn snap_sync(
         diag.pivot_age_seconds = Some(pivot_age);
         diag.staleness_threshold_seconds = (SNAP_LIMIT as u64) * SECONDS_PER_BLOCK;
         diag.sync_mode = "snap".to_string();
+        METRICS
+            .pivot_timestamp
+            .store(pivot_header.timestamp, std::sync::atomic::Ordering::Relaxed);
         #[cfg(feature = "metrics")]
         ethrex_metrics::sync::METRICS_SYNC.set_pivot_age_seconds(pivot_age as i64);
     }
@@ -827,6 +830,9 @@ pub async fn update_pivot(
             diag.pivot_timestamp = Some(pivot.timestamp);
             let pivot_age = current_unix_time().saturating_sub(pivot.timestamp);
             diag.pivot_age_seconds = Some(pivot_age);
+            METRICS
+                .pivot_timestamp
+                .store(pivot.timestamp, std::sync::atomic::Ordering::Relaxed);
             #[cfg(feature = "metrics")]
             ethrex_metrics::sync::METRICS_SYNC.set_pivot_age_seconds(pivot_age as i64);
         }
