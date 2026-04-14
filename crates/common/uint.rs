@@ -891,6 +891,11 @@ impl From<ethereum_types::U256> for U256 {
 // ---------------------------------------------------------------------------
 
 /// 512-bit unsigned integer. Used for intermediate ADDMOD arithmetic.
+///
+/// Internal representation: `[u64; 8]` in **little-endian** limb order
+/// (limb 0 = least significant). The derived `Ord` is lexicographic over
+/// limbs, which is NOT numeric order. Use explicit comparison methods for
+/// numeric ordering if needed.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct U512([u64; 8]);
