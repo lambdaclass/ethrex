@@ -31,7 +31,12 @@ pub fn validate_block_pre_execution(
     elasticity_multiplier: u64,
 ) -> Result<(), InvalidBlockError> {
     // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header, elasticity_multiplier)?;
+    validate_block_header(
+        &block.header,
+        parent_header,
+        elasticity_multiplier,
+        chain_config.chain_id,
+    )?;
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
         let block_rlp_size = block.length();

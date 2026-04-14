@@ -645,6 +645,7 @@ pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
     elasticity_multiplier: u64,
+    chain_id: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
@@ -674,7 +675,11 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::BlockNumberNotOneGreater);
     }
 
-    if header.extra_data.len() > 32 {
+    // Ethereum limits extra_data to 32 bytes. BSC (Parlia) uses extra_data for
+    // validator lists, attestations, and seals (hundreds of bytes). Skip the
+    // check for BSC; their consensus engine enforces its own format requirements.
+    // TODO: use Network/ChainSpec abstraction instead of chain_id match
+    if header.extra_data.len() > 32 && chain_id != 56 && chain_id != 97 {
         return Err(InvalidBlockHeaderError::ExtraDataTooLong);
     }
 
@@ -973,7 +978,7 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER, 1).is_ok());
         assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
         assert_eq!(block.encode_to_vec().len(), block.length());
     }
