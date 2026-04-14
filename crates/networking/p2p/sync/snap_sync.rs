@@ -124,8 +124,6 @@ pub async fn sync_cycle_snap(
         diag.current_phase = "headers".to_string();
         diag.sync_mode = "snap".to_string();
     }
-    #[cfg(feature = "metrics")]
-    ethrex_metrics::sync::METRICS_SYNC.set_current_phase(1);
     info!(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
@@ -311,8 +309,6 @@ pub async fn snap_sync(
         METRICS
             .pivot_timestamp
             .store(pivot_header.timestamp, std::sync::atomic::Ordering::Relaxed);
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.set_pivot_age_seconds(pivot_age as i64);
     }
 
     let state_root = pivot_header.state_root;
@@ -337,8 +333,6 @@ pub async fn snap_sync(
         // account_state_snapshots_dir
 
         diagnostics.write().await.current_phase = "account_ranges".to_string();
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.set_current_phase(2);
         info!("Starting to download account ranges from peers");
         request_account_range(
             peers,
@@ -362,8 +356,6 @@ pub async fn snap_sync(
                     .load(std::sync::atomic::Ordering::Relaxed),
             );
         }
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.set_current_phase(3);
         *METRICS.account_tries_insert_start_time.lock().await = Some(SystemTime::now());
         METRICS
             .current_step
@@ -391,8 +383,6 @@ pub async fn snap_sync(
         info!("Computed state root after request_account_rages: {computed_state_root:?}");
 
         diagnostics.write().await.current_phase = "storage_ranges".to_string();
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.set_current_phase(4);
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
         // We start downloading the storage leafs. To do so, we need to be sure that the storage root
         // is correct. To do so, we always heal the state trie before requesting storage rates
@@ -483,8 +473,6 @@ pub async fn snap_sync(
         *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         diagnostics.write().await.current_phase = "storage_insertion".to_string();
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.set_current_phase(5);
         *METRICS.storage_tries_insert_start_time.lock().await = Some(SystemTime::now());
         METRICS
             .current_step
@@ -505,8 +493,6 @@ pub async fn snap_sync(
     }
 
     diagnostics.write().await.current_phase = "healing".to_string();
-    #[cfg(feature = "metrics")]
-    ethrex_metrics::sync::METRICS_SYNC.set_current_phase(6);
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
     info!("Starting Healing Process");
     let mut global_state_leafs_healed: u64 = 0;
@@ -567,8 +553,6 @@ pub async fn snap_sync(
     let mut code_hashes_to_download = Vec::new();
 
     diagnostics.write().await.current_phase = "bytecodes".to_string();
-    #[cfg(feature = "metrics")]
-    ethrex_metrics::sync::METRICS_SYNC.set_current_phase(7);
     info!("Starting download code hashes from peers");
     for entry in std::fs::read_dir(&code_hashes_dir)
         .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
@@ -833,8 +817,6 @@ pub async fn update_pivot(
             METRICS
                 .pivot_timestamp
                 .store(pivot.timestamp, std::sync::atomic::Ordering::Relaxed);
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::sync::METRICS_SYNC.set_pivot_age_seconds(pivot_age as i64);
         }
         let block_headers = peers
             .request_block_headers(block_number + 1, pivot.hash())
