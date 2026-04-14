@@ -468,20 +468,26 @@ pub async fn snap_sync(
                 };
             }
             // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
-            // We just need to update the pivot and start again
-            if !heal_state_trie_wrap(
-                pivot_header.state_root,
-                store.clone(),
-                peers,
-                calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
-                &mut state_leafs_healed,
-                &mut storage_accounts,
-                &mut code_hash_collector,
-            )
-            .await?
-            {
-                continue;
-            };
+            // We just need to update the pivot and start again.
+            // BSC: skip interleaved healing during the storage loop. BSC pivot rotation
+            // changes state_root, and healing sets account roots to None, which breaks
+            // the subsequent storage lookup under the new pivot hash. Healing runs
+            // separately after all storage is downloaded (the main healing loop below).
+            if !is_bsc {
+                if !heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    peers,
+                    calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
+                    &mut state_leafs_healed,
+                    &mut storage_accounts,
+                    &mut code_hash_collector,
+                )
+                .await?
+                {
+                    continue;
+                }
+            }
 
             info!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
