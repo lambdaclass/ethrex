@@ -15,6 +15,7 @@ panic = "abort"
 [dependencies]
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+ruint = { version = "1", default-features = false }
 
 ethrex-guest-program = { path = "../../", default-features = false, features = ["zisk"] }
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
@@ -22,7 +23,6 @@ ethrex-vm = { path = "../../../vm", default-features = false, features = [
 ] }
 ethrex-common = { path = "../../../common", default-features = false, features = [
     "zisk",
-    "uint-ethereum-types",  # Switch to "uint-ruint" to benchmark alternative backend
 ] }
 
 [features]

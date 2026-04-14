@@ -1,13 +1,15 @@
 // Hash/address types from ethereum_types (not switched by uint backend)
 pub use ethereum_types::{
-    BigEndianHash, Bloom, BloomInput, FromStrRadixErr, H128, H160, H256, H264, H32, H512, H520,
+    BigEndianHash, Bloom, BloomInput, FromStrRadixErr, H32, H128, H160, H256, H264, H512, H520,
     Signature,
 };
 pub type Address = H160;
 
-// Switchable uint types
+// Injectable uint types — vendors call install_uint256_backend() to override.
 mod uint;
-pub use uint::{ParseU256Error, U256, U512};
+pub use uint::{
+    DefaultUint256Ops, ParseU256Error, U256, U512, Uint256Ops, install_uint256_backend,
+};
 pub mod constants;
 pub mod serde_utils;
 pub mod types;

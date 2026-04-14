@@ -1,25 +1,234 @@
-// Switchable U256/U512 backend.
-// Selected at compile time via feature flags: `uint-ethereum-types` (default) or `uint-ruint`.
+// Injectable U256/U512 backend.
+// Vendors install a custom backend via `install_uint256_backend()` at startup.
+// Default: ethereum_types-based implementation.
 
-#[cfg(all(feature = "uint-ethereum-types", feature = "uint-ruint"))]
-compile_error!("Only one uint backend can be enabled: choose `uint-ethereum-types` or `uint-ruint`");
-
-#[cfg(not(any(feature = "uint-ethereum-types", feature = "uint-ruint")))]
-compile_error!("A uint backend must be enabled: `uint-ethereum-types` or `uint-ruint`");
+use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
-// Backend selection
+// Uint256Ops trait — the backend contract
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "uint-ethereum-types")]
-mod backend {
-    pub use ethereum_types::{U256, U512};
+/// Trait defining all U256/U512 operations that a backend must support.
+/// Every method has a default implementation using ethereum_types.
+/// Vendors override only the operations they want to accelerate.
+pub trait Uint256Ops: Send + Sync + core::fmt::Debug {
+    // ── U256 arithmetic ─────────────────────────────────────────────
+
+    fn overflowing_add(&self, a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        let (v, o) = a.overflowing_add(b);
+        (v.0, o)
+    }
+
+    fn overflowing_sub(&self, a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        let (v, o) = a.overflowing_sub(b);
+        (v.0, o)
+    }
+
+    fn overflowing_mul(&self, a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        let (v, o) = a.overflowing_mul(b);
+        (v.0, o)
+    }
+
+    fn overflowing_pow(&self, base: [u64; 4], exp: [u64; 4]) -> ([u64; 4], bool) {
+        let base = ethereum_types::U256(base);
+        let exp = ethereum_types::U256(exp);
+        let (v, o) = base.overflowing_pow(exp);
+        (v.0, o)
+    }
+
+    fn checked_add(&self, a: [u64; 4], b: [u64; 4]) -> Option<[u64; 4]> {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.checked_add(b).map(|v| v.0)
+    }
+
+    fn checked_sub(&self, a: [u64; 4], b: [u64; 4]) -> Option<[u64; 4]> {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.checked_sub(b).map(|v| v.0)
+    }
+
+    fn checked_mul(&self, a: [u64; 4], b: [u64; 4]) -> Option<[u64; 4]> {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.checked_mul(b).map(|v| v.0)
+    }
+
+    fn checked_div(&self, a: [u64; 4], b: [u64; 4]) -> Option<[u64; 4]> {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.checked_div(b).map(|v| v.0)
+    }
+
+    fn checked_rem(&self, a: [u64; 4], b: [u64; 4]) -> Option<[u64; 4]> {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.checked_rem(b).map(|v| v.0)
+    }
+
+    fn saturating_add(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.saturating_add(b).0
+    }
+
+    fn saturating_sub(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.saturating_sub(b).0
+    }
+
+    fn saturating_mul(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        a.saturating_mul(b).0
+    }
+
+    // ── U256 bitwise & inspection ───────────────────────────────────
+
+    fn not(&self, a: [u64; 4]) -> [u64; 4] {
+        [!a[0], !a[1], !a[2], !a[3]]
+    }
+
+    fn bitand(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        [a[0] & b[0], a[1] & b[1], a[2] & b[2], a[3] & b[3]]
+    }
+
+    fn bitor(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        [a[0] | b[0], a[1] | b[1], a[2] | b[2], a[3] | b[3]]
+    }
+
+    fn bitxor(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        [a[0] ^ b[0], a[1] ^ b[1], a[2] ^ b[2], a[3] ^ b[3]]
+    }
+
+    fn shl(&self, a: [u64; 4], shift: usize) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        (a << shift).0
+    }
+
+    fn shr(&self, a: [u64; 4], shift: usize) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        (a >> shift).0
+    }
+
+    fn div(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        (a / b).0
+    }
+
+    fn rem(&self, a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+        let a = ethereum_types::U256(a);
+        let b = ethereum_types::U256(b);
+        (a % b).0
+    }
+
+    fn leading_zeros(&self, a: [u64; 4]) -> u32 {
+        ethereum_types::U256(a).leading_zeros()
+    }
+
+    fn bits(&self, a: [u64; 4]) -> usize {
+        ethereum_types::U256(a).bits()
+    }
+
+    fn bit(&self, a: [u64; 4], index: usize) -> bool {
+        ethereum_types::U256(a).bit(index)
+    }
+
+    fn byte(&self, a: [u64; 4], index: usize) -> u8 {
+        ethereum_types::U256(a).byte(index)
+    }
+
+    // ── U256 byte conversion ────────────────────────────────────────
+
+    fn to_big_endian(&self, a: [u64; 4]) -> [u8; 32] {
+        ethereum_types::U256(a).to_big_endian()
+    }
+
+    fn from_big_endian(&self, bytes: &[u8]) -> [u64; 4] {
+        ethereum_types::U256::from_big_endian(bytes).0
+    }
+
+    fn from_little_endian(&self, bytes: &[u8]) -> [u64; 4] {
+        ethereum_types::U256::from_little_endian(bytes).0
+    }
+
+    // ── U256 string parsing ─────────────────────────────────────────
+
+    fn from_dec_str(&self, s: &str) -> Result<[u64; 4], ParseU256Error> {
+        ethereum_types::U256::from_dec_str(s)
+            .map(|v| v.0)
+            .map_err(|e| ParseU256Error(e.to_string()))
+    }
+
+    fn from_str_radix(&self, s: &str, radix: u32) -> Result<[u64; 4], ParseU256Error> {
+        ethereum_types::U256::from_str_radix(s, radix)
+            .map(|v| v.0)
+            .map_err(|_| ParseU256Error("invalid string for radix".to_string()))
+    }
+
+    // ── U512 operations (for ADDMOD) ────────────────────────────────
+
+    fn u512_from_u256(&self, a: [u64; 4]) -> [u64; 8] {
+        let v = ethereum_types::U512::from(ethereum_types::U256(a));
+        v.0
+    }
+
+    fn u512_overflowing_add(&self, a: [u64; 8], b: [u64; 8]) -> ([u64; 8], bool) {
+        let a = ethereum_types::U512(a);
+        let b = ethereum_types::U512(b);
+        let (v, o) = a.overflowing_add(b);
+        (v.0, o)
+    }
+
+    fn u512_rem(&self, a: [u64; 8], b: [u64; 8]) -> [u64; 8] {
+        let a = ethereum_types::U512(a);
+        let b = ethereum_types::U512(b);
+        (a % b).0
+    }
+
+    fn u512_rem_u256(&self, a: [u64; 8], b: [u64; 4]) -> [u64; 8] {
+        let a = ethereum_types::U512(a);
+        let b = ethereum_types::U512::from(ethereum_types::U256(b));
+        (a % b).0
+    }
 }
 
-#[cfg(feature = "uint-ruint")]
-mod backend {
-    pub type U256 = ruint::Uint<256, 4>;
-    pub type U512 = ruint::Uint<512, 8>;
+// ---------------------------------------------------------------------------
+// Default backend
+// ---------------------------------------------------------------------------
+
+/// Default U256 backend using ethereum_types. All trait methods use defaults.
+#[derive(Debug)]
+pub struct DefaultUint256Ops;
+
+impl Uint256Ops for DefaultUint256Ops {}
+
+// ---------------------------------------------------------------------------
+// Global backend
+// ---------------------------------------------------------------------------
+
+static U256_OPS: OnceLock<Box<dyn Uint256Ops>> = OnceLock::new();
+
+/// Install a custom U256 backend globally. Returns `true` if installed,
+/// `false` if a backend was already set.
+pub fn install_uint256_backend<B: Uint256Ops + 'static>(backend: B) -> bool {
+    U256_OPS.set(Box::new(backend)).is_ok()
+}
+
+/// Get the installed backend, or the default if none was installed.
+#[inline]
+fn ops() -> &'static dyn Uint256Ops {
+    U256_OPS
+        .get_or_init(|| Box::new(DefaultUint256Ops))
+        .as_ref()
 }
 
 // ---------------------------------------------------------------------------
@@ -28,21 +237,11 @@ mod backend {
 
 /// Error type for U256 string parsing.
 #[derive(Debug)]
-pub enum ParseU256Error {
-    #[cfg(feature = "uint-ethereum-types")]
-    EthereumTypes(ethereum_types::FromDecStrErr),
-    #[cfg(feature = "uint-ruint")]
-    Ruint(ruint::ParseError),
-}
+pub struct ParseU256Error(pub String);
 
 impl core::fmt::Display for ParseU256Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            #[cfg(feature = "uint-ethereum-types")]
-            Self::EthereumTypes(e) => write!(f, "{e}"),
-            #[cfg(feature = "uint-ruint")]
-            Self::Ruint(e) => write!(f, "{e}"),
-        }
+        write!(f, "{}", self.0)
     }
 }
 
@@ -52,13 +251,43 @@ impl std::error::Error for ParseU256Error {}
 // U256
 // ---------------------------------------------------------------------------
 
-/// 256-bit unsigned integer. Backend selected at compile time.
+/// 256-bit unsigned integer. Operations delegate through the installed backend.
 #[repr(transparent)]
-#[derive(
-    Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-#[serde(transparent)]
-pub struct U256(backend::U256);
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
+pub struct U256([u64; 4]);
+
+// Manual Ord: compare from most-significant limb (index 3) to least (index 0).
+// Derived Ord would compare in array order (index 0 first), which is wrong for LE limbs.
+impl Ord for U256 {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.0[3]
+            .cmp(&other.0[3])
+            .then(self.0[2].cmp(&other.0[2]))
+            .then(self.0[1].cmp(&other.0[1]))
+            .then(self.0[0].cmp(&other.0[0]))
+    }
+}
+
+impl PartialOrd for U256 {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// Custom serde: serialize as ethereum_types::U256 for wire compatibility.
+impl serde::Serialize for U256 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ethereum_types::U256(self.0).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for U256 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ethereum_types::U256::deserialize(deserializer).map(|v| Self(v.0))
+    }
+}
 
 // ---- constants & constructors ----
 
@@ -70,46 +299,20 @@ impl U256 {
     /// Construct from four u64 limbs in little-endian word order (limbs[0] is least significant).
     #[inline]
     pub const fn from_limbs(limbs: [u64; 4]) -> Self {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            Self(ethereum_types::U256(limbs))
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            Self(backend::U256::from_limbs(limbs))
-        }
+        Self(limbs)
     }
 
     /// Reference to internal limbs in little-endian word order.
     #[inline]
     pub fn as_limbs(&self) -> &[u64; 4] {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            &self.0 .0
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.as_limbs()
-        }
+        &self.0
     }
 
     /// Mutable reference to internal limbs.
     #[inline]
     pub fn as_limbs_mut(&mut self) -> &mut [u64; 4] {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            &mut self.0 .0
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            // SAFETY: mutating limbs in-place is safe as long as we don't break invariants.
-            // ruint marks this unsafe because arbitrary writes could create invalid state,
-            // but our callers only copy limb values from other valid U256s.
-            unsafe { self.0.as_limbs_mut() }
-        }
+        &mut self.0
     }
-
-    // Compatibility methods (match ethereum_types API)
 
     #[inline]
     pub const fn zero() -> Self {
@@ -133,53 +336,19 @@ impl U256 {
     /// Construct from big-endian bytes. Input may be shorter than 32 bytes (left-padded with zeros).
     #[inline]
     pub fn from_big_endian(bytes: &[u8]) -> Self {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            Self(ethereum_types::U256::from_big_endian(bytes))
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            // alloy expects exactly 32 bytes via from_be_slice, pad if shorter
-            if bytes.len() >= 32 {
-                Self(backend::U256::from_be_slice(&bytes[bytes.len() - 32..]))
-            } else {
-                let mut padded = [0u8; 32];
-                padded[32 - bytes.len()..].copy_from_slice(bytes);
-                Self(backend::U256::from_be_slice(&padded))
-            }
-        }
+        Self(ops().from_big_endian(bytes))
     }
 
     /// Convert to 32-byte big-endian representation.
     #[inline]
     pub fn to_big_endian(self) -> [u8; 32] {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.to_big_endian()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.to_be_bytes::<32>()
-        }
+        ops().to_big_endian(self.0)
     }
 
     /// Construct from little-endian bytes.
     #[inline]
     pub fn from_little_endian(bytes: &[u8]) -> Self {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            Self(ethereum_types::U256::from_little_endian(bytes))
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            if bytes.len() >= 32 {
-                Self(backend::U256::from_le_slice(&bytes[..32]))
-            } else {
-                let mut padded = [0u8; 32];
-                padded[..bytes.len()].copy_from_slice(bytes);
-                Self(backend::U256::from_le_slice(&padded))
-            }
-        }
+        Self(ops().from_little_endian(bytes))
     }
 }
 
@@ -188,92 +357,66 @@ impl U256 {
 impl U256 {
     #[inline]
     pub fn overflowing_add(self, rhs: Self) -> (Self, bool) {
-        let (v, o) = self.0.overflowing_add(rhs.0);
+        let (v, o) = ops().overflowing_add(self.0, rhs.0);
         (Self(v), o)
     }
 
     #[inline]
     pub fn overflowing_sub(self, rhs: Self) -> (Self, bool) {
-        let (v, o) = self.0.overflowing_sub(rhs.0);
+        let (v, o) = ops().overflowing_sub(self.0, rhs.0);
         (Self(v), o)
     }
 
     #[inline]
     pub fn overflowing_mul(self, rhs: Self) -> (Self, bool) {
-        let (v, o) = self.0.overflowing_mul(rhs.0);
+        let (v, o) = ops().overflowing_mul(self.0, rhs.0);
         (Self(v), o)
     }
 
     #[inline]
     pub fn overflowing_pow(self, exp: Self) -> (Self, bool) {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            let (v, o) = self.0.overflowing_pow(exp.0);
-            (Self(v), o)
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            // alloy/ruint overflowing_pow takes a usize exponent; we need u256-wide.
-            // Use manual square-and-multiply for the alloy backend.
-            let mut base = self;
-            let mut e = exp;
-            let mut result = Self::ONE;
-            let mut overflowed = false;
-            while !e.is_zero() {
-                if e.as_limbs()[0] & 1 == 1 {
-                    let (r, o) = result.overflowing_mul(base);
-                    result = r;
-                    overflowed |= o;
-                }
-                e = Self(e.0 >> 1);
-                if !e.is_zero() {
-                    let (b, o) = base.overflowing_mul(base);
-                    base = b;
-                    overflowed |= o;
-                }
-            }
-            (result, overflowed)
-        }
+        let (v, o) = ops().overflowing_pow(self.0, exp.0);
+        (Self(v), o)
     }
 
     #[inline]
     pub fn checked_add(self, rhs: Self) -> Option<Self> {
-        self.0.checked_add(rhs.0).map(Self)
+        ops().checked_add(self.0, rhs.0).map(Self)
     }
 
     #[inline]
     pub fn checked_sub(self, rhs: Self) -> Option<Self> {
-        self.0.checked_sub(rhs.0).map(Self)
+        ops().checked_sub(self.0, rhs.0).map(Self)
     }
 
     #[inline]
     pub fn checked_mul(self, rhs: Self) -> Option<Self> {
-        self.0.checked_mul(rhs.0).map(Self)
+        ops().checked_mul(self.0, rhs.0).map(Self)
     }
 
     #[inline]
     pub fn checked_div(self, rhs: Self) -> Option<Self> {
-        self.0.checked_div(rhs.0).map(Self)
+        ops().checked_div(self.0, rhs.0).map(Self)
     }
 
     #[inline]
     pub fn checked_rem(self, rhs: Self) -> Option<Self> {
-        self.0.checked_rem(rhs.0).map(Self)
+        ops().checked_rem(self.0, rhs.0).map(Self)
     }
 
     #[inline]
     pub fn saturating_add(self, rhs: Self) -> Self {
-        Self(self.0.saturating_add(rhs.0))
+        Self(ops().saturating_add(self.0, rhs.0))
     }
 
     #[inline]
     pub fn saturating_mul(self, rhs: Self) -> Self {
-        Self(self.0.saturating_mul(rhs.0))
+        Self(ops().saturating_mul(self.0, rhs.0))
     }
 
     #[inline]
     pub fn saturating_sub(self, rhs: Self) -> Self {
-        Self(self.0.saturating_sub(rhs.0))
+        Self(ops().saturating_sub(self.0, rhs.0))
     }
 
     #[inline]
@@ -298,59 +441,31 @@ impl U256 {
     /// Returns the bit at the given index (0 = least significant).
     #[inline]
     pub fn bit(&self, index: usize) -> bool {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.bit(index)
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.bit(index)
-        }
+        ops().bit(self.0, index)
     }
 
-    /// Returns the byte at the given index (0 = most significant byte, EVM convention).
+    /// Returns the byte at the given index (0 = least significant byte).
     #[inline]
     pub fn byte(&self, index: usize) -> u8 {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.byte(index)
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.byte(31 - index)
-        }
+        ops().byte(self.0, index)
     }
 
     /// Number of leading zero bits.
     #[inline]
     pub fn leading_zeros(&self) -> u32 {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.leading_zeros()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.leading_zeros() as u32
-        }
+        ops().leading_zeros(self.0)
     }
 
     /// Returns true if the value is zero.
     #[inline]
     pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
+        self.0 == [0; 4]
     }
 
     /// Number of bits needed to represent this value.
     #[inline]
     pub fn bits(&self) -> usize {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.bits()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.bit_len()
-        }
+        ops().bits(self.0)
     }
 }
 
@@ -360,70 +475,31 @@ impl U256 {
     /// Returns the low 64 bits.
     #[inline]
     pub fn as_u64(&self) -> u64 {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.as_u64()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.as_limbs()[0]
-        }
+        self.0[0]
     }
 
     /// Returns the low 32 bits.
     #[inline]
     pub fn low_u32(&self) -> u32 {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.low_u32()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.as_limbs()[0] as u32
-        }
+        self.0[0] as u32
     }
 
     /// Returns the low 64 bits.
     #[inline]
     pub fn low_u64(&self) -> u64 {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.low_u64()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.as_limbs()[0]
-        }
+        self.0[0]
     }
 
     /// Returns the low bits as usize.
     #[inline]
     pub fn as_usize(&self) -> usize {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            self.0.as_usize()
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.as_limbs()[0] as usize
-        }
+        self.0[0] as usize
     }
 
     /// Parse from decimal string.
     #[inline]
     pub fn from_dec_str(s: &str) -> Result<Self, ParseU256Error> {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            ethereum_types::U256::from_dec_str(s)
-                .map(Self)
-                .map_err(ParseU256Error::EthereumTypes)
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            backend::U256::from_str_radix(s, 10)
-                .map(Self)
-                .map_err(ParseU256Error::Ruint)
-        }
+        ops().from_dec_str(s).map(Self)
     }
 
     /// Convert to 32-byte little-endian representation.
@@ -450,22 +526,16 @@ impl U256 {
     /// Parse from string with given radix.
     #[inline]
     pub fn from_str_radix(s: &str, radix: u32) -> Result<Self, ParseU256Error> {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            ethereum_types::U256::from_str_radix(s, radix)
-                .map(Self)
-                .map_err(|_| {
-                    // ethereum_types::FromStrRadixErr doesn't implement Error;
-                    // convert through from_dec_str error type for consistent wrapping.
-                    ParseU256Error::EthereumTypes(ethereum_types::FromDecStrErr::InvalidLength)
-                })
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            backend::U256::from_str_radix(s, radix as u64)
-                .map(Self)
-                .map_err(ParseU256Error::Ruint)
-        }
+        ops().from_str_radix(s, radix).map(Self)
+    }
+}
+
+impl core::str::FromStr for U256 {
+    type Err = ParseU256Error;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_str(s)
     }
 }
 
@@ -477,19 +547,57 @@ macro_rules! impl_from_uint {
             impl From<$t> for U256 {
                 #[inline]
                 fn from(v: $t) -> Self {
-                    Self(backend::U256::from(v))
+                    let mut limbs = [0u64; 4];
+                    limbs[0] = v as u64;
+                    #[allow(unused_comparisons)]
+                    if core::mem::size_of::<$t>() > 8 {
+                        limbs[1] = ((v as u128) >> 64) as u64;
+                    }
+                    Self(limbs)
                 }
             }
         )*
     };
 }
 
-impl_from_uint!(u8, u16, u32, u64, usize, u128, i32, i64);
+impl_from_uint!(u8, u16, u32, u64, usize);
+
+impl From<u128> for U256 {
+    #[inline]
+    fn from(v: u128) -> Self {
+        Self([v as u64, (v >> 64) as u64, 0, 0])
+    }
+}
+
+// Signed conversions: two's complement sign extension for EVM compatibility.
+impl From<i32> for U256 {
+    #[inline]
+    fn from(v: i32) -> Self {
+        if v >= 0 {
+            Self::from(v as u64)
+        } else {
+            let abs_minus_one = (!(v as u32)) as u64;
+            Self::MAX - Self::from(abs_minus_one)
+        }
+    }
+}
+
+impl From<i64> for U256 {
+    #[inline]
+    fn from(v: i64) -> Self {
+        if v >= 0 {
+            Self::from(v as u64)
+        } else {
+            let abs_minus_one = !(v as u64);
+            Self::MAX - Self::from(abs_minus_one)
+        }
+    }
+}
 
 impl From<bool> for U256 {
     #[inline]
     fn from(v: bool) -> Self {
-        Self(backend::U256::from(v as u64))
+        Self::from(v as u64)
     }
 }
 
@@ -499,11 +607,10 @@ impl TryFrom<U256> for u64 {
     type Error = &'static str;
     #[inline]
     fn try_from(v: U256) -> Result<Self, Self::Error> {
-        let limbs = v.as_limbs();
-        if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
+        if v.0[1] != 0 || v.0[2] != 0 || v.0[3] != 0 {
             Err("U256 value too large for u64")
         } else {
-            Ok(limbs[0])
+            Ok(v.0[0])
         }
     }
 }
@@ -528,39 +635,95 @@ impl TryFrom<U256> for u8 {
 
 // ---- operator traits ----
 
-macro_rules! impl_binop {
-    ($trait:ident, $method:ident) => {
-        impl core::ops::$trait for U256 {
-            type Output = Self;
-            #[inline]
-            fn $method(self, rhs: Self) -> Self {
-                Self(core::ops::$trait::$method(self.0, rhs.0))
-            }
-        }
-    };
+impl core::ops::Add for U256 {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        self.overflowing_add(rhs).0
+    }
 }
 
-macro_rules! impl_binop_assign {
-    ($trait:ident, $method:ident) => {
-        impl core::ops::$trait for U256 {
-            #[inline]
-            fn $method(&mut self, rhs: Self) {
-                core::ops::$trait::$method(&mut self.0, rhs.0);
-            }
-        }
-    };
+impl core::ops::Sub for U256 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        self.overflowing_sub(rhs).0
+    }
 }
 
-impl_binop!(Add, add);
-impl_binop!(Sub, sub);
-impl_binop!(Mul, mul);
-impl_binop!(Div, div);
-impl_binop!(Rem, rem);
-impl_binop!(BitAnd, bitand);
-impl_binop!(BitOr, bitor);
-impl_binop!(BitXor, bitxor);
+impl core::ops::Mul for U256 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, rhs: Self) -> Self {
+        self.overflowing_mul(rhs).0
+    }
+}
 
-// Cross-type arithmetic (U256 op primitive). ethereum_types supports these.
+impl core::ops::Div for U256 {
+    type Output = Self;
+    #[inline]
+    fn div(self, rhs: Self) -> Self {
+        Self(ops().div(self.0, rhs.0))
+    }
+}
+
+impl core::ops::Rem for U256 {
+    type Output = Self;
+    #[inline]
+    fn rem(self, rhs: Self) -> Self {
+        Self(ops().rem(self.0, rhs.0))
+    }
+}
+
+impl core::ops::BitAnd for U256 {
+    type Output = Self;
+    #[inline]
+    fn bitand(self, rhs: Self) -> Self {
+        Self(ops().bitand(self.0, rhs.0))
+    }
+}
+
+impl core::ops::BitOr for U256 {
+    type Output = Self;
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self {
+        Self(ops().bitor(self.0, rhs.0))
+    }
+}
+
+impl core::ops::BitXor for U256 {
+    type Output = Self;
+    #[inline]
+    fn bitxor(self, rhs: Self) -> Self {
+        Self(ops().bitxor(self.0, rhs.0))
+    }
+}
+
+impl core::ops::Not for U256 {
+    type Output = Self;
+    #[inline]
+    fn not(self) -> Self {
+        Self(ops().not(self.0))
+    }
+}
+
+impl core::ops::Shl<usize> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shl(self, rhs: usize) -> Self {
+        Self(ops().shl(self.0, rhs))
+    }
+}
+
+impl core::ops::Shr<usize> for U256 {
+    type Output = Self;
+    #[inline]
+    fn shr(self, rhs: usize) -> Self {
+        Self(ops().shr(self.0, rhs))
+    }
+}
+
+// Cross-type arithmetic (U256 op primitive).
 macro_rules! impl_cross_binop {
     ($prim:ty, $trait:ident, $method:ident) => {
         impl core::ops::$trait<$prim> for U256 {
@@ -586,40 +749,27 @@ impl_cross_binop!(i32, Sub, sub);
 impl_cross_binop!(i32, Mul, mul);
 impl_cross_binop!(i32, Div, div);
 
-impl_binop_assign!(AddAssign, add_assign);
-impl_binop_assign!(SubAssign, sub_assign);
-impl_binop_assign!(MulAssign, mul_assign);
-impl_binop_assign!(DivAssign, div_assign);
-impl_binop_assign!(RemAssign, rem_assign);
-impl_binop_assign!(BitAndAssign, bitand_assign);
-impl_binop_assign!(BitOrAssign, bitor_assign);
-impl_binop_assign!(BitXorAssign, bitxor_assign);
-
-impl core::ops::Not for U256 {
-    type Output = Self;
-    #[inline]
-    fn not(self) -> Self {
-        Self(!self.0)
-    }
+macro_rules! impl_assign_via_op {
+    ($trait:ident, $method:ident, $op_trait:ident, $op_method:ident) => {
+        impl core::ops::$trait for U256 {
+            #[inline]
+            fn $method(&mut self, rhs: Self) {
+                *self = core::ops::$op_trait::$op_method(*self, rhs);
+            }
+        }
+    };
 }
 
-impl core::ops::Shl<usize> for U256 {
-    type Output = Self;
-    #[inline]
-    fn shl(self, rhs: usize) -> Self {
-        Self(self.0 << rhs)
-    }
-}
+impl_assign_via_op!(AddAssign, add_assign, Add, add);
+impl_assign_via_op!(SubAssign, sub_assign, Sub, sub);
+impl_assign_via_op!(MulAssign, mul_assign, Mul, mul);
+impl_assign_via_op!(DivAssign, div_assign, Div, div);
+impl_assign_via_op!(RemAssign, rem_assign, Rem, rem);
+impl_assign_via_op!(BitAndAssign, bitand_assign, BitAnd, bitand);
+impl_assign_via_op!(BitOrAssign, bitor_assign, BitOr, bitor);
+impl_assign_via_op!(BitXorAssign, bitxor_assign, BitXor, bitxor);
 
-impl core::ops::Shr<usize> for U256 {
-    type Output = Self;
-    #[inline]
-    fn shr(self, rhs: usize) -> Self {
-        Self(self.0 >> rhs)
-    }
-}
-
-// Additional shift impls for common integer types (matching ethereum_types)
+// Additional shift impls for common integer types
 macro_rules! impl_shift {
     ($($t:ty),*) => {
         $(
@@ -627,14 +777,14 @@ macro_rules! impl_shift {
                 type Output = Self;
                 #[inline]
                 fn shl(self, rhs: $t) -> Self {
-                    Self(self.0 << rhs)
+                    Self(ops().shl(self.0, rhs as usize))
                 }
             }
             impl core::ops::Shr<$t> for U256 {
                 type Output = Self;
                 #[inline]
                 fn shr(self, rhs: $t) -> Self {
-                    Self(self.0 >> rhs)
+                    Self(ops().shr(self.0, rhs as usize))
                 }
             }
         )*
@@ -646,14 +796,14 @@ impl_shift!(u8, u16, u32, u64, i32, i64);
 impl core::ops::ShlAssign<usize> for U256 {
     #[inline]
     fn shl_assign(&mut self, rhs: usize) {
-        self.0 <<= rhs;
+        *self = *self << rhs;
     }
 }
 
 impl core::ops::ShrAssign<usize> for U256 {
     #[inline]
     fn shr_assign(&mut self, rhs: usize) {
-        self.0 >>= rhs;
+        *self = *self >> rhs;
     }
 }
 
@@ -661,42 +811,25 @@ impl core::ops::ShrAssign<usize> for U256 {
 
 impl core::fmt::Debug for U256 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(&self.0, f)
+        write!(f, "{:#x}", ethereum_types::U256(self.0))
     }
 }
 
 impl core::fmt::Display for U256 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(&self.0, f)
+        write!(f, "{}", ethereum_types::U256(self.0))
     }
 }
 
 impl core::fmt::LowerHex for U256 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::LowerHex::fmt(&self.0, f)
+        core::fmt::LowerHex::fmt(&ethereum_types::U256(self.0), f)
     }
 }
 
 impl core::fmt::UpperHex for U256 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::UpperHex::fmt(&self.0, f)
-    }
-}
-
-// ---- conversion to/from inner type (for interop with ethereum_types in specific backends) ----
-
-#[cfg(feature = "uint-ethereum-types")]
-impl U256 {
-    /// Access the underlying `ethereum_types::U256`. Only available with the ethereum-types backend.
-    #[inline]
-    pub fn inner(&self) -> &ethereum_types::U256 {
-        &self.0
-    }
-
-    /// Construct from an `ethereum_types::U256`.
-    #[inline]
-    pub fn from_inner(inner: ethereum_types::U256) -> Self {
-        Self(inner)
+        core::fmt::UpperHex::fmt(&ethereum_types::U256(self.0), f)
     }
 }
 
@@ -704,8 +837,6 @@ impl U256 {
 // BigEndianHash interop
 // ---------------------------------------------------------------------------
 
-/// Implement BigEndianHash-like conversion between H256 and our U256.
-/// This avoids depending on the ethereum_types BigEndianHash trait directly.
 impl U256 {
     /// Convert H256 to U256 (big-endian interpretation).
     #[inline]
@@ -720,7 +851,6 @@ impl U256 {
     }
 }
 
-/// Implement the BigEndianHash trait from ethereum_types for our wrapper.
 impl ethereum_types::BigEndianHash for U256 {
     type Uint = Self;
 
@@ -733,12 +863,18 @@ impl ethereum_types::BigEndianHash for U256 {
     }
 }
 
-// Conversions between our U256 and ethereum_types::U256 (for BigEndianHash interop)
-#[cfg(feature = "uint-ethereum-types")]
+// Conversions between our U256 and ethereum_types::U256
 impl From<U256> for ethereum_types::U256 {
     #[inline]
     fn from(v: U256) -> Self {
-        v.0
+        ethereum_types::U256(v.0)
+    }
+}
+
+impl From<ethereum_types::U256> for U256 {
+    #[inline]
+    fn from(v: ethereum_types::U256) -> Self {
+        Self(v.0)
     }
 }
 
@@ -749,48 +885,32 @@ impl From<U256> for ethereum_types::U256 {
 /// 512-bit unsigned integer. Used for intermediate ADDMOD arithmetic.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct U512(backend::U512);
+pub struct U512([u64; 8]);
 
 impl U512 {
     #[inline]
     pub fn overflowing_add(self, rhs: Self) -> (Self, bool) {
-        let (v, o) = self.0.overflowing_add(rhs.0);
+        let (v, o) = ops().u512_overflowing_add(self.0, rhs.0);
         (Self(v), o)
     }
 
     /// Extract the low 256 bits as a U256.
     #[inline]
     pub fn low_u256(self) -> U256 {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            // ethereum_types::U512 stores as [u64; 8], low limbs first
-            U256::from_limbs([self.0 .0[0], self.0 .0[1], self.0 .0[2], self.0 .0[3]])
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            let limbs = self.0.as_limbs();
-            U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]])
-        }
+        U256::from_limbs([self.0[0], self.0[1], self.0[2], self.0[3]])
     }
 
     /// Reference to internal limbs.
     #[inline]
     pub fn as_limbs(&self) -> &[u64; 8] {
-        #[cfg(feature = "uint-ethereum-types")]
-        {
-            &self.0 .0
-        }
-        #[cfg(feature = "uint-ruint")]
-        {
-            self.0.as_limbs()
-        }
+        &self.0
     }
 }
 
 impl From<U256> for U512 {
     #[inline]
     fn from(v: U256) -> Self {
-        Self(backend::U512::from(v.0))
+        Self(ops().u512_from_u256(v.0))
     }
 }
 
@@ -798,23 +918,22 @@ impl core::ops::Rem for U512 {
     type Output = Self;
     #[inline]
     fn rem(self, rhs: Self) -> Self {
-        Self(self.0 % rhs.0)
+        Self(ops().u512_rem(self.0, rhs.0))
     }
 }
 
 /// U512 % U256 — used in ADDMOD opcode.
-/// Converts the U256 modulus to U512 for the operation.
 impl core::ops::Rem<U256> for U512 {
     type Output = Self;
     #[inline]
     fn rem(self, rhs: U256) -> Self {
-        Self(self.0 % backend::U512::from(rhs.0))
+        Self(ops().u512_rem_u256(self.0, rhs.0))
     }
 }
 
 impl core::fmt::Debug for U512 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Debug::fmt(&self.0, f)
+        write!(f, "{:#x}", ethereum_types::U512(self.0))
     }
 }
 
@@ -832,7 +951,6 @@ impl ethrex_rlp::encode::RLPEncode for U256 {
     fn length(&self) -> usize {
         let bits = self.bits().saturating_sub(1) as u32;
         let lsb = (self.low_u32() & 0xff) as u8;
-        // Inlined from ethrex_rlp::encode::impl_length_integers
         let sig_len = (bits + 8) >> 3;
         let is_multibyte_mask = ((sig_len > 1) as usize) | ((lsb > 0x7f) as usize);
         1 + sig_len as usize * is_multibyte_mask

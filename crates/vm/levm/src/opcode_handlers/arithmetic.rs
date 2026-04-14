@@ -186,9 +186,7 @@ impl OpcodeHandler for OpAddModHandler {
                 reason = "mod is checked non-zero above"
             )]
             let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
-            vm.current_call_frame
-                .stack
-                .push(res.low_u256())?;
+            vm.current_call_frame.stack.push(res.low_u256())?;
         }
 
         Ok(OpcodeResult::Continue)

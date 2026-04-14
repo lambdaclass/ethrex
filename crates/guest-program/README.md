@@ -449,6 +449,61 @@ Add your zkVM to the CI workflow in `.github/workflows/`. See existing workflows
 3. **Run with the prover** (requires host-side integration):
    The prover backend code in `crates/l2/prover/` needs to be updated to support your zkVM for end-to-end proving.
 
+### Custom U256 Backend
+
+ethrex supports injectable U256 arithmetic backends. By default, `ethereum_types` is used. Vendors can swap the backend by implementing the `Uint256Ops` trait and installing it before execution.
+
+This follows the same pattern as `revm::install_crypto()` and `alloy_consensus::install_default_provider()`.
+
+#### Implementing a Custom Backend
+
+Create a module implementing `ethrex_common::Uint256Ops`. Every method has a default implementation, so you only need to override the operations you want to accelerate:
+
+```rust
+use ethrex_common::{ParseU256Error, Uint256Ops};
+
+#[derive(Debug)]
+pub struct MyU256Ops;
+
+impl Uint256Ops for MyU256Ops {
+    // Override only what you need. Unoverridden methods use the
+    // default ethereum_types implementation.
+
+    fn overflowing_add(&self, a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+        // Your accelerated implementation (e.g., hardware CSR instructions)
+        todo!()
+    }
+
+    fn overflowing_mul(&self, a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
+        // Your accelerated implementation
+        todo!()
+    }
+}
+```
+
+The `[u64; 4]` representation is fixed (little-endian limb order, `limbs[0]` = least significant). All trait methods operate on raw limbs. See `bin/zisk/src/ruint_backend.rs` for a complete example using the `ruint` crate.
+
+#### Installing the Backend
+
+Call `install_uint256_backend()` in your guest `main()` before any U256 operations:
+
+```rust
+use ethrex_common::install_uint256_backend;
+
+mod my_u256;
+
+pub fn main() {
+    install_uint256_backend(my_u256::MyU256Ops);
+
+    // All U256 operations now use your backend
+    let input = read_input();
+    let output = execution_program(input, crypto).unwrap();
+    commit(&output);
+}
+```
+
+If `install_uint256_backend()` is never called, the default `ethereum_types` backend is used automatically. The function returns `false` if a backend was already installed (only the first call takes effect).
+
 ### Architecture Notes
 
 - **Guest programs are deterministic**: The same input must always produce the same output

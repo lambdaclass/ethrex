@@ -47,7 +47,7 @@ sp1 = ["dep:k256", "dep:substrate-bn", "ethrex-l2-common/secp256k1", "ethrex-cry
 risc0 = ["dep:k256", "dep:substrate-bn", "ethrex-l2-common/secp256k1"]
 zisk = [
     "dep:k256", "dep:substrate-bn", "dep:ziskos",
-    "ethrex-common/zisk", "ethrex-common/uint-ethereum-types",
+    "ethrex-common/zisk",
     "ethrex-vm/zisk", "ethrex-l2-common/zisk",
 ]
 openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]

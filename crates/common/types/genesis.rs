@@ -1,5 +1,5 @@
-use bytes::Bytes;
 use crate::U256;
+use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256};
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::encode::RLPEncode;
