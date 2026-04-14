@@ -4,7 +4,10 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{
+        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
+        VMError,
+    },
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -602,6 +605,17 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+        // If gas was fully consumed during intrinsic gas charging (e.g. privileged
+        // L2 txs where gas_limit < intrinsic_gas), fail immediately.
+        if self.current_call_frame.gas_remaining == 0 && self.current_call_frame.gas_limit > 0 {
+            return Ok(ContextResult {
+                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                gas_used: self.current_call_frame.gas_limit,
+                gas_spent: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            });
+        }
+
         if precompiles::is_precompile(
             &self.current_call_frame.to,
             self.env.config.fork,
