@@ -17,8 +17,8 @@ pub const SYSTEM_ADDRESS: Address = H160([
     0xff, 0xff, 0xff, 0xfe,
 ]);
 
-/// Maximum gas for Bor system calls (50 million, matching Bor's MaxTxGas).
-pub const MAX_SYSTEM_CALL_GAS: u64 = 50_000_000;
+/// Maximum gas for Bor system calls, matching Bor's params.MaxTxGas (1 << 25).
+pub const MAX_SYSTEM_CALL_GAS: u64 = 1 << 25;
 
 /// Compute the 4-byte Solidity function selector from a signature string.
 fn selector(sig: &str) -> [u8; 4] {

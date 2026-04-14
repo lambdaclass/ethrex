@@ -48,12 +48,12 @@ pub fn validate_bor_header(
     }
 
     // Reject blocks too far in the future (Bor bor.go:422-461)
-    // Bor uses allowedFutureBlockTimeSeconds = 15 by default.
+    // Bor uses maxAllowedFutureBlockTimeSeconds = 30 (consensus/bor/bor.go:134).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    if header.timestamp > now + 15 {
+    if header.timestamp > now + 30 {
         return Err(InvalidBlockHeaderError::PolygonFutureBlock {
             header_time: header.timestamp,
             now,
