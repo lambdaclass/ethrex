@@ -29,21 +29,22 @@ impl AirbenderBackend {
     }
 
     fn write_elf_file() -> Result<(), BackendError> {
-        match std::fs::read(ELF_PATH) {
-            Ok(existing_content) => {
-                if existing_content != ZKVM_AIRBENDER_PROGRAM_ELF {
-                    std::fs::write(ELF_PATH, ZKVM_AIRBENDER_PROGRAM_ELF)
-                        .map_err(BackendError::execution)?;
-                }
-            }
-            Err(e) => {
-                if e.kind() == ErrorKind::NotFound {
-                    std::fs::write(ELF_PATH, ZKVM_AIRBENDER_PROGRAM_ELF)
-                        .map_err(BackendError::execution)?;
+        let needs_write = match std::fs::metadata(ELF_PATH) {
+            Ok(meta) => {
+                if meta.len() != u64::try_from(ZKVM_AIRBENDER_PROGRAM_ELF.len()).unwrap_or(0) {
+                    true
                 } else {
-                    return Err(BackendError::execution(e));
+                    let existing = std::fs::read(ELF_PATH).map_err(BackendError::execution)?;
+                    existing != ZKVM_AIRBENDER_PROGRAM_ELF
                 }
             }
+            Err(e) if e.kind() == ErrorKind::NotFound => true,
+            Err(e) => return Err(BackendError::execution(e)),
+        };
+
+        if needs_write {
+            std::fs::write(ELF_PATH, ZKVM_AIRBENDER_PROGRAM_ELF)
+                .map_err(BackendError::execution)?;
         }
         Ok(())
     }
