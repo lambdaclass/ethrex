@@ -377,7 +377,7 @@ Wait ~15 seconds, then verify the sidecar is healthy and loaded the assertion:
 curl http://localhost:9547/health  # Should return "OK"
 
 # Check logs for assertion loading (wait ~15s after start)
-docker logs credible-sidecar 2>&1 | grep "trigger_recorder"
+docker logs credible-sidecar 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "trigger_recorder"
 # Should show: triggers: {Call { trigger_selector: 0xf2fde38b }: {0x7ab4397a}}
 # This means: transferOwnership(address) calls will trigger the assertion
 ```
@@ -407,9 +407,10 @@ cast call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
 Check sidecar logs to confirm the assertion caught it:
 
 ```bash
-docker logs credible-sidecar 2>&1 | grep "is_valid=false"
+# Note: docker logs contain ANSI color codes, so pipe through sed to strip them
+docker logs credible-sidecar 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "is_valid=false"
 # Should show: Transaction processed ... is_valid=false
-docker logs credible-sidecar 2>&1 | grep "assertion_failure_count"
+docker logs credible-sidecar 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "assertion_failure"
 # Should show: Transaction failed assertion validation ... failed_assertions=[...]
 ```
 
@@ -426,7 +427,7 @@ cast send $OWNABLE_TARGET "doSomething()" \
 Check sidecar logs:
 
 ```bash
-docker logs credible-sidecar 2>&1 | grep "is_valid=true"
+docker logs credible-sidecar 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "is_valid=true"
 # Should show: Transaction processed ... is_valid=true
 ```
 
