@@ -157,6 +157,11 @@ impl LEVM {
             // Mirrors bsc-chain/bsc consensus/parlia/parlia.go `distributeIncoming`.
             if is_bsc_system_tx {
                 let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
+                let coinbase_bal_before = db.get_account(block.header.coinbase)?.info.balance;
+                println!(
+                    "BSC drain: block={} tx_idx={} system_bal={} coinbase_bal_before={} coinbase={:?}",
+                    block.header.number, tx_idx, system_bal, coinbase_bal_before, block.header.coinbase
+                );
                 if !system_bal.is_zero() {
                     let sys_acc = db.get_account_mut(SYSTEM_ADDRESS)?;
                     sys_acc.info.balance = U256::zero();
