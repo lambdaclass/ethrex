@@ -169,6 +169,11 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v4
+        with:
+          repository: lambdaclass/ethrex-tooling
+          path: tooling
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

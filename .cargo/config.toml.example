@@ -1,0 +1,7 @@
+# Local development overrides for cross-repo work with ethrex-tooling.
+# Append this section to your .cargo/config.toml to use local ethrex-tooling sources
+# instead of git-fetched versions. Adjust paths to match your local layout.
+
+[patch."https://github.com/lambdaclass/ethrex-tooling"]
+ethrex-monitor = { path = "../ethrex-tooling/monitor" }
+ethrex-repl = { path = "../ethrex-tooling/repl" }
