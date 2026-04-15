@@ -492,6 +492,23 @@ impl LEVM {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
 
+            // BSC Finalize pre-work (pipeline path): drain SYSTEM_ADDRESS and
+            // credit coinbase before the system tx executes. See execute_block
+            // for detailed comment.
+            if is_bsc_system_tx {
+                let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
+                println!(
+                    "BSC drain (pipeline): block={} tx_idx={} system_bal={} coinbase={:?}",
+                    block.header.number, tx_idx, system_bal, block.header.coinbase
+                );
+                if !system_bal.is_zero() {
+                    let sys_acc = db.get_account_mut(SYSTEM_ADDRESS)?;
+                    sys_acc.info.balance = U256::zero();
+                    let cb_acc = db.get_account_mut(block.header.coinbase)?;
+                    cb_acc.info.balance = cb_acc.info.balance.saturating_add(system_bal);
+                }
+            }
+
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
                 #[allow(clippy::cast_possible_truncation)]
