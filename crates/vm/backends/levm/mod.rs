@@ -188,7 +188,7 @@ impl LEVM {
         // from pre-refund values; overflow can only be detected after execution.
         if is_amsterdam && block_gas_used > block.header.gas_limit {
             return Err(EvmError::Transaction(format!(
-                "Block gas used overflow: \
+                "Gas allowance exceeded: Block gas used overflow: \
                  block_gas_used {block_gas_used} > block_gas_limit {}",
                 block.header.gas_limit
             )));
@@ -502,7 +502,7 @@ impl LEVM {
         // from pre-refund values; overflow can only be detected after execution.
         if is_amsterdam && block_gas_used > block.header.gas_limit {
             return Err(EvmError::Transaction(format!(
-                "Block gas used overflow: \
+                "Gas allowance exceeded: Block gas used overflow: \
                  block_gas_used {block_gas_used} > block_gas_limit {}",
                 block.header.gas_limit
             )));
@@ -993,7 +993,7 @@ impl LEVM {
         // EIP-7778: block-level overflow check using pre-refund gas.
         if block_gas_used > header.gas_limit {
             return Err(EvmError::Transaction(format!(
-                "Block gas used overflow: \
+                "Gas allowance exceeded: Block gas used overflow: \
                  block_gas_used {block_gas_used} > block_gas_limit {}",
                 header.gas_limit
             )));
