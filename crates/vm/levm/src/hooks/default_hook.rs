@@ -361,6 +361,20 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         vm.increase_account_balance(fee_recipient, coinbase_fee)?;
     }
 
+    // BSC also routes the EIP-4844 blob base fee to SYSTEM_ADDRESS (Ethereum
+    // burns it instead). This is how the deposit() system call's msg.value
+    // ends up matching BSC's canonical total for blocks with blob txs.
+    if matches!(vm.vm_type, VMType::Bsc) {
+        let blob_fee = crate::utils::calculate_blob_gas_cost(
+            &vm.env.tx_blob_hashes,
+            vm.env.block_excess_blob_gas,
+            &vm.env.config,
+        )?;
+        if !blob_fee.is_zero() {
+            vm.increase_account_balance(SYSTEM_ADDRESS, blob_fee)?;
+        }
+    }
+
     Ok(())
 }
 
