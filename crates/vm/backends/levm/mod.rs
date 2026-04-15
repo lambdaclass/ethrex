@@ -194,6 +194,14 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
+            if is_bsc && block.header.number == 101687062 {
+                println!(
+                    "BSC block 101687062 tx{}: gas_used={} gas_spent={} state_gas={} sender={:?} to={:?} is_sys={}",
+                    tx_idx, report.gas_used, report.gas_spent, report.state_gas_used,
+                    tx_sender, tx.to(), is_bsc_system_tx
+                );
+            }
+
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
 
@@ -533,6 +541,13 @@ impl LEVM {
                 false,
                 crypto,
             )?;
+            if is_bsc && block.header.number == 101687062 {
+                println!(
+                    "BSC block 101687062 (pipe) tx{}: gas_used={} gas_spent={} state_gas={} sender={:?} to={:?} is_sys={}",
+                    tx_idx, report.gas_used, report.gas_spent, report.state_gas_used,
+                    tx_sender, tx.to(), is_bsc_system_tx
+                );
+            }
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
