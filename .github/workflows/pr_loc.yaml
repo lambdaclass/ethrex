@@ -46,6 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: lambdaclass/ethrex-tooling
+          ref: main
           path: tooling
 
       - name: Setup Rust Environment
@@ -69,6 +70,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: lambdaclass/ethrex-tooling
+          ref: main
           path: tooling
 
       - name: Setup Rust Environment
