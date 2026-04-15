@@ -138,10 +138,14 @@ impl LEVM {
             } else {
                 cumulative_gas_used
             };
-            // BSC: consensus-engine-injected system txs (from SYSTEM_ADDRESS) carry
-            // gas_limit = i64::MAX and bypass the block gas cap. Regular BSC user
-            // txs are still subject to the check.
-            let is_bsc_system_tx = is_bsc && tx_sender == SYSTEM_ADDRESS;
+            // BSC: consensus-engine-injected system txs (sender == coinbase &&
+            // to is a BSC system contract && gas_price == 0) carry gas_limit =
+            // i64::MAX and bypass the block gas cap. Regular BSC user txs are
+            // still subject to the check.
+            let is_bsc_system_tx = is_bsc
+                && tx_sender == block.header.coinbase
+                && tx.gas_price().is_zero()
+                && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
             if !is_bsc_system_tx {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
@@ -440,10 +444,14 @@ impl LEVM {
             } else {
                 cumulative_gas_used
             };
-            // BSC: consensus-engine-injected system txs (from SYSTEM_ADDRESS) carry
-            // gas_limit = i64::MAX and bypass the block gas cap. Regular BSC user
-            // txs are still subject to the check.
-            let is_bsc_system_tx = is_bsc && tx_sender == SYSTEM_ADDRESS;
+            // BSC: consensus-engine-injected system txs (sender == coinbase &&
+            // to is a BSC system contract && gas_price == 0) carry gas_limit =
+            // i64::MAX and bypass the block gas cap. Regular BSC user txs are
+            // still subject to the check.
+            let is_bsc_system_tx = is_bsc
+                && tx_sender == block.header.coinbase
+                && tx.gas_price().is_zero()
+                && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
             if !is_bsc_system_tx {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }

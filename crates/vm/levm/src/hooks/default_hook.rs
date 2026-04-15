@@ -32,12 +32,21 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
-        // BSC system transactions (from SYSTEM_ADDRESS) are consensus-engine-injected
-        // with gas_limit = i64::MAX — they bypass EIP-7825, intrinsic gas, and block
-        // gas allowance checks. Regular BSC user txs follow normal rules.
+        // BSC system transactions are consensus-engine-injected with gas_limit = i64::MAX
+        // and bypass EIP-7825, intrinsic gas, and block gas allowance checks.
+        // Identified by: sender == coinbase && to is a BSC system contract && gas_price == 0.
+        // Regular BSC user txs follow normal rules.
         let is_bsc =
             vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
-        let is_bsc_system_tx = is_bsc && sender_address == SYSTEM_ADDRESS;
+        let is_bsc_system_tx = is_bsc
+            && sender_address == vm.env.coinbase
+            && vm.env.gas_price.is_zero()
+            && match vm.tx.to() {
+                ethrex_common::types::TxKind::Call(to) => {
+                    ethrex_common::constants::is_bsc_system_contract(&to)
+                }
+                _ => false,
+            };
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
@@ -83,10 +92,8 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        // BSC system transactions (from SYSTEM_ADDRESS) are consensus-engine-injected
-        // and don't pay intrinsic gas — only the contract's actual gas is charged.
-        let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
-        let is_bsc_system_tx = is_bsc && sender_address == SYSTEM_ADDRESS;
+        // BSC system transactions don't pay intrinsic gas — only the contract's
+        // actual gas usage is charged. `is_bsc_system_tx` was computed above.
         if !is_bsc_system_tx {
             vm.add_intrinsic_gas()?;
         }
@@ -591,11 +598,19 @@ pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMEr
 }
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
-    // BSC consensus-engine-injected system transactions (from SYSTEM_ADDRESS)
-    // carry gas_limit = i64::MAX and bypass the block gas allowance check.
-    // Regular BSC user txs are still subject to the check.
+    // BSC system transactions (sender == coinbase && to is system contract &&
+    // gas_price == 0) carry gas_limit = i64::MAX and bypass this check.
+    // Regular BSC user txs are still subject to it.
     let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
-    let is_bsc_system_tx = is_bsc && vm.env.origin == SYSTEM_ADDRESS;
+    let is_bsc_system_tx = is_bsc
+        && vm.env.origin == vm.env.coinbase
+        && vm.env.gas_price.is_zero()
+        && match vm.tx.to() {
+            ethrex_common::types::TxKind::Call(to) => {
+                ethrex_common::constants::is_bsc_system_contract(&to)
+            }
+            _ => false,
+        };
     if !is_bsc_system_tx && vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded {
             block_gas_limit: vm.env.block_gas_limit,
