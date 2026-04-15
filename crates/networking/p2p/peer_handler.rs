@@ -18,11 +18,12 @@ use ethrex_common::{
     types::{BlockBody, BlockHeader, validate_block_body},
 };
 use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::encode::RLPEncode;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
     sync::atomic::Ordering,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use tracing::{debug, error, trace, warn};
 
@@ -68,14 +69,16 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    match PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
-        .await
-    {
+    let (result, elapsed) =
+        PeerHandler::make_request(peer_table, peer_id, connection, request, PEER_REPLY_TIMEOUT)
+            .await;
+    match result {
         Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
         })) => {
             if !block_headers.is_empty() {
+                let _ = peer_table.record_response_latency(peer_id, elapsed);
                 let sync_head_number = block_headers
                     .last()
                     .ok_or(PeerHandlerError::BlockHeaders)?
@@ -104,6 +107,11 @@ impl PeerHandler {
         }
     }
 
+    /// Send a request and return the result together with the round-trip time.
+    ///
+    /// Latency is **not** recorded here — callers must record it after
+    /// validating the payload so that a peer serving garbage quickly cannot
+    /// inflate its score.
     pub(crate) async fn make_request(
         // TODO: We should receive the PeerHandler (or self) instead, but since it is not yet spawnified it cannot be shared
         // Fix this to avoid passing the PeerTable as a parameter
@@ -112,11 +120,13 @@ impl PeerHandler {
         connection: &mut PeerConnection,
         message: RLPxMessage,
         timeout: Duration,
-    ) -> Result<RLPxMessage, PeerConnectionError> {
-        peer_table.inc_requests(peer_id)?;
+    ) -> (Result<RLPxMessage, PeerConnectionError>, Duration) {
+        let _ = peer_table.inc_requests(peer_id);
+        let start = Instant::now();
         let result = connection.outgoing_request(message, timeout).await;
-        peer_table.dec_requests(peer_id)?;
-        result
+        let elapsed = start.elapsed();
+        let _ = peer_table.dec_requests(peer_id);
+        (result, elapsed)
     }
 
     /// Returns a random node id and the channel ends to an active peer connection that supports the given capability
@@ -233,8 +243,14 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
+        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+            Vec<BlockHeader>,
+            H256,
+            PeerConnection,
+            u64,
+            u64,
+            Duration,
+        )>(1000);
 
         let mut current_show = 0;
 
@@ -247,7 +263,7 @@ impl PeerHandler {
         let mut logged_no_free_peers_count = 0;
 
         loop {
-            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
+            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit, elapsed)) =
                 task_receiver.try_recv()
             {
                 // Release the reservation we made before spawning the task.
@@ -263,6 +279,16 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((startblock, previous_chunk_limit));
 
                     continue; // Retry with the next peer
+                }
+
+                // Record latency/bandwidth only after validation (non-empty response).
+                if !elapsed.is_zero() {
+                    let _ = self.peer_table.record_response_latency(peer_id, elapsed);
+                    let response_bytes: u64 =
+                        headers.iter().map(|h| h.encode_to_vec().len() as u64).sum();
+                    let _ = self
+                        .peer_table
+                        .record_bandwidth(peer_id, response_bytes, elapsed);
                 }
 
                 downloaded_count += headers.len() as u64;
@@ -352,6 +378,7 @@ impl PeerHandler {
                 trace!(
                     "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
                 );
+                let req_start = Instant::now();
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
@@ -361,12 +388,20 @@ impl PeerHandler {
                 .await
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
+                let req_elapsed = req_start.elapsed();
 
-                tx.send((headers, peer_id, connection, startblock, chunk_limit))
-                    .await
-                    .inspect_err(|err| {
-                        error!("Failed to send headers result through channel. Error: {err}")
-                    })
+                tx.send((
+                    headers,
+                    peer_id,
+                    connection,
+                    startblock,
+                    chunk_limit,
+                    req_elapsed,
+                ))
+                .await
+                .inspect_err(|err| {
+                    error!("Failed to send headers result through channel. Error: {err}")
+                })
             });
         }
 
@@ -428,21 +463,23 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
-                    id: _,
-                    block_headers,
-                })) = PeerHandler::make_request(
+                let (result, elapsed) = PeerHandler::make_request(
                     &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
                     PEER_REPLY_TIMEOUT,
                 )
-                .await
+                .await;
+                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                    id: _,
+                    block_headers,
+                })) = result
                 {
                     if !block_headers.is_empty()
                         && are_block_headers_chained(&block_headers, &order)
                     {
+                        let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                         return Ok(Some(block_headers));
                     } else {
                         warn!(
@@ -514,20 +551,22 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
-                    id: _,
-                    block_bodies,
-                })) = PeerHandler::make_request(
+                let (result, elapsed) = PeerHandler::make_request(
                     &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
                     PEER_REPLY_TIMEOUT,
                 )
-                .await
+                .await;
+                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
+                    id: _,
+                    block_bodies,
+                })) = result
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                        let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                         self.peer_table.record_success(peer_id)?;
                         return Ok(Some((block_bodies, peer_id)));
                     }
@@ -606,20 +645,21 @@ impl PeerHandler {
             reverse: false,
         });
         debug!("get_block_header: requesting header with number {block_number}");
-        match PeerHandler::make_request(
+        let (result, elapsed) = PeerHandler::make_request(
             &self.peer_table,
             peer_id,
             connection,
             request,
             PEER_REPLY_TIMEOUT,
         )
-        .await
-        {
+        .await;
+        match result {
             Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                 id: _,
                 block_headers,
             })) => {
                 if !block_headers.is_empty() {
+                    let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                     return Ok(Some(
                         block_headers
                             .last()
