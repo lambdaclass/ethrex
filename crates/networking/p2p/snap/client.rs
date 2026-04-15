@@ -16,7 +16,7 @@ use crate::{
             GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
         },
     },
-    snap::{constants::*, encodable_to_proof, error::SnapError},
+    snap::{async_fs, constants::*, encodable_to_proof, error::SnapError},
     sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
@@ -160,13 +160,7 @@ pub async fn request_account_range(
                 .zip(current_account_states)
                 .collect::<Vec<(H256, AccountState)>>();
 
-            if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
-            })? {
-                std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
-                    SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
-                })?;
-            }
+            async_fs::ensure_dir_exists(account_state_snapshots_dir).await?;
 
             let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
             write_set.spawn(async move {
@@ -193,8 +187,6 @@ pub async fn request_account_range(
         }
 
         if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -262,15 +254,12 @@ pub async fn request_account_range(
             .expect("Should be able to update pivot")
         }
 
-        // Reserve a request slot before spawning so get_best_peer sees
-        // this peer as busy immediately, preventing spawn floods.
-        // Workers call outgoing_request directly (not make_request) to
-        // avoid a double increment. Released via dec_requests on try_recv.
-        peers.peer_table.inc_requests(peer_id)?;
+        let peer_table = peers.peer_table.clone();
 
         tokio::spawn(request_account_range_worker(
             peer_id,
             connection,
+            peer_table,
             chunk_start,
             chunk_end,
             pivot_header.state_root,
@@ -295,13 +284,7 @@ pub async fn request_account_range(
             .zip(current_account_states)
             .collect::<Vec<(H256, AccountState)>>();
 
-        if !std::fs::exists(account_state_snapshots_dir).map_err(|_| {
-            SnapError::SnapshotDir("State snapshots directory does not exist".to_string())
-        })? {
-            std::fs::create_dir_all(account_state_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Failed to create state snapshots directory".to_string())
-            })?;
-        }
+        async_fs::ensure_dir_exists(account_state_snapshots_dir).await?;
 
         let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
         dump_accounts_to_file(&path, account_state_chunk)
@@ -395,8 +378,6 @@ pub async fn request_bytecodes(
                 remaining_start,
                 remaining_end,
             } = result;
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -456,8 +437,7 @@ pub async fn request_bytecodes(
             .copied()
             .collect();
 
-        // Reserve a request slot before spawning (see account range comment).
-        peers.peer_table.inc_requests(peer_id)?;
+        let peer_table = peers.peer_table.clone();
 
         tokio::spawn(async move {
             let empty_task_result = TaskResult {
@@ -476,10 +456,14 @@ pub async fn request_bytecodes(
                 hashes: hashes_to_request.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            // The caller already holds a request reservation for this peer,
-            // so call outgoing_request directly to avoid a double increment.
-            if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) = connection
-                .outgoing_request(request, PEER_REPLY_TIMEOUT)
+            if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) =
+                PeerHandler::make_request(
+                    &peer_table,
+                    peer_id,
+                    &mut connection,
+                    request,
+                    PEER_REPLY_TIMEOUT,
+                )
                 .await
             {
                 if codes.is_empty() {
@@ -617,15 +601,8 @@ pub async fn request_storage_ranges(
             let current_account_storages = std::mem::take(&mut current_account_storages);
             let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-            if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
-            })? {
-                std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
-                    SnapError::SnapshotDir(
-                        "Failed to create storage snapshots directory".to_string(),
-                    )
-                })?;
-            }
+            async_fs::ensure_dir_exists(account_storages_snapshots_dir).await?;
+
             let account_storages_snapshots_dir_cloned =
                 account_storages_snapshots_dir.to_path_buf();
             if !disk_joinset.is_empty() {
@@ -658,8 +635,6 @@ pub async fn request_storage_ranges(
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
             } = result;
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -997,13 +972,13 @@ pub async fn request_storage_ranges(
                 chunk_storage_roots.first().unwrap_or(&H256::zero()),
             );
         }
-        // Reserve a request slot before spawning (see account range comment).
-        peers.peer_table.inc_requests(peer_id)?;
+        let peer_table = peers.peer_table.clone();
 
         tokio::spawn(request_storage_ranges_worker(
             task,
             peer_id,
             connection,
+            peer_table,
             pivot_header.state_root,
             chunk_account_hashes,
             chunk_storage_roots,
@@ -1014,13 +989,8 @@ pub async fn request_storage_ranges(
     {
         let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
-        if !std::fs::exists(account_storages_snapshots_dir).map_err(|_| {
-            SnapError::SnapshotDir("Storage snapshots directory does not exist".to_string())
-        })? {
-            std::fs::create_dir_all(account_storages_snapshots_dir).map_err(|_| {
-                SnapError::SnapshotDir("Failed to create storage snapshots directory".to_string())
-            })?;
-        }
+        async_fs::ensure_dir_exists(account_storages_snapshots_dir).await?;
+
         let path = get_account_storages_snapshot_file(account_storages_snapshots_dir, chunk_index);
         dump_storages_to_file(&path, snapshot).map_err(|_| {
             SnapError::SnapshotDir(format!(
@@ -1156,6 +1126,7 @@ pub async fn request_storage_trienodes(
 async fn request_account_range_worker(
     peer_id: H256,
     mut connection: PeerConnection,
+    peer_table: PeerTable,
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
@@ -1174,11 +1145,14 @@ async fn request_account_range_worker(
         id: _,
         accounts,
         proof,
-        // The caller already holds a request reservation for this peer,
-        // so call outgoing_request directly to avoid a double increment.
-    })) = connection
-        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
+    })) = PeerHandler::make_request(
+        &peer_table,
+        peer_id,
+        &mut connection,
+        request,
+        PEER_REPLY_TIMEOUT,
+    )
+    .await
     {
         if accounts.is_empty() {
             tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
@@ -1254,6 +1228,7 @@ async fn request_storage_ranges_worker(
     task: StorageTask,
     peer_id: H256,
     mut connection: PeerConnection,
+    peer_table: PeerTable,
     state_root: H256,
     chunk_account_hashes: Vec<H256>,
     chunk_storage_roots: Vec<H256>,
@@ -1284,11 +1259,14 @@ async fn request_storage_ranges_worker(
         id: _,
         slots,
         proof,
-        // The caller already holds a request reservation for this peer,
-        // so call outgoing_request directly to avoid a double increment.
-    })) = connection
-        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
+    })) = PeerHandler::make_request(
+        &peer_table,
+        peer_id,
+        &mut connection,
+        request,
+        PEER_REPLY_TIMEOUT,
+    )
+    .await
     else {
         tracing::debug!("Failed to get storage range");
         tx.send(empty_task_result).await.ok();
