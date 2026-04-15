@@ -117,12 +117,23 @@ impl OpcodeHandler for OpPrevRandaoHandler {
 
         // After Paris, `PREVRANDAO` is the prev_randao (or current_random) field.
         // Source: https://eips.ethereum.org/EIPS/eip-4399
-        #[expect(unsafe_code, reason = "safe")]
-        let val = U256(unsafe {
-            let mut bytes = vm.env.prev_randao.unwrap_or_default().0;
-            bytes.reverse();
-            mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
-        });
+        //
+        // BSC never went through "The Merge". Per bnb-chain/bsc `core/vm/jump_table.go`,
+        // `newShanghaiInstructionSet` builds on `newLondonInstructionSet` (NOT
+        // `newMergeInstructionSet`), so opcode 0x44 keeps DIFFICULTY semantics
+        // on BSC across Shanghai/Cancun/Pascal/Mendel. `NewEVMBlockContext`
+        // leaves `Context.Random = nil` whenever `header.Difficulty != 0`, so
+        // the opcode pushes `block.difficulty` on every Parlia block.
+        let val = if matches!(vm.vm_type, crate::vm::VMType::Bsc) {
+            vm.env.difficulty
+        } else {
+            #[expect(unsafe_code, reason = "safe")]
+            U256(unsafe {
+                let mut bytes = vm.env.prev_randao.unwrap_or_default().0;
+                bytes.reverse();
+                mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
+            })
+        };
         if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
             use std::io::Write;
             let stderr = std::io::stderr();
