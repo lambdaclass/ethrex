@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,6 +49,9 @@ pub struct CredibleLayerClient {
     iteration_id: AtomicU64,
     /// gRPC client for unary calls (GetTransaction)
     grpc_client: Arc<Mutex<SidecarTransportClient<Channel>>>,
+    /// Whether the StreamEvents stream is currently connected.
+    /// When false, evaluate_transaction skips immediately (permissive).
+    stream_connected: Arc<AtomicBool>,
 }
 
 impl CredibleLayerClient {
@@ -67,6 +70,8 @@ impl CredibleLayerClient {
             .connect_lazy();
 
         let mut client = SidecarTransportClient::new(channel.clone());
+        let stream_connected = Arc::new(AtomicBool::new(false));
+        let stream_connected_bg = stream_connected.clone();
 
         // Create the event channel. The sender goes to the client, the receiver
         // is owned by the background stream task.
@@ -84,6 +89,7 @@ impl CredibleLayerClient {
                 match client.stream_events(grpc_stream).await {
                     Ok(response) => {
                         info!("StreamEvents stream connected to sidecar");
+                        stream_connected_bg.store(true, Ordering::Relaxed);
                         let mut ack_stream = response.into_inner();
 
                         // Send an initial CommitHead (block 0) as the first event on
@@ -158,6 +164,7 @@ impl CredibleLayerClient {
                         debug!(%status, "StreamEvents connect failed, retrying in 5s");
                     }
                 }
+                stream_connected_bg.store(false, Ordering::Relaxed);
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         });
@@ -170,6 +177,7 @@ impl CredibleLayerClient {
             event_id_counter: AtomicU64::new(1),
             iteration_id: AtomicU64::new(0),
             grpc_client: Arc::new(Mutex::new(SidecarTransportClient::new(channel))),
+            stream_connected,
         })
     }
 
@@ -219,6 +227,12 @@ impl CredibleLayerClient {
     /// Returns `true` if the transaction should be included, `false` if it should be dropped.
     /// On any error or timeout, returns `true` (permissive behavior).
     pub async fn evaluate_transaction(&self, transaction: Transaction) -> bool {
+        // Fast path: if the stream isn't connected, skip evaluation (permissive).
+        // This avoids blocking block production when the sidecar isn't running.
+        if !self.stream_connected.load(Ordering::Relaxed) {
+            return true;
+        }
+
         let tx_exec_id = transaction.tx_execution_id.clone();
         let tx_hash = tx_exec_id
             .as_ref()
