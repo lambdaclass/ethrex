@@ -3137,8 +3137,7 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
-        // BSC uses the same EVM execution path as L1 for now.
-        BlockchainType::Bsc => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
+        BlockchainType::Bsc => Evm::new_for_bsc(vm_db, Arc::new(NativeCrypto)),
     };
     Ok(evm)
 }
