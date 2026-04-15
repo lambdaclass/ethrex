@@ -31,7 +31,6 @@ use spawned_concurrency::{
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_message_on},
 };
 use std::{
-    collections::VecDeque,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -48,8 +47,6 @@ const SCORE_WEIGHT: i64 = 1;
 const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
-/// Number of latency/bandwidth samples to keep per peer for scoring.
-const METRICS_WINDOW_SIZE: usize = 20;
 /// Smoothing factor for exponential moving average (0..1, higher = more weight on recent).
 const EMA_ALPHA: f64 = 0.3;
 
@@ -90,20 +87,21 @@ impl Default for ScoringConfig {
 }
 
 /// Rolling performance metrics collected per peer.
+///
+/// Bandwidth is measured via cumulative bytes and time with exponential
+/// decay, so it reflects actual throughput across many requests rather
+/// than being dominated by per-request latency.
 #[derive(Debug, Clone, Default)]
 pub struct PeerMetrics {
-    latency_samples: VecDeque<Duration>,
     latency_ema_ms: Option<f64>,
-    bandwidth_samples: VecDeque<f64>,
-    bandwidth_ema: Option<f64>,
+    /// Exponentially-decayed cumulative bytes transferred.
+    bandwidth_bytes_acc: f64,
+    /// Exponentially-decayed cumulative transfer time (seconds).
+    bandwidth_time_acc: f64,
 }
 
 impl PeerMetrics {
     pub fn record_latency(&mut self, latency: Duration) {
-        if self.latency_samples.len() >= METRICS_WINDOW_SIZE {
-            self.latency_samples.pop_front();
-        }
-        self.latency_samples.push_back(latency);
         let ms = latency.as_secs_f64() * 1000.0;
         self.latency_ema_ms = Some(match self.latency_ema_ms {
             Some(prev) => prev * (1.0 - EMA_ALPHA) + ms * EMA_ALPHA,
@@ -115,15 +113,13 @@ impl PeerMetrics {
         if elapsed.is_zero() || bytes == 0 {
             return;
         }
-        let bps = bytes as f64 / elapsed.as_secs_f64();
-        if self.bandwidth_samples.len() >= METRICS_WINDOW_SIZE {
-            self.bandwidth_samples.pop_front();
-        }
-        self.bandwidth_samples.push_back(bps);
-        self.bandwidth_ema = Some(match self.bandwidth_ema {
-            Some(prev) => prev * (1.0 - EMA_ALPHA) + bps * EMA_ALPHA,
-            None => bps,
-        });
+        // Decay previous accumulators so recent transfers weigh more,
+        // then add the new sample.  bandwidth = total_bytes / total_time
+        // across the decayed window, which correctly separates throughput
+        // from latency.
+        self.bandwidth_bytes_acc = self.bandwidth_bytes_acc * (1.0 - EMA_ALPHA) + bytes as f64;
+        self.bandwidth_time_acc =
+            self.bandwidth_time_acc * (1.0 - EMA_ALPHA) + elapsed.as_secs_f64();
     }
 
     pub fn latency_ema_ms(&self) -> Option<f64> {
@@ -131,7 +127,11 @@ impl PeerMetrics {
     }
 
     pub fn bandwidth_ema_bps(&self) -> Option<f64> {
-        self.bandwidth_ema
+        if self.bandwidth_time_acc == 0.0 {
+            None
+        } else {
+            Some(self.bandwidth_bytes_acc / self.bandwidth_time_acc)
+        }
     }
 
     /// Peers with ≤50ms get MAX_SCORE, ≥5000ms get MIN_SCORE, linear interpolation.
@@ -151,7 +151,7 @@ impl PeerMetrics {
     /// Returns a neutral midpoint score for peers with no samples yet, so that
     /// "unknown" is distinguishable from "measured-and-at-boundary".
     pub fn bandwidth_score(&self) -> i64 {
-        let Some(ema) = self.bandwidth_ema else {
+        let Some(ema) = self.bandwidth_ema_bps() else {
             return (MAX_SCORE + MIN_SCORE) / 2;
         };
         let low = 10_000_f64;
@@ -331,11 +331,31 @@ impl PeerData {
     }
 
     /// Return the effective score for this peer under the given strategy.
+    ///
+    /// For Latency/Bandwidth strategies, the metric-derived score is combined
+    /// with the success-based `score` so that failure penalties (from
+    /// `record_failure` / `record_critical_failure`) are never silently ignored.
+    /// When `score` is negative (the peer has been penalized), we take the
+    /// minimum of the two so the penalty always takes effect.
     pub fn effective_score(&self, strategy: ScoringStrategy) -> i64 {
         match strategy {
             ScoringStrategy::Success => self.score,
-            ScoringStrategy::Latency => self.metrics.latency_score(),
-            ScoringStrategy::Bandwidth => self.metrics.bandwidth_score(),
+            ScoringStrategy::Latency => {
+                let metric = self.metrics.latency_score();
+                if self.score < 0 {
+                    metric.min(self.score)
+                } else {
+                    metric
+                }
+            }
+            ScoringStrategy::Bandwidth => {
+                let metric = self.metrics.bandwidth_score();
+                if self.score < 0 {
+                    metric.min(self.score)
+                } else {
+                    metric
+                }
+            }
         }
     }
 }
