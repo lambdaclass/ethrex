@@ -108,9 +108,10 @@ pub async fn request_account_range(
     let limit_u256 = U256::from_big_endian(&limit.0);
 
     let range = limit_u256 - start_u256;
-    let chunk_count = U256::from(ACCOUNT_RANGE_CHUNK_COUNT)
-        .min(range.max(U256::one()))
-        .as_usize();
+    // Bounded by ACCOUNT_RANGE_CHUNK_COUNT (800), always fits in usize.
+    let chunk_count =
+        usize::try_from(U256::from(ACCOUNT_RANGE_CHUNK_COUNT).min(range.max(U256::one())))
+            .expect("chunk_count bounded by ACCOUNT_RANGE_CHUNK_COUNT");
     let chunk_size = range / chunk_count;
 
     // list of tasks to be executed
@@ -789,7 +790,9 @@ pub async fn request_storage_ranges(
                         .checked_mul(slots_per_chunk)
                         .unwrap_or(U256::MAX);
 
-                    let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+                    let chunk_count = usize::try_from(missing_storage_range / chunk_size)
+                        .unwrap_or(ACCOUNT_RANGE_CHUNK_COUNT)
+                        .max(1);
 
                     let first_acc_hash = *accounts_by_root_hash[remaining_start]
                         .1

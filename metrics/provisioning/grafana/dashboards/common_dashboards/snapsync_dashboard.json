@@ -232,12 +232,85 @@
       ]
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Sync Rates Overview",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "headers/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_accounts_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "accounts dl/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "accounts ins/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage dl/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage ins/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_state_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "state heals/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage heals/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "bytecodes/s"
+        }
+      ]
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 12
       },
       "title": "Peer Health",
       "type": "row"
@@ -253,7 +326,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 7
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
@@ -305,7 +378,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 7
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
@@ -359,7 +432,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 7
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
@@ -393,7 +466,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 7
+        "y": 13
       },
       "fieldConfig": {
         "defaults": {
@@ -422,7 +495,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 18
       },
       "title": "Headers",
       "type": "row"
@@ -438,7 +511,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 13
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -505,7 +578,7 @@
         "h": 2,
         "w": 6,
         "x": 0,
-        "y": 17
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -546,7 +619,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 13
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -602,7 +675,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 13
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -638,7 +711,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 13
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -674,7 +747,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -703,7 +776,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 30
       },
       "title": "Accounts",
       "type": "row"
@@ -719,7 +792,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 25
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
@@ -786,7 +859,7 @@
         "h": 2,
         "w": 6,
         "x": 0,
-        "y": 29
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -827,7 +900,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 25
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
@@ -883,7 +956,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 25
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
@@ -919,7 +992,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 25
+        "y": 31
       },
       "fieldConfig": {
         "defaults": {
@@ -955,7 +1028,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 37
       },
       "fieldConfig": {
         "defaults": {
@@ -988,7 +1061,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 42
       },
       "title": "Storage",
       "type": "row"
@@ -1004,7 +1077,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 37
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1071,7 +1144,7 @@
         "h": 2,
         "w": 6,
         "x": 0,
-        "y": 41
+        "y": 47
       },
       "fieldConfig": {
         "defaults": {
@@ -1112,7 +1185,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 37
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1168,7 +1241,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 37
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1204,7 +1277,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 37
+        "y": 43
       },
       "fieldConfig": {
         "defaults": {
@@ -1240,7 +1313,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 49
       },
       "fieldConfig": {
         "defaults": {
@@ -1273,7 +1346,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 54
       },
       "title": "Healing",
       "type": "row"
@@ -1289,7 +1362,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1324,7 +1397,7 @@
         "h": 2,
         "w": 6,
         "x": 0,
-        "y": 53
+        "y": 59
       },
       "fieldConfig": {
         "defaults": {
@@ -1365,7 +1438,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1421,7 +1494,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1456,7 +1529,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 49
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {
@@ -1492,7 +1565,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 61
       },
       "fieldConfig": {
         "defaults": {
@@ -1525,7 +1598,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 66
       },
       "title": "Bytecodes",
       "type": "row"
@@ -1541,7 +1614,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 61
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {
@@ -1608,7 +1681,7 @@
         "h": 2,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 71
       },
       "fieldConfig": {
         "defaults": {
@@ -1649,7 +1722,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 61
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {
@@ -1705,7 +1778,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 61
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {
@@ -1741,7 +1814,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 61
+        "y": 67
       },
       "fieldConfig": {
         "defaults": {
@@ -1777,7 +1850,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 67
+        "y": 73
       },
       "fieldConfig": {
         "defaults": {

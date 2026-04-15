@@ -96,6 +96,7 @@ class DiagnosticsTracker:
         self.events: list[dict] = []  # degradation events across all networks
         self.dumped_for_run: dict[str, bool] = {inst.name: False for inst in instances}
         self._last_progress: dict[str, Optional[str]] = {inst.name: None for inst in instances}
+        self.last_reasons: dict[str, frozenset] = {inst.name: frozenset() for inst in instances}
 
     def poll_interval(self, name: str) -> float:
         return DIAGNOSTICS_DEGRADED_INTERVAL if self.degraded[name] else DIAGNOSTICS_NORMAL_INTERVAL
@@ -170,27 +171,46 @@ class DiagnosticsTracker:
             if phase in WATCHED_PHASES:
                 reasons.append(f"watched_phase:{phase}")
 
+        reasons_set = frozenset(reasons)
         if reasons:
-            if not self.degraded[name]:
+            newly_degraded = not self.degraded[name]
+            reasons_changed = reasons_set != self.last_reasons.get(name, frozenset())
+            if newly_degraded:
                 self.degraded[name] = True
                 self.degraded_since[name] = now
                 self.healthy_since[name] = 0
+                # Distinguish intentional tracing (watched phase) from real issues
+                only_watched = all(r.startswith("watched_phase:") for r in reasons)
                 event = {
                     "timestamp": datetime.utcnow().isoformat() + "Z",
                     "network": name,
-                    "event_type": "degradation_start",
+                    "event_type": "watched_phase_start" if only_watched else "degradation_start",
                     "reasons": reasons,
                     "eligible_peers": snapshot.get("peer_scores", {}).get("summary", {}).get("eligible_peers"),
                     "phase": snapshot.get("sync_status", {}).get("current_phase"),
                 }
                 self.events.append(event)
-                print(f"⚠️  [{name}] Degradation detected: {', '.join(reasons)} — increasing poll frequency")
+                if only_watched:
+                    print(f"👁️  [{name}] Watched phase active: {', '.join(reasons)} — increasing poll frequency")
+                else:
+                    print(f"⚠️  [{name}] Degradation detected: {', '.join(reasons)} — increasing poll frequency")
                 # Bump log level to TRACE for detailed peer comms
                 if rpc_set_log_level(inst.rpc_url, LOG_LEVEL_DEGRADED):
                     print(f"🔍 [{name}] Log level bumped to TRACE for peer diagnostics")
                 else:
                     print(f"⚠️  [{name}] Failed to bump log level")
-            # Dump snapshots on degradation
+            elif reasons_changed:
+                # Already degraded but reasons changed — record and log
+                event = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "network": name,
+                    "event_type": "reasons_changed",
+                    "reasons": reasons,
+                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                }
+                self.events.append(event)
+                print(f"🔄 [{name}] Monitor reasons changed: {', '.join(reasons)}")
+            # Dump snapshots on degradation / watched phase
             self._dump_snapshots(name)
         else:
             # Healthy — check if we can exit degraded mode
@@ -203,15 +223,16 @@ class DiagnosticsTracker:
                     event = {
                         "timestamp": datetime.utcnow().isoformat() + "Z",
                         "network": name,
-                        "event_type": "degradation_end",
+                        "event_type": "monitoring_normal",
                     }
                     self.events.append(event)
-                    print(f"✅ [{name}] Degradation resolved — resuming normal poll frequency")
+                    print(f"✅ [{name}] Monitoring back to normal — resuming default poll frequency")
                     # Restore log level to normal
                     if rpc_set_log_level(inst.rpc_url, LOG_LEVEL_NORMAL):
                         print(f"📝 [{name}] Log level restored to DEBUG")
                     else:
                         print(f"⚠️  [{name}] Failed to restore log level")
+        self.last_reasons[name] = reasons_set
 
     def on_failure(self, inst, name: str) -> None:
         """Called when a network fails — do a final poll and dump snapshots."""
@@ -256,10 +277,10 @@ class DiagnosticsTracker:
             print(f"⚠️  [{name}] Failed to dump snapshots: {e}")
 
     def format_degradation_events(self) -> str:
-        """Format degradation events for the summary.txt."""
+        """Format monitor events for the summary.txt."""
         if not self.events:
             return ""
-        lines = ["\n  Degradation Events:"]
+        lines = ["\n  Monitor Events:"]
         for ev in self.events:
             ts = ev["timestamp"]
             net = ev.get("network", "?")
@@ -279,6 +300,7 @@ class DiagnosticsTracker:
             self.last_poll[name] = 0
             self.dumped_for_run[name] = False
             self._last_progress[name] = None
+            self.last_reasons[name] = frozenset()
         self.events = []
 
 
