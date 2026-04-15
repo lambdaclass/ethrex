@@ -712,3 +712,24 @@ pub enum PeerHandlerError {
     #[error("Snap error: {0}")]
     Snap(#[from] SnapError),
 }
+
+impl PeerHandlerError {
+    /// Transient errors caused by individual peer interactions (bad/slow/absent
+    /// responses) that should trigger a retry. Actor/storage/snap failures
+    /// indicate a more fundamental problem and should be surfaced as fatal.
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            PeerHandlerError::SendMessageToPeer(_)
+            | PeerHandlerError::BlockHeaders
+            | PeerHandlerError::UnexpectedResponseFromPeer(_)
+            | PeerHandlerError::EmptyResponseFromPeer(_)
+            | PeerHandlerError::ReceiveMessageFromPeer(_)
+            | PeerHandlerError::ReceiveMessageFromPeerTimeout(_)
+            | PeerHandlerError::InvalidHeaders
+            | PeerHandlerError::NoResponseFromPeer => true,
+            PeerHandlerError::StorageFull
+            | PeerHandlerError::PeerTableError(_)
+            | PeerHandlerError::Snap(_) => false,
+        }
+    }
+}

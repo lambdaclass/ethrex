@@ -317,6 +317,12 @@ pub enum SyncError {
 
 impl SyncError {
     pub fn is_recoverable(&self) -> bool {
+        // PeerHandler delegates to its own classification so that transient
+        // peer/network errors retry while structural errors (dead actor,
+        // local storage full) still exit.
+        if let SyncError::PeerHandler(e) = self {
+            return e.is_recoverable();
+        }
         match self {
             SyncError::SnapshotReadError(_, _)
             | SyncError::SnapshotDecodeError(_)
@@ -349,8 +355,9 @@ impl SyncError {
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks
-            | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_) => true,
+            | SyncError::NoBlockHeaders => true,
+            // PeerHandler handled above by delegation
+            SyncError::PeerHandler(_) => unreachable!(),
         }
     }
 }

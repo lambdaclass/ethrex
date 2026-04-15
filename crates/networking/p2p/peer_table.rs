@@ -891,22 +891,7 @@ impl PeerTableServer {
     }
 
     fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
-        self.peers
-            .iter()
-            .filter_map(|(id, peer_data)| {
-                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
-                    || !capabilities
-                        .iter()
-                        .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    None
-                } else {
-                    let connection = peer_data.connection.clone()?;
-                    Some((*id, peer_data.score, peer_data.requests, connection))
-                }
-            })
-            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
-            .map(|(k, _, _, v)| (k, v))
+        self.do_get_best_peer_excluding(capabilities, &[])
     }
 
     /// Like `do_get_best_peer`, but excludes specific peers from selection.
