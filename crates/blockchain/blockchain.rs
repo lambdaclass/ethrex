@@ -382,12 +382,11 @@ impl Blockchain {
 
         let (execution_result, bal) = vm.execute_block(block)?;
 
-        // For BSC: execute Parlia system calls after user transactions, before
-        // computing state transitions.  Must happen before get_state_transitions()
-        // so that system-call state changes are included in the state root.
-        if matches!(self.options.r#type, BlockchainType::Bsc) {
-            execute_bsc_system_calls(block, &parent_header, &mut vm)?;
-        }
+        // For BSC: system transactions (drain SYSTEM_ADDRESS + deposit/slash/etc.)
+        // are included IN the block body as the last transactions. They are
+        // executed via the normal tx pipeline in `execute_block` above, with the
+        // LEVM backend handling the drain+credit pre-work for each system tx.
+        // No separate system-call phase is needed here during validation.
 
         let account_updates = vm.get_state_transitions()?;
 

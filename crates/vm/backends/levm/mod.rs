@@ -150,6 +150,25 @@ impl LEVM {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
 
+            // BSC Finalize pre-work: before executing a system tx, drain the
+            // SYSTEM_ADDRESS balance (accumulated tx fees) and credit it to the
+            // coinbase. The subsequent system tx (deposit()) will then spend
+            // msg.value from the newly-credited coinbase to the validator contract.
+            // Mirrors bsc-chain/bsc consensus/parlia/parlia.go `distributeIncoming`.
+            if is_bsc_system_tx {
+                let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
+                if !system_bal.is_zero() {
+                    db.store.clone(); // keep compiler happy if needed
+                    let mut acc = db.get_account(SYSTEM_ADDRESS)?.clone();
+                    acc.info.balance = U256::zero();
+                    db.current_accounts_state.insert(SYSTEM_ADDRESS, acc);
+                    let mut cb = db.get_account(block.header.coinbase)?.clone();
+                    cb.info.balance = cb.info.balance.saturating_add(system_bal);
+                    db.current_accounts_state
+                        .insert(block.header.coinbase, cb);
+                }
+            }
+
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
                 #[allow(clippy::cast_possible_truncation)]
