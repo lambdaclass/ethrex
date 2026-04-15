@@ -126,12 +126,14 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
-            // All forks: reject tx if cumulative post-refund gas + tx.gas > block gas limit.
-            // For Amsterdam+ (EIP-7778), block gas accounting uses pre-refund values, so the
-            // cumulative check uses post-refund gas (what a block builder would track for
-            // inclusion decisions). A separate post-execution check catches block-level
-            // overflow from pre-refund gas.
-            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
+            // state) can legally exceed the block gas limit as long as
+            // max(sum_regular, sum_state) stays within it. Block-level overflow is
+            // detected post-execution.
+            if !is_amsterdam {
+                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            }
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -428,12 +430,14 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
-            // All forks: reject tx if cumulative post-refund gas + tx.gas > block gas limit.
-            // For Amsterdam+ (EIP-7778), block gas accounting uses pre-refund values, so the
-            // cumulative check uses post-refund gas (what a block builder would track for
-            // inclusion decisions). A separate post-execution check catches block-level
-            // overflow from pre-refund gas.
-            check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
+            // state) can legally exceed the block gas limit as long as
+            // max(sum_regular, sum_state) stays within it. Block-level overflow is
+            // detected post-execution.
+            if !is_amsterdam {
+                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            }
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -977,14 +981,9 @@ impl LEVM {
         //    exceeding the gas limit produce GAS_USED_OVERFLOW instead of a BAL
         //    mismatch error (the BAL is built assuming rejected txs, so the miner
         //    balance in the BAL won't match execution that ran all txs).
-        let mut cumulative_gas_used = 0_u64;
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        for (tx_idx, _, report, _, _, _) in &exec_results {
-            // Per-tx check: reject if cumulative post-refund gas + tx gas_limit > block gas limit.
-            let tx_gas_limit = txs_with_sender[*tx_idx].0.gas_limit();
-            check_gas_limit(cumulative_gas_used, tx_gas_limit, header.gas_limit)?;
-            cumulative_gas_used += report.gas_spent;
+        for (_, _, report, _, _, _) in &exec_results {
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
