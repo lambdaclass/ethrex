@@ -2130,14 +2130,19 @@ impl LEVM {
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
 
-        // TODO: I don't like deciding the behavior based on the VMType here.
-        // BSC uses Parlia PoA — beacon root contract calls and block hash history
-        // (EIP-4788, EIP-2935) are Ethereum PoS-specific and do not apply.
-        if matches!(vm_type, VMType::L2(_) | VMType::Bsc) {
+        // L2: skip both — they don't apply in the L2 sequencer path.
+        if matches!(vm_type, VMType::L2(_)) {
             return Ok(());
         }
 
-        if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+        // BSC: EIP-4788 (beacon root) doesn't apply — parent_beacon_block_root is
+        // zero on BSC blocks. EIP-2935 (block hash history) DOES apply on BSC:
+        // it writes the parent block hash into HISTORY_STORAGE_ADDRESS on every
+        // block, and this state change is reflected in the canonical state root.
+        if !matches!(vm_type, VMType::Bsc)
+            && block_header.parent_beacon_block_root.is_some()
+            && fork >= Fork::Cancun
+        {
             Self::beacon_root_contract_call(block_header, db, vm_type, crypto)?;
         }
 
