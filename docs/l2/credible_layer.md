@@ -99,7 +99,10 @@ This is a step-by-step guide to run the full Credible Layer stack locally, deplo
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (`forge`, `cast`)
 - Docker (running)
 - Node.js >= 22 and `pnpm` (for the assertion indexer)
-- ethrex built: `cargo build --release -p ethrex --features l2`
+- ethrex built (including contract compilation):
+  ```bash
+  COMPILE_CONTRACTS=true cargo build --release -p ethrex --features l2
+  ```
 
 ### Step 1: Start ethrex L1
 
@@ -123,8 +126,19 @@ cast block-number --rpc-url http://localhost:8545
 ### Step 2: Deploy L2 contracts on L1
 
 ```bash
-COMPILE_CONTRACTS=true make deploy-l1
+../../target/release/ethrex l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --deposit-rich \
+  --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+  --genesis-l1-path ../../fixtures/genesis/l1.json \
+  --genesis-l2-path ../../fixtures/genesis/l2.json
 ```
+
+This uses the pre-built binary directly (no recompilation). Addresses are written to `cmd/.env`.
 
 ### Step 3: Start ethrex L2 with Credible Layer
 
