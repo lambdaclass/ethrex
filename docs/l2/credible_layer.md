@@ -6,39 +6,7 @@ Credible Layer integrates ethrex L2 with [Phylax Systems' Credible Layer](https:
 
 ### Architecture
 
-```
-                    ethrex L2 Sequencer
-                    ┌─────────────────────────────────────────┐
-                    │                                         │
-User ──tx──▶ RPC ──┼──▶ Aeges check ──▶ Mempool              │
-                    │                      │                  │
-                    │                      ▼                  │
-                    │   Block Producer: fill_transactions()   │
-                    │     │                                   │
-                    │     │ For each tx:                      │
-                    │     ├─ Send Transaction ──────────────────────▶ ┌────────────────────┐
-                    │     ├─ Await verdict    ◀──────────────────────│ Credible Layer      │
-                    │     ├─ ASSERTION_FAILED? Skip tx               │ Sidecar             │
-                    │     └─ Otherwise: include tx                   │ (Assertion Enforcer)│
-                    │                                                │                    │
-                    │   On block sealed:                             │ Runs PhEVM to      │
-                    │     └─ Send CommitHead ────────────────────────│ evaluate assertions│
-                    │                                                │                    │
-                    │   WebSocket server (:1730)                     │ Tracks chain state │
-                    │     └─ eth_subscribe("newHeads") ◀────────────│ via WS + traces    │
-                    │                                         │      └────────────────────┘
-                    │   debug_traceBlockByNumber              │              │
-                    │     └─ prestateTracer (diff mode) ◀───────────────────┘
-                    │                                         │
-                    └─────────────────────────────────────────┘
-                                        │
-                               On-chain (L2)
-                    ┌─────────────────────────────────────────┐
-                    │  State Oracle    Assertion DA            │
-                    │  (registry of    (bytecode storage)      │
-                    │   assertions)                             │
-                    └─────────────────────────────────────────┘
-```
+![Credible Layer Architecture](img/credible_layer_architecture.svg)
 
 ### Key Concepts
 
