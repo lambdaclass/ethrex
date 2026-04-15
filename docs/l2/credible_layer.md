@@ -217,16 +217,14 @@ docker run -d --name assertion-da -p 5001:5001 \
 ### Step 6: Deploy OwnableTarget test contract
 
 ```bash
-cd <ethrex_repo>/crates/l2/contracts/src/credible_layer
-solc --bin OwnableTarget.sol -o /tmp/cb_compiled --overwrite
-
 PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
-BYTECODE=0x$(cat /tmp/cb_compiled/OwnableTarget.bin)
 
-cast send --private-key $PK --rpc-url http://localhost:1729 --create "$BYTECODE"
+rex deploy \
+  --contract-path <ethrex_repo>/crates/l2/contracts/src/credible_layer/OwnableTarget.sol \
+  --private-key $PK --rpc-url http://localhost:1729 --print-address
 ```
 
-Note the `contractAddress` from the output. Example: `0x00c042c4d5d913277ce16611a2ce6e9003554ad5`
+Note the contract address from the output. Example: `0x00c042c4d5d913277ce16611a2ce6e9003554ad5`
 
 ### Step 7: Upload assertion to DA and register on State Oracle
 
