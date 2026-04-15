@@ -158,14 +158,10 @@ impl LEVM {
             if is_bsc_system_tx {
                 let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
                 if !system_bal.is_zero() {
-                    db.store.clone(); // keep compiler happy if needed
-                    let mut acc = db.get_account(SYSTEM_ADDRESS)?.clone();
-                    acc.info.balance = U256::zero();
-                    db.current_accounts_state.insert(SYSTEM_ADDRESS, acc);
-                    let mut cb = db.get_account(block.header.coinbase)?.clone();
-                    cb.info.balance = cb.info.balance.saturating_add(system_bal);
-                    db.current_accounts_state
-                        .insert(block.header.coinbase, cb);
+                    let sys_acc = db.get_account_mut(SYSTEM_ADDRESS)?;
+                    sys_acc.info.balance = U256::zero();
+                    let cb_acc = db.get_account_mut(block.header.coinbase)?;
+                    cb_acc.info.balance = cb_acc.info.balance.saturating_add(system_bal);
                 }
             }
 
