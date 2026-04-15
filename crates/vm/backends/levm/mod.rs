@@ -127,11 +127,12 @@ impl LEVM {
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block gas limit.
-            // Amsterdam+: skip per-tx block-level check; the per-tx gas cap
-            // (TX_MAX_GAS_LIMIT_AMSTERDAM) is enforced in the VM hook, and block-level
-            // overflow is detected after all txs execute (EIP-7778 uses pre-refund gas
-            // for block accounting, so the limit can only be checked post-execution).
-            if !is_amsterdam {
+            // Amsterdam+: reject if the tx's gas_limit alone exceeds the block gas limit
+            // (EIP-8037). Cumulative overflow is checked post-execution because EIP-7778
+            // uses pre-refund gas for block accounting.
+            if is_amsterdam {
+                check_gas_limit(0, tx.gas_limit(), block.header.gas_limit)?;
+            } else {
                 check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
             }
 
@@ -431,11 +432,12 @@ impl LEVM {
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block gas limit.
-            // Amsterdam+: skip per-tx block-level check; the per-tx gas cap
-            // (TX_MAX_GAS_LIMIT_AMSTERDAM) is enforced in the VM hook, and block-level
-            // overflow is detected after all txs execute (EIP-7778 uses pre-refund gas
-            // for block accounting, so the limit can only be checked post-execution).
-            if !is_amsterdam {
+            // Amsterdam+: reject if the tx's gas_limit alone exceeds the block gas limit
+            // (EIP-8037). Cumulative overflow is checked post-execution because EIP-7778
+            // uses pre-refund gas for block accounting.
+            if is_amsterdam {
+                check_gas_limit(0, tx.gas_limit(), block.header.gas_limit)?;
+            } else {
                 check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
             }
 
@@ -983,7 +985,10 @@ impl LEVM {
         //    balance in the BAL won't match execution that ran all txs).
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        for (_, _, report, _, _, _) in &exec_results {
+        for (tx_idx, _, report, _, _, _) in &exec_results {
+            // Per-tx check: reject if the tx's gas_limit alone exceeds the block gas limit.
+            let tx_gas_limit = txs_with_sender[*tx_idx].0.gas_limit();
+            check_gas_limit(0, tx_gas_limit, header.gas_limit)?;
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
