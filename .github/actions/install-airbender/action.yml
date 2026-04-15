@@ -8,7 +8,7 @@ runs:
       shell: bash
       run: |
         rustup toolchain install nightly-2026-02-10
-        rustup component add rust-src llvm-tools-preview --toolchain nightly-2026-02-10
+        rustup component add rust-src llvm-tools-preview clippy --toolchain nightly-2026-02-10
         cargo install cargo-binutils
 
     - name: Install cargo-airbender
