@@ -113,10 +113,12 @@ rm -rf dev_ethrex_l1 dev_ethrex_l2
   --authrpc.port 8551 --dev \
   --datadir dev_ethrex_l1 &
 
-# Verify
-sleep 5
+# Verify (wait ~10s — initial "payload_id is None" errors are normal and resolve themselves)
+sleep 10
 cast block-number --rpc-url http://localhost:8545
 ```
+
+> **Note:** You may see `ERROR Failed to produce block: payload_id is None in ForkChoiceResponse` in the first few seconds. This is a known L1 dev mode timing issue — the engine API needs a moment to initialize. The errors stop after a few blocks and block production continues normally.
 
 ### Step 2: Deploy L2 contracts on L1
 
