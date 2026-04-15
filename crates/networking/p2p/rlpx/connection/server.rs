@@ -1405,10 +1405,24 @@ async fn handle_incoming_message(
                         let block = new_block.block;
                         let announced_td = new_block.total_difficulty;
                         tokio::spawn(async move {
-                            // Run the blocking pipeline on the tokio blocking pool
-                            let bc = blockchain.clone();
+                            // Serialize with the sync cycle: both paths call
+                            // forkchoice_update, which destructively rewinds
+                            // canonical entries above the given head. Without
+                            // this lock, racing updates produce a canonical
+                            // "hole" that breaks BLOCKHASH lookups later.
+                            let canonical_lock = blockchain.polygon_canonical_lock();
+                            let _canonical_guard = canonical_lock.lock().await;
+                            // Re-check: the sync cycle may have advanced past
+                            // this block while we were waiting for the lock.
+                            let latest = storage.get_latest_block_number().await.unwrap_or(0);
                             let blk_number = block.header.number;
                             let blk_hash = block.hash();
+                            if blk_number <= latest {
+                                blockchain.clear_polygon_in_flight(&blk_hash);
+                                return;
+                            }
+                            // Run the blocking pipeline on the tokio blocking pool
+                            let bc = blockchain.clone();
                             let result = tokio::task::spawn_blocking(move || {
                                 bc.add_block_pipeline(block, None)
                             })

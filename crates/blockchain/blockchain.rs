@@ -216,6 +216,12 @@ pub struct Blockchain {
     /// Set of block hashes currently being executed by spawned tasks.
     /// Prevents duplicate execution when multiple peers announce the same block.
     polygon_in_flight_blocks: std::sync::Mutex<HashSet<H256>>,
+    /// Serializes canonical-chain updates on Polygon between the sync cycle
+    /// (`full::add_blocks_in_batch`) and the NewBlock P2P handler. Both call
+    /// `forkchoice_update`, which destructively rewinds canonical entries
+    /// above the given head — if they race, blocks stored by one path can be
+    /// orphaned from the number→hash mapping written by the other.
+    polygon_canonical_lock: Arc<TokioMutex<()>>,
     /// Epoch-seconds timestamp of the last successfully processed block.
     /// Used by the bridge fallback to avoid re-triggering when P2P NewBlock is flowing.
     last_block_processed_at: AtomicU64,
@@ -350,6 +356,7 @@ impl Blockchain {
             polygon_sync_head: std::sync::Mutex::new(None),
             polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
             polygon_in_flight_blocks: std::sync::Mutex::new(HashSet::new()),
+            polygon_canonical_lock: Arc::new(TokioMutex::new(())),
             last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
@@ -365,6 +372,7 @@ impl Blockchain {
             polygon_sync_head: std::sync::Mutex::new(None),
             polygon_pending_blocks: std::sync::Mutex::new(HashMap::new()),
             polygon_in_flight_blocks: std::sync::Mutex::new(HashSet::new()),
+            polygon_canonical_lock: Arc::new(TokioMutex::new(())),
             last_block_processed_at: AtomicU64::new(0),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
@@ -2801,6 +2809,15 @@ impl Blockchain {
             pending.remove(&parent_hash);
         }
         block
+    }
+
+    /// Clone the handle to the Polygon canonical-chain write lock.
+    ///
+    /// Both the sync cycle and the NewBlock P2P handler must acquire this
+    /// lock around `add_block_pipeline` + `forkchoice_update` so their
+    /// canonical rewinds don't stomp on each other. See the field docstring.
+    pub fn polygon_canonical_lock(&self) -> Arc<TokioMutex<()>> {
+        self.polygon_canonical_lock.clone()
     }
 
     /// Mark a block hash as currently being processed. Returns false if already in-flight.

@@ -268,6 +268,12 @@ async fn add_blocks_in_batch(
         .ok_or(SyncError::InvalidRangeReceived)?;
 
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
+    // On Polygon, serialize with the NewBlock P2P handler: both paths call
+    // `forkchoice_update`, which destructively rewinds canonical entries above
+    // the given head. Without this lock, racing updates can orphan canonical
+    // number→hash entries and break later BLOCKHASH lookups.
+    let canonical_lock = blockchain.polygon_canonical_lock();
+    let _canonical_guard = canonical_lock.lock().await;
     // Run the batch
     if let Err((err, batch_failure)) =
         add_blocks(blockchain.clone(), blocks, final_batch, cancel_token).await
