@@ -453,13 +453,19 @@ impl NodeRecord {
             secp256k1: Some(H264::from_slice(
                 &PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
             )),
-            tcp_port: Some(node.tcp_port),
-            udp_port: Some(node.udp_port),
             ..Default::default()
         };
         match node.ip.to_canonical() {
-            IpAddr::V4(ip) => pairs.ip = Some(ip),
-            IpAddr::V6(ip) => pairs.ip6 = Some(ip),
+            IpAddr::V4(ip) => {
+                pairs.ip = Some(ip);
+                pairs.tcp_port = Some(node.tcp_port);
+                pairs.udp_port = Some(node.udp_port);
+            }
+            IpAddr::V6(ip) => {
+                pairs.ip6 = Some(ip);
+                pairs.tcp6_port = Some(node.tcp_port);
+                pairs.udp6_port = Some(node.udp_port);
+            }
         }
 
         let mut record = NodeRecord {
