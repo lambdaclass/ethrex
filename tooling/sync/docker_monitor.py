@@ -96,6 +96,7 @@ class DiagnosticsTracker:
         self.events: list[dict] = []  # degradation events across all networks
         self.dumped_for_run: dict[str, bool] = {inst.name: False for inst in instances}
         self._last_progress: dict[str, Optional[str]] = {inst.name: None for inst in instances}
+        self.last_reasons: dict[str, frozenset] = {inst.name: frozenset() for inst in instances}
 
     def poll_interval(self, name: str) -> float:
         return DIAGNOSTICS_DEGRADED_INTERVAL if self.degraded[name] else DIAGNOSTICS_NORMAL_INTERVAL
@@ -170,8 +171,11 @@ class DiagnosticsTracker:
             if phase in WATCHED_PHASES:
                 reasons.append(f"watched_phase:{phase}")
 
+        reasons_set = frozenset(reasons)
         if reasons:
-            if not self.degraded[name]:
+            newly_degraded = not self.degraded[name]
+            reasons_changed = reasons_set != self.last_reasons.get(name, frozenset())
+            if newly_degraded:
                 self.degraded[name] = True
                 self.degraded_since[name] = now
                 self.healthy_since[name] = 0
@@ -195,6 +199,17 @@ class DiagnosticsTracker:
                     print(f"🔍 [{name}] Log level bumped to TRACE for peer diagnostics")
                 else:
                     print(f"⚠️  [{name}] Failed to bump log level")
+            elif reasons_changed:
+                # Already degraded but reasons changed — record and log
+                event = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "network": name,
+                    "event_type": "reasons_changed",
+                    "reasons": reasons,
+                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                }
+                self.events.append(event)
+                print(f"🔄 [{name}] Monitor reasons changed: {', '.join(reasons)}")
             # Dump snapshots on degradation / watched phase
             self._dump_snapshots(name)
         else:
@@ -217,6 +232,7 @@ class DiagnosticsTracker:
                         print(f"📝 [{name}] Log level restored to DEBUG")
                     else:
                         print(f"⚠️  [{name}] Failed to restore log level")
+        self.last_reasons[name] = reasons_set
 
     def on_failure(self, inst, name: str) -> None:
         """Called when a network fails — do a final poll and dump snapshots."""
@@ -284,6 +300,7 @@ class DiagnosticsTracker:
             self.last_poll[name] = 0
             self.dumped_for_run[name] = False
             self._last_progress[name] = None
+            self.last_reasons[name] = frozenset()
         self.events = []
 
 
