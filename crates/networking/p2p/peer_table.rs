@@ -978,7 +978,6 @@ impl PeerTableServer {
             .flat_map(|bucket| bucket.contacts.iter().map(|(id, c)| (id, c)))
     }
 
-
     // --- Peer selection ---
 
     fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
@@ -1332,12 +1331,7 @@ mod tests {
     /// Helper: build a dummy contact with a unique node derived from `seed`.
     fn dummy_contact(seed: u8) -> (H256, Contact) {
         let pk = H512::from_low_u64_be(seed as u64 + 1);
-        let node = Node::new(
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, seed)),
-            30303,
-            30303,
-            pk,
-        );
+        let node = Node::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, seed)), 30303, 30303, pk);
         let node_id = node.node_id();
         let contact = Contact::new(node, DiscoveryProtocol::Discv4);
         (node_id, contact)
