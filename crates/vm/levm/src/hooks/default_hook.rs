@@ -581,7 +581,10 @@ pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMEr
 }
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
-    if vm.env.gas_limit > vm.env.block_gas_limit {
+    // BSC allows tx gas_limit > block.gas_limit; actual gas consumed is capped
+    // by block-remaining so this check is skipped.
+    let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+    if !is_bsc && vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded {
             block_gas_limit: vm.env.block_gas_limit,
             tx_gas_limit: vm.env.gas_limit,
