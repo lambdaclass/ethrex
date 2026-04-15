@@ -420,20 +420,21 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         .as_deref()
         .map(|a| {
             let addr: IpAddr = a.parse().expect("Failed to parse --discovery.addr address");
-            if let Some(extip) = &opts.nat_extip {
-                let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
-                assert!(
-                    addr.is_ipv4() == external.is_ipv4(),
-                    "--discovery.addr and --nat.extip must use the same address family (both IPv4 or both IPv6)"
-                );
-            }
+            assert!(
+                addr.is_ipv4() == rlpx_external_addr.is_ipv4(),
+                "--discovery.addr and external address must use the same address family (both IPv4 or both IPv6)"
+            );
             addr
         })
         .unwrap_or(rlpx_bind_addr);
 
-    // Discovery external address: use the explicit discovery bind addr when it
-    // is a specific (non-wildcard) IP; otherwise fall back to rlpx_external_addr.
-    let discovery_external_addr = if !discovery_bind_addr.is_unspecified() {
+    // Discovery external address: always use rlpx_external_addr (which is
+    // --nat.extip when set) so the announced address reflects what peers see.
+    // Only fall back to the discovery bind addr when no NAT external IP is
+    // configured and the bind addr is a specific (non-wildcard) IP.
+    let discovery_external_addr = if opts.nat_extip.is_some() {
+        rlpx_external_addr
+    } else if !discovery_bind_addr.is_unspecified() {
         discovery_bind_addr
     } else {
         rlpx_external_addr
