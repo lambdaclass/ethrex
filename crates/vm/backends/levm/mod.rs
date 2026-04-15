@@ -101,6 +101,9 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // BSC allows txs to have gas_limit > block.gas_limit — actual gas usage
+        // is capped at block-remaining anyway. Skip the prospective block-gas check.
+        let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
 
         // Enable BAL recording for Amsterdam+ forks
         if is_amsterdam {
@@ -135,7 +138,9 @@ impl LEVM {
             } else {
                 cumulative_gas_used
             };
-            check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
+            if !is_bsc {
+                check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
+            }
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -240,6 +245,7 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
 
         let transactions_with_sender =
             block
@@ -430,7 +436,9 @@ impl LEVM {
             } else {
                 cumulative_gas_used
             };
-            check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
+            if !is_bsc {
+                check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
+            }
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
