@@ -146,6 +146,14 @@ impl LEVM {
                 && tx_sender == block.header.coinbase
                 && tx.gas_price().is_zero()
                 && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
+            if is_bsc && block.header.number < 101687020 {
+                println!(
+                    "BSC tx {}/{}: sender={:?} coinbase={:?} gas_price={} to={:?} is_sys={}",
+                    block.header.number, tx_idx,
+                    tx_sender, block.header.coinbase, tx.gas_price(),
+                    tx.to(), is_bsc_system_tx
+                );
+            }
             if !is_bsc_system_tx {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
@@ -472,6 +480,14 @@ impl LEVM {
                 && tx_sender == block.header.coinbase
                 && tx.gas_price().is_zero()
                 && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
+            if is_bsc && block.header.number < 101687020 {
+                println!(
+                    "BSC tx {}/{}: sender={:?} coinbase={:?} gas_price={} to={:?} is_sys={}",
+                    block.header.number, tx_idx,
+                    tx_sender, block.header.coinbase, tx.gas_price(),
+                    tx.to(), is_bsc_system_tx
+                );
+            }
             if !is_bsc_system_tx {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
