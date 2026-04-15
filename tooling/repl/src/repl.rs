@@ -262,10 +262,9 @@ impl Repl {
                     Err(e) => return formatter::format_error(&e),
                 };
                 match self.call_rpc_raw(namespace, method, &resolved).await {
-                    Ok((result, cmd)) => {
+                    Ok((result, _)) => {
                         let formatted = formatter::format_value(&result);
                         self.variables.insert(var_name.to_string(), result);
-                        let _ = cmd; // suppress unused warning
                         formatted
                     }
                     Err(e) => formatter::format_error(&e),
