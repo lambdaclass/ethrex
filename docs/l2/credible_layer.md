@@ -233,7 +233,7 @@ Build the assertion using the [credible-layer-starter](https://github.com/phylax
 ```bash
 git clone --recurse-submodules https://github.com/phylaxsystems/credible-layer-starter /tmp/credible-layer-starter
 cd /tmp/credible-layer-starter
-forge build   # or: pcl build
+pcl build   # or: forge build
 ```
 
 Submit the assertion's **creation bytecode** to the DA server:
