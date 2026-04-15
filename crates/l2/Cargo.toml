@@ -54,16 +54,25 @@ crossterm = { version = "0.29.0", features = ["event-stream"] }
 ratatui = "0.29.0"
 tui-logger.workspace = true
 axum.workspace = true
+tonic = "0.12"
+prost = "0.13"
+tokio-stream = "0.1"
 ethrex-guest-program = { path = "../guest-program", optional = true }
 
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
+tonic-build = "0.12"
 
 [dev-dependencies]
 anyhow = "1.0.86"
+hex = { workspace = true }
 
 [lib]
 path = "./l2.rs"
+
+[[bin]]
+name = "mock-sidecar"
+path = "sequencer/circuit_breaker/mock_sidecar/main.rs"
 
 [lints.clippy]
 unwrap_used = "deny"

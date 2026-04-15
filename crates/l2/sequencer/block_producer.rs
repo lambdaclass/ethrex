@@ -39,6 +39,11 @@ use serde_json::Value;
 use std::str::FromStr;
 use tokio::sync::broadcast;
 
+use super::circuit_breaker::{
+    CircuitBreakerClient,
+    client::CircuitBreakerConfig as ClientCircuitBreakerConfig,
+    sidecar_proto::{BlobExcessGasAndPrice, BlockEnv, CommitHead, NewIteration},
+};
 use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
@@ -65,6 +70,7 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
+    circuit_breaker: Option<Arc<CircuitBreakerClient>>,
     /// Broadcast sender for new block header notifications to WS subscribers.
     new_heads_sender: Option<broadcast::Sender<Value>>,
 }
@@ -79,7 +85,7 @@ pub struct BlockProducerHealth {
 
 impl BlockProducer {
     #[expect(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         config: &BlockProducerConfig,
         l1_rpc_url: Vec<Url>,
         store: Store,
@@ -88,6 +94,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        circuit_breaker_url: Option<String>,
         new_heads_sender: Option<broadcast::Sender<Value>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
@@ -114,6 +121,25 @@ impl BlockProducer {
             );
         }
 
+        let circuit_breaker = if let Some(url) = circuit_breaker_url {
+            let cb_config = ClientCircuitBreakerConfig {
+                sidecar_url: url,
+                ..Default::default()
+            };
+            match CircuitBreakerClient::connect(cb_config).await {
+                Ok(client) => {
+                    info!("Circuit Breaker sidecar connected");
+                    Some(Arc::new(client))
+                }
+                Err(e) => {
+                    warn!("Failed to connect to Circuit Breaker sidecar: {e}. Proceeding without circuit breaker.");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             store,
             blockchain,
@@ -127,6 +153,7 @@ impl BlockProducer {
             block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
+            circuit_breaker,
             new_heads_sender,
         })
     }
@@ -163,6 +190,45 @@ impl BlockProducer {
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 
+        // Circuit Breaker: send NewIteration before building the block.
+        // CommitHead is sent AFTER the block is stored (see below).
+        // The sidecar flow per block: NewIteration → Transaction(s) → CommitHead
+        if let Some(cb) = &self.circuit_breaker {
+            let block_number_bytes = u64_to_u256_bytes(payload.header.number);
+            let timestamp_bytes = u64_to_u256_bytes(payload.header.timestamp);
+            let beneficiary_bytes = payload.header.coinbase.as_bytes().to_vec();
+            let difficulty_bytes = payload.header.difficulty.to_big_endian().to_vec();
+            let prevrandao = Some(payload.header.prev_randao.to_fixed_bytes().to_vec());
+            let block_env = BlockEnv {
+                number: block_number_bytes,
+                beneficiary: beneficiary_bytes,
+                timestamp: timestamp_bytes,
+                gas_limit: payload.header.gas_limit,
+                basefee: payload.header.base_fee_per_gas.unwrap_or(0),
+                difficulty: difficulty_bytes,
+                prevrandao,
+                blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+                    excess_blob_gas: 0,
+                    blob_gasprice: vec![0u8; 16], // u128 big-endian = 0
+                }),
+            };
+            let iteration_id = cb.current_iteration_id() + 1;
+            let parent_block_hash = Some(payload.header.parent_hash.to_fixed_bytes().to_vec());
+            let parent_beacon_block_root = payload
+                .header
+                .parent_beacon_block_root
+                .map(|h| h.to_fixed_bytes().to_vec());
+            let new_iteration = NewIteration {
+                block_env: Some(block_env),
+                iteration_id,
+                parent_block_hash,
+                parent_beacon_block_root,
+            };
+            if let Err(e) = cb.send_new_iteration(new_iteration).await {
+                warn!("Failed to send NewIteration to circuit breaker: {e}");
+            }
+        }
+
         let registered_chains = self.get_registered_l2_chain_ids().await?;
 
         // Blockchain builds the payload from mempool txs and executes them
@@ -173,6 +239,7 @@ impl BlockProducer {
             &mut self.privileged_nonces,
             self.block_gas_limit,
             registered_chains,
+            self.circuit_breaker.clone(),
         )
         .await?;
         info!(
@@ -224,6 +291,30 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+
+        // Circuit Breaker: send CommitHead AFTER block is stored (matches Besu plugin flow)
+        if let Some(cb) = &self.circuit_breaker {
+            let last_tx_hash = self
+                .store
+                .get_block_by_hash(block_hash)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|b| b.body.transactions.last().map(|tx| tx.hash().to_fixed_bytes().to_vec()));
+            #[allow(clippy::as_conversions)]
+            let commit_head = CommitHead {
+                last_tx_hash,
+                n_transactions: transactions_count as u64,
+                block_number: u64_to_u256_bytes(block_number),
+                selected_iteration_id: cb.current_iteration_id(),
+                block_hash: Some(block_hash.to_fixed_bytes().to_vec()),
+                parent_beacon_block_root: None,
+                timestamp: u64_to_u256_bytes(block_header.timestamp),
+            };
+            if let Err(e) = cb.send_commit_head(commit_head).await {
+                warn!("Failed to send CommitHead to circuit breaker: {e}");
+            }
+        }
 
         // Broadcast the new block header to any active eth_subscribe("newHeads") connections.
         if let Some(sender) = &self.new_heads_sender {
@@ -318,6 +409,13 @@ impl BlockProducer {
     }
 }
 
+/// Encode a u64 as a 32-byte big-endian U256 for protobuf fields.
+fn u64_to_u256_bytes(value: u64) -> Vec<u8> {
+    let mut buf = [0u8; 32];
+    buf[24..].copy_from_slice(&value.to_be_bytes());
+    buf.to_vec()
+}
+
 #[actor(protocol = BlockProducerProtocol)]
 impl BlockProducer {
     pub async fn spawn(
@@ -330,6 +428,7 @@ impl BlockProducer {
         l2_gas_limit: u64,
         new_heads_sender: Option<broadcast::Sender<Value>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
+        let circuit_breaker_url = cfg.circuit_breaker.sidecar_url.clone();
         let block_producer = Self::new(
             &cfg.block_producer,
             cfg.eth.rpc_url,
@@ -339,8 +438,10 @@ impl BlockProducer {
             sequencer_state,
             router_address,
             l2_gas_limit,
+            circuit_breaker_url,
             new_heads_sender,
-        )?;
+        )
+        .await?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);
         Ok(actor_ref)
     }

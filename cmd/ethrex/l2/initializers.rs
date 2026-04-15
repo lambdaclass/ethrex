@@ -103,6 +103,103 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     addresses
 }
 
+/// Build an Aeges mempool pre-filter callback from a gRPC endpoint URL.
+///
+/// Connects to the Aeges service and wraps the client in a `MempoolFilter` closure
+/// that accepts raw transaction bytes and returns `true` if the transaction is allowed.
+/// Returns `None` if no URL is provided or if the connection fails (permissive on error).
+async fn build_aeges_filter(aeges_url: Option<String>) -> Option<ethrex_l2_rpc::MempoolFilter> {
+    use ethrex_common::types::Transaction as EthrexTx;
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_l2::sequencer::circuit_breaker::{AegesClient, aeges::AegesConfig};
+    use ethrex_l2::sequencer::circuit_breaker::aeges_proto::{
+        AccessListEntry, Transaction as AegesTransaction,
+    };
+    use ethrex_rlp::decode::RLPDecode;
+    use std::sync::Arc;
+
+    let url = aeges_url?;
+    let config = AegesConfig {
+        aeges_url: url,
+        ..Default::default()
+    };
+    match AegesClient::connect(config).await {
+        Ok(client) => {
+            tracing::info!("Aeges mempool pre-filter connected");
+            let client = Arc::new(client);
+            let filter: ethrex_l2_rpc::MempoolFilter = Arc::new(move |raw: bytes::Bytes| {
+                let client = client.clone();
+                Box::pin(async move {
+                    // Decode the raw tx bytes into an ethrex Transaction.
+                    let tx = match EthrexTx::decode_unfinished(&raw)
+                        .map(|(tx, _)| tx)
+                        .or_else(|_| {
+                            // Try stripping the type prefix byte and decoding.
+                            raw.first()
+                                .filter(|&&b| b <= 0x7f)
+                                .and_then(|_| {
+                                    EthrexTx::decode_unfinished(&raw[1..])
+                                        .map(|(tx, _)| tx)
+                                        .ok()
+                                })
+                                .ok_or(ethrex_rlp::error::RLPDecodeError::InvalidLength)
+                        }) {
+                        Ok(tx) => tx,
+                        Err(_) => return true, // Permissive: admit if we can't decode
+                    };
+
+                    let tx_hash = tx.hash();
+                    let sender = tx.sender(&NativeCrypto).unwrap_or_default();
+                    let value_bytes = tx.value().to_big_endian();
+                    let to = match tx.to() {
+                        ethrex_common::types::TxKind::Call(addr) => Some(addr.as_bytes().to_vec()),
+                        ethrex_common::types::TxKind::Create => None,
+                    };
+                    let access_list = tx
+                        .access_list()
+                        .iter()
+                        .map(|(addr, keys)| AccessListEntry {
+                            address: addr.as_bytes().to_vec(),
+                            storage_keys: keys.iter().map(|k| k.as_bytes().to_vec()).collect(),
+                        })
+                        .collect();
+                    #[allow(clippy::as_conversions)]
+                    let aeges_tx = AegesTransaction {
+                        hash: tx_hash.as_bytes().to_vec(),
+                        sender: sender.as_bytes().to_vec(),
+                        to,
+                        value: value_bytes.to_vec(),
+                        nonce: tx.nonce(),
+                        r#type: u8::from(tx.tx_type()) as u32,
+                        chain_id: tx.chain_id(),
+                        payload: tx.data().to_vec(),
+                        gas_limit: tx.gas_limit(),
+                        gas_price: None,
+                        max_fee_per_gas: tx.max_fee_per_gas(),
+                        max_priority_fee_per_gas: tx.max_priority_fee(),
+                        max_fee_per_blob_gas: None,
+                        access_list,
+                        versioned_hashes: tx
+                            .blob_versioned_hashes()
+                            .iter()
+                            .map(|h| h.as_bytes().to_vec())
+                            .collect(),
+                        code_delegation_list: vec![],
+                    };
+                    client.verify_transaction(aeges_tx).await
+                })
+            });
+            Some(filter)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to connect to Aeges service: {e}. Proceeding without pre-filter."
+            );
+            None
+        }
+    }
+}
+
 pub async fn init_rollup_store(datadir: &Path) -> StoreRollup {
     #[cfg(feature = "l2-sql")]
     let engine_type = EngineTypeRollup::SQL;

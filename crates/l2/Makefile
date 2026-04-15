@@ -281,3 +281,30 @@ state-diff-test:
 # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 validate-blobs:
 	cargo test -p ethrex-test validate_blobs_match_genesis --release
+
+# Circuit Breaker (Credible Layer)
+# See docs/l2/circuit_breaker.md for full documentation.
+
+init-circuit-breaker: ## 🛡️ Start the Circuit Breaker sidecar stack (assertion-da + sidecar)
+	@echo "Starting Circuit Breaker sidecar stack..."
+	@echo "Make sure to set STATE_ORACLE_ADDRESS in sidecar-config.template.json"
+	docker run -d --name assertion-da -p 5001:5001 \
+		-e DB_PATH=/data/assertions \
+		-e DA_LISTEN_ADDR=0.0.0.0:5001 \
+		-e DA_CACHE_SIZE=1000000 \
+		ghcr.io/phylaxsystems/credible-sdk/assertion-da-dev:sha-01b3374 || true
+	@echo "Assertion DA running on :5001"
+	@echo "Start the sidecar manually: ./sidecar --config-file-path ./sidecar-config.template.json"
+
+down-circuit-breaker: ## 🛑 Stop the Circuit Breaker sidecar stack
+	docker stop assertion-da 2>/dev/null || true
+	docker rm assertion-da 2>/dev/null || true
+
+init-l2-circuit-breaker: ## 🛡️ Start L2 with Circuit Breaker enabled
+	cargo run --release --features l2 --manifest-path ../../Cargo.toml -- \
+		l2 \
+		--circuit-breaker-url http://localhost:50051 \
+		--circuit-breaker-aeges-url http://localhost:8080 \
+		--l2.ws-enabled \
+		--l2.ws-port 1730 \
+		2>&1 | tee /tmp/l2_cb.log

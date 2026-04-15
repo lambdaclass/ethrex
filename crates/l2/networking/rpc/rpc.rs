@@ -39,7 +39,7 @@ use tokio::{
     sync::{Mutex as TokioMutex, broadcast},
 };
 use tower_http::cors::CorsLayer;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 use crate::l2::transaction::SponsoredTx;
@@ -47,13 +47,38 @@ use ethrex_common::Address;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 
-#[derive(Debug, Clone)]
+/// Broadcast channel capacity for new block header notifications.
+/// A value of 128 handles bursts without blocking block production.
+pub const NEW_HEADS_CHANNEL_CAPACITY: usize = 128;
+
+/// Async callback for mempool pre-filtering (Aeges integration).
+///
+/// Receives the raw transaction bytes and returns `true` if the transaction
+/// should be admitted to the mempool, `false` if it should be rejected.
+/// On any error or timeout the implementation should return `true` (permissive).
+pub type MempoolFilter =
+    Arc<dyn (Fn(bytes::Bytes) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>) + Send + Sync>;
+
+#[derive(Clone)]
 pub struct RpcApiContext {
     pub l1_ctx: ethrex_rpc::RpcApiContext,
     pub valid_delegation_addresses: Vec<Address>,
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
     pub sponsored_gas_limit: u64,
+    /// Broadcast sender for new block header notifications (eth_subscribe "newHeads").
+    /// `None` when the WS server is disabled.
+    pub new_heads_sender: Option<broadcast::Sender<Value>>,
+    /// Mempool pre-filter callback (Aeges integration). `None` when not configured.
+    pub mempool_filter: Option<MempoolFilter>,
+}
+
+impl std::fmt::Debug for RpcApiContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcApiContext")
+            .field("sponsored_gas_limit", &self.sponsored_gas_limit)
+            .finish_non_exhaustive()
+    }
 }
 
 pub trait RpcHandler: Sized {
@@ -128,12 +153,14 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil: l2_gas_limit,
             block_worker_channel,
-            new_heads_sender,
+            new_heads_sender: new_heads_sender.clone(),
         },
         valid_delegation_addresses,
         sponsor_pk,
         rollup_store,
         sponsored_gas_limit,
+        new_heads_sender,
+        mempool_filter: None,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -224,6 +251,224 @@ async fn handle_http_request(
     Ok(Json(res))
 }
 
+/// Handle a WebSocket connection.
+///
+/// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
+/// regular JSON-RPC request-response calls that work the same as over HTTP.
+async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
+    // subscription_id -> broadcast::Receiver<Value>
+    // We store only one receiver per subscription ID; senders are cloned from
+    // context.new_heads_sender when a subscription is created.
+    let mut subscriptions: HashMap<String, broadcast::Receiver<Value>> = HashMap::new();
+    // Channel for the write loop to receive outbound messages.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    loop {
+        tokio::select! {
+            // Process incoming WS messages (JSON-RPC requests).
+            msg = socket.recv() => {
+                let Some(msg) = msg else {
+                    // Connection closed.
+                    break;
+                };
+                let body = match msg {
+                    Ok(Message::Text(text)) => text.to_string(),
+                    Ok(Message::Close(_)) => break,
+                    // Ignore ping/pong/binary frames.
+                    Ok(_) => continue,
+                    Err(_) => break,
+                };
+
+                let response = handle_ws_request(&body, &context, &mut subscriptions, &out_tx).await;
+                if let Some(resp) = response {
+                    if socket.send(Message::Text(resp.into())).await.is_err() {
+                        break;
+                    }
+                }
+            }
+
+            // Push subscription notifications for all active subscriptions.
+            _ = drain_subscriptions(&mut subscriptions, &out_tx) => {}
+
+            // Send any pending outbound messages (subscription notifications).
+            Some(msg) = out_rx.recv() => {
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Connection closed — subscriptions are dropped automatically when the
+    // HashMap goes out of scope (task 4.6).
+}
+
+/// Process an incoming JSON-RPC request over WebSocket.
+/// Returns `Some(response_text)` for request-response calls.
+/// For eth_subscribe / eth_unsubscribe the response is also returned inline.
+async fn handle_ws_request(
+    body: &str,
+    context: &RpcApiContext,
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+    _out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Option<String> {
+    let req: RpcRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            let resp = ethrex_rpc::rpc_response(
+                RpcRequestId::String("".to_string()),
+                Err::<Value, _>(ethrex_rpc::RpcErr::BadParams(
+                    "Invalid request body".to_string(),
+                )),
+            )
+            .ok()?;
+            return Some(resp.to_string());
+        }
+    };
+
+    match req.method.as_str() {
+        "eth_subscribe" => {
+            let result = handle_eth_subscribe(&req, context, subscriptions);
+            let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
+            Some(resp.to_string())
+        }
+        "eth_unsubscribe" => {
+            let result = handle_eth_unsubscribe(&req, subscriptions);
+            let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
+            Some(resp.to_string())
+        }
+        _ => {
+            let res = map_http_requests(&req, context.clone()).await;
+            let resp = ethrex_rpc::rpc_response(req.id, res).ok()?;
+            Some(resp.to_string())
+        }
+    }
+}
+
+/// Handle `eth_subscribe`.
+///
+/// Only `"newHeads"` is supported (task 4.7). Returns a hex subscription ID
+/// on success or an error for unsupported subscription types.
+fn handle_eth_subscribe(
+    req: &RpcRequest,
+    context: &RpcApiContext,
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+) -> Result<Value, RpcErr> {
+    // params[0] must be the subscription type string.
+    let params = req.params.as_deref().unwrap_or(&[]);
+    let sub_type = params
+        .first()
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| RpcErr::L1RpcErr(ethrex_rpc::RpcErr::BadParams(
+            "eth_subscribe requires a subscription type parameter".to_string(),
+        )))?;
+
+    match sub_type {
+        "newHeads" => {
+            let sender = context.new_heads_sender.as_ref().ok_or_else(|| {
+                RpcErr::L1RpcErr(ethrex_rpc::RpcErr::Internal(
+                    "WebSocket server not enabled".to_string(),
+                ))
+            })?;
+
+            // Generate a unique subscription ID.
+            let sub_id = generate_subscription_id();
+
+            // Subscribe to the broadcast channel.
+            let receiver = sender.subscribe();
+            subscriptions.insert(sub_id.clone(), receiver);
+
+            Ok(Value::String(sub_id))
+        }
+        other => Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::Internal(format!(
+            "Unsupported subscription type: {other}"
+        )))),
+    }
+}
+
+/// Handle `eth_unsubscribe`.
+///
+/// Returns `true` if the subscription existed and was removed, `false` otherwise.
+fn handle_eth_unsubscribe(
+    req: &RpcRequest,
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+) -> Result<Value, RpcErr> {
+    let params = req.params.as_deref().unwrap_or(&[]);
+    let sub_id = params
+        .first()
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| RpcErr::L1RpcErr(ethrex_rpc::RpcErr::BadParams(
+            "eth_unsubscribe requires a subscription ID parameter".to_string(),
+        )))?;
+
+    let removed = subscriptions.remove(sub_id).is_some();
+    Ok(Value::Bool(removed))
+}
+
+/// Generate a unique hex-encoded subscription ID.
+fn generate_subscription_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("0x{id:016x}")
+}
+
+/// Drain any buffered messages from active subscriptions and send them to
+/// the outbound channel. This is called from the `select!` loop to ensure
+/// subscription notifications are forwarded promptly.
+///
+/// Returns immediately after draining whatever is currently buffered;
+/// the future resolves to `()` so the caller can combine it with other arms.
+async fn drain_subscriptions(
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+    out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) {
+    // Collect subscription IDs to avoid borrow conflicts while iterating.
+    let sub_ids: Vec<String> = subscriptions.keys().cloned().collect();
+    for sub_id in sub_ids {
+        let Some(receiver) = subscriptions.get_mut(&sub_id) else {
+            continue;
+        };
+        loop {
+            match receiver.try_recv() {
+                Ok(header) => {
+                    let notification = build_subscription_notification(&sub_id, header);
+                    if out_tx.send(notification).is_err() {
+                        // Channel closed — connection is shutting down.
+                        return;
+                    }
+                }
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Closed) => {
+                    // Sender was dropped.
+                    subscriptions.remove(&sub_id);
+                    break;
+                }
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    warn!("eth_subscribe newHeads: subscription {sub_id} lagged by {n} messages");
+                    // Continue to catch up.
+                }
+            }
+        }
+    }
+    // Yield so that the select! loop can check other arms.
+    tokio::task::yield_now().await;
+}
+
+/// Build the standard Ethereum subscription notification envelope:
+/// `{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0x...","result":{...}}}`
+fn build_subscription_notification(sub_id: &str, result: Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_subscription",
+        "params": {
+            "subscription": sub_id,
+            "result": result,
+        }
+    })
+    .to_string()
+}
+
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match resolve_namespace(&req.method) {
@@ -249,6 +494,28 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),
                 ));
+            }
+            // Task 3.2/3.3: Check with Aeges before admitting to mempool.
+            // Privileged transactions are added directly by the L1Watcher, never via
+            // eth_sendRawTransaction, so all transactions here are regular user txs.
+            if let Some(filter) = &context.mempool_filter {
+                // Extract the raw transaction bytes from the first param.
+                let raw_bytes = req
+                    .params
+                    .as_deref()
+                    .and_then(|p| p.first())
+                    .and_then(|v| v.as_str())
+                    .map(|hex| {
+                        let hex = hex.strip_prefix("0x").unwrap_or(hex);
+                        hex::decode(hex).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                if !filter(raw_bytes.into()).await {
+                    debug!("Aeges pre-filter rejected transaction");
+                    return Err(RpcErr::InvalidEthrexL2Message(
+                        "Transaction rejected by Aeges pre-filter".to_string(),
+                    ));
+                }
             }
             SendRawTransactionRequest::call(req, context.l1_ctx)
                 .await
@@ -284,112 +551,12 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     }
 }
 
-/// Handle a WebSocket connection.
-///
-/// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
-/// regular JSON-RPC request-response calls that work the same as over HTTP.
-/// Subscription functionality is provided by ethrex_rpc (L1 crate).
-async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
-    // subscription_id -> broadcast::Receiver<Value>
-    let mut subscriptions: HashMap<String, broadcast::Receiver<Value>> = HashMap::new();
-    // Channel for the write loop to receive outbound messages.
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-
-    loop {
-        tokio::select! {
-            // Process incoming WS messages (JSON-RPC requests).
-            msg = socket.recv() => {
-                let Some(msg) = msg else {
-                    // Connection closed.
-                    break;
-                };
-                let body = match msg {
-                    Ok(Message::Text(text)) => text.to_string(),
-                    Ok(Message::Close(_)) => break,
-                    // Ignore ping/pong/binary frames.
-                    Ok(_) => continue,
-                    Err(_) => break,
-                };
-
-                let response = handle_ws_request(&body, &context, &mut subscriptions, &out_tx).await;
-                if let Some(resp) = response
-                    && socket.send(Message::Text(resp.into())).await.is_err()
-                {
-                    break;
-                }
-            }
-
-            // Push subscription notifications for all active subscriptions.
-            _ = ethrex_rpc::drain_subscriptions(&mut subscriptions, &out_tx) => {}
-
-            // Send any pending outbound messages (subscription notifications).
-            Some(msg) = out_rx.recv() => {
-                if socket.send(Message::Text(msg.into())).await.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-
-    // Connection closed — subscriptions are dropped automatically when the
-    // HashMap goes out of scope.
-}
-
-/// Process an incoming JSON-RPC request over WebSocket.
-/// Returns `Some(response_text)` for request-response calls.
-/// For eth_subscribe / eth_unsubscribe the response is also returned inline.
-async fn handle_ws_request(
-    body: &str,
-    context: &RpcApiContext,
-    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
-    _out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
-) -> Option<String> {
-    let req: RpcRequest = match serde_json::from_str(body) {
-        Ok(r) => r,
-        Err(_) => {
-            let resp = ethrex_rpc::rpc_response(
-                RpcRequestId::String("".to_string()),
-                Err::<Value, _>(ethrex_rpc::RpcErr::BadParams(
-                    "Invalid request body".to_string(),
-                )),
-            )
-            .ok()?;
-            return Some(resp.to_string());
-        }
-    };
-
-    match req.method.as_str() {
-        "eth_subscribe" => {
-            // Delegate to L1's implementation, which reads from context.l1_ctx.new_heads_sender.
-            let result = ethrex_rpc::handle_eth_subscribe(&req, &context.l1_ctx, subscriptions)
-                .map_err(RpcErr::L1RpcErr);
-            let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
-        }
-        "eth_unsubscribe" => {
-            // Delegate to L1's implementation.
-            let result =
-                ethrex_rpc::handle_eth_unsubscribe(&req, subscriptions).map_err(RpcErr::L1RpcErr);
-            let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
-        }
-        _ => {
-            let res = map_http_requests(&req, context.clone()).await;
-            let resp = ethrex_rpc::rpc_response(req.id, res).ok()?;
-            Some(resp.to_string())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use ethrex_rpc::{
-        NEW_HEADS_CHANNEL_CAPACITY, broadcast, build_subscription_notification,
-        generate_subscription_id, handle_eth_unsubscribe,
-    };
     use serde_json::{Value, json};
+    use tokio::sync::broadcast;
 
     use super::*;
 

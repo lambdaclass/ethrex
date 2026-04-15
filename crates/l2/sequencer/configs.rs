@@ -17,6 +17,21 @@ pub struct SequencerConfig {
     pub monitor: MonitorConfig,
     pub admin_server: AdminConfig,
     pub state_updater: StateUpdaterConfig,
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+/// Configuration for the Circuit Breaker sidecar integration.
+/// Both URLs are optional; if absent, the feature is disabled.
+#[derive(Clone, Debug, Default)]
+pub struct CircuitBreakerConfig {
+    /// gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
+    pub sidecar_url: Option<String>,
+    /// gRPC endpoint for the Aeges mempool pre-filter service.
+    pub aeges_url: Option<String>,
+    /// Address of the already-deployed State Oracle contract on L2.
+    /// Required by the Credible Layer sidecar for assertion registry lookups.
+    /// Deploy the State Oracle separately using the Phylax toolchain before starting ethrex.
+    pub state_oracle_address: Option<Address>,
 }
 
 // TODO: Move to blockchain/dev

@@ -39,6 +39,7 @@ pub mod proof_coordinator;
 pub use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 pub mod state_updater;
 
+pub mod circuit_breaker;
 pub mod configs;
 pub mod errors;
 pub mod setup;
