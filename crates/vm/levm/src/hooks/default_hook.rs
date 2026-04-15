@@ -79,7 +79,13 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        vm.add_intrinsic_gas()?;
+        // BSC system transactions (from SYSTEM_ADDRESS) are consensus-engine-injected
+        // and don't pay intrinsic gas — only the contract's actual gas is charged.
+        let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+        let is_bsc_system_tx = is_bsc && sender_address == SYSTEM_ADDRESS;
+        if !is_bsc_system_tx {
+            vm.add_intrinsic_gas()?;
+        }
 
         // (7) NONCE_IS_MAX
         vm.increment_account_nonce(sender_address)
