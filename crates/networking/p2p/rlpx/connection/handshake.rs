@@ -146,6 +146,10 @@ pub(crate) async fn perform(
             current_requests: HashMap::new(),
             disconnect_reason: None,
             is_validated: false,
+            serve_request_window_start: std::time::Instant::now(),
+            serve_requests_in_window: 0,
+            txs_sent_to_peer: 0,
+            received_txs_from_peer: false,
         },
         stream,
     ))

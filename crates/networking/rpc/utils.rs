@@ -395,14 +395,12 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
                 "Failed to slice index abi_decoded_error_data when getting message from revert data".to_owned(),
             ),
         )?);
-        let string_len = if string_length > usize::MAX.into() {
-            return Err(EthClientError::Custom(
+        let string_len = usize::try_from(string_length).map_err(|_| {
+            EthClientError::Custom(
                 "Failed to convert string_length to usize when getting message from revert data"
                     .to_owned(),
-            ));
-        } else {
-            string_length.as_usize()
-        };
+            )
+        })?;
         let string_data = abi_decoded_error_data
             .get(68..68 + string_len)
             .ok_or(EthClientError::Custom(
