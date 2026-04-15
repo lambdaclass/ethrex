@@ -26,7 +26,7 @@ use ethrex_p2p::{
     rlpx::initiator::RLPxInitiator,
     sync::SyncMode,
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{NetworkConfig, Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
@@ -336,10 +336,12 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
     let local_node = Node::from_enode_url(
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
     ).expect("Bad enode url");
+    let network_config = NetworkConfig::from_node(&local_node);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     P2PContext::new(
         local_node,
+        network_config,
         TaskTracker::default(),
         SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
         peer_table,
