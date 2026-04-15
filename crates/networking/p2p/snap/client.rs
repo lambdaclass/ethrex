@@ -715,11 +715,10 @@ pub async fn request_storage_ranges(
                 let _ = peers
                     .peer_table
                     .record_response_latency(peer_id, stats.elapsed);
-                let _ = peers.peer_table.record_bandwidth(
-                    peer_id,
-                    stats.response_bytes,
-                    stats.elapsed,
-                );
+                let _ =
+                    peers
+                        .peer_table
+                        .record_bandwidth(peer_id, stats.response_bytes, stats.elapsed);
             }
             completed_tasks += 1;
 
