@@ -3151,6 +3151,10 @@ pub fn validate_state_root(
     if new_state_root == block_header.state_root {
         Ok(())
     } else {
+        println!(
+            "STATE ROOT MISMATCH block={} got={:?} expected={:?}",
+            block_header.number, new_state_root, block_header.state_root
+        );
         Err(ChainError::InvalidBlock(
             InvalidBlockError::StateRootMismatch,
         ))
