@@ -4,9 +4,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{
-        ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError,
-    },
+    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
