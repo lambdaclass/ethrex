@@ -1,4 +1,4 @@
-/// Mock Circuit Breaker Sidecar for end-to-end testing.
+/// Mock Credible Layer Sidecar for end-to-end testing.
 ///
 /// Implements the sidecar.proto gRPC protocol and rejects any transaction
 /// that calls the `transferOwnership(address)` function selector (0xf2fde38b).

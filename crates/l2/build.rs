@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Emitter::default().add_instructions(&git2)?.emit()?;
     }
 
-    // Compile Circuit Breaker protobuf definitions (client + server for mock sidecar)
+    // Compile Credible Layer protobuf definitions (client + server for mock sidecar)
     tonic_build::configure()
         .compile_protos(
             &["proto/sidecar.proto", "proto/aeges.proto"],

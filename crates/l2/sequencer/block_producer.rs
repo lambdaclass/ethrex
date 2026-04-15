@@ -39,9 +39,9 @@ use serde_json::Value;
 use std::str::FromStr;
 use tokio::sync::broadcast;
 
-use super::circuit_breaker::{
-    CircuitBreakerClient,
-    client::CircuitBreakerConfig as ClientCircuitBreakerConfig,
+use super::credible_layer::{
+    CredibleLayerClient,
+    client::CredibleLayerConfig as ClientCredibleLayerConfig,
     sidecar_proto::{BlobExcessGasAndPrice, BlockEnv, CommitHead, NewIteration},
 };
 use super::errors::BlockProducerError;
@@ -70,7 +70,7 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
-    circuit_breaker: Option<Arc<CircuitBreakerClient>>,
+    credible_layer: Option<Arc<CredibleLayerClient>>,
     /// Broadcast sender for new block header notifications to WS subscribers.
     new_heads_sender: Option<broadcast::Sender<Value>>,
 }
@@ -94,7 +94,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
-        circuit_breaker_url: Option<String>,
+        credible_layer_url: Option<String>,
         new_heads_sender: Option<broadcast::Sender<Value>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
@@ -121,18 +121,18 @@ impl BlockProducer {
             );
         }
 
-        let circuit_breaker = if let Some(url) = circuit_breaker_url {
-            let cb_config = ClientCircuitBreakerConfig {
+        let credible_layer = if let Some(url) = credible_layer_url {
+            let cb_config = ClientCredibleLayerConfig {
                 sidecar_url: url,
                 ..Default::default()
             };
-            match CircuitBreakerClient::connect(cb_config).await {
+            match CredibleLayerClient::connect(cb_config).await {
                 Ok(client) => {
-                    info!("Circuit Breaker sidecar connected");
+                    info!("Credible Layer sidecar connected");
                     Some(Arc::new(client))
                 }
                 Err(e) => {
-                    warn!("Failed to connect to Circuit Breaker sidecar: {e}. Proceeding without circuit breaker.");
+                    warn!("Failed to connect to Credible Layer sidecar: {e}. Proceeding without credible layer.");
                     None
                 }
             }
@@ -153,7 +153,7 @@ impl BlockProducer {
             block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
-            circuit_breaker,
+            credible_layer,
             new_heads_sender,
         })
     }
@@ -190,10 +190,10 @@ impl BlockProducer {
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 
-        // Circuit Breaker: send NewIteration before building the block.
+        // Credible Layer: send NewIteration before building the block.
         // CommitHead is sent AFTER the block is stored (see below).
         // The sidecar flow per block: NewIteration → Transaction(s) → CommitHead
-        if let Some(cb) = &self.circuit_breaker {
+        if let Some(cb) = &self.credible_layer {
             let block_number_bytes = u64_to_u256_bytes(payload.header.number);
             let timestamp_bytes = u64_to_u256_bytes(payload.header.timestamp);
             let beneficiary_bytes = payload.header.coinbase.as_bytes().to_vec();
@@ -225,7 +225,7 @@ impl BlockProducer {
                 parent_beacon_block_root,
             };
             if let Err(e) = cb.send_new_iteration(new_iteration).await {
-                warn!("Failed to send NewIteration to circuit breaker: {e}");
+                warn!("Failed to send NewIteration to credible layer: {e}");
             }
         }
 
@@ -239,7 +239,7 @@ impl BlockProducer {
             &mut self.privileged_nonces,
             self.block_gas_limit,
             registered_chains,
-            self.circuit_breaker.clone(),
+            self.credible_layer.clone(),
         )
         .await?;
         info!(
@@ -292,8 +292,8 @@ impl BlockProducer {
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
-        // Circuit Breaker: send CommitHead AFTER block is stored (matches Besu plugin flow)
-        if let Some(cb) = &self.circuit_breaker {
+        // Credible Layer: send CommitHead AFTER block is stored (matches Besu plugin flow)
+        if let Some(cb) = &self.credible_layer {
             let last_tx_hash = self
                 .store
                 .get_block_by_hash(block_hash)
@@ -312,7 +312,7 @@ impl BlockProducer {
                 timestamp: u64_to_u256_bytes(block_header.timestamp),
             };
             if let Err(e) = cb.send_commit_head(commit_head).await {
-                warn!("Failed to send CommitHead to circuit breaker: {e}");
+                warn!("Failed to send CommitHead to credible layer: {e}");
             }
         }
 
@@ -428,7 +428,7 @@ impl BlockProducer {
         l2_gas_limit: u64,
         new_heads_sender: Option<broadcast::Sender<Value>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
-        let circuit_breaker_url = cfg.circuit_breaker.sidecar_url.clone();
+        let credible_layer_url = cfg.credible_layer.sidecar_url.clone();
         let block_producer = Self::new(
             &cfg.block_producer,
             cfg.eth.rpc_url,
@@ -438,7 +438,7 @@ impl BlockProducer {
             sequencer_state,
             router_address,
             l2_gas_limit,
-            circuit_breaker_url,
+            credible_layer_url,
             new_heads_sender,
         )
         .await?;

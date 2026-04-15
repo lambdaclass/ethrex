@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Circuit Breaker End-to-End Validation Script
+# Credible Layer End-to-End Validation Script
 #
-# This script validates the full Circuit Breaker integration:
-# 1. Checks that ethrex L2 is running with Circuit Breaker enabled
+# This script validates the full Credible Layer integration:
+# 1. Checks that ethrex L2 is running with Credible Layer enabled
 # 2. Checks that the sidecar is running and healthy
 # 3. Deploys a test target contract (OwnableTarget)
 # 4. (Manual step) Deploys and registers a test assertion via pcl
@@ -10,13 +10,13 @@
 # 6. Sends a valid transaction → verifies it IS included
 #
 # Prerequisites:
-#   - ethrex L2 running with --circuit-breaker-url (see: make init-l2-circuit-breaker)
-#   - Credible Layer sidecar running (see: make init-circuit-breaker)
+#   - ethrex L2 running with --credible-layer-url (see: make init-l2-credible-layer)
+#   - Credible Layer sidecar running (see: make init-credible-layer)
 #   - cast (from foundry) installed
 #   - A funded account on L2
 #
 # Usage:
-#   ./circuit_breaker_e2e.sh [L2_RPC_URL] [SIDECAR_HEALTH_URL]
+#   ./credible_layer_e2e.sh [L2_RPC_URL] [SIDECAR_HEALTH_URL]
 
 set -euo pipefail
 
@@ -58,7 +58,7 @@ fi
 
 info "Deploying OwnableTarget contract..."
 
-# OwnableTarget bytecode (compiled from contracts/src/circuit_breaker/OwnableTarget.sol)
+# OwnableTarget bytecode (compiled from contracts/src/credible_layer/OwnableTarget.sol)
 # If you need to recompile: solc --bin OwnableTarget.sol
 # For now, we attempt to deploy using cast
 OWNABLE_TARGET_DEPLOY=$(cast send --create \
@@ -79,7 +79,7 @@ if [ -n "$OWNABLE_TARGET_DEPLOY" ]; then
     fi
 else
     info "Could not deploy OwnableTarget. You may need to deploy it manually."
-    info "Compile with: solc --bin crates/l2/contracts/src/circuit_breaker/OwnableTarget.sol"
+    info "Compile with: solc --bin crates/l2/contracts/src/credible_layer/OwnableTarget.sol"
 fi
 
 # ─── Step 4: Assertion registration (manual) ──────────────────────────────────

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.27;
 
 /// @title TestOwnershipAssertion
-/// @notice A trivial assertion for Circuit Breaker end-to-end testing.
+/// @notice A trivial assertion for Credible Layer end-to-end testing.
 /// Protects OwnableTarget by asserting that ownership cannot change.
 ///
 /// This contract uses the credible-std library interfaces.

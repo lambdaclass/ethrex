@@ -669,7 +669,7 @@ L2 options:
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
 
       --l2.ws-enabled
-          Enable WebSocket RPC server for L2. Required by the Circuit Breaker sidecar.
+          Enable WebSocket RPC server for L2. Required by the Credible Layer sidecar.
 
           [env: ETHREX_L2_WS_ENABLED=]
 
@@ -685,18 +685,18 @@ L2 options:
           [env: ETHREX_L2_WS_PORT=]
           [default: 1729]
 
-Circuit Breaker options:
-      --circuit-breaker-url <URL>
+Credible Layer options:
+      --credible-layer-url <URL>
           gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
           When set, enables transaction validation against assertions during block building.
 
-          [env: ETHREX_CIRCUIT_BREAKER_URL=]
+          [env: ETHREX_CREDIBLE_LAYER_URL=]
 
-      --circuit-breaker-aeges-url <URL>
+      --credible-layer-aeges-url <URL>
           gRPC endpoint for the Aeges mempool pre-filter service.
           When set, transactions are validated before mempool admission.
 
-          [env: ETHREX_CIRCUIT_BREAKER_AEGES_URL=]
+          [env: ETHREX_CREDIBLE_LAYER_AEGES_URL=]
 
 Monitor options:
       --no-monitor

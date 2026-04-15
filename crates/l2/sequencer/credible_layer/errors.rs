@@ -1,7 +1,7 @@
 use tonic::Status;
 
 #[derive(Debug, thiserror::Error)]
-pub enum CircuitBreakerError {
+pub enum CredibleLayerError {
     #[error("gRPC transport error: {0}")]
     Transport(#[from] tonic::transport::Error),
     #[error("gRPC status error: {0}")]
@@ -10,6 +10,6 @@ pub enum CircuitBreakerError {
     StreamClosed,
     #[error("Result timeout for tx {0}")]
     ResultTimeout(String),
-    #[error("Circuit Breaker error: {0}")]
+    #[error("Credible Layer error: {0}")]
     Internal(String),
 }

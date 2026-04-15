@@ -1,6 +1,6 @@
-# Circuit Breaker Contracts
+# Credible Layer Contracts
 
-This directory contains example/demo contracts for the Circuit Breaker integration:
+This directory contains example/demo contracts for the Credible Layer integration:
 
 - `OwnableTarget.sol` — a simple Ownable contract used as a demonstration target
 - `TestOwnershipAssertion.sol` — a test assertion that asserts ownership of `OwnableTarget` cannot change
@@ -60,7 +60,7 @@ forge script script/DeployStateOracle.s.sol --rpc-url <L2_RPC_URL> --broadcast
 ```
 
 Once deployed, note the State Oracle address and pass it to ethrex via the
-`--circuit-breaker-state-oracle` flag (see the [Circuit Breaker docs](../../../../docs/l2/circuit_breaker.md)).
+`--credible-layer-state-oracle` flag (see the [Credible Layer docs](../../../../docs/l2/credible_layer.md)).
 
 ### References
 

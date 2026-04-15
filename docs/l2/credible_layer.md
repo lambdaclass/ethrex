@@ -1,8 +1,8 @@
-# Circuit Breaker (Credible Layer Integration)
+# Credible Layer Integration
 
 ## Overview
 
-Circuit Breaker integrates ethrex L2 with [Phylax Systems' Credible Layer](https://docs.phylax.systems/credible/credible-introduction) — a pre-execution security infrastructure that validates transactions against on-chain assertions before block inclusion. Transactions that violate an assertion are silently dropped before they land on-chain.
+Credible Layer integrates ethrex L2 with [Phylax Systems' Credible Layer](https://docs.phylax.systems/credible/credible-introduction) — a pre-execution security infrastructure that validates transactions against on-chain assertions before block inclusion. Transactions that violate an assertion are silently dropped before they land on-chain.
 
 ### Architecture
 
@@ -76,7 +76,7 @@ Per block:
    - If `ASSERTION_FAILED`: skip the transaction
    - Otherwise: include it
 
-Privileged transactions (L1→L2 deposits) bypass Circuit Breaker entirely.
+Privileged transactions (L1→L2 deposits) bypass Credible Layer entirely.
 
 ---
 
@@ -86,10 +86,10 @@ Privileged transactions (L1→L2 deposits) bypass Circuit Breaker entirely.
 
 | File | Role |
 |------|------|
-| `crates/l2/sequencer/circuit_breaker/mod.rs` | Module root, proto imports |
-| `crates/l2/sequencer/circuit_breaker/client.rs` | `CircuitBreakerClient` — gRPC client for sidecar |
-| `crates/l2/sequencer/circuit_breaker/aeges.rs` | `AegesClient` — gRPC client for Aeges |
-| `crates/l2/sequencer/circuit_breaker/errors.rs` | Error types |
+| `crates/l2/sequencer/credible_layer/mod.rs` | Module root, proto imports |
+| `crates/l2/sequencer/credible_layer/client.rs` | `CredibleLayerClient` — gRPC client for sidecar |
+| `crates/l2/sequencer/credible_layer/aeges.rs` | `AegesClient` — gRPC client for Aeges |
+| `crates/l2/sequencer/credible_layer/errors.rs` | Error types |
 | `crates/l2/proto/sidecar.proto` | Sidecar gRPC protocol definition |
 | `crates/l2/proto/aeges.proto` | Aeges gRPC protocol definition |
 | `crates/l2/sequencer/block_producer.rs` | Block producer — sends CommitHead + NewIteration |
@@ -103,11 +103,11 @@ CLI flags:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--circuit-breaker-url` | gRPC endpoint for the sidecar | (disabled) |
-| `--circuit-breaker-aeges-url` | gRPC endpoint for Aeges pre-filter | (disabled) |
-| `--circuit-breaker-state-oracle` | Address of the deployed State Oracle contract on L2 | (none) |
+| `--credible-layer-url` | gRPC endpoint for the sidecar | (disabled) |
+| `--credible-layer-aeges-url` | gRPC endpoint for Aeges pre-filter | (disabled) |
+| `--credible-layer-state-oracle` | Address of the deployed State Oracle contract on L2 | (none) |
 
-When `--circuit-breaker-url` is not set, Circuit Breaker is completely disabled with zero overhead.
+When `--credible-layer-url` is not set, Credible Layer is completely disabled with zero overhead.
 
 ### Sidecar Requirements
 
@@ -124,7 +124,7 @@ The `debug_traceBlockByNumber` with `prestateTracer` in diff mode is particularl
 
 ## How to Run (End-to-End)
 
-This is a step-by-step guide to run the full Circuit Breaker stack locally, deploy an assertion, and verify that violating transactions are dropped. All steps have been tested and verified.
+This is a step-by-step guide to run the full Credible Layer stack locally, deploy an assertion, and verify that violating transactions are dropped. All steps have been tested and verified.
 
 ### Prerequisites
 
@@ -156,7 +156,7 @@ cast block-number --rpc-url http://localhost:8545
 COMPILE_CONTRACTS=true make deploy-l1
 ```
 
-### Step 3: Start ethrex L2 with Circuit Breaker
+### Step 3: Start ethrex L2 with Credible Layer
 
 ```bash
 export $(cat ../../cmd/.env | xargs)
@@ -173,7 +173,7 @@ RUST_LOG=info,ethrex_l2=debug ../../target/release/ethrex l2 \
   --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --circuit-breaker-url http://localhost:50051 \
+  --credible-layer-url http://localhost:50051 \
   --l2.ws-enabled --l2.ws-port 1730 &
 
 # Verify (wait ~10s for L2 to start)
@@ -231,7 +231,7 @@ docker run -d --name assertion-da -p 5001:5001 \
 ### Step 6: Deploy OwnableTarget test contract
 
 ```bash
-cd <ethrex_repo>/crates/l2/contracts/src/circuit_breaker
+cd <ethrex_repo>/crates/l2/contracts/src/credible_layer
 solc --bin OwnableTarget.sol -o /tmp/cb_compiled --overwrite
 
 PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
@@ -413,7 +413,7 @@ cast call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
 timeout 25 cast send $OWNABLE_TARGET "transferOwnership(address)" \
   0x0000000000000000000000000000000000000001 \
   --private-key $PK --rpc-url http://localhost:1729
-# Expected: times out with no output (tx was dropped by Circuit Breaker)
+# Expected: times out with no output (tx was dropped by Credible Layer)
 
 # Verify owner is UNCHANGED
 cast call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729

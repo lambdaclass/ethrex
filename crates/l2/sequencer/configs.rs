@@ -17,13 +17,13 @@ pub struct SequencerConfig {
     pub monitor: MonitorConfig,
     pub admin_server: AdminConfig,
     pub state_updater: StateUpdaterConfig,
-    pub circuit_breaker: CircuitBreakerConfig,
+    pub credible_layer: CredibleLayerConfig,
 }
 
-/// Configuration for the Circuit Breaker sidecar integration.
+/// Configuration for the Credible Layer sidecar integration.
 /// Both URLs are optional; if absent, the feature is disabled.
 #[derive(Clone, Debug, Default)]
-pub struct CircuitBreakerConfig {
+pub struct CredibleLayerConfig {
     /// gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
     pub sidecar_url: Option<String>,
     /// gRPC endpoint for the Aeges mempool pre-filter service.

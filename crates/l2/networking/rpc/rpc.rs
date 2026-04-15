@@ -124,6 +124,9 @@ pub async fn start_api(
     // here. The same sender clone should be given to the block producer so it
     // can publish headers after sealing each block.
     new_heads_sender: Option<broadcast::Sender<Value>>,
+    // Optional mempool pre-filter (Aeges integration). When `Some`, every
+    // `eth_sendRawTransaction` call is checked before mempool admission.
+    mempool_filter: Option<MempoolFilter>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -160,7 +163,7 @@ pub async fn start_api(
         rollup_store,
         sponsored_gas_limit,
         new_heads_sender,
-        mempool_filter: None,
+        mempool_filter,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

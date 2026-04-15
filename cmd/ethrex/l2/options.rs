@@ -8,7 +8,7 @@ use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::configs::{AdminConfig, AlignedConfig, CircuitBreakerConfig, MonitorConfig},
+    sequencer::configs::{AdminConfig, AlignedConfig, CredibleLayerConfig, MonitorConfig},
 };
 use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
@@ -124,7 +124,7 @@ pub struct SequencerOptions {
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
     #[clap(flatten)]
-    pub circuit_breaker_opts: CircuitBreakerOptions,
+    pub credible_layer_opts: CredibleLayerOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -296,10 +296,10 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 start_at: opts.state_updater_opts.start_at,
                 l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
             },
-            circuit_breaker: CircuitBreakerConfig {
-                sidecar_url: opts.circuit_breaker_opts.circuit_breaker_url,
-                aeges_url: opts.circuit_breaker_opts.circuit_breaker_aeges_url,
-                state_oracle_address: opts.circuit_breaker_opts.circuit_breaker_state_oracle,
+            credible_layer: CredibleLayerConfig {
+                sidecar_url: opts.credible_layer_opts.credible_layer_url,
+                aeges_url: opts.credible_layer_opts.credible_layer_aeges_url,
+                state_oracle_address: opts.credible_layer_opts.credible_layer_state_oracle,
             },
         })
     }
@@ -336,7 +336,7 @@ impl SequencerOptions {
         self.state_updater_opts
             .populate_with_defaults(&defaults.state_updater_opts);
         // admin_opts contains only non-optional fields.
-        // circuit_breaker_opts contains only optional fields, nothing to populate.
+        // credible_layer_opts contains only optional fields, nothing to populate.
     }
 }
 
@@ -1106,31 +1106,31 @@ impl Default for AdminOptions {
 }
 
 #[derive(Parser, Default, Debug)]
-pub struct CircuitBreakerOptions {
+pub struct CredibleLayerOptions {
     #[arg(
-        long = "circuit-breaker-url",
+        long = "credible-layer-url",
         value_name = "URL",
-        env = "ETHREX_CIRCUIT_BREAKER_URL",
-        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051). When set, the circuit breaker integration is enabled.",
-        help_heading = "Circuit Breaker options"
+        env = "ETHREX_CREDIBLE_LAYER_URL",
+        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051). When set, the credible layer integration is enabled.",
+        help_heading = "Credible Layer options"
     )]
-    pub circuit_breaker_url: Option<String>,
+    pub credible_layer_url: Option<String>,
     #[arg(
-        long = "circuit-breaker-aeges-url",
+        long = "credible-layer-aeges-url",
         value_name = "URL",
-        env = "ETHREX_CIRCUIT_BREAKER_AEGES_URL",
+        env = "ETHREX_CREDIBLE_LAYER_AEGES_URL",
         help = "gRPC endpoint for the Aeges mempool pre-filter service (e.g. http://localhost:8080). When set, Aeges pre-filtering is enabled.",
-        help_heading = "Circuit Breaker options"
+        help_heading = "Credible Layer options"
     )]
-    pub circuit_breaker_aeges_url: Option<String>,
+    pub credible_layer_aeges_url: Option<String>,
     #[arg(
-        long = "circuit-breaker-state-oracle",
+        long = "credible-layer-state-oracle",
         value_name = "ADDRESS",
-        env = "ETHREX_CIRCUIT_BREAKER_STATE_ORACLE",
-        help = "Address of the already-deployed State Oracle contract on L2. The State Oracle maps protected contracts to their active assertions and is required by the Credible Layer sidecar. Deploy it separately using the Phylax toolchain (see crates/l2/contracts/src/circuit_breaker/README.md).",
-        help_heading = "Circuit Breaker options"
+        env = "ETHREX_CREDIBLE_LAYER_STATE_ORACLE",
+        help = "Address of the already-deployed State Oracle contract on L2. The State Oracle maps protected contracts to their active assertions and is required by the Credible Layer sidecar. Deploy it separately using the Phylax toolchain (see crates/l2/contracts/src/credible_layer/README.md).",
+        help_heading = "Credible Layer options"
     )]
-    pub circuit_breaker_state_oracle: Option<Address>,
+    pub credible_layer_state_oracle: Option<Address>,
 }
 
 #[derive(Parser)]

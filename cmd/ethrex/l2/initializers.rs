@@ -53,6 +53,7 @@ fn init_rpc_api(
     l2_gas_limit: u64,
     ws_addr: Option<SocketAddr>,
     new_heads_sender: Option<broadcast::Sender<Value>>,
+    mempool_filter: Option<ethrex_l2_rpc::MempoolFilter>,
 ) {
     init_datadir(&opts.datadir);
 
@@ -75,6 +76,7 @@ fn init_rpc_api(
         l2_gas_limit,
         l2_opts.sponsored_gas_limit,
         new_heads_sender,
+        mempool_filter,
     );
 
     tracker.spawn(rpc_api);
@@ -111,8 +113,8 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 async fn build_aeges_filter(aeges_url: Option<String>) -> Option<ethrex_l2_rpc::MempoolFilter> {
     use ethrex_common::types::Transaction as EthrexTx;
     use ethrex_crypto::NativeCrypto;
-    use ethrex_l2::sequencer::circuit_breaker::{AegesClient, aeges::AegesConfig};
-    use ethrex_l2::sequencer::circuit_breaker::aeges_proto::{
+    use ethrex_l2::sequencer::credible_layer::{AegesClient, aeges::AegesConfig};
+    use ethrex_l2::sequencer::credible_layer::aeges_proto::{
         AccessListEntry, Transaction as AegesTransaction,
     };
     use ethrex_rlp::decode::RLPDecode;
@@ -439,6 +441,14 @@ pub async fn init_l2(
         (None, None)
     };
 
+    // Build the Aeges mempool pre-filter if configured.
+    let mempool_filter = build_aeges_filter(
+        opts.sequencer_opts
+            .credible_layer_opts
+            .credible_layer_aeges_url
+            .clone(),
+    )
+    .await;
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -454,6 +464,7 @@ pub async fn init_l2(
         l2_gas_limit,
         ws_addr,
         new_heads_sender,
+        mempool_filter,
     );
 
     // Initialize metrics if enabled

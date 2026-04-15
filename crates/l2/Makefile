@@ -282,11 +282,11 @@ state-diff-test:
 validate-blobs:
 	cargo test -p ethrex-test validate_blobs_match_genesis --release
 
-# Circuit Breaker (Credible Layer)
-# See docs/l2/circuit_breaker.md for full documentation.
+# Credible Layer (Credible Layer)
+# See docs/l2/credible_layer.md for full documentation.
 
-init-circuit-breaker: ## 🛡️ Start the Circuit Breaker sidecar stack (assertion-da + sidecar)
-	@echo "Starting Circuit Breaker sidecar stack..."
+init-credible-layer: ## 🛡️ Start the Credible Layer sidecar stack (assertion-da + sidecar)
+	@echo "Starting Credible Layer sidecar stack..."
 	@echo "Make sure to set STATE_ORACLE_ADDRESS in sidecar-config.template.json"
 	docker run -d --name assertion-da -p 5001:5001 \
 		-e DB_PATH=/data/assertions \
@@ -296,15 +296,15 @@ init-circuit-breaker: ## 🛡️ Start the Circuit Breaker sidecar stack (assert
 	@echo "Assertion DA running on :5001"
 	@echo "Start the sidecar manually: ./sidecar --config-file-path ./sidecar-config.template.json"
 
-down-circuit-breaker: ## 🛑 Stop the Circuit Breaker sidecar stack
+down-credible-layer: ## 🛑 Stop the Credible Layer sidecar stack
 	docker stop assertion-da 2>/dev/null || true
 	docker rm assertion-da 2>/dev/null || true
 
-init-l2-circuit-breaker: ## 🛡️ Start L2 with Circuit Breaker enabled
+init-l2-credible-layer: ## 🛡️ Start L2 with Credible Layer enabled
 	cargo run --release --features l2 --manifest-path ../../Cargo.toml -- \
 		l2 \
-		--circuit-breaker-url http://localhost:50051 \
-		--circuit-breaker-aeges-url http://localhost:8080 \
+		--credible-layer-url http://localhost:50051 \
+		--credible-layer-aeges-url http://localhost:8080 \
 		--l2.ws-enabled \
 		--l2.ws-port 1730 \
 		2>&1 | tee /tmp/l2_cb.log

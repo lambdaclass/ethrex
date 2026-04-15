@@ -1,5 +1,5 @@
-use crate::sequencer::circuit_breaker::{
-    CircuitBreakerClient,
+use crate::sequencer::credible_layer::{
+    CredibleLayerClient,
     sidecar_proto::{Transaction as SidecarTransaction, TransactionEnv, TxExecutionId},
 };
 use crate::sequencer::errors::BlockProducerError;
@@ -39,7 +39,7 @@ pub async fn build_payload(
     privileged_nonces: &mut HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
     registered_chains: Vec<U256>,
-    circuit_breaker: Option<Arc<CircuitBreakerClient>>,
+    credible_layer: Option<Arc<CredibleLayerClient>>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -54,7 +54,7 @@ pub async fn build_payload(
         privileged_nonces,
         block_gas_limit,
         registered_chains,
-        circuit_breaker,
+        credible_layer,
     )
     .await?;
     blockchain.finalize_payload(&mut context)?;
@@ -106,7 +106,7 @@ pub async fn fill_transactions(
     privileged_nonces: &mut HashMap<u64, Option<u64>>,
     configured_block_gas_limit: u64,
     registered_chains: Vec<U256>,
-    circuit_breaker: Option<Arc<CircuitBreakerClient>>,
+    credible_layer: Option<Arc<CredibleLayerClient>>,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
     let VMType::L2(fee_config) = context.vm.vm_type else {
@@ -193,9 +193,9 @@ pub async fn fill_transactions(
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
         let tx_hash = head_tx.tx.hash();
 
-        // Task 2.5: For non-privileged transactions, check with the circuit breaker sidecar.
+        // Task 2.5: For non-privileged transactions, check with the credible layer sidecar.
         // Privileged transactions (PrivilegedL2Transaction) bypass this check.
-        if let Some(cb) = &circuit_breaker {
+        if let Some(cb) = &credible_layer {
             if !head_tx.is_privileged() {
                 let block_num_bytes = {
                     let mut buf = [0u8; 32];
@@ -369,7 +369,7 @@ fn build_transaction_env(tx: &Transaction, sender: ethrex_common::Address) -> Tr
         .access_list()
         .iter()
         .map(|(addr, keys)| {
-            use super::super::circuit_breaker::sidecar_proto::AccessListItem;
+            use super::super::credible_layer::sidecar_proto::AccessListItem;
             AccessListItem {
                 address: addr.as_bytes().to_vec(),
                 storage_keys: keys.iter().map(|k| k.as_bytes().to_vec()).collect(),
@@ -380,7 +380,7 @@ fn build_transaction_env(tx: &Transaction, sender: ethrex_common::Address) -> Tr
     let authorization_list = tx
         .authorization_list()
         .map(|list| {
-            use super::super::circuit_breaker::sidecar_proto::Authorization;
+            use super::super::credible_layer::sidecar_proto::Authorization;
             list.iter()
                 .map(|auth| {
                     let chain_id_bytes = auth.chain_id.to_big_endian();

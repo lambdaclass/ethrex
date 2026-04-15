@@ -2,7 +2,7 @@
 pragma solidity ^0.8.27;
 
 /// @title OwnableTarget
-/// @notice A simple Ownable contract used as a target for Circuit Breaker testing.
+/// @notice A simple Ownable contract used as a target for Credible Layer testing.
 /// The TestOwnershipAssertion protects this contract by preventing ownership transfers.
 contract OwnableTarget {
     address public owner;

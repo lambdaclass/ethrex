@@ -72,7 +72,7 @@ path = "./l2.rs"
 
 [[bin]]
 name = "mock-sidecar"
-path = "sequencer/circuit_breaker/mock_sidecar/main.rs"
+path = "sequencer/credible_layer/mock_sidecar/main.rs"
 
 [lints.clippy]
 unwrap_used = "deny"

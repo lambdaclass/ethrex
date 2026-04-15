@@ -8,7 +8,7 @@ use super::aeges_proto::{
     aeges_service_client::AegesServiceClient, VerifyTransactionRequest,
     Transaction as AegesTransaction,
 };
-use super::errors::CircuitBreakerError;
+use super::errors::CredibleLayerError;
 
 /// Configuration for the Aeges mempool pre-filter.
 #[derive(Debug, Clone)]
@@ -40,11 +40,11 @@ pub struct AegesClient {
 
 impl AegesClient {
     /// Connect to the Aeges service.
-    pub async fn connect(config: AegesConfig) -> Result<Self, CircuitBreakerError> {
+    pub async fn connect(config: AegesConfig) -> Result<Self, CredibleLayerError> {
         info!(url = %config.aeges_url, "Connecting to Aeges service");
 
         let channel = Channel::from_shared(config.aeges_url.clone())
-            .map_err(|e| CircuitBreakerError::Internal(format!("Invalid Aeges URL: {e}")))?
+            .map_err(|e| CredibleLayerError::Internal(format!("Invalid Aeges URL: {e}")))?
             .connect()
             .await?;
 
@@ -103,7 +103,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::sequencer::circuit_breaker::aeges_proto::{
+    use crate::sequencer::credible_layer::aeges_proto::{
         Transaction as AegesTransaction, VerifyTransactionRequest, VerifyTransactionResponse,
     };
 

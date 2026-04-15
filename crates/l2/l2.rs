@@ -6,7 +6,7 @@ pub mod utils;
 
 pub use based::block_fetcher::BlockFetcher;
 pub use sequencer::configs::{
-    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CircuitBreakerConfig, CommitterConfig,
+    BasedConfig, BlockFetcherConfig, BlockProducerConfig, CredibleLayerConfig, CommitterConfig,
     EthConfig, L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
 };
 pub use sequencer::start_l2;

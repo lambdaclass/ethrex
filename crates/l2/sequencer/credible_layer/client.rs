@@ -6,16 +6,16 @@ use tokio::sync::{mpsc, Mutex};
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
-use super::errors::CircuitBreakerError;
+use super::errors::CredibleLayerError;
 use super::sidecar_proto::{
     self, sidecar_transport_client::SidecarTransportClient, CommitHead, Event,
     GetTransactionRequest, NewIteration, ResultStatus, Transaction, TransactionResult,
     TxExecutionId,
 };
 
-/// Configuration for the Circuit Breaker gRPC client.
+/// Configuration for the Credible Layer gRPC client.
 #[derive(Debug, Clone)]
-pub struct CircuitBreakerConfig {
+pub struct CredibleLayerConfig {
     /// gRPC endpoint URL for the sidecar (e.g., "http://localhost:50051")
     pub sidecar_url: String,
     /// Timeout for waiting for a transaction result from the sidecar
@@ -24,7 +24,7 @@ pub struct CircuitBreakerConfig {
     pub poll_timeout: Duration,
 }
 
-impl Default for CircuitBreakerConfig {
+impl Default for CredibleLayerConfig {
     fn default() -> Self {
         Self {
             sidecar_url: "http://localhost:50051".to_string(),
@@ -39,8 +39,8 @@ impl Default for CircuitBreakerConfig {
 /// Maintains a persistent bidirectional `StreamEvents` gRPC stream. Events are sent
 /// via an mpsc channel that feeds the stream. Transaction results are retrieved via
 /// the `GetTransaction` unary RPC.
-pub struct CircuitBreakerClient {
-    config: CircuitBreakerConfig,
+pub struct CredibleLayerClient {
+    config: CredibleLayerConfig,
     /// Sender side of the persistent StreamEvents stream
     event_sender: mpsc::Sender<Event>,
     /// Monotonically increasing event ID counter
@@ -51,17 +51,17 @@ pub struct CircuitBreakerClient {
     grpc_client: Arc<Mutex<SidecarTransportClient<Channel>>>,
 }
 
-impl CircuitBreakerClient {
+impl CredibleLayerClient {
     /// Create a new client with lazy connection to the sidecar.
     /// Opens a persistent StreamEvents bidirectional stream in the background.
-    pub async fn connect(config: CircuitBreakerConfig) -> Result<Self, CircuitBreakerError> {
+    pub async fn connect(config: CredibleLayerConfig) -> Result<Self, CredibleLayerError> {
         info!(
             url = %config.sidecar_url,
-            "Configuring Circuit Breaker sidecar client"
+            "Configuring Credible Layer sidecar client"
         );
 
         let channel = Channel::from_shared(config.sidecar_url.clone())
-            .map_err(|e| CircuitBreakerError::Internal(format!("Invalid URL: {e}")))?
+            .map_err(|e| CredibleLayerError::Internal(format!("Invalid URL: {e}")))?
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(5))
             .connect_lazy();
@@ -162,7 +162,7 @@ impl CircuitBreakerClient {
             }
         });
 
-        info!("Circuit Breaker client ready (persistent stream opened)");
+        info!("Credible Layer client ready (persistent stream opened)");
 
         Ok(Self {
             config,
@@ -187,7 +187,7 @@ impl CircuitBreakerClient {
     pub async fn send_commit_head(
         &self,
         commit_head: CommitHead,
-    ) -> Result<(), CircuitBreakerError> {
+    ) -> Result<(), CredibleLayerError> {
         let event = Event {
             event_id: self.next_event_id(),
             event: Some(sidecar_proto::event::Event::CommitHead(commit_head)),
@@ -195,14 +195,14 @@ impl CircuitBreakerClient {
         self.event_sender
             .send(event)
             .await
-            .map_err(|_| CircuitBreakerError::StreamClosed)
+            .map_err(|_| CredibleLayerError::StreamClosed)
     }
 
     /// Send a NewIteration event (new block started) and increment the iteration ID.
     pub async fn send_new_iteration(
         &self,
         new_iteration: NewIteration,
-    ) -> Result<(), CircuitBreakerError> {
+    ) -> Result<(), CredibleLayerError> {
         self.iteration_id.fetch_add(1, Ordering::Relaxed);
         let event = Event {
             event_id: self.next_event_id(),
@@ -211,7 +211,7 @@ impl CircuitBreakerClient {
         self.event_sender
             .send(event)
             .await
-            .map_err(|_| CircuitBreakerError::StreamClosed)
+            .map_err(|_| CredibleLayerError::StreamClosed)
     }
 
     /// Send a Transaction event and wait for the sidecar's verdict.
@@ -321,25 +321,25 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::sequencer::circuit_breaker::sidecar_proto::{
+    use crate::sequencer::credible_layer::sidecar_proto::{
         CommitHead, NewIteration, ResultStatus, TransactionResult, TxExecutionId,
     };
 
     #[test]
     fn config_default_url_is_localhost_50051() {
-        let cfg = CircuitBreakerConfig::default();
+        let cfg = CredibleLayerConfig::default();
         assert_eq!(cfg.sidecar_url, "http://localhost:50051");
     }
 
     #[test]
     fn config_default_result_timeout_is_500ms() {
-        let cfg = CircuitBreakerConfig::default();
+        let cfg = CredibleLayerConfig::default();
         assert_eq!(cfg.result_timeout, Duration::from_millis(500));
     }
 
     #[test]
     fn config_default_poll_timeout_is_200ms() {
-        let cfg = CircuitBreakerConfig::default();
+        let cfg = CredibleLayerConfig::default();
         assert_eq!(cfg.poll_timeout, Duration::from_millis(200));
     }
 
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn new_iteration_has_expected_iteration_id() {
-        use crate::sequencer::circuit_breaker::sidecar_proto::BlockEnv;
+        use crate::sequencer::credible_layer::sidecar_proto::BlockEnv;
         let ni = NewIteration {
             block_env: Some(BlockEnv { number: vec![0; 32], beneficiary: vec![0; 20], timestamp: vec![0; 32], gas_limit: 30_000_000, basefee: 1_000_000_000, difficulty: vec![0; 32], prevrandao: None, blob_excess_gas_and_price: None }),
             iteration_id: 42, parent_block_hash: None, parent_beacon_block_root: None,
