@@ -44,7 +44,7 @@ Per block:
    - If `ASSERTION_FAILED`: skip the transaction
    - Otherwise: include it
 
-Privileged transactions (L1→L2 deposits) bypass Credible Layer entirely.
+Privileged transactions (L1→L2 deposits) bypass the Credible Layer in this first version of the integration.
 
 ---
 
@@ -55,8 +55,8 @@ Privileged transactions (L1→L2 deposits) bypass Credible Layer entirely.
 | File | Role |
 |------|------|
 | `crates/l2/sequencer/credible_layer/mod.rs` | Module root, proto imports |
-| `crates/l2/sequencer/credible_layer/client.rs` | `CredibleLayerClient` — gRPC client for sidecar |
-| `crates/l2/sequencer/credible_layer/aeges.rs` | `AegesClient` — gRPC client for Aeges |
+| `crates/l2/sequencer/credible_layer/client.rs` | `CredibleLayerClient` — gRPC client for the sidecar; handles block building validation (StreamEvents, GetTransaction) |
+| `crates/l2/sequencer/credible_layer/aeges.rs` | `AegesClient` — gRPC client for the Aeges mempool pre-filter; validates transactions before pool admission (VerifyTransaction) |
 | `crates/l2/sequencer/credible_layer/errors.rs` | Error types |
 | `crates/l2/proto/sidecar.proto` | Sidecar gRPC protocol definition |
 | `crates/l2/proto/aeges.proto` | Aeges gRPC protocol definition |
@@ -71,11 +71,12 @@ CLI flags:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--credible-layer-url` | gRPC endpoint for the sidecar | (disabled) |
-| `--credible-layer-aeges-url` | gRPC endpoint for Aeges pre-filter | (disabled) |
-| `--credible-layer-state-oracle` | Address of the deployed State Oracle contract on L2 | (none) |
+| `--credible-layer` | Enable the Credible Layer integration (required gate flag) | `false` |
+| `--credible-layer-url` | gRPC endpoint for the sidecar (requires `--credible-layer`) | (none) |
+| `--credible-layer-aeges-url` | gRPC endpoint for Aeges pre-filter (requires `--credible-layer`) | (none) |
+| `--credible-layer-state-oracle` | Address of the deployed State Oracle contract on L2 (requires `--credible-layer`) | (none) |
 
-When `--credible-layer-url` is not set, Credible Layer is completely disabled with zero overhead.
+When `--credible-layer` is not set, Credible Layer is completely disabled with zero overhead.
 
 ### Sidecar Requirements
 
@@ -96,7 +97,7 @@ This is a step-by-step guide to run the full Credible Layer stack locally, deplo
 
 ### Prerequisites
 
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) (`forge`, `cast`)
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) (`forge`)
 - Docker (running)
 - Node.js >= 22 and `pnpm` (for the assertion indexer)
 - ethrex built (including contract compilation):
@@ -118,7 +119,7 @@ rm -rf dev_ethrex_l1 dev_ethrex_l2
 
 # Verify (wait ~10s — initial "payload_id is None" errors are normal and resolve themselves)
 sleep 10
-cast block-number --rpc-url http://localhost:8545
+rex block-number --rpc-url http://localhost:8545
 ```
 
 > **Note:** You may see `ERROR Failed to produce block: payload_id is None in ForkChoiceResponse` in the first few seconds. This is a known L1 dev mode timing issue — the engine API needs a moment to initialize. The errors stop after a few blocks and block production continues normally.
@@ -145,7 +146,7 @@ This uses the pre-built binary directly (no recompilation). Addresses are writte
 ```bash
 export $(cat ../../cmd/.env | xargs)
 
-RUST_LOG=info,ethrex_l2=debug ../../target/release/ethrex l2 \
+RUST_LOG=info ../../target/release/ethrex l2 \
   --no-monitor \
   --watcher.block-delay 0 \
   --network ../../fixtures/genesis/l2.json \
@@ -157,11 +158,12 @@ RUST_LOG=info,ethrex_l2=debug ../../target/release/ethrex l2 \
   --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --credible-layer \
   --credible-layer-url http://localhost:50051 \
   --l2.ws-enabled --l2.ws-port 1730 &
 
 # Verify (wait ~10s for L2 to start)
-cast block-number --rpc-url http://localhost:1729
+rex block-number --rpc-url http://localhost:1729
 ```
 
 The L2 will log `StreamEvents connect failed, retrying in 5s` until the sidecar starts. This is expected — the L2 is permissive and keeps producing blocks.
@@ -179,7 +181,7 @@ PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
 STATE_ORACLE_MAX_ASSERTIONS_PER_AA=100 \
 STATE_ORACLE_ASSERTION_TIMELOCK_BLOCKS=1 \
-STATE_ORACLE_ADMIN_ADDRESS=$(cast wallet address $PK) \
+STATE_ORACLE_ADMIN_ADDRESS=$(rex address -k $PK) \
 DA_PROVER_ADDRESS=0xb0d60c09103F4a5c04EE8537A22ECD6a34382B36 \
 DEPLOY_ADMIN_VERIFIER_OWNER=true \
 DEPLOY_ADMIN_VERIFIER_WHITELIST=false \
@@ -266,21 +268,21 @@ ADMIN_VERIFIER=0x9f9F5Fd89ad648f2C000C954d8d9C87743243eC5
 DA_VERIFIER=0x422A3492e218383753D8006C7Bfa97815B44373F
 
 # Disable whitelist (required for devnet)
-cast send $STATE_ORACLE "disableWhitelist()" \
-  --private-key $PK --rpc-url http://localhost:1729
+rex send $STATE_ORACLE "disableWhitelist()" \
+  -k $PK --rpc-url http://localhost:1729
 
 # Register the target contract as an assertion adopter
-cast send $STATE_ORACLE "registerAssertionAdopter(address,address,bytes)" \
+rex send $STATE_ORACLE "registerAssertionAdopter(address,address,bytes)" \
   $OWNABLE_TARGET $ADMIN_VERIFIER "0x" \
-  --private-key $PK --rpc-url http://localhost:1729
+  -k $PK --rpc-url http://localhost:1729
 
 # Add the assertion
-cast send $STATE_ORACLE "addAssertion(address,bytes32,address,bytes,bytes)" \
+rex send $STATE_ORACLE "addAssertion(address,bytes32,address,bytes,bytes)" \
   $OWNABLE_TARGET $ASSERTION_ID $DA_VERIFIER "0x" $DA_SIG \
-  --private-key $PK --rpc-url http://localhost:1729
+  -k $PK --rpc-url http://localhost:1729
 
 # Verify
-cast call $STATE_ORACLE "hasAssertion(address,bytes32)(bool)" \
+rex call $STATE_ORACLE "hasAssertion(address,bytes32)(bool)" \
   $OWNABLE_TARGET $ASSERTION_ID --rpc-url http://localhost:1729
 # Should return: true
 ```
@@ -391,16 +393,16 @@ PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 OWNABLE_TARGET=<address from step 6>
 
 # Check current owner
-cast call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
+rex call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
 
 # Try to transfer ownership (this should time out — tx never included!)
-timeout 25 cast send $OWNABLE_TARGET "transferOwnership(address)" \
+timeout 25 rex send $OWNABLE_TARGET "transferOwnership(address)" \
   0x0000000000000000000000000000000000000001 \
-  --private-key $PK --rpc-url http://localhost:1729
+  -k $PK --rpc-url http://localhost:1729
 # Expected: times out with no output (tx was dropped by Credible Layer)
 
 # Verify owner is UNCHANGED
-cast call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
+rex call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
 # Should still be the original deployer address
 ```
 
@@ -419,8 +421,8 @@ docker logs credible-sidecar 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "assertion_
 Send a non-protected call (`doSomething()`). The sidecar allows it through:
 
 ```bash
-cast send $OWNABLE_TARGET "doSomething()" \
-  --private-key $PK --rpc-url http://localhost:1729
+rex send $OWNABLE_TARGET "doSomething()" \
+  -k $PK --rpc-url http://localhost:1729
 # Expected: status 1 (success), included in a block
 ```
 

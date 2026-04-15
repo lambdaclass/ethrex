@@ -126,7 +126,7 @@ impl CredibleLayerClient {
                                                 Some(sidecar_proto::event::Event::Reorg(_)) => "Reorg",
                                                 None => "None",
                                             };
-                                            debug!("Forwarding {event_type} event to gRPC stream (event_id={})", e.event_id);
+                                            info!("Forwarding {event_type} event to gRPC stream (event_id={})", e.event_id);
                                             if grpc_tx.send(e).await.is_err() {
                                                 warn!("gRPC stream send failed, reconnecting");
                                                 break;
@@ -134,7 +134,7 @@ impl CredibleLayerClient {
                                         }
                                         None => {
                                             // Main channel closed — client dropped
-                                            debug!("Event channel closed, stopping stream task");
+                                            warn!("Event channel closed, stopping stream task");
                                             return;
                                         }
                                     }
@@ -161,7 +161,7 @@ impl CredibleLayerClient {
                         }
                     }
                     Err(status) => {
-                        debug!(%status, "StreamEvents connect failed, retrying in 5s");
+                        warn!(%status, "StreamEvents connect failed, retrying in 5s");
                     }
                 }
                 stream_connected_bg.store(false, Ordering::Relaxed);

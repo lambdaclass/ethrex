@@ -296,10 +296,14 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 start_at: opts.state_updater_opts.start_at,
                 l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
             },
-            credible_layer: CredibleLayerConfig {
-                sidecar_url: opts.credible_layer_opts.credible_layer_url,
-                aeges_url: opts.credible_layer_opts.credible_layer_aeges_url,
-                state_oracle_address: opts.credible_layer_opts.credible_layer_state_oracle,
+            credible_layer: if opts.credible_layer_opts.credible_layer {
+                CredibleLayerConfig {
+                    sidecar_url: opts.credible_layer_opts.credible_layer_url,
+                    aeges_url: opts.credible_layer_opts.credible_layer_aeges_url,
+                    state_oracle_address: opts.credible_layer_opts.credible_layer_state_oracle,
+                }
+            } else {
+                CredibleLayerConfig::default()
             },
         })
     }
@@ -1108,10 +1112,20 @@ impl Default for AdminOptions {
 #[derive(Parser, Default, Debug)]
 pub struct CredibleLayerOptions {
     #[arg(
+        long = "credible-layer",
+        action = clap::ArgAction::SetTrue,
+        default_value = "false",
+        env = "ETHREX_CREDIBLE_LAYER",
+        help = "Enable the Credible Layer integration. Required before using any --credible-layer-* flags.",
+        help_heading = "Credible Layer options"
+    )]
+    pub credible_layer: bool,
+    #[arg(
         long = "credible-layer-url",
         value_name = "URL",
         env = "ETHREX_CREDIBLE_LAYER_URL",
-        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051). When set, the credible layer integration is enabled.",
+        requires = "credible_layer",
+        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051).",
         help_heading = "Credible Layer options"
     )]
     pub credible_layer_url: Option<String>,
@@ -1119,6 +1133,7 @@ pub struct CredibleLayerOptions {
         long = "credible-layer-aeges-url",
         value_name = "URL",
         env = "ETHREX_CREDIBLE_LAYER_AEGES_URL",
+        requires = "credible_layer",
         help = "gRPC endpoint for the Aeges mempool pre-filter service (e.g. http://localhost:8080). When set, Aeges pre-filtering is enabled.",
         help_heading = "Credible Layer options"
     )]
@@ -1127,6 +1142,7 @@ pub struct CredibleLayerOptions {
         long = "credible-layer-state-oracle",
         value_name = "ADDRESS",
         env = "ETHREX_CREDIBLE_LAYER_STATE_ORACLE",
+        requires = "credible_layer",
         help = "Address of the already-deployed State Oracle contract on L2. The State Oracle maps protected contracts to their active assertions and is required by the Credible Layer sidecar. Deploy it separately using the Phylax toolchain (see crates/l2/contracts/src/credible_layer/README.md).",
         help_heading = "Credible Layer options"
     )]
