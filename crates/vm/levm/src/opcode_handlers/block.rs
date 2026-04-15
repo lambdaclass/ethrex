@@ -118,11 +118,22 @@ impl OpcodeHandler for OpPrevRandaoHandler {
         // After Paris, `PREVRANDAO` is the prev_randao (or current_random) field.
         // Source: https://eips.ethereum.org/EIPS/eip-4399
         #[expect(unsafe_code, reason = "safe")]
-        vm.current_call_frame.stack.push(U256(unsafe {
+        let val = U256(unsafe {
             let mut bytes = vm.env.prev_randao.unwrap_or_default().0;
             bytes.reverse();
             mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
-        }))?;
+        });
+        if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+            use std::io::Write;
+            let stderr = std::io::stderr();
+            let mut lock = stderr.lock();
+            let _ = writeln!(
+                lock,
+                "  PREVRANDAO push={:?} (difficulty={:?})",
+                val, vm.env.difficulty
+            );
+        }
+        vm.current_call_frame.stack.push(val)?;
 
         Ok(OpcodeResult::Continue)
     }
