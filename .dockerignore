@@ -19,7 +19,5 @@ docs/
 # Local development
 hive/
 ethereum-package/
-tooling/ef_tests/blockchain/vectors
-tooling/ef_tests/state/vectors
 dev_ethrex_l1/
 dev_ethrex_l2/

@@ -22,7 +22,6 @@ COPY crates ./crates
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY test ./test
-COPY tooling ./tooling
 COPY Cargo.* .
 COPY .cargo/ ./.cargo
 
@@ -57,7 +56,6 @@ COPY benches ./benches
 COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
-COPY tooling ./tooling
 COPY fixtures/genesis ./fixtures/genesis
 COPY .git ./.git
 COPY Cargo.* ./
