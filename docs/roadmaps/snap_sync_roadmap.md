@@ -1,7 +1,7 @@
 # Snap Sync Module Roadmap
 
-**Author:** Pablo Deymonnaz
-**Date:** February 2026 (updated April 2026)
+**Author:** Pablo Deymonnaz (original), ElFantasma (ongoing updates)
+**Date:** February 2026 (last updated 2026-04-15)
 **Status:** Draft for Review
 
 ---
@@ -16,7 +16,17 @@ This roadmap outlines a strategic plan to improve the ethrex snap sync module in
 
 The snap sync module currently comprises ~4,900 lines across 11 files. Our goal is to achieve sync times competitive with geth while maintaining code quality standards.
 
-> **April 2026 update:** Spawned 0.5.0 has been [merged](#6295) — the actor framework blocker for Phase 3 is gone. Several new performance PRs (#6410, #6184, #6177, #6159, #6178) have been opened since the original roadmap. Phase 1 now includes trie building optimizations that represent the largest single improvement opportunity (-31% account insertion time). Phase 3 pipelining has been partially achieved without actors (#6184), validating the incremental approach.
+> **April 2026 update (initial):** Spawned 0.5.0 has been [merged](#6295) — the actor framework blocker for Phase 3 is gone. Several new performance PRs (#6410, #6184, #6177, #6159, #6178) have been opened since the original roadmap. Phase 1 now includes trie building optimizations that represent the largest single improvement opportunity (-31% account insertion time). Phase 3 pipelining has been partially achieved without actors (#6184), validating the incremental approach.
+
+> **2026-04-15 update:** Multiple workstreams advanced significantly:
+>
+> - **Reliability:** Discovered and diagnosed three compounding bugs causing ~20% of mainnet snap syncs to crash on pivot update (peer rotation, weight function, BlockRangeUpdate filtering — see Issue #6474). Quick fix shipped as PR #6475; proper multi-bug fix tracked as #6474.
+> - **Observability:** PR #6470 opened adding `admin_syncStatus` / `admin_peerScores` RPC endpoints, live `peer_top.py` TUI, Grafana dashboards, and monitor improvements. Tooling was used to produce the forensic analysis for the reliability work.
+> - **Profiling-driven perf candidates:** Mainnet profiling of `insert_storages` revealed that **~80% of idle thread-seconds** come from small-account dispatcher overhead, not from the monster account. Two new issues opened:
+>   - **#6476** small-account batching — amortize dispatcher overhead for the 26M <1ms trie builds
+>   - **#6477** big-account parallelization in snap sync — analogous to PR #6410 but for large storage tries (realistic gain ~5-6%, smaller than initially thought)
+> - **Pipelining context added** to Issue #4240 (Phase 3 spawned rewrite) with a concrete proposal: ~13% gain from phase overlap (Accounts → Storage + Bytecodes → Healing pipelined via actors).
+> - **New roadmap items for reliability** (see §1.18 and §1.19 below).
 
 ---
 
@@ -73,14 +83,17 @@ The snap sync process consists of 6 sequential phases:
 
 ### Current Performance Bottlenecks
 
-Based on code analysis and mainnet profiling data (PR #6410):
+Based on code analysis and mainnet profiling data (PR #6410; April 2026 profiling run `20260412_172457`):
 
 | Bottleneck | Location | Impact | Priority |
 |------------|----------|--------|----------|
+| **Pivot update crashes** | `update_pivot` in `snap_sync.rs` | **~20% of mainnet runs crash** with `process::exit(2)` + DB corruption — requires full resync | **Critical (reliability)** |
 | **Trie building in insertion** | `insert_accounts`, `insert_storage` | **75-91% of insertion time** (883s/1184s for accounts, 2357s/2587s for storage on mainnet) | **Critical** |
+| **Small-account dispatcher overhead** | `insert_storages` dispatcher | **~80% of the 49% idle thread-seconds** (≈14,915 thread-seconds on a 2347s mainnet storage phase). 26.3M accounts × avg <1ms, dispatcher blocked 69% of wall on slot turnover | **Critical** (newly quantified) |
+| **Large storage tries run single-threaded** | `insert_storages` per-account task | Monster (Uniswap-class, 159.6M leaves) runs 244.9s on 1 thread; ~20% of idle thread-seconds | **High** |
 | Sequential header download | `sync_cycle_snap()` | Blocks state download start | Critical |
 | Sequential phase pipeline | `snap_sync.rs` orchestration | Bytecodes/storage wait for all accounts to finish | High |
-| Redundant code hash pass | `insert_accounts` | Extra full iteration over temp DB | Medium |
+| Redundant code hash pass | `insert_accounts` | Extra full iteration over temp DB (addressed in #6410) | Medium |
 | Trie node batching | `heal_state_trie()`, `heal_storage_trie()` | Writes are batched but could use `put_batch_no_alloc` | Medium |
 | Busy-wait loops | Multiple locations | CPU waste (only when no peers available) | Medium |
 | SST file intermediate step | Account/storage download | Overlapping key ranges force RocksDB merge during ingestion | Medium |
@@ -369,6 +382,145 @@ Disable write-ahead log for snap sync temp DBs (crash recovery not needed) and t
 Current healing dispatch only fills one peer slot per loop iteration. Fill all available slots per tick to maximize network utilization.
 
 **Status:** PR #6175 open
+
+---
+
+### 1.18 Snap Sync Observability Tooling (PR #6470 — In Progress, added 2026-04-15)
+
+**Current State:** Diagnosing snap sync failures required manual log grep and docker inspection. No runtime visibility into peer scores, sync phase, or request distribution.
+
+**Changes:**
+- `admin_syncStatus` RPC endpoint — live sync phase, pivot block, progress metrics, error history
+- `admin_peerScores` RPC endpoint — per-peer scores, inflight request counts, capabilities, last BlockRangeUpdate, eligibility
+- `admin_setLogLevel` RPC — dynamically raise to TRACE during incidents
+- `tooling/sync/peer_top.py` — live TUI showing peer scores, request distribution, and selection patterns in real time
+- Grafana dashboard panels: sync progress, peer scoring distribution, request rates, per-phase rate overview
+- Docker monitor improvements: rolling snapshots, degradation detection, 5s polling, force-dump on failure
+- Header-download diagnostics logging in `snap_sync.rs`
+
+**Impact:** No direct sync-time impact. Enables diagnosis of every other reliability/perf issue. The forensic analysis for §1.19 (pivot-update crashes) was only possible because of this tooling.
+
+**Status:** PR #6470 open
+
+---
+
+### 1.19 Pivot Update Reliability (PRs/Issues #6475, #6474 — added 2026-04-15)
+
+**Current State:** `update_pivot` crashes the node (`process::exit(2)`) on ~20% of mainnet sync runs. The exit leaves the DB in an inconsistent state (`Unknown state found in DB`), requiring a full `removedb` and resync from scratch.
+
+**Root causes** (full forensics in Issue #6474):
+
+- **Bug A — `update_pivot` classified as irrecoverable.** Commit `583795955` changed the retry loop from infinite to `MAX_TOTAL_FAILURES=15` with exponential backoff. 15 failures exhaust in ~2-3 min, then `PeerHandlerError::BlockHeaders` → classified irrecoverable → `process::exit(2)`.
+- **Bug B — Deterministic peer selection never rotates.** `get_best_peer` + `.max_by_key(weight_peer)` always returns the same top-scored peer. The weight function `score - inflight_requests` systematically prefers idle/incapable peers (e.g., eth/70-only erigon with 0 snap requests, score 47) over busy healthy peers (Geth with 47 snap requests, weight 3).
+- **Bug C — `BlockRangeUpdate.range_to` unused in selection.** Peers advertise their chain tip; we store it but don't filter by it. On hoodi we kept asking a peer for pivot block 2593928 while its last BlockRangeUpdate said range_to=2593886 (42 blocks behind).
+
+**Evidence:** Hoodi failure `run_20260411_033943` — only 2 distinct peers tried across 9 attempts; at least 6 other peers had the block. Mainnet failure `run_20260414_011127` — stuck on erigon/v3.5.0-dev with weight 47 while 11 healthy peers had weight 3.
+
+**Quick fix (PR #6475 — shipped):**
+- Reclassify `PeerHandler`/`NoBlockHeaders` errors as recoverable (narrow per-variant via `PeerHandlerError::is_recoverable()`)
+- Add `get_best_peer_excluding(caps, excluded)` — rotation-aware peer selection
+- Replace `MAX_TOTAL_FAILURES=15` with `MAX_ROTATIONS=5` (scales with peer count)
+- Catch recoverable errors inside retry loop so protocol errors advance rotation
+
+**Proper fix (Issue #6474 — deferred):** tackle the deeper peer-selection bugs:
+1. Fix `weight_peer` for control-plane requests (pivot update, header resolution) — don't penalize data-plane inflight
+2. Filter peers by `BlockRangeUpdate.range_to` before selection
+3. Broaden rotation across all eligible peers
+4. Don't count passive waits as failures
+5. Revert irrecoverable classification of post-pivot-header fetch failures
+6. Raise/remove `MAX_TOTAL_FAILURES`
+7. Cherry-pick fixes from `fullsync-acceleration` branches (880244afe, efaa344d4)
+8. DB cleanup / graceful shutdown on sync failure
+
+**Impact:** Removes a reliability failure that was ~20% of mainnet runs. Currently masks optimization progress (slower runs → more pivot updates → more exposure to the bug).
+
+**Status:** PR #6475 open (AI agent feedback addressed 2026-04-15); Issue #6474 open as follow-up.
+
+---
+
+### 1.20 Within-Trie Parallelization for Large Storage Tries (Issue #6477 — added 2026-04-15)
+
+**Current State:** `insert_storages` is parallel across accounts (16 worker threads, one account per task), but each individual account's trie is built single-threaded. For large storage tries (Uniswap-class, 159M+ leaves), this means a single thread runs for ~245s while the monster is processed.
+
+**Proposed Change:** Apply `trie_from_sorted_parallel` (from PR #6410) *inside* each large storage task, splitting the trie build across 16 storage-slot-nibble ranges.
+
+**Distinction from #5482:** Issue #5482 (existing, open) addresses the same idea but for *block execution* — parallelizing per-tx storage updates during state-root computation. This issue (#6477) is the analogous change for snap sync's initial trie construction.
+
+**Expected Impact:** ~100-150s saved (~5-6% of storage phase). Smaller than originally projected because the other 15 threads aren't actually idle during the monster's solo run (they're working on the long tail).
+
+**Status:** Issue #6477 open
+
+---
+
+### 1.21 Small-Account Batching in insert_storages (Issue #6476 — added 2026-04-15)
+
+**Current State:** `insert_storages` profiling shows only 8.1 of 16 threads used on average (**49% of thread-seconds idle**, 18,589 / 37,554). Decomposition:
+- Monster account serialization: ~20% of idle time
+- **Small-account dispatcher overhead: ~80% of idle time** — 26.3M accounts with avg <1ms trie build each, dispatcher blocked 69% of wall on slot turnover
+
+**Proposed Change:** Bundle N small accounts per worker job to amortize send/reap/slot-free overhead. Large accounts still run as single tasks.
+
+**Expected Impact:** Potentially 5-15 min off the 39-min storage phase (30-40%). This is the dominant parallelism killer and **higher-value than #6477** (big-account).
+
+**Architectural dependencies:** None. Change is inside the existing dispatcher loop — independent of the spawned migration (Phase 3) and of #6477 (complementary, additive).
+
+**Status:** Issue #6476 open
+
+---
+
+### 1.22 Decoded `TrieLayerCache` (PR #6348 — In Progress, added to roadmap 2026-04-15)
+
+**Current State:** `TrieLayerCache` hits still go through `Node::decode()` even when the node was just cached — decoded representation is discarded and re-derived on every access.
+
+**Proposed Change:** Cache the decoded `Node` value alongside the encoded bytes. Skip `Node::decode()` on cache hits.
+
+**Expected Impact:** TBD — needs benchmark. Hot path in trie traversal; decode is not free.
+
+**Status:** PR #6348 open (author: Arkenan)
+
+---
+
+### 1.23 Bloom Filter for Non-Existent Storage Slots (PR #6288 — In Progress, added to roadmap 2026-04-15)
+
+**Current State:** Storage trie seeks are issued for every slot read, including for accounts that have no storage or slots that don't exist. On large contracts, many lookups miss.
+
+**Proposed Change:** Add a bloom filter to skip trie seeks for slots known not to exist.
+
+**Expected Impact:** TBD — needs benchmark. Could help both sync-time trie seeks and runtime reads.
+
+**Status:** PR #6288 open (author: ilitteri)
+
+---
+
+### 1.24 Adaptive Request Sizing & Storage Bisection (PR #6181 — In Progress, added to roadmap 2026-04-15)
+
+**Current State:** Storage range requests use fixed size per request. Adaptive sizing based on peer response history and bisection on oversized responses could improve throughput.
+
+**Proposed Change:** Adaptive request sizing + storage bisection on oversized responses + parallel trie construction for storage.
+
+**Status:** PR #6181 open (author: ilitteri)
+
+---
+
+### 1.25 Concurrent Bytecode + Storage Download (PR #6205 — In Progress, added to roadmap 2026-04-15)
+
+**Current State:** Bytecodes download as a distinct phase after storage. Pipeline opportunity similar to what PR #6184 did for bytecodes + healing.
+
+**Proposed Change:** Run bytecode downloads concurrently with storage downloads.
+
+**Note:** May overlap partially with PR #6184 (which concurrently runs bytecodes with *healing*). Needs review to reconcile.
+
+**Status:** PR #6205 open (author: ilitteri)
+
+---
+
+### 1.26 Phase Completion Markers for Validation (PR #6189 — In Progress, added to roadmap 2026-04-15)
+
+**Current State:** No persisted markers for phase completion; recovery and validation tooling has to infer progress.
+
+**Proposed Change:** Add phase completion markers to the snap sync validation flow.
+
+**Status:** PR #6189 open (author: ilitteri)
 
 ---
 
@@ -742,6 +894,18 @@ Remaining: channel capacity `1000` appears at lines 138, 370, 587 — could be a
 
 ---
 
+### 2.18 Storage Download Refactor via `StorageTrieTracker` (PR #6171 — In Progress, added 2026-04-15)
+
+**Current State:** `AccountStorageRoots` tracks storage downloads per-account with complex index-based referencing into `accounts_by_root_hash`. Tasks reference accounts by index, results carry index ranges, big-account promotion mutates intervals — hard to follow and brittle.
+
+**Proposed Change:** New `StorageTrieTracker` groups storage tries by root hash from the start, separating small (single-request) from big (multi-request) tries. Moves trie data into tasks and back in results, eliminating index-based coupling.
+
+**Relation:** Complementary to #6140 (same file, orthogonal concerns). This is the data-ownership refactor; #6140 is the readability/correctness cleanup.
+
+**Status:** PR #6171 open (author: fedacking)
+
+---
+
 ### Issue #6140 — Refactor `request_storage_ranges` (Steps Summary)
 
 9-step plan to refactor `request_storage_ranges` in `snap/client.rs`. Each step is one independently correct commit. Full details in [Issue #6140](https://github.com/lambdaclass/ethrex/issues/6140).
@@ -962,42 +1126,67 @@ This requires `StorageActor` to handle dynamically growing task queues (new acco
 | Schedule overrun | Medium | Medium | Prioritize high-impact items; iterative delivery |
 | ~~Spawned refactor not ready~~ | ~~Medium~~ | ~~High~~ | ✅ Resolved — spawned 0.5.0 merged in #6295 (March 31, 2026) |
 | Pipeline ordering bugs | Medium | High | Pipelining introduces data races if actors process out of order; needs careful invariant tracking |
+| **Pivot-update crash masks optimization progress** | **High** | **High** | Ship §1.19 quick fix (#6475) before investing in further perf work — otherwise measurements are noisy and users hit the crash before seeing gains. Identified 2026-04-15. |
+| **DB corruption requires full resync on any crash** | **High** | **High** | `process::exit(2)` paths leave inconsistent state. Addressed in §1.19 proper fix (#6474 item 8). Until fixed, every sync crash costs a full resync. |
 
 ---
 
 ## Timeline
 
-### Recommended execution order (updated April 2026)
+### Recommended execution order (updated 2026-04-15)
 
-The key insight from profiling is that **trie building dominates insertion time** (75-91%). The recommended priority is:
+Two key insights drive priorities:
+- **Trie building dominates insertion time** (75-91% from 1.12 profiling)
+- **Small-account dispatcher overhead accounts for ~80% of idle thread-seconds** in `insert_storages` (new finding from #6476 profiling)
 
-1. **Land trie building optimizations first** (1.12, #6410) — largest single improvement, orthogonal to concurrency model
-2. **Land write path optimizations** (1.14, 1.15, 1.16) — compound on trie improvements
-3. **Land pipelining** (1.13, #6184) — concurrent bytecodes + background healing
-4. **Phase 2 quick wins** (2.8, 2.17, 2.15, 2.1, 2.4) — low-effort correctness/quality
-5. **Actor migration** (3.1) — clean architecture, now unblocked, subsumes 2.5/2.12
-6. **Remaining Phase 2/3 items** — documentation, testing, peer scoring
+Recommended priority:
+
+1. **Unblock users first** — ship pivot-update crash fix (#6475) so ~20% of mainnet runs stop crashing. **This is the highest-priority item right now** — every other perf win is masked by the crash.
+2. **Land observability tooling** (1.18, #6470) — enables measuring all other changes
+3. **Land trie building optimizations** (1.12, #6410) — largest single improvement, orthogonal to concurrency model
+4. **Land write path optimizations** (1.14, 1.15, 1.16) — compound on trie improvements
+5. **Explore small-account batching** (1.21, #6476) — potentially 30-40% of storage phase (largest unexploited opportunity)
+6. **Land pipelining** (1.13, #6184) — concurrent bytecodes + background healing
+7. **Big-account within-trie parallelization** (1.20, #6477) — ~5-6%, complementary to #6476
+8. **Phase 2 quick wins** (2.8, 2.17, 2.15, 2.1, 2.4) — low-effort correctness/quality
+9. **Proper pivot-update fix** (#6474) — deeper peer selection bugs, tackle after quick fix stabilizes
+10. **Actor migration** (3.1) — clean architecture, now unblocked, subsumes 2.5/2.12
+11. **Remaining Phase 2/3 items** — documentation, testing, peer scoring
 
 ### Phase 1: Performance
 
 ```
+Priority 0 (CRITICAL — user-facing reliability):
+  1.19  Pivot update reliability quick fix (PR #6475) — stops ~20% crash rate
+
 Priority 1 (high impact, ready now):
+  1.18  Snap sync observability tooling (PR #6470) — prereq for measuring others
   1.12  Optimize trie building (PR #6410) — -31% account insertion
   1.15  Optimize insertion/healing write paths (PR #6159)
   1.14  Eliminate SST file intermediate step (PR #6177)
   1.13  Pipeline bytecodes + background healing (PR #6184) — -13% total
+  1.21  Small-account batching (Issue #6476) — potentially 30-40% of storage phase
 
 Priority 2 (medium impact):
   1.16  Disable WAL and improve concurrency (PR #6178)
   1.17  Fill all peer slots per tick in healing (PR #6175)
+  1.20  Big-account within-trie parallelization (Issue #6477) — ~5-6%
+  1.24  Adaptive request sizing + storage bisection (PR #6181)
   1.1   Parallel Header Download (PR #6059)
   1.6   Async Disk I/O (PR #6113)
   1.4   Reduce Busy-Wait Loops (Issue #6140)
 
 Lower priority / needs measurement:
+  1.22  Decoded TrieLayerCache (PR #6348)
+  1.23  Bloom filter for non-existent storage slots (PR #6288)
+  1.25  Concurrent bytecode + storage (PR #6205) — may overlap with 1.13
+  1.26  Phase completion markers (PR #6189)
   1.3   Optimize Trie Node Batching
   1.7   Peer Connection Optimization (PR #6117)
   1.10  Snap sync benchmark tool (PR #6108)
+
+Follow-up / deferred:
+  1.19b Pivot update proper fix (Issue #6474) — deeper peer selection bugs
 
 Done:
   1.11  Per-phase timing breakdown (✅ Merged #6136)
@@ -1029,6 +1218,7 @@ Independent (do when bandwidth available):
   2.6   Test Coverage Improvement
   2.7   Configuration Externalization
   2.16  Healing Code Unification
+  2.18  StorageTrieTracker refactor (PR #6171)
 
 Done:
   2.3   Consolidate Error Handling (✅ Merged #5975)
@@ -1139,5 +1329,5 @@ After 3.1:
 
 ---
 
-*Document Version: 1.2*
-*Last Updated: April 2026*
+*Document Version: 1.3*
+*Last Updated: 2026-04-15*
