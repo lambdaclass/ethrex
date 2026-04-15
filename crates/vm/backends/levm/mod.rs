@@ -132,7 +132,7 @@ impl LEVM {
 
         if is_bsc && block.header.number == 101687062 {
             let fork = chain_config.fork(block.header.timestamp);
-            println!(
+            eprintln!(
                 "BSC HDR 101687062: ts={} fork={:?} is_amsterdam={} base_fee={:?} gas_limit={} tx_count={} coinbase={:?}",
                 block.header.timestamp,
                 fork,
@@ -161,7 +161,7 @@ impl LEVM {
                 && tx.gas_price().is_zero()
                 && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
             if is_bsc && block.header.number < 101687020 {
-                println!(
+                eprintln!(
                     "BSC tx {}/{}: sender={:?} coinbase={:?} gas_price={} to={:?} is_sys={}",
                     block.header.number,
                     tx_idx,
@@ -184,7 +184,7 @@ impl LEVM {
             if is_bsc_system_tx {
                 let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
                 let coinbase_bal_before = db.get_account(block.header.coinbase)?.info.balance;
-                println!(
+                eprintln!(
                     "BSC drain: block={} tx_idx={} system_bal={} coinbase_bal_before={} coinbase={:?}",
                     block.header.number,
                     tx_idx,
@@ -220,7 +220,7 @@ impl LEVM {
             if trace_this_tx {
                 BSC_OPCODE_TRACE.store(true, Ordering::Relaxed);
                 let calldata_hex: String = tx.data().iter().map(|b| format!("{b:02x}")).collect();
-                println!(
+                eprintln!(
                     "TRACE BEGIN block={} tx={} sender={:?} to={:?} calldata=0x{}",
                     block.header.number,
                     tx_idx,
@@ -232,7 +232,7 @@ impl LEVM {
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
             if trace_this_tx {
                 BSC_OPCODE_TRACE.store(false, Ordering::Relaxed);
-                println!("TRACE END block={} tx={}", block.header.number, tx_idx);
+                eprintln!("TRACE END block={} tx={}", block.header.number, tx_idx);
             }
 
             if is_bsc && block.header.number == 101687062 {
@@ -246,7 +246,7 @@ impl LEVM {
                 } else {
                     report.gas_used.saturating_add(report.gas_refunded)
                 };
-                println!(
+                eprintln!(
                     "BSC block 101687062 tx{}: gas_used={} gas_spent={} refund={} pre_refund={} state_gas={} tx_type={:?} gas_limit={} calldata_len={} sender={:?} to={:?} is_sys={} fork={:?}",
                     tx_idx,
                     report.gas_used,
@@ -536,7 +536,7 @@ impl LEVM {
 
         if is_bsc && block.header.number == 101687062 {
             let fork = chain_config.fork(block.header.timestamp);
-            println!(
+            eprintln!(
                 "BSC HDR 101687062 (pipe): ts={} fork={:?} is_amsterdam={} base_fee={:?} gas_limit={} tx_count={} coinbase={:?}",
                 block.header.timestamp,
                 fork,
@@ -565,7 +565,7 @@ impl LEVM {
                 && tx.gas_price().is_zero()
                 && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
             if is_bsc && block.header.number < 101687020 {
-                println!(
+                eprintln!(
                     "BSC tx {}/{}: sender={:?} coinbase={:?} gas_price={} to={:?} is_sys={}",
                     block.header.number,
                     tx_idx,
@@ -585,7 +585,7 @@ impl LEVM {
             // for detailed comment.
             if is_bsc_system_tx {
                 let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
-                println!(
+                eprintln!(
                     "BSC drain (pipeline): block={} tx_idx={} system_bal={} coinbase={:?}",
                     block.header.number, tx_idx, system_bal, block.header.coinbase
                 );
@@ -615,7 +615,7 @@ impl LEVM {
             if trace_this_tx {
                 BSC_OPCODE_TRACE.store(true, Ordering::Relaxed);
                 let calldata_hex: String = tx.data().iter().map(|b| format!("{b:02x}")).collect();
-                println!(
+                eprintln!(
                     "TRACE BEGIN (pipe) block={} tx={} sender={:?} to={:?} calldata=0x{}",
                     block.header.number,
                     tx_idx,
@@ -636,7 +636,7 @@ impl LEVM {
             )?;
             if trace_this_tx {
                 BSC_OPCODE_TRACE.store(false, Ordering::Relaxed);
-                println!(
+                eprintln!(
                     "TRACE END (pipe) block={} tx={}",
                     block.header.number, tx_idx
                 );
@@ -648,7 +648,7 @@ impl LEVM {
                 } else {
                     report.gas_used.saturating_add(report.gas_refunded)
                 };
-                println!(
+                eprintln!(
                     "BSC block 101687062 (pipe) tx{}: gas_used={} gas_spent={} refund={} pre_refund={} state_gas={} tx_type={:?} gas_limit={} calldata_len={} sender={:?} to={:?} is_sys={} fork={:?}",
                     tx_idx,
                     report.gas_used,
