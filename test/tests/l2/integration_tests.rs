@@ -444,8 +444,8 @@ async fn test_privileged_tx_with_contract_call(
 
     while l2_client
         .get_logs(
-            first_block,
-            block_number,
+            U256::from(first_block),
+            U256::from(block_number),
             deployed_contract_address,
             vec![topic],
         )
@@ -453,7 +453,7 @@ async fn test_privileged_tx_with_contract_call(
         .is_ok_and(|logs| logs.is_empty())
     {
         println!("ptx_with_contract_call: Waiting for the event to be built");
-        block_number += U256::one();
+        block_number += 1;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -461,8 +461,8 @@ async fn test_privileged_tx_with_contract_call(
 
     let logs = l2_client
         .get_logs(
-            first_block,
-            block_number,
+            U256::from(first_block),
+            U256::from(block_number),
             deployed_contract_address,
             vec![topic],
         )
