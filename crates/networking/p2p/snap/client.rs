@@ -199,19 +199,6 @@ pub async fn request_account_range(
         }
 
         if let Ok((accounts, peer_id, chunk_start_end, stats)) = task_receiver.try_recv() {
-            // Feed transfer stats for bandwidth/latency scoring.
-            if !stats.elapsed.is_zero() {
-                let _ = peers
-                    .peer_table
-                    .record_response_latency(peer_id, stats.elapsed);
-                if stats.response_bytes > 0 {
-                    let _ = peers.peer_table.record_bandwidth(
-                        peer_id,
-                        stats.response_bytes,
-                        stats.elapsed,
-                    );
-                }
-            }
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -225,6 +212,19 @@ pub async fn request_account_range(
             if accounts.is_empty() {
                 peers.peer_table.record_failure(peer_id)?;
                 continue;
+            }
+            // Record latency/bandwidth only after validation (non-empty response).
+            if !stats.elapsed.is_zero() {
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
+                if stats.response_bytes > 0 {
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
+                }
             }
             peers.peer_table.record_success(peer_id)?;
 
@@ -404,19 +404,6 @@ pub async fn request_bytecodes(
                 remaining_end,
                 transfer_stats: stats,
             } = result;
-            // Feed transfer stats for bandwidth/latency scoring.
-            if !stats.elapsed.is_zero() {
-                let _ = peers
-                    .peer_table
-                    .record_response_latency(peer_id, stats.elapsed);
-                if stats.response_bytes > 0 {
-                    let _ = peers.peer_table.record_bandwidth(
-                        peer_id,
-                        stats.response_bytes,
-                        stats.elapsed,
-                    );
-                }
-            }
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -431,6 +418,19 @@ pub async fn request_bytecodes(
             if bytecodes.is_empty() {
                 peers.peer_table.record_failure(peer_id)?;
                 continue;
+            }
+            // Record latency/bandwidth only after validation (non-empty response).
+            if !stats.elapsed.is_zero() {
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
+                if stats.response_bytes > 0 {
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
+                }
             }
 
             downloaded_count += bytecodes.len() as u64;
@@ -676,18 +676,16 @@ pub async fn request_storage_ranges(
                 remaining_hash_range: (hash_start, hash_end),
                 transfer_stats: stats,
             } = result;
-            // Feed transfer stats for bandwidth/latency scoring.
-            if !stats.elapsed.is_zero() {
+            // Record latency/bandwidth only for responses with actual data.
+            if !stats.elapsed.is_zero() && stats.response_bytes > 0 {
                 let _ = peers
                     .peer_table
                     .record_response_latency(peer_id, stats.elapsed);
-                if stats.response_bytes > 0 {
-                    let _ = peers.peer_table.record_bandwidth(
-                        peer_id,
-                        stats.response_bytes,
-                        stats.elapsed,
-                    );
-                }
+                let _ = peers.peer_table.record_bandwidth(
+                    peer_id,
+                    stats.response_bytes,
+                    stats.elapsed,
+                );
             }
             completed_tasks += 1;
 
@@ -1100,9 +1098,11 @@ pub async fn request_state_trienodes(
             .collect(),
         bytes: MAX_RESPONSE_BYTES,
     });
+    let req_start = Instant::now();
     let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await;
+    let elapsed = req_start.elapsed();
     drop(permit);
     let nodes = match response {
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
@@ -1130,6 +1130,9 @@ pub async fn request_state_trienodes(
             return Err(SnapError::InvalidHash);
         }
     }
+
+    // Record latency only after full validation (decode + hash check).
+    let _ = peer_table.record_response_latency(peer_id, elapsed);
 
     Ok(nodes)
 }
