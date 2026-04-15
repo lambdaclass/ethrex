@@ -138,7 +138,11 @@ impl LEVM {
             } else {
                 cumulative_gas_used
             };
-            if !is_bsc {
+            // BSC: consensus-engine-injected system txs (from SYSTEM_ADDRESS) carry
+            // gas_limit = i64::MAX and bypass the block gas cap. Regular BSC user
+            // txs are still subject to the check.
+            let is_bsc_system_tx = is_bsc && tx_sender == SYSTEM_ADDRESS;
+            if !is_bsc_system_tx {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
 
@@ -436,7 +440,11 @@ impl LEVM {
             } else {
                 cumulative_gas_used
             };
-            if !is_bsc {
+            // BSC: consensus-engine-injected system txs (from SYSTEM_ADDRESS) carry
+            // gas_limit = i64::MAX and bypass the block gas cap. Regular BSC user
+            // txs are still subject to the check.
+            let is_bsc_system_tx = is_bsc && tx_sender == SYSTEM_ADDRESS;
+            if !is_bsc_system_tx {
                 check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
             }
 

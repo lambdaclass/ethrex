@@ -32,14 +32,18 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
+        // BSC system transactions (from SYSTEM_ADDRESS) are consensus-engine-injected
+        // with gas_limit = i64::MAX — they bypass EIP-7825, intrinsic gas, and block
+        // gas allowance checks. Regular BSC user txs follow normal rules.
+        let is_bsc =
+            vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+        let is_bsc_system_tx = is_bsc && sender_address == SYSTEM_ADDRESS;
+
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
             // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
             // Amsterdam removes this restriction (EIP-8037 reservoir model).
-            // BSC doesn't enforce EIP-7825.
-            let is_bsc =
-                vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
-            if !is_bsc
+            if !is_bsc_system_tx
                 && vm.env.config.fork >= Fork::Osaka
                 && vm.env.config.fork < Fork::Amsterdam
                 && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
@@ -587,10 +591,12 @@ pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMEr
 }
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
-    // BSC allows tx gas_limit > block.gas_limit; actual gas consumed is capped
-    // by block-remaining so this check is skipped.
+    // BSC consensus-engine-injected system transactions (from SYSTEM_ADDRESS)
+    // carry gas_limit = i64::MAX and bypass the block gas allowance check.
+    // Regular BSC user txs are still subject to the check.
     let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
-    if !is_bsc && vm.env.gas_limit > vm.env.block_gas_limit {
+    let is_bsc_system_tx = is_bsc && vm.env.origin == SYSTEM_ADDRESS;
+    if !is_bsc_system_tx && vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded {
             block_gas_limit: vm.env.block_gas_limit,
             tx_gas_limit: vm.env.gas_limit,
