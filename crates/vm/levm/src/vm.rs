@@ -32,7 +32,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
+    sync::atomic::{AtomicBool, Ordering},
 };
+
+/// Debug toggle used to print an opcode-level trace while executing a specific
+/// tx. Enabled/cleared from the backend around a targeted tx (e.g. BSC block
+/// 101687062 tx 1) so the output is bounded.
+pub static BSC_OPCODE_TRACE: AtomicBool = AtomicBool::new(false);
 
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
@@ -660,6 +666,20 @@ impl<'a> VM<'a> {
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
+
+            // BSC opcode trace (gated; turned on only around a specific tx).
+            if BSC_OPCODE_TRACE.load(Ordering::Relaxed) {
+                let pc = self.current_call_frame.pc.saturating_sub(1);
+                let gas_rem = self.current_call_frame.gas_remaining;
+                let depth = self.call_frames.len();
+                let to = self.current_call_frame.to;
+                let code_addr = self.current_call_frame.code_address;
+                let op_enum = crate::opcodes::Opcode::from(opcode);
+                println!(
+                    "TRACE d={} pc={:>5} op=0x{:02x}({:?}) gas_rem={:>10} to={:?} code={:?}",
+                    depth, pc, opcode, op_enum, gas_rem, to, code_addr
+                );
+            }
 
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]

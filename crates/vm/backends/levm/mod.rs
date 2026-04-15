@@ -39,7 +39,7 @@ use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
-use ethrex_levm::vm::VMType;
+use ethrex_levm::vm::{BSC_OPCODE_TRACE, VMType};
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
@@ -130,6 +130,20 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
+        if is_bsc && block.header.number == 101687062 {
+            let fork = chain_config.fork(block.header.timestamp);
+            println!(
+                "BSC HDR 101687062: ts={} fork={:?} is_amsterdam={} base_fee={:?} gas_limit={} tx_count={} coinbase={:?}",
+                block.header.timestamp,
+                fork,
+                is_amsterdam,
+                block.header.base_fee_per_gas,
+                block.header.gas_limit,
+                transactions_with_sender.len(),
+                block.header.coinbase,
+            );
+        }
+
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard: on Amsterdam, use max(regular, state) per EIP-8037;
             // pre-Amsterdam uses cumulative_gas_used (post-refund sum).
@@ -149,9 +163,13 @@ impl LEVM {
             if is_bsc && block.header.number < 101687020 {
                 println!(
                     "BSC tx {}/{}: sender={:?} coinbase={:?} gas_price={} to={:?} is_sys={}",
-                    block.header.number, tx_idx,
-                    tx_sender, block.header.coinbase, tx.gas_price(),
-                    tx.to(), is_bsc_system_tx
+                    block.header.number,
+                    tx_idx,
+                    tx_sender,
+                    block.header.coinbase,
+                    tx.gas_price(),
+                    tx.to(),
+                    is_bsc_system_tx
                 );
             }
             if !is_bsc_system_tx {
@@ -168,7 +186,11 @@ impl LEVM {
                 let coinbase_bal_before = db.get_account(block.header.coinbase)?.info.balance;
                 println!(
                     "BSC drain: block={} tx_idx={} system_bal={} coinbase_bal_before={} coinbase={:?}",
-                    block.header.number, tx_idx, system_bal, coinbase_bal_before, block.header.coinbase
+                    block.header.number,
+                    tx_idx,
+                    system_bal,
+                    coinbase_bal_before,
+                    block.header.coinbase
                 );
                 if !system_bal.is_zero() {
                     let sys_acc = db.get_account_mut(SYSTEM_ADDRESS)?;
@@ -192,13 +214,53 @@ impl LEVM {
                 }
             }
 
+            // Gate opcode-level tracing to ONE specific tx so the output is
+            // bounded. Toggle it around the execute_tx call.
+            let trace_this_tx = is_bsc && block.header.number == 101687062 && tx_idx == 1;
+            if trace_this_tx {
+                BSC_OPCODE_TRACE.store(true, Ordering::Relaxed);
+                let calldata_hex: String = tx.data().iter().map(|b| format!("{b:02x}")).collect();
+                println!(
+                    "TRACE BEGIN block={} tx={} sender={:?} to={:?} calldata=0x{}",
+                    block.header.number,
+                    tx_idx,
+                    tx_sender,
+                    tx.to(),
+                    calldata_hex,
+                );
+            }
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+            if trace_this_tx {
+                BSC_OPCODE_TRACE.store(false, Ordering::Relaxed);
+                println!("TRACE END block={} tx={}", block.header.number, tx_idx);
+            }
 
             if is_bsc && block.header.number == 101687062 {
+                let fork = chain_config.fork(block.header.timestamp);
+                // Pre-refund = post-refund + capped refund. On pre-Amsterdam,
+                // report.gas_used has already been overwritten to post-refund,
+                // so pre = gas_used + gas_refunded. On Amsterdam+, gas_used is
+                // already pre-refund.
+                let pre_refund = if is_amsterdam {
+                    report.gas_used
+                } else {
+                    report.gas_used.saturating_add(report.gas_refunded)
+                };
                 println!(
-                    "BSC block 101687062 tx{}: gas_used={} gas_spent={} state_gas={} sender={:?} to={:?} is_sys={}",
-                    tx_idx, report.gas_used, report.gas_spent, report.state_gas_used,
-                    tx_sender, tx.to(), is_bsc_system_tx
+                    "BSC block 101687062 tx{}: gas_used={} gas_spent={} refund={} pre_refund={} state_gas={} tx_type={:?} gas_limit={} calldata_len={} sender={:?} to={:?} is_sys={} fork={:?}",
+                    tx_idx,
+                    report.gas_used,
+                    report.gas_spent,
+                    report.gas_refunded,
+                    pre_refund,
+                    report.state_gas_used,
+                    tx.tx_type(),
+                    tx.gas_limit(),
+                    tx.data().len(),
+                    tx_sender,
+                    tx.to(),
+                    is_bsc_system_tx,
+                    fork,
                 );
             }
 
@@ -472,6 +534,20 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
+        if is_bsc && block.header.number == 101687062 {
+            let fork = chain_config.fork(block.header.timestamp);
+            println!(
+                "BSC HDR 101687062 (pipe): ts={} fork={:?} is_amsterdam={} base_fee={:?} gas_limit={} tx_count={} coinbase={:?}",
+                block.header.timestamp,
+                fork,
+                is_amsterdam,
+                block.header.base_fee_per_gas,
+                block.header.gas_limit,
+                transactions_with_sender.len(),
+                block.header.coinbase,
+            );
+        }
+
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard: on Amsterdam, use max(regular, state) per EIP-8037;
             // pre-Amsterdam uses cumulative_gas_used (post-refund sum).
@@ -491,9 +567,13 @@ impl LEVM {
             if is_bsc && block.header.number < 101687020 {
                 println!(
                     "BSC tx {}/{}: sender={:?} coinbase={:?} gas_price={} to={:?} is_sys={}",
-                    block.header.number, tx_idx,
-                    tx_sender, block.header.coinbase, tx.gas_price(),
-                    tx.to(), is_bsc_system_tx
+                    block.header.number,
+                    tx_idx,
+                    tx_sender,
+                    block.header.coinbase,
+                    tx.gas_price(),
+                    tx.to(),
+                    is_bsc_system_tx
                 );
             }
             if !is_bsc_system_tx {
@@ -531,6 +611,19 @@ impl LEVM {
                 }
             }
 
+            let trace_this_tx = is_bsc && block.header.number == 101687062 && tx_idx == 1;
+            if trace_this_tx {
+                BSC_OPCODE_TRACE.store(true, Ordering::Relaxed);
+                let calldata_hex: String = tx.data().iter().map(|b| format!("{b:02x}")).collect();
+                println!(
+                    "TRACE BEGIN (pipe) block={} tx={} sender={:?} to={:?} calldata=0x{}",
+                    block.header.number,
+                    tx_idx,
+                    tx_sender,
+                    tx.to(),
+                    calldata_hex,
+                );
+            }
             let report = Self::execute_tx_in_block(
                 tx,
                 tx_sender,
@@ -541,11 +634,35 @@ impl LEVM {
                 false,
                 crypto,
             )?;
-            if is_bsc && block.header.number == 101687062 {
+            if trace_this_tx {
+                BSC_OPCODE_TRACE.store(false, Ordering::Relaxed);
                 println!(
-                    "BSC block 101687062 (pipe) tx{}: gas_used={} gas_spent={} state_gas={} sender={:?} to={:?} is_sys={}",
-                    tx_idx, report.gas_used, report.gas_spent, report.state_gas_used,
-                    tx_sender, tx.to(), is_bsc_system_tx
+                    "TRACE END (pipe) block={} tx={}",
+                    block.header.number, tx_idx
+                );
+            }
+            if is_bsc && block.header.number == 101687062 {
+                let fork = chain_config.fork(block.header.timestamp);
+                let pre_refund = if is_amsterdam {
+                    report.gas_used
+                } else {
+                    report.gas_used.saturating_add(report.gas_refunded)
+                };
+                println!(
+                    "BSC block 101687062 (pipe) tx{}: gas_used={} gas_spent={} refund={} pre_refund={} state_gas={} tx_type={:?} gas_limit={} calldata_len={} sender={:?} to={:?} is_sys={} fork={:?}",
+                    tx_idx,
+                    report.gas_used,
+                    report.gas_spent,
+                    report.gas_refunded,
+                    pre_refund,
+                    report.state_gas_used,
+                    tx.tx_type(),
+                    tx.gas_limit(),
+                    tx.data().len(),
+                    tx_sender,
+                    tx.to(),
+                    is_bsc_system_tx,
+                    fork,
                 );
             }
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {

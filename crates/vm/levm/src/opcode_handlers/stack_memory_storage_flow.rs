@@ -236,15 +236,20 @@ impl OpcodeHandler for OpSLoadHandler {
             }
         };
 
+        let was_cold = vm.substate.add_accessed_slot(address, key);
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::sload(
-                vm.substate.add_accessed_slot(address, key),
-            )?)?;
+            .increase_consumed_gas(gas_cost::sload(was_cold)?)?;
 
         // Record to BAL AFTER gas check passes per EIP-7928
         vm.record_storage_slot_to_bal(address, storage_slot_key);
 
         let value = vm.get_storage_value(address, key)?;
+        if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+            println!(
+                "  SLOAD addr={:?} key={:?} value={:?} was_cold={}",
+                address, key, value, was_cold
+            );
+        }
         vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
@@ -276,6 +281,22 @@ impl OpcodeHandler for OpSStoreHandler {
 
         let (current_value, original_value, storage_slot_was_cold) =
             vm.access_storage_slot_for_sstore(to, key)?;
+
+        if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+            let gas_before = vm.current_call_frame.gas_remaining;
+            let refund_before = vm.substate.refunded_gas;
+            println!(
+                "  SSTORE addr={:?} key={:?} new={:?} current={:?} original={:?} was_cold={} gas_before={} refund_before={}",
+                to,
+                key,
+                value,
+                current_value,
+                original_value,
+                storage_slot_was_cold,
+                gas_before,
+                refund_before,
+            );
+        }
 
         // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
         // Per EIP-7928: if SSTORE passes the stipend check but fails the main gas charge,
