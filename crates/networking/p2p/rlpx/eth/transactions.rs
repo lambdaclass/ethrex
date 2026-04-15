@@ -66,12 +66,25 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NewPooledTransactionHashes {
-    transaction_types: Bytes,
-    transaction_sizes: Vec<usize>,
+    pub(crate) transaction_types: Bytes,
+    pub(crate) transaction_sizes: Vec<usize>,
     pub transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {
+    /// Build from pre-computed raw fields (used when constructing trimmed announcements).
+    pub fn from_raw(
+        transaction_types: Bytes,
+        transaction_sizes: Vec<usize>,
+        transaction_hashes: Vec<H256>,
+    ) -> Self {
+        Self {
+            transaction_types,
+            transaction_sizes,
+            transaction_hashes,
+        }
+    }
+
     pub fn new(
         transactions: Vec<Transaction>,
         blockchain: &Blockchain,
@@ -124,6 +137,26 @@ impl NewPooledTransactionHashes {
         blockchain
             .mempool
             .reserve_unknown_hashes(&self.transaction_hashes)
+    }
+
+    /// Extract only the entries for the given `requested` hashes from this announcement.
+    /// Returns a trimmed announcement containing just those hashes with their types and sizes.
+    pub fn filter_to(&self, requested: &[H256]) -> NewPooledTransactionHashes {
+        let mut types = Vec::with_capacity(requested.len());
+        let mut sizes = Vec::with_capacity(requested.len());
+        let mut hashes = Vec::with_capacity(requested.len());
+        for &hash in requested {
+            if let Some(pos) = self.transaction_hashes.iter().position(|h| *h == hash) {
+                types.push(self.transaction_types[pos]);
+                sizes.push(self.transaction_sizes[pos]);
+                hashes.push(hash);
+            }
+        }
+        NewPooledTransactionHashes {
+            transaction_types: types.into(),
+            transaction_sizes: sizes,
+            transaction_hashes: hashes,
+        }
     }
 }
 
