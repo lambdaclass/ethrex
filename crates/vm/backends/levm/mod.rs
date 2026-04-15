@@ -2251,6 +2251,14 @@ pub fn extract_all_requests_levm(
         return Ok(Default::default());
     }
 
+    // BSC doesn't implement EIP-6110/EIP-7002/EIP-7251 (consensus-layer validator
+    // deposits/withdrawals/consolidations). BSC activates Prague EVM opcodes but
+    // not the PoS request-extraction semantics, so the predeploy contracts for
+    // these EIPs aren't on-chain.
+    if chain_config.chain_id == 56 || chain_config.chain_id == 97 {
+        return Ok(Default::default());
+    }
+
     let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db, vm_type, crypto)?
         .output
         .into();
