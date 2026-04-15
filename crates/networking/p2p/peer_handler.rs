@@ -464,9 +464,7 @@ impl PeerHandler {
                         return Ok(None);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
-                        let _ = self
-                            .peer_table
-                            .record_response_latency(peer_id, elapsed);
+                        let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                         self.peer_table.record_success(peer_id)?;
                         return Ok(Some(block_headers));
                     }
@@ -556,9 +554,7 @@ impl PeerHandler {
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        let _ = self
-                            .peer_table
-                            .record_response_latency(peer_id, elapsed);
+                        let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                         self.peer_table.record_success(peer_id)?;
                         return Ok(Some((block_bodies, peer_id)));
                     }
@@ -699,9 +695,7 @@ impl PeerHandler {
                 block_headers,
             })) => {
                 if !block_headers.is_empty() {
-                    let _ = self
-                        .peer_table
-                        .record_response_latency(peer_id, elapsed);
+                    let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                     return Ok(Some(
                         block_headers
                             .last()
