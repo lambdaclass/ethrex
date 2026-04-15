@@ -245,7 +245,11 @@ impl OpcodeHandler for OpSLoadHandler {
 
         let value = vm.get_storage_value(address, key)?;
         if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-            println!(
+            use std::io::Write;
+            let stderr = std::io::stderr();
+            let mut lock = stderr.lock();
+            let _ = writeln!(
+                lock,
                 "  SLOAD addr={:?} key={:?} value={:?} was_cold={}",
                 address, key, value, was_cold
             );
@@ -283,9 +287,13 @@ impl OpcodeHandler for OpSStoreHandler {
             vm.access_storage_slot_for_sstore(to, key)?;
 
         if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+            use std::io::Write;
             let gas_before = vm.current_call_frame.gas_remaining;
             let refund_before = vm.substate.refunded_gas;
-            println!(
+            let stderr = std::io::stderr();
+            let mut lock = stderr.lock();
+            let _ = writeln!(
+                lock,
                 "  SSTORE addr={:?} key={:?} new={:?} current={:?} original={:?} was_cold={} gas_before={} refund_before={}",
                 to,
                 key,

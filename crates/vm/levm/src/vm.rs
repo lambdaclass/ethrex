@@ -668,14 +668,19 @@ impl<'a> VM<'a> {
             let opcode_time_start = std::time::Instant::now();
 
             // BSC opcode trace (gated; turned on only around a specific tx).
+            // Use stderr + flush to avoid buffered interleaving with other log output.
             if BSC_OPCODE_TRACE.load(Ordering::Relaxed) {
+                use std::io::Write;
                 let pc = self.current_call_frame.pc.saturating_sub(1);
                 let gas_rem = self.current_call_frame.gas_remaining;
                 let depth = self.call_frames.len();
                 let to = self.current_call_frame.to;
                 let code_addr = self.current_call_frame.code_address;
                 let op_enum = crate::opcodes::Opcode::from(opcode);
-                println!(
+                let stderr = std::io::stderr();
+                let mut lock = stderr.lock();
+                let _ = writeln!(
+                    lock,
                     "TRACE d={} pc={:>5} op=0x{:02x}({:?}) gas_rem={:>10} to={:?} code={:?}",
                     depth, pc, opcode, op_enum, gas_rem, to, code_addr
                 );
