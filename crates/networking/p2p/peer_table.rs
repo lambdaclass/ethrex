@@ -978,24 +978,6 @@ impl PeerTableServer {
             .flat_map(|bucket| bucket.contacts.iter().map(|(id, c)| (id, c)))
     }
 
-    /// Collect all contacts into a Vec, recording the scan duration as a metric.
-    fn collect_contacts(&self) -> Vec<(H256, Contact)> {
-        #[cfg(feature = "metrics")]
-        let start = std::time::Instant::now();
-
-        let result: Vec<(H256, Contact)> = self
-            .iter_contacts()
-            .map(|(id, c)| (*id, c.clone()))
-            .collect();
-
-        #[cfg(feature = "metrics")]
-        {
-            use ethrex_metrics::p2p::METRICS_P2P;
-            METRICS_P2P.observe_iter_contacts_duration(start.elapsed().as_secs_f64());
-        }
-
-        result
-    }
 
     // --- Peer selection ---
 
@@ -1133,8 +1115,8 @@ impl PeerTableServer {
 
         let mut nodes: Vec<(Node, H256)> = vec![];
 
-        for (contact_id, contact) in self.collect_contacts() {
-            let dist = xor_distance(&node_id, &contact_id);
+        for (contact_id, contact) in self.iter_contacts() {
+            let dist = xor_distance(&node_id, contact_id);
             if nodes.len() < MAX_NODES_IN_NEIGHBORS_PACKET {
                 nodes.push((contact.node.clone(), dist));
             } else if let Some((farthest_idx, _)) =
@@ -1340,3 +1322,200 @@ impl PeerTableServer {
 }
 
 pub type PeerTable = ActorRef<PeerTableServer>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::H512;
+    use std::net::Ipv4Addr;
+
+    /// Helper: build a dummy contact with a unique node derived from `seed`.
+    fn dummy_contact(seed: u8) -> (H256, Contact) {
+        let pk = H512::from_low_u64_be(seed as u64 + 1);
+        let node = Node::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, seed)),
+            30303,
+            30303,
+            pk,
+        );
+        let node_id = node.node_id();
+        let contact = Contact::new(node, DiscoveryProtocol::Discv4);
+        (node_id, contact)
+    }
+
+    // --- KBucket::insert ---
+
+    #[test]
+    fn insert_into_empty_bucket() {
+        let mut bucket = KBucket::default();
+        let (id, contact) = dummy_contact(1);
+        assert!(bucket.insert(id, contact));
+        assert_eq!(bucket.contacts.len(), 1);
+        assert!(bucket.replacements.is_empty());
+    }
+
+    #[test]
+    fn insert_fills_bucket_then_goes_to_replacements() {
+        let mut bucket = KBucket::default();
+
+        // Fill the main list to capacity.
+        for i in 0..MAX_NODES_PER_BUCKET as u8 {
+            let (id, contact) = dummy_contact(i);
+            assert!(bucket.insert(id, contact), "contact {i} should go to main");
+        }
+        assert_eq!(bucket.contacts.len(), MAX_NODES_PER_BUCKET);
+
+        // The next insert should go to the replacement list.
+        let (id, contact) = dummy_contact(200);
+        assert!(!bucket.insert(id, contact));
+        assert_eq!(bucket.contacts.len(), MAX_NODES_PER_BUCKET);
+        assert_eq!(bucket.replacements.len(), 1);
+    }
+
+    // --- KBucket::contains ---
+
+    #[test]
+    fn contains_checks_main_and_replacement() {
+        let mut bucket = KBucket::default();
+
+        let (id_main, contact_main) = dummy_contact(1);
+        bucket.insert(id_main, contact_main);
+        assert!(bucket.contains(&id_main));
+
+        // Fill bucket so next goes to replacement.
+        for i in 2..=(MAX_NODES_PER_BUCKET as u8) {
+            let (id, c) = dummy_contact(i);
+            bucket.insert(id, c);
+        }
+        let (id_repl, contact_repl) = dummy_contact(100);
+        bucket.insert(id_repl, contact_repl);
+
+        assert!(bucket.contains(&id_repl));
+        assert!(!bucket.contains(&H256::zero()));
+    }
+
+    // --- KBucket::get / get_any ---
+
+    #[test]
+    fn get_returns_main_list_only() {
+        let mut bucket = KBucket::default();
+        let (id, contact) = dummy_contact(1);
+        bucket.insert(id, contact);
+        assert!(bucket.get(&id).is_some());
+        assert!(bucket.get(&H256::zero()).is_none());
+    }
+
+    #[test]
+    fn get_any_returns_from_replacement() {
+        let mut bucket = KBucket::default();
+        // Fill main list.
+        for i in 0..MAX_NODES_PER_BUCKET as u8 {
+            let (id, c) = dummy_contact(i);
+            bucket.insert(id, c);
+        }
+        // Insert into replacements.
+        let (id_repl, c_repl) = dummy_contact(200);
+        bucket.insert(id_repl, c_repl);
+
+        assert!(bucket.get(&id_repl).is_none()); // not in main
+        assert!(bucket.get_any(&id_repl).is_some()); // found via replacement
+    }
+
+    // --- KBucket::remove_and_promote ---
+
+    #[test]
+    fn remove_and_promote_with_replacement() {
+        let mut bucket = KBucket::default();
+
+        // Fill main list.
+        let mut main_ids = Vec::new();
+        for i in 0..MAX_NODES_PER_BUCKET as u8 {
+            let (id, c) = dummy_contact(i);
+            main_ids.push(id);
+            bucket.insert(id, c);
+        }
+
+        // Add a replacement.
+        let (repl_id, repl_contact) = dummy_contact(200);
+        bucket.insert(repl_id, repl_contact);
+
+        // Remove a main contact — the replacement should be promoted.
+        let promoted = bucket.remove_and_promote(&main_ids[0]);
+        assert_eq!(promoted, Some(repl_id));
+        assert_eq!(bucket.contacts.len(), MAX_NODES_PER_BUCKET);
+        assert!(bucket.replacements.is_empty());
+        assert!(!bucket.contains(&main_ids[0]));
+        assert!(bucket.contains(&repl_id));
+    }
+
+    #[test]
+    fn remove_and_promote_without_replacement() {
+        let mut bucket = KBucket::default();
+        let (id, c) = dummy_contact(1);
+        bucket.insert(id, c);
+
+        let promoted = bucket.remove_and_promote(&id);
+        assert!(promoted.is_none());
+        assert!(bucket.contacts.is_empty());
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_none() {
+        let mut bucket = KBucket::default();
+        assert!(bucket.remove_and_promote(&H256::zero()).is_none());
+    }
+
+    // --- Replacement eviction ---
+
+    #[test]
+    fn replacement_list_evicts_oldest_when_full() {
+        let mut bucket = KBucket::default();
+        // Fill main list.
+        for i in 0..MAX_NODES_PER_BUCKET as u8 {
+            let (id, c) = dummy_contact(i);
+            bucket.insert(id, c);
+        }
+
+        // Fill replacement list beyond capacity.
+        let mut repl_ids = Vec::new();
+        for i in 0..(MAX_REPLACEMENTS_PER_BUCKET + 2) as u8 {
+            let seed = 100 + i;
+            let (id, c) = dummy_contact(seed);
+            repl_ids.push(id);
+            bucket.insert(id, c);
+        }
+
+        assert_eq!(bucket.replacements.len(), MAX_REPLACEMENTS_PER_BUCKET);
+        // The oldest two should have been evicted.
+        assert!(!bucket.contains(&repl_ids[0]));
+        assert!(!bucket.contains(&repl_ids[1]));
+        // The most recent ones should still be there.
+        assert!(bucket.contains(repl_ids.last().unwrap()));
+    }
+
+    // --- bucket_index ---
+
+    #[test]
+    fn bucket_index_self_is_none() {
+        let id = H256::random();
+        assert_eq!(bucket_index(&id, &id), None);
+    }
+
+    #[test]
+    fn bucket_index_minimal_distance() {
+        let local = H256::zero();
+        // XOR distance = 1 → highest bit is bit 0 → bucket 0
+        let mut remote = H256::zero();
+        remote.0[31] = 1;
+        assert_eq!(bucket_index(&local, &remote), Some(0));
+    }
+
+    #[test]
+    fn bucket_index_maximal_distance() {
+        let local = H256::zero();
+        // XOR distance has highest bit at position 255 → bucket 255
+        let mut remote = H256::zero();
+        remote.0[0] = 0x80;
+        assert_eq!(bucket_index(&local, &remote), Some(255));
+    }
+}
