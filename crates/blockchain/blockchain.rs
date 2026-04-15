@@ -3253,8 +3253,10 @@ fn execute_bsc_system_calls(
         .map_err(|e| ChainError::Custom(format!("BSC system contract upgrade: {e}")))?;
 
     // Read and drain the SYSTEM_ADDRESS balance — this is the accumulated gas
-    // fees from all user transactions in the block.  The balance is zeroed
-    // here and passed as `msg.value` to the `deposit()` call.
+    // fees from all user transactions in the block. Per BSC `parlia.go`
+    // `distributeIncoming`: drain SYSTEM_ADDRESS, credit the coinbase, then
+    // the `deposit()` system call transfers it from coinbase to the validator
+    // contract via `msg.value`.
     let deposit_value = vm
         .get_account_balance(SYSTEM_ADDRESS)
         .map_err(|e| ChainError::Custom(format!("BSC read SYSTEM_ADDRESS balance: {e}")))?;
@@ -3262,6 +3264,11 @@ fn execute_bsc_system_calls(
     if deposit_value > U256::zero() {
         vm.set_account_balance(SYSTEM_ADDRESS, U256::zero())
             .map_err(|e| ChainError::Custom(format!("BSC zero SYSTEM_ADDRESS balance: {e}")))?;
+        let current_coinbase_balance = vm.get_account_balance(coinbase).map_err(|e| {
+            ChainError::Custom(format!("BSC read coinbase balance: {e}"))
+        })?;
+        vm.set_account_balance(coinbase, current_coinbase_balance + deposit_value)
+            .map_err(|e| ChainError::Custom(format!("BSC credit coinbase: {e}")))?;
     }
 
     // Build the ordered list of system messages for this block.
