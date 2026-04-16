@@ -233,14 +233,14 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
-          # Not required while Amsterdam fork spec is still evolving.
-          # Remove optional: true once the fork stabilizes.
+          # Pin EELS branch to a known-good commit to avoid CI breakage
+          # from upstream changes. Bump the commit when ready to pick up new tests.
+          # Source: ethereum/execution-specs devnets/bal/3 @ 2026-04-14
           - name: "Consume Engine Amsterdam"
             simulation: ethereum/eels/consume-engine
             limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
-            buildarg: "fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.6.1/fixtures_bal.tar.gz branch=devnets/bal/3"
+            buildarg: "fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.6.1/fixtures_bal.tar.gz branch=5c6e20abf3586f52d9e58393203ca07f2d0151fe"
             artifact_prefix: consume_engine_amsterdam
-            optional: true
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
