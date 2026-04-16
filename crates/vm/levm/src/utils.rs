@@ -553,17 +553,21 @@ impl<'a> VM<'a> {
             &self.current_call_frame.calldata
         };
 
-        // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+        // EIP-7623: tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
         let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST;
 
-        // EIP-7981 (Amsterdam): Include access list tokens in the floor calculation,
-        // and use the Amsterdam multiplier (EIP-7976).
+        // EIP-7981 (Amsterdam): Use unweighted calldata length for the floor calculation,
+        // include access list tokens, and use the Amsterdam multiplier (EIP-7976).
+        // floor_tokens_in_calldata = (zero_bytes + nonzero_bytes) * 4 = calldata.len() * 4
         let (total_tokens, floor_per_token) = if self.env.config.fork >= Fork::Amsterdam {
+            let floor_tokens_in_calldata = (calldata.len() as u64)
+                .checked_mul(STANDARD_TOKEN_COST)
+                .ok_or(InternalError::Overflow)?;
             let access_list_tokens = gas_cost::tokens_in_access_list_data(self.tx.access_list());
-            let total = tokens_in_calldata
+            let total = floor_tokens_in_calldata
                 .checked_add(access_list_tokens)
                 .ok_or(InternalError::Overflow)?;
             (total, TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM)
