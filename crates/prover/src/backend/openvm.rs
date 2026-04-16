@@ -17,6 +17,10 @@ static PROGRAM_ELF: &[u8] =
 pub struct OpenVmProveOutput(pub NonRootStarkProof);
 
 /// OpenVM v2 prover backend.
+///
+/// The SDK is created per-call rather than stored in the struct because it
+/// contains `Rc` internally (in the Transpiler) and is therefore `!Send`.
+/// The Actor framework requires `Send` on backend structs.
 #[derive(Default)]
 pub struct OpenVmBackend;
 
@@ -25,23 +29,13 @@ impl OpenVmBackend {
         Self
     }
 
-    /// Create a new SDK instance with production-recommended parameters.
-    ///
-    /// The SDK contains `Rc` internally (in the Transpiler) and is therefore
-    /// `!Send`. We create it per-call so that `OpenVmBackend` itself remains
-    /// `Send` (required by the Actor framework). The SDK lazily caches proving
-    /// keys via `OnceLock` fields, but that cache is local to each instance.
-    fn sdk() -> Sdk {
-        Sdk::standard(
-            app_params_with_100_bits_security(MAX_APP_LOG_STACKED_HEIGHT),
-            AggregationSystemParams::default(),
-        )
-    }
-
     /// Execute using already-serialized input.
     fn execute_with_stdin(&self, stdin: StdIn) -> Result<(), BackendError> {
-        Self::sdk()
-            .execute(PROGRAM_ELF, stdin)
+        let sdk = Sdk::standard(
+            app_params_with_100_bits_security(MAX_APP_LOG_STACKED_HEIGHT),
+            AggregationSystemParams::default(),
+        );
+        sdk.execute(PROGRAM_ELF, stdin)
             .map_err(BackendError::execution)?;
         Ok(())
     }
@@ -54,7 +48,11 @@ impl OpenVmBackend {
     ) -> Result<OpenVmProveOutput, BackendError> {
         match format {
             ProofFormat::Compressed => {
-                let (proof, _verification_baseline) = Self::sdk()
+                let sdk = Sdk::standard(
+                    app_params_with_100_bits_security(MAX_APP_LOG_STACKED_HEIGHT),
+                    AggregationSystemParams::default(),
+                );
+                let (proof, _verification_baseline) = sdk
                     .prove(PROGRAM_ELF, stdin, &[])
                     .map_err(BackendError::proving)?;
                 Ok(OpenVmProveOutput(proof))
