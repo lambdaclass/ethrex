@@ -53,6 +53,34 @@ pub struct Options {
         help_heading = "L2 options"
     )]
     pub sponsored_gas_limit: u64,
+    #[arg(
+        long = "l2.ws-enabled",
+        default_value = "false",
+        help = "Enable WebSocket RPC server for L2. Disabled by default.",
+        help_heading = "L2 options",
+        env = "ETHREX_L2_WS_ENABLED"
+    )]
+    pub l2_ws_enabled: bool,
+    #[arg(
+        long = "l2.ws-addr",
+        default_value = "0.0.0.0",
+        value_name = "ADDRESS",
+        requires = "l2_ws_enabled",
+        help = "Listening address for the L2 WebSocket RPC server.",
+        help_heading = "L2 options",
+        env = "ETHREX_L2_WS_ADDR"
+    )]
+    pub l2_ws_addr: String,
+    #[arg(
+        long = "l2.ws-port",
+        default_value = "1729",
+        value_name = "PORT",
+        requires = "l2_ws_enabled",
+        help = "Listening port for the L2 WebSocket RPC server.",
+        help_heading = "L2 options",
+        env = "ETHREX_L2_WS_PORT"
+    )]
+    pub l2_ws_port: String,
 }
 
 impl Default for Options {
@@ -66,6 +94,9 @@ impl Default for Options {
             )
             .unwrap(),
             sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
+            l2_ws_enabled: false,
+            l2_ws_addr: "0.0.0.0".to_string(),
+            l2_ws_port: "1729".to_string(),
         }
     }
 }

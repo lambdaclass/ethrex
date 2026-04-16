@@ -51,7 +51,7 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
-use axum::extract::ws::WebSocket;
+use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use axum_extra::{
@@ -80,7 +80,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
-    Mutex as TokioMutex,
+    Mutex as TokioMutex, broadcast,
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot,
 };
@@ -209,6 +209,9 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
+    /// Broadcast sender for new block header notifications (eth_subscribe "newHeads").
+    /// `None` when the WS server is disabled or subscriptions are not needed.
+    pub new_heads_sender: Option<broadcast::Sender<Value>>,
 }
 
 impl std::fmt::Debug for RpcApiContext {
@@ -392,6 +395,10 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
     }
 }
 
+/// Broadcast channel capacity for new block header notifications.
+/// A value of 128 handles bursts without blocking block production.
+pub const NEW_HEADS_CHANNEL_CAPACITY: usize = 128;
+
 /// Duration after which inactive filters are cleaned up.
 ///
 /// Filters created via `eth_newFilter` are automatically removed if not
@@ -488,6 +495,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
+    new_heads_sender: Option<broadcast::Sender<Value>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -510,6 +518,7 @@ pub async fn start_api(
         log_filter_handler,
         gas_ceil,
         block_worker_channel,
+        new_heads_sender,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -670,27 +679,201 @@ pub async fn handle_authrpc_request(
     }
 }
 
+/// Handle a WebSocket connection.
+///
+/// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
+/// regular JSON-RPC request-response calls that work the same as over HTTP.
 async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
-    while let Some(message) = socket.recv().await {
-        let Ok(body) = message
-            .and_then(|msg| msg.into_text())
-            .map(|msg| msg.to_string())
-        else {
-            return;
-        };
+    let context = state.0;
+    // subscription_id -> broadcast::Receiver<Value>
+    let mut subscriptions: HashMap<String, broadcast::Receiver<Value>> = HashMap::new();
+    // Channel for the write loop to receive outbound messages.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-        // ok-clone: increase arc reference count
-        let Ok(response) = handle_http_request(state.clone(), body)
-            .await
-            .map(|res| res.to_string())
-        else {
-            return;
-        };
+    loop {
+        tokio::select! {
+            // Process incoming WS messages (JSON-RPC requests).
+            msg = socket.recv() => {
+                let Some(msg) = msg else {
+                    // Connection closed.
+                    break;
+                };
+                let body = match msg {
+                    Ok(Message::Text(text)) => text.to_string(),
+                    Ok(Message::Close(_)) => break,
+                    // Ignore ping/pong/binary frames.
+                    Ok(_) => continue,
+                    Err(_) => break,
+                };
 
-        if socket.send(response.into()).await.is_err() {
-            return;
+                let response = handle_ws_request(&body, &context, &mut subscriptions, &out_tx).await;
+                if let Some(resp) = response
+                    && socket.send(Message::Text(resp.into())).await.is_err()
+                {
+                    break;
+                }
+            }
+
+            // Push subscription notifications for all active subscriptions.
+            _ = drain_subscriptions(&mut subscriptions, &out_tx) => {}
+
+            // Send any pending outbound messages (subscription notifications).
+            Some(msg) = out_rx.recv() => {
+                if socket.send(Message::Text(msg.into())).await.is_err() {
+                    break;
+                }
+            }
         }
     }
+
+    // Connection closed — subscriptions are dropped automatically when the
+    // HashMap goes out of scope.
+}
+
+/// Process an incoming JSON-RPC request over WebSocket.
+/// Returns `Some(response_text)` for request-response calls.
+/// For eth_subscribe / eth_unsubscribe the response is also returned inline.
+async fn handle_ws_request(
+    body: &str,
+    context: &RpcApiContext,
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+    _out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Option<String> {
+    use crate::utils::{RpcRequest, RpcRequestId};
+
+    let req: RpcRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            let resp = rpc_response(
+                RpcRequestId::String("".to_string()),
+                Err::<Value, _>(RpcErr::BadParams("Invalid request body".to_string())),
+            )
+            .ok()?;
+            return Some(resp.to_string());
+        }
+    };
+
+    match req.method.as_str() {
+        "eth_subscribe" => {
+            let result = handle_eth_subscribe(&req, context, subscriptions);
+            let resp = rpc_response(req.id, result).ok()?;
+            Some(resp.to_string())
+        }
+        "eth_unsubscribe" => {
+            let result = handle_eth_unsubscribe(&req, subscriptions);
+            let resp = rpc_response(req.id, result).ok()?;
+            Some(resp.to_string())
+        }
+        _ => {
+            let res = map_http_requests(&req, context.clone()).await;
+            let resp = rpc_response(req.id, res).ok()?;
+            Some(resp.to_string())
+        }
+    }
+}
+
+/// Handle `eth_subscribe`.
+///
+/// Only `"newHeads"` is supported. Returns a hex subscription ID
+/// on success or an error for unsupported subscription types.
+pub fn handle_eth_subscribe(
+    req: &crate::utils::RpcRequest,
+    context: &RpcApiContext,
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+) -> Result<Value, RpcErr> {
+    let params = req.params.as_deref().unwrap_or(&[]);
+    let sub_type = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
+        RpcErr::BadParams("eth_subscribe requires a subscription type parameter".to_string())
+    })?;
+
+    match sub_type {
+        "newHeads" => {
+            let sender = context
+                .new_heads_sender
+                .as_ref()
+                .ok_or_else(|| RpcErr::Internal("WebSocket server not enabled".to_string()))?;
+
+            let sub_id = generate_subscription_id();
+            let receiver = sender.subscribe();
+            subscriptions.insert(sub_id.clone(), receiver);
+
+            Ok(Value::String(sub_id))
+        }
+        other => Err(RpcErr::Internal(format!(
+            "Unsupported subscription type: {other}"
+        ))),
+    }
+}
+
+/// Handle `eth_unsubscribe`.
+///
+/// Returns `true` if the subscription existed and was removed, `false` otherwise.
+pub fn handle_eth_unsubscribe(
+    req: &crate::utils::RpcRequest,
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+) -> Result<Value, RpcErr> {
+    let params = req.params.as_deref().unwrap_or(&[]);
+    let sub_id = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
+        RpcErr::BadParams("eth_unsubscribe requires a subscription ID parameter".to_string())
+    })?;
+
+    let removed = subscriptions.remove(sub_id).is_some();
+    Ok(Value::Bool(removed))
+}
+
+/// Generate a unique hex-encoded subscription ID.
+pub fn generate_subscription_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("0x{id:016x}")
+}
+
+/// Drain any buffered messages from active subscriptions and send them to
+/// the outbound channel. This is called from the `select!` loop to ensure
+/// subscription notifications are forwarded promptly.
+pub async fn drain_subscriptions(
+    subscriptions: &mut HashMap<String, broadcast::Receiver<Value>>,
+    out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) {
+    let sub_ids: Vec<String> = subscriptions.keys().cloned().collect();
+    for sub_id in sub_ids {
+        let Some(receiver) = subscriptions.get_mut(&sub_id) else {
+            continue;
+        };
+        loop {
+            match receiver.try_recv() {
+                Ok(header) => {
+                    let notification = build_subscription_notification(&sub_id, header);
+                    if out_tx.send(notification).is_err() {
+                        return;
+                    }
+                }
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Closed) => {
+                    subscriptions.remove(&sub_id);
+                    break;
+                }
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    warn!("eth_subscribe newHeads: subscription {sub_id} lagged by {n} messages");
+                }
+            }
+        }
+    }
+    tokio::task::yield_now().await;
+}
+
+/// Build the standard Ethereum subscription notification envelope.
+pub fn build_subscription_notification(sub_id: &str, result: Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_subscription",
+        "params": {
+            "subscription": sub_id,
+            "result": result,
+        }
+    })
+    .to_string()
 }
 
 /// Handle requests that can come from either clients or other users

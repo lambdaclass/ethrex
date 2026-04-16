@@ -35,7 +35,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
+use serde_json::Value;
 use std::str::FromStr;
+use tokio::sync::broadcast;
 
 use super::errors::BlockProducerError;
 
@@ -63,6 +65,8 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
+    /// Broadcast sender for new block header notifications to WS subscribers.
+    new_heads_sender: Option<broadcast::Sender<Value>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -84,6 +88,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        new_heads_sender: Option<broadcast::Sender<Value>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
             block_time_ms,
@@ -122,6 +127,7 @@ impl BlockProducer {
             block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
+            new_heads_sender,
         })
     }
 
@@ -201,6 +207,8 @@ impl BlockProducer {
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+        // Save the header for newHeads notifications before block is moved into store_block.
+        let block_header = block.header.clone();
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;
@@ -216,6 +224,27 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+
+        // Broadcast the new block header to any active eth_subscribe("newHeads") connections.
+        if let Some(sender) = &self.new_heads_sender {
+            match serde_json::to_value(&block_header) {
+                Ok(mut header_value) => {
+                    // Inject the computed block hash into the serialized header
+                    // so subscribers see a complete header including the "hash" field.
+                    if let Value::Object(ref mut map) = header_value {
+                        map.insert(
+                            "hash".to_string(),
+                            Value::String(format!("{block_hash:#x}")),
+                        );
+                    }
+                    // Ignore send errors — they just mean no subscribers are connected.
+                    let _ = sender.send(header_value);
+                }
+                Err(e) => {
+                    warn!("Failed to serialize block header for newHeads broadcast: {e}");
+                }
+            }
+        }
 
         metrics!(
             METRICS_BLOCKS.set_block_number(block_number);
@@ -299,6 +328,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        new_heads_sender: Option<broadcast::Sender<Value>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
         let block_producer = Self::new(
             &cfg.block_producer,
@@ -309,6 +339,7 @@ impl BlockProducer {
             sequencer_state,
             router_address,
             l2_gas_limit,
+            new_heads_sender,
         )?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);
         Ok(actor_ref)

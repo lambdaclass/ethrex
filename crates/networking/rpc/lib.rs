@@ -87,7 +87,10 @@ pub use eth::{
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_debug_requests,
+    ClientVersion, NEW_HEADS_CHANNEL_CAPACITY, NodeData, RpcApiContext, RpcHandler,
+    RpcRequestWrapper, build_subscription_notification, drain_subscriptions,
+    generate_subscription_id, handle_eth_subscribe, handle_eth_unsubscribe, map_debug_requests,
     map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };
+pub use tokio::sync::broadcast;
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

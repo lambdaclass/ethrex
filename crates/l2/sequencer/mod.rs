@@ -19,8 +19,10 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use reqwest::Url;
+use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
 use std::pin::Pin;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use utils::get_needed_proof_types;
@@ -53,6 +55,7 @@ pub async fn start_l2(
     genesis: Genesis,
     checkpoints_dir: PathBuf,
     l2_gas_limit: u64,
+    new_heads_sender: Option<broadcast::Sender<Value>>,
 ) -> Result<
     (
         Option<ActorRef<L1Committer>>,
@@ -160,6 +163,7 @@ pub async fn start_l2(
         shared_state.clone(),
         cfg.l1_watcher.router_address,
         l2_gas_limit,
+        new_heads_sender,
     )
     .await
     .inspect_err(|err| {
