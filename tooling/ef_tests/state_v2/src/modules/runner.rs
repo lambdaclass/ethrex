@@ -9,6 +9,7 @@ use ethrex_common::{
         LegacyTransaction, Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment, tracing::LevmCallTracer, utils::get_base_fee_per_blob_gas, vm::VM,
     vm::VMType,
@@ -69,8 +70,8 @@ pub async fn run_test(
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm =
-            VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
+            .map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.
         let execution_result = vm.execute();
@@ -180,8 +181,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
                 .collect(),
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas_limit: test_case.gas,
             ..Default::default()
         })
@@ -189,8 +194,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP4844Transaction(EIP4844Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas: test_case.gas,
             to: match to {
                 TxKind::Call(to) => to,
@@ -207,8 +216,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP1559Transaction(EIP1559Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas_limit: test_case.gas,
             to,
             value,

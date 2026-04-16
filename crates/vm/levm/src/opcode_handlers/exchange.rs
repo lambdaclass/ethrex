@@ -46,11 +46,10 @@ impl OpcodeHandler for OpSwapNHandler {
         //   - 0x5B, which corresponds to a JUMPDEST opcode.
         //   - 0x5F to 0x7F, which corresponds to PUSHx opcodes.
         //   - The extra 3 values (0x5C, 0x5D and 0x5E) are probably included to simplify decoding.
-        let relative_offset = match relative_offset {
-            x if x <= 0x5A => x.wrapping_add(17),
-            x if x < 0x80 => return Err(ExceptionalHalt::InvalidOpcode.into()),
-            x => x.wrapping_sub(20),
-        };
+        if (0x5B..0x80).contains(&relative_offset) {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        let relative_offset = relative_offset.wrapping_add(145);
 
         // Stack grows downwards, so we add the offset to get deeper elements
         // SWAPN swaps top with the (n+1)th element where n = decoded relative_offset
@@ -108,12 +107,12 @@ impl OpcodeHandler for OpExchangeHandler {
         // This range is more restricted than the one in DUPN and SWAPN because this payload
         // contains two values, and the decoded offsets would overlap. In other words, it avoids
         // having two different EXCHANGE encodings for the exact same offsets.
+        if (0x52..0x80).contains(&relative_offset) {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+
         let relative_offset = {
-            let byte = match relative_offset {
-                x if x <= 0x4F => x,
-                x if x < 0x80 => return Err(ExceptionalHalt::InvalidOpcode.into()),
-                x => x.wrapping_sub(48),
-            };
+            let byte = relative_offset ^ 0x8F;
 
             let q = byte >> 4;
             let r = byte & 0x0F;

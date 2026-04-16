@@ -34,29 +34,29 @@ help:
 
 # L1 targets
 sp1:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features sp1
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features sp1-build-elf
 
 risc0:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features risc0
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features risc0-build-elf
 
 zisk:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features zisk
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features zisk-build-elf
 
 openvm:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features openvm
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features openvm-build-elf
 
 # L2 targets
 l2-sp1:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features sp1,l2
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features sp1-build-elf,l2
 
 l2-risc0:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features risc0,l2
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features risc0-build-elf,l2
 
 l2-zisk:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features zisk,l2
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features zisk-build-elf,l2
 
 l2-openvm:
-	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features openvm,l2
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features openvm-build-elf,l2
 
 clean:
 	rm -rf bin/sp1/out bin/risc0/out bin/zisk/out bin/openvm/out

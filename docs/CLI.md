@@ -27,12 +27,12 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 
       --datadir <DATABASE_DIRECTORY>
-          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
+          Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.
 
           [env: ETHREX_DATADIR=]
           [default: /home/runner/.local/share/ethrex]
@@ -70,6 +70,11 @@ Node options:
           [env: ETHREX_LOG_COLOR=]
           [default: auto]
 
+      --no-migrate
+          Do not migrate an existing database to the network-specific subdirectory.
+
+          [env: ETHREX_NO_MIGRATE=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
 
@@ -102,9 +107,14 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
+
+      --nat.extip <IP>
+          The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
+
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -319,9 +329,14 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
+
+      --nat.extip <IP>
+          The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
+
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -486,12 +501,6 @@ Block producer options:
       --block-producer.l1-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
 
-      --block-producer.block-gas-limit <UINT64>
-          Maximum gas limit for the L2 blocks.
-
-          [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
-          [default: 30000000]
-
 Proposer options:
       --elasticity-multiplier <UINT64>
           [env: ETHREX_PROPOSER_ELASTICITY_MULTIPLIER=]
@@ -621,6 +630,11 @@ Aligned options:
           Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
 
           [env: ETHREX_ALIGNED_FROM_BLOCK=]
+
+      --aligned.resubmission-timeout <SECONDS>
+          Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).
+
+          [env: ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS=]
 
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk

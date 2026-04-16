@@ -1,5 +1,4 @@
 use super::{message::Message, p2p::DisconnectReason};
-use crate::peer_table::PeerTableError;
 use crate::snap::error::SnapError;
 use aes::cipher::InvalidLength;
 use ethrex_blockchain::error::{ChainError, MempoolError};
@@ -7,6 +6,7 @@ use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use ethrex_storage::error::StoreError;
 #[cfg(feature = "l2")]
 use ethrex_storage_rollup::RollupStoreError;
+use spawned_concurrency::error::ActorError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -86,7 +86,7 @@ pub enum PeerConnectionError {
     #[error("Received invalid block range update")]
     InvalidBlockRangeUpdate,
     #[error(transparent)]
-    PeerTableError(#[from] PeerTableError),
+    ActorError(#[from] ActorError),
     #[error("Request timeouted")]
     Timeout,
     #[error("Unexpected response: Expected {0}, got {1}")]

@@ -8,6 +8,7 @@ use ethrex_common::{
         bloom_from_logs,
     },
 };
+use ethrex_crypto::NativeCrypto;
 
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +65,7 @@ impl From<Receipt> for RpcReceiptInfo {
             tx_type: receipt.tx_type,
             status: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
-            logs_bloom: bloom_from_logs(&receipt.logs),
+            logs_bloom: bloom_from_logs(&receipt.logs, &ethrex_crypto::NativeCrypto),
         }
     }
 }
@@ -175,14 +176,13 @@ impl RpcReceiptTxInfo {
         base_fee_per_gas: Option<u64>,
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
-        let from = transaction.sender()?;
+        let from = transaction.sender(&NativeCrypto)?;
         let transaction_hash = transaction.hash();
-        let effective_gas_price = transaction
-            .effective_gas_price(base_fee_per_gas)
-            .ok_or(RpcErr::Internal(
-                "Could not get effective gas price from tx".into(),
-            ))?
-            .as_u64();
+        let effective_gas_price =
+            u64::try_from(transaction.effective_gas_price(base_fee_per_gas).ok_or(
+                RpcErr::Internal("Could not get effective gas price from tx".into()),
+            )?)
+            .map_err(|_| RpcErr::Internal("effective gas price overflows u64".into()))?;
         let transaction_index = index;
         let (blob_gas_price, blob_gas_used) = match &transaction {
             Transaction::EIP4844Transaction(tx) => (

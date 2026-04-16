@@ -13,7 +13,7 @@ use crate::deserialize::deserialize_block_expected_exception;
 use crate::fork::Fork;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct TestUnit {
     #[serde(default, rename = "_info")]
     pub info: Info,
@@ -178,22 +178,28 @@ impl TestUnit {
             coinbase: self.genesis_block_header.coinbase,
             difficulty: self.genesis_block_header.difficulty,
             extra_data: self.genesis_block_header.extra_data.clone(),
-            gas_limit: self.genesis_block_header.gas_limit.as_u64(),
+            gas_limit: self.genesis_block_header.gas_limit.try_into().unwrap(),
             nonce: self.genesis_block_header.nonce.to_low_u64_be(),
             mix_hash: self.genesis_block_header.mix_hash,
-            timestamp: self.genesis_block_header.timestamp.as_u64(),
+            timestamp: self.genesis_block_header.timestamp.try_into().unwrap(),
             base_fee_per_gas: self
                 .genesis_block_header
                 .base_fee_per_gas
-                .map(|v| v.as_u64()),
-            blob_gas_used: self.genesis_block_header.blob_gas_used.map(|v| v.as_u64()),
+                .map(|v| v.try_into().unwrap()),
+            blob_gas_used: self
+                .genesis_block_header
+                .blob_gas_used
+                .map(|v| v.try_into().unwrap()),
             excess_blob_gas: self
                 .genesis_block_header
                 .excess_blob_gas
-                .map(|v| v.as_u64()),
+                .map(|v| v.try_into().unwrap()),
             requests_hash: self.genesis_block_header.requests_hash,
             block_access_list_hash: self.genesis_block_header.block_access_list_hash,
-            slot_number: self.genesis_block_header.slot_number.map(|v| v.as_u64()),
+            slot_number: self
+                .genesis_block_header
+                .slot_number
+                .map(|v| v.try_into().unwrap()),
         }
     }
 }
@@ -313,6 +319,21 @@ pub struct Block {
     #[serde(default)]
     pub uncle_headers: Vec<Header>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// Execution witness from zkevm fixtures (standard format: state/codes/headers).
+    #[serde(default, rename = "executionWitness")]
+    pub execution_witness: Option<serde_json::Value>,
+    /// Reference-encoded stateless input bytes from zkevm fixtures.
+    #[serde(default, rename = "statelessInputBytes")]
+    pub stateless_input_bytes: Option<String>,
+    /// Expected stateless output bytes from zkevm fixtures.
+    #[serde(default, rename = "statelessOutputBytes")]
+    pub stateless_output_bytes: Option<String>,
+    /// Block access list from zkevm fixtures.
+    #[serde(default, rename = "blockAccessList")]
+    pub block_access_list_data: Option<serde_json::Value>,
+    /// Transaction receipts from zkevm fixtures.
+    #[serde(default, rename = "receipts")]
+    pub receipts: Option<serde_json::Value>,
 }
 
 impl BlockWithRLP {
@@ -375,21 +396,21 @@ impl From<Header> for BlockHeader {
             receipts_root: val.receipt_trie,
             logs_bloom: val.bloom,
             difficulty: val.difficulty,
-            number: val.number.as_u64(),
-            gas_limit: val.gas_limit.as_u64(),
-            gas_used: val.gas_used.as_u64(),
-            timestamp: val.timestamp.as_u64(),
+            number: val.number.try_into().unwrap(),
+            gas_limit: val.gas_limit.try_into().unwrap(),
+            gas_used: val.gas_used.try_into().unwrap(),
+            timestamp: val.timestamp.try_into().unwrap(),
             extra_data: val.extra_data,
             prev_randao: val.mix_hash,
             nonce: val.nonce.to_low_u64_be(),
-            base_fee_per_gas: val.base_fee_per_gas.map(|v| v.as_u64()),
+            base_fee_per_gas: val.base_fee_per_gas.map(|v| v.try_into().unwrap()),
             withdrawals_root: val.withdrawals_root,
-            blob_gas_used: val.blob_gas_used.map(|x| x.as_u64()),
-            excess_blob_gas: val.excess_blob_gas.map(|x| x.as_u64()),
+            blob_gas_used: val.blob_gas_used.map(|x| x.try_into().unwrap()),
+            excess_blob_gas: val.excess_blob_gas.map(|x| x.try_into().unwrap()),
             parent_beacon_block_root: val.parent_beacon_block_root,
             requests_hash: val.requests_hash,
             block_access_list_hash: val.block_access_list_hash,
-            slot_number: val.slot_number.map(|x| x.as_u64()),
+            slot_number: val.slot_number.map(|x| x.try_into().unwrap()),
             ..Default::default()
         }
     }
@@ -398,7 +419,7 @@ impl From<Header> for BlockHeader {
 impl From<Transaction> for ethrexTransaction {
     fn from(val: Transaction) -> Self {
         match val.transaction_type {
-            Some(tx_type) => match tx_type.as_u64() {
+            Some(tx_type) => match tx_type.try_into().unwrap() {
                 0 => ethrexTransaction::LegacyTransaction(val.into()),
                 1 => ethrexTransaction::EIP2930Transaction(val.into()),
                 2 => ethrexTransaction::EIP1559Transaction(val.into()),
@@ -415,14 +436,22 @@ impl From<Transaction> for EIP1559Transaction {
     fn from(val: Transaction) -> Self {
         EIP1559Transaction {
             // Note: gas_price is not used in this conversion as it is not part of EIP1559Transaction, this could be a problem
-            chain_id: val.chain_id.map(|id| id.as_u64()).unwrap_or(1 /*mainnet*/), // TODO: Consider converting this into Option
-            nonce: val.nonce.as_u64(),
-            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            chain_id: val
+                .chain_id
+                .map(|id| id.try_into().unwrap())
+                .unwrap_or(1 /*mainnet*/), // TODO: Consider converting this into Option
+            nonce: val.nonce.try_into().unwrap(),
+            max_priority_fee_per_gas: val
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             max_fee_per_gas: val
                 .max_fee_per_gas
                 .unwrap_or(val.gas_price.unwrap_or_default())
-                .as_u64(), // TODO: Consider converting this into Option
-            gas_limit: val.gas_limit.as_u64(),
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
+            gas_limit: val.gas_limit.try_into().unwrap(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
             //     _ => TxKind::Call(val.to),
@@ -447,14 +476,22 @@ impl From<Transaction> for EIP1559Transaction {
 impl From<Transaction> for EIP4844Transaction {
     fn from(val: Transaction) -> Self {
         EIP4844Transaction {
-            chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1), // TODO: Consider converting this into Option
-            nonce: val.nonce.as_u64(),
-            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            chain_id: val
+                .chain_id
+                .map(|id: U256| id.try_into().unwrap())
+                .unwrap_or(1), // TODO: Consider converting this into Option
+            nonce: val.nonce.try_into().unwrap(),
+            max_priority_fee_per_gas: val
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             max_fee_per_gas: val
                 .max_fee_per_gas
                 .unwrap_or(val.gas_price.unwrap_or_default())
-                .as_u64(),
-            gas: val.gas_limit.as_u64(),
+                .try_into()
+                .unwrap(),
+            gas: val.gas_limit.try_into().unwrap(),
             to: match val.to {
                 TxKind::Call(address) => address,
                 TxKind::Create => panic!("EIP4844Transaction cannot be contract creation"),
@@ -480,14 +517,22 @@ impl From<Transaction> for EIP4844Transaction {
 impl From<Transaction> for EIP7702Transaction {
     fn from(val: Transaction) -> Self {
         EIP7702Transaction {
-            chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1), // TODO: Consider converting this into Option
-            nonce: val.nonce.as_u64(),
-            max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default().as_u64(), // TODO: Consider converting this into Option
+            chain_id: val
+                .chain_id
+                .map(|id: U256| id.try_into().unwrap())
+                .unwrap_or(1), // TODO: Consider converting this into Option
+            nonce: val.nonce.try_into().unwrap(),
+            max_priority_fee_per_gas: val
+                .max_priority_fee_per_gas
+                .unwrap_or_default()
+                .try_into()
+                .unwrap(), // TODO: Consider converting this into Option
             max_fee_per_gas: val
                 .max_fee_per_gas
                 .unwrap_or(val.gas_price.unwrap_or_default())
-                .as_u64(),
-            gas_limit: val.gas_limit.as_u64(),
+                .try_into()
+                .unwrap(),
+            gas_limit: val.gas_limit.try_into().unwrap(),
             to: match val.to {
                 TxKind::Call(address) => address,
                 TxKind::Create => panic!("EIP7702Transaction cannot be contract creation"),
@@ -507,7 +552,7 @@ impl From<Transaction> for EIP7702Transaction {
                 .map(|a| ethrex_common::types::AuthorizationTuple {
                     chain_id: a.chain_id,
                     address: a.address,
-                    nonce: a.nonce.as_u64(),
+                    nonce: a.nonce.try_into().unwrap(),
                     y_parity: a.v,
                     r_signature: a.r,
                     s_signature: a.s,
@@ -524,9 +569,9 @@ impl From<Transaction> for EIP7702Transaction {
 impl From<Transaction> for LegacyTransaction {
     fn from(val: Transaction) -> Self {
         LegacyTransaction {
-            nonce: val.nonce.as_u64(),
+            nonce: val.nonce.try_into().unwrap(),
             gas_price: val.gas_price.unwrap_or_default(), // TODO: Consider converting this into Option
-            gas: val.gas_limit.as_u64(),
+            gas: val.gas_limit.try_into().unwrap(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
             //     _ => TxKind::Call(val.to),
@@ -545,10 +590,13 @@ impl From<Transaction> for LegacyTransaction {
 impl From<Transaction> for EIP2930Transaction {
     fn from(val: Transaction) -> Self {
         EIP2930Transaction {
-            chain_id: val.chain_id.map(|id: U256| id.as_u64()).unwrap_or(1),
-            nonce: val.nonce.as_u64(),
+            chain_id: val
+                .chain_id
+                .map(|id: U256| id.try_into().unwrap())
+                .unwrap_or(1),
+            nonce: val.nonce.try_into().unwrap(),
             gas_price: val.gas_price.unwrap_or_default(),
-            gas_limit: val.gas_limit.as_u64(),
+            gas_limit: val.gas_limit.try_into().unwrap(),
             // to: match val.to {
             //     zero if zero == H160::zero() => TxKind::Create,
             //     _ => TxKind::Call(val.to),
@@ -574,11 +622,11 @@ impl From<Account> for ethrexAccount {
     fn from(val: Account) -> Self {
         ethrexAccount {
             info: AccountInfo {
-                code_hash: code_hash(&val.code),
+                code_hash: code_hash(&val.code, &ethrex_crypto::NativeCrypto),
                 balance: val.balance,
-                nonce: val.nonce.as_u64(),
+                nonce: val.nonce.try_into().unwrap(),
             },
-            code: Code::from_bytecode(val.code),
+            code: Code::from_bytecode(val.code, &ethrex_crypto::NativeCrypto),
             storage: val
                 .storage
                 .into_iter()
@@ -594,7 +642,7 @@ impl From<Account> for GenesisAccount {
             code: val.code,
             storage: val.storage.into_iter().collect(),
             balance: val.balance,
-            nonce: val.nonce.as_u64(),
+            nonce: val.nonce.try_into().unwrap(),
         }
     }
 }

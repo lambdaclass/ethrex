@@ -1,6 +1,8 @@
 use crate::authentication::authenticate;
 use crate::debug::block_access_list::BlockAccessListRequest;
+use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
+use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
@@ -185,7 +187,7 @@ type BlockWorkerMessage = (
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
 /// The context is cloned for each request, with most fields being cheap `Arc` references.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RpcApiContext {
     /// Database storage for blocks, transactions, and state.
     pub storage: Store,
@@ -207,6 +209,18 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
+}
+
+impl std::fmt::Debug for RpcApiContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("RpcApiContext");
+        s.field("storage", &self.storage)
+            .field("blockchain", &self.blockchain)
+            .field("syncer", &self.syncer.as_ref().map(|_| ".."))
+            .field("peer_handler", &self.peer_handler.as_ref().map(|_| ".."))
+            .field("gas_ceil", &self.gas_ceil);
+        s.finish()
+    }
 }
 
 /// Client version information used for identification in the Engine API and P2P.
@@ -371,6 +385,10 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
+        RpcErr::InvalidProofFormat(_) => "InvalidProofFormat",
+        RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
+        RpcErr::InvalidPayload(_) => "InvalidPayload",
+        RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
     }
 }
 
@@ -777,6 +795,10 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
+        "debug_executionWitnessByBlockHash" => {
+            ExecutionWitnessByBlockHashRequest::call(req, context).await
+        }
+        "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
         "debug_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
