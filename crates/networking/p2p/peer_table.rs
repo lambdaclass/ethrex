@@ -362,8 +362,19 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewContacts,
         _ctx: &Context<Self>,
     ) {
+        let count = msg.nodes.len();
+        let start = std::time::Instant::now();
         self.do_new_contacts(msg.nodes, msg.local_node_id, msg.protocol)
             .await;
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_secs(1) {
+            tracing::warn!(
+                ?elapsed,
+                count,
+                contacts = self.contacts.len(),
+                "PeerTable: handle_new_contacts slow"
+            );
+        }
     }
 
     #[send_handler]
@@ -372,8 +383,19 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewContactRecords,
         _ctx: &Context<Self>,
     ) {
+        let count = msg.node_records.len();
+        let start = std::time::Instant::now();
         self.do_new_contact_records(msg.node_records, msg.local_node_id)
             .await;
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_secs(1) {
+            tracing::warn!(
+                ?elapsed,
+                count,
+                contacts = self.contacts.len(),
+                "PeerTable: handle_new_contact_records slow"
+            );
+        }
     }
 
     #[send_handler]
@@ -1087,10 +1109,16 @@ impl PeerTableServer {
 
     async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
         if let Some(remote_fork_id) = record.get_fork_id() {
-            backend::is_fork_id_valid(store, remote_fork_id)
+            let start = std::time::Instant::now();
+            let result = backend::is_fork_id_valid(store, remote_fork_id)
                 .await
                 .ok()
-                .or(Some(false))
+                .or(Some(false));
+            let elapsed = start.elapsed();
+            if elapsed > std::time::Duration::from_millis(100) {
+                tracing::warn!(?elapsed, "PeerTable: evaluate_fork_id slow DB call");
+            }
+            result
         } else {
             Some(false)
         }
