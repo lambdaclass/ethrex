@@ -10,6 +10,7 @@
 //! removed during the next `new_head` fan-out rather than silently accumulating
 //! unread messages.
 
+use ethrex_common::types::BlockHeader;
 use serde_json::Value;
 use spawned_concurrency::{
     actor,
@@ -19,7 +20,7 @@ use spawned_concurrency::{
 };
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Actor that manages all active WebSocket subscriptions.
 ///
@@ -45,9 +46,10 @@ impl Default for SubscriptionManager {
 pub trait SubscriptionManagerProtocol: Send + Sync {
     /// Broadcast a new block header to all `newHeads` subscribers.
     ///
-    /// This is a fire-and-forget message; dead subscribers are removed
-    /// automatically when their channel is closed.
-    fn new_head(&self, header: Value) -> Result<(), ActorError>;
+    /// The actor handles serialization and hash injection. Callers just
+    /// pass the raw `BlockHeader`. Dead subscribers are removed automatically
+    /// when their channel is closed.
+    fn new_head(&self, header: BlockHeader) -> Result<(), ActorError>;
 
     /// Register a new subscriber.
     ///
@@ -75,14 +77,32 @@ impl SubscriptionManager {
         msg: subscription_manager_protocol::NewHead,
         _ctx: &Context<Self>,
     ) {
+        if self.subscribers.is_empty() {
+            return;
+        }
+
+        // Serialize the header and inject the computed block hash.
         let header = msg.header;
+        let block_hash = header.hash();
+        let mut header_value = match serde_json::to_value(&header) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to serialize block header for newHeads: {e}");
+                return;
+            }
+        };
+        if let Value::Object(ref mut map) = header_value {
+            map.insert(
+                "hash".to_string(),
+                Value::String(format!("{block_hash:#x}")),
+            );
+        }
+
         let mut dead_ids: Vec<String> = Vec::new();
 
         for (sub_id, sender) in &self.subscribers {
-            let notification = build_subscription_notification(sub_id, header.clone());
+            let notification = build_subscription_notification(sub_id, header_value.clone());
             if sender.send(notification).is_err() {
-                // The receiver (WebSocket write-loop) has been dropped, so the
-                // connection is closed. Remove the subscriber.
                 dead_ids.push(sub_id.clone());
             }
         }

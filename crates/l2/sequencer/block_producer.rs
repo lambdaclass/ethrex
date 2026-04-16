@@ -35,7 +35,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
-use serde_json::Value;
+
 use std::str::FromStr;
 
 use super::errors::BlockProducerError;
@@ -224,25 +224,9 @@ impl BlockProducer {
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
-        // Send the new block header to all active eth_subscribe("newHeads") connections.
+        // Notify all eth_subscribe("newHeads") subscribers.
         if let Some(ref manager) = self.subscription_manager {
-            match serde_json::to_value(&block_header) {
-                Ok(mut header_value) => {
-                    // Inject the computed block hash into the serialized header
-                    // so subscribers see a complete header including the "hash" field.
-                    if let Value::Object(ref mut map) = header_value {
-                        map.insert(
-                            "hash".to_string(),
-                            Value::String(format!("{block_hash:#x}")),
-                        );
-                    }
-                    // Fire-and-forget: ignore errors (actor may be stopping).
-                    let _ = manager.new_head(header_value);
-                }
-                Err(e) => {
-                    warn!("Failed to serialize block header for newHeads notification: {e}");
-                }
-            }
+            let _ = manager.new_head(block_header);
         }
 
         metrics!(

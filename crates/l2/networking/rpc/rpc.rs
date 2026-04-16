@@ -441,7 +441,10 @@ mod tests {
         let (tx, mut rx) = unbounded_channel::<String>();
         let sub_id = manager.subscribe(tx).await.expect("subscribe must succeed");
 
-        let header = json!({"number": "0x42", "hash": "0xdeadbeef"});
+        let header = ethrex_common::types::BlockHeader {
+            number: 0x42,
+            ..Default::default()
+        };
         manager
             .new_head(header.clone())
             .expect("new_head send must succeed");
@@ -452,7 +455,9 @@ mod tests {
         let msg = rx.try_recv().expect("receiver must have a message");
         let notification: Value = serde_json::from_str(&msg).expect("must be valid JSON");
         assert_eq!(notification["params"]["subscription"], sub_id);
-        assert_eq!(notification["params"]["result"], header);
+        // The actor serializes the header and injects the hash.
+        assert!(notification["params"]["result"]["number"].is_string());
+        assert!(notification["params"]["result"]["hash"].is_string());
     }
 
     #[tokio::test]
