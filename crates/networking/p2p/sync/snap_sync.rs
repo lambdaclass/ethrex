@@ -421,6 +421,7 @@ pub async fn snap_sync(
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,
             block_sync_state,
+            blockchain.clone(),
         )
         .await?;
         info!("Finish downloading account ranges from peers");

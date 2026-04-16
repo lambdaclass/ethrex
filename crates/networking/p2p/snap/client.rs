@@ -17,7 +17,9 @@ use crate::{
         },
     },
     snap::{constants::*, encodable_to_proof, error::SnapError},
-    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
+    sync::{
+        AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot, update_pivot_bsc,
+    },
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -98,6 +100,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    blockchain: std::sync::Arc<ethrex_blockchain::Blockchain>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -252,14 +255,23 @@ pub async fn request_account_range(
 
         if block_is_stale(pivot_header, chain_id) {
             info!("request_account_range became stale, updating pivot");
-            *pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-            )
-            .await
-            .expect("Should be able to update pivot")
+            // BSC uses a peer-status-based pivot refresh (vs extrapolating from
+            // current pivot timestamp) because BSC peers prune at ~128 blocks
+            // and extrapolation can't outpace chain production.
+            *pivot_header = if chain_id == 56 || chain_id == 97 {
+                update_pivot_bsc(pivot_header, peers, &blockchain, block_sync_state)
+                    .await
+                    .expect("Should be able to update pivot (bsc)")
+            } else {
+                update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    peers,
+                    block_sync_state,
+                )
+                .await
+                .expect("Should be able to update pivot")
+            };
         }
 
         // Reserve a request slot before spawning so get_best_peer sees
