@@ -1,12 +1,12 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network, init_store,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
-    parse_socket_addr, read_jwtsecret_file, store_node_config_file,
+    read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
 use ethrex_common::Address;
@@ -29,7 +29,7 @@ use eyre::OptionExt;
 use secp256k1::SecretKey;
 use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
-use std::{fs::read_to_string, net::SocketAddr, path::Path, sync::Arc, time::Duration};
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -51,10 +51,15 @@ fn init_rpc_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
-    ws_addr: Option<SocketAddr>,
     new_heads_sender: Option<broadcast::Sender<Value>>,
 ) {
     init_datadir(&opts.datadir);
+
+    let ws_addr = if opts.ws_enabled {
+        Some(get_ws_socket_addr(opts))
+    } else {
+        None
+    };
 
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
@@ -78,11 +83,6 @@ fn init_rpc_api(
     );
 
     tracker.spawn(rpc_api);
-}
-
-fn get_l2_ws_socket_addr(l2_opts: &L2Options) -> SocketAddr {
-    parse_socket_addr(&l2_opts.l2_ws_addr, &l2_opts.l2_ws_port)
-        .expect("Failed to parse L2 websocket address and port")
 }
 
 fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
@@ -330,17 +330,14 @@ pub async fn init_l2(
     .await?;
 
     // Create broadcast channel for new block headers when WS is enabled.
-    let ws_addr = if opts.l2_ws_enabled {
-        Some(get_l2_ws_socket_addr(&opts))
-    } else {
-        None
-    };
-    let (new_heads_sender, new_heads_sender_for_block_producer) = if ws_addr.is_some() {
-        let (sender, _) = broadcast::channel(ethrex_l2_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-        (Some(sender.clone()), Some(sender))
-    } else {
-        (None, None)
-    };
+    // L2 uses the same --ws.enabled / --ws.addr / --ws.port flags as L1.
+    let (new_heads_sender, new_heads_sender_for_block_producer) =
+        if opts.node_opts.ws_enabled {
+            let (sender, _) = broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
+            (Some(sender.clone()), Some(sender))
+        } else {
+            (None, None)
+        };
 
     init_rpc_api(
         &opts.node_opts,
@@ -355,7 +352,6 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         l2_gas_limit,
-        ws_addr,
         new_heads_sender,
     );
 
