@@ -92,7 +92,7 @@ Build the `ethrex` binary with the features needed for the chosen backend. The `
 ssh <server> "bash -l -c 'cd ~/ethrex && COMPILE_CONTRACTS=true cargo build --release --features <features> --bin ethrex'"
 
 # Build load test
-ssh <server> "bash -l -c 'cd ~/ethrex && cargo build --release --manifest-path ./tooling/load_test/Cargo.toml'"
+ssh <server> "bash -l -c 'cd ~/ethrex-tooling && cargo build --release --manifest-path ./load_test/Cargo.toml'"
 ```
 
 `COMPILE_CONTRACTS=true` compiles the Solidity contracts and embeds them in the binary. This only needs to happen once — the same binary is used for deploying, running the L2, and proving.
@@ -185,10 +185,10 @@ Run the pre-compiled binary directly (built in step 1b) instead of `cargo run` t
 
 ```bash
 # ETH transfers (default):
-ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> ./tooling/target/release/load_test -k ./fixtures/keys/private_keys.txt -t eth-transfers > ~/loadtest.log 2>&1 &'"
+ssh <server> "bash -l -c 'cd ~/ethrex-tooling && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> ./target/release/load_test -k ../ethrex/fixtures/keys/private_keys.txt -t eth-transfers > ~/loadtest.log 2>&1 &'"
 
 # ERC20 transactions:
-ssh <server> "bash -l -c 'cd ~/ethrex && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> ./tooling/target/release/load_test -k ./fixtures/keys/private_keys.txt -t erc20 > ~/loadtest.log 2>&1 &'"
+ssh <server> "bash -l -c 'cd ~/ethrex-tooling && nohup env LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=<tx_amount> ./target/release/load_test -k ../ethrex/fixtures/keys/private_keys.txt -t erc20 > ~/loadtest.log 2>&1 &'"
 
 # For continuous load, add LOAD_TEST_ENDLESS=true to env vars.
 ```
