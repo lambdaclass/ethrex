@@ -210,10 +210,9 @@ pub async fn init_rpc_api(
     .await;
 
     let ws_config = if opts.ws_enabled {
-        let (sender, _) = ethrex_rpc::broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(opts),
-            new_heads_sender: sender,
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
         })
     } else {
         None

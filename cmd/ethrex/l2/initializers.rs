@@ -14,7 +14,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
 use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
-use ethrex_rpc::{WebSocketConfig, broadcast};
+use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
@@ -324,10 +324,9 @@ pub async fn init_l2(
 
     // Create WebSocket config when WS is enabled.
     let ws_config = if opts.node_opts.ws_enabled {
-        let (sender, _) = broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(&opts.node_opts),
-            new_heads_sender: sender,
+            subscription_manager: SubscriptionManager::spawn(),
         })
     } else {
         None
@@ -370,7 +369,7 @@ pub async fn init_l2(
         genesis,
         checkpoints_dir,
         l2_gas_limit,
-        ws_config.as_ref().map(|ws| ws.new_heads_sender.clone()),
+        ws_config.as_ref().map(|ws| ws.subscription_manager.clone()),
     )
     .await?;
     join_set.spawn(l2_sequencer);

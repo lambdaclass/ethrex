@@ -67,6 +67,7 @@ mod eth;
 mod mempool;
 mod net;
 pub mod rpc;
+pub mod subscription_manager;
 mod tracing;
 
 pub mod clients;
@@ -87,10 +88,9 @@ pub use eth::{
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    ClientVersion, NEW_HEADS_CHANNEL_CAPACITY, NodeData, RpcApiContext, RpcHandler,
-    RpcRequestWrapper, WebSocketConfig, build_subscription_notification, drain_subscriptions,
-    generate_subscription_id, handle_eth_subscribe, handle_eth_unsubscribe, map_debug_requests,
-    map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
+    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
+    handle_eth_subscribe, handle_eth_unsubscribe, map_debug_requests, map_eth_requests,
+    map_http_requests, rpc_response, shutdown_signal,
 };
-pub use tokio::sync::broadcast;
+pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

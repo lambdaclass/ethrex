@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    subscription_manager::SubscriptionManagerProtocol,
     types::{
         fork_choice::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
@@ -303,11 +304,11 @@ async fn handle_forkchoice(
                 }
             };
 
-            // Broadcast the new head to eth_subscribe("newHeads") subscribers.
-            if let Some(ws) = &context.ws {
-                if let Ok(header_value) = serde_json::to_value(&head) {
-                    let _ = ws.new_heads_sender.send(header_value);
-                }
+            // Send the new head to all eth_subscribe("newHeads") subscribers via the actor.
+            if let Some(ws) = &context.ws
+                && let Ok(header_value) = serde_json::to_value(&head)
+            {
+                let _ = ws.subscription_manager.new_head(header_value);
             }
 
             Ok((
