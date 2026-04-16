@@ -9,7 +9,7 @@ use crate::l2::fees::{
 use crate::l2::messages::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -21,8 +21,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
-    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, SubscriptionManagerProtocol,
-    WebSocketConfig,
+    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, WebSocketConfig,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
@@ -280,193 +279,6 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     }
 }
 
-/// Handle a WebSocket connection.
-///
-/// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
-/// regular JSON-RPC request-response calls that work the same as over HTTP.
 async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let mut subscription_id: Option<String> = None;
-
-    loop {
-        tokio::select! {
-            msg = socket.recv() => {
-                let Some(msg) = msg else { break };
-                let body = match msg {
-                    Ok(Message::Text(text)) => text.to_string(),
-                    Ok(Message::Close(_)) => break,
-                    Ok(_) => continue,
-                    Err(_) => break,
-                };
-
-                let response = handle_ws_request(
-                    &body, &context, &out_tx, &mut subscription_id,
-                ).await;
-                if let Some(resp) = response
-                    && socket.send(Message::Text(resp.into())).await.is_err()
-                {
-                    break;
-                }
-            }
-
-            Some(msg) = out_rx.recv() => {
-                if socket.send(Message::Text(msg.into())).await.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-
-    if let (Some(id), Some(ref ws)) = (subscription_id, context.l1_ctx.ws) {
-        let _ = ws.subscription_manager.unsubscribe(id).await;
-    }
-}
-
-/// Process an incoming JSON-RPC request over WebSocket.
-/// Returns `Some(response_text)` for request-response calls.
-/// For eth_subscribe / eth_unsubscribe the response is also returned inline.
-async fn handle_ws_request(
-    body: &str,
-    context: &RpcApiContext,
-    out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
-    subscription_id: &mut Option<String>,
-) -> Option<String> {
-    let req: RpcRequest = match serde_json::from_str(body) {
-        Ok(r) => r,
-        Err(_) => {
-            let resp = ethrex_rpc::rpc_response(
-                RpcRequestId::String("".to_string()),
-                Err::<Value, _>(ethrex_rpc::RpcErr::BadParams(
-                    "Invalid request body".to_string(),
-                )),
-            )
-            .ok()?;
-            return Some(resp.to_string());
-        }
-    };
-
-    match req.method.as_str() {
-        "eth_subscribe" => {
-            let result = ethrex_rpc::handle_eth_subscribe(
-                &req, &context.l1_ctx, out_tx, subscription_id,
-            )
-                .await
-                .map_err(RpcErr::L1RpcErr);
-            let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
-        }
-        "eth_unsubscribe" => {
-            let result =
-                ethrex_rpc::handle_eth_unsubscribe(&req, &context.l1_ctx, subscription_id)
-                    .await
-                    .map_err(RpcErr::L1RpcErr);
-            let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
-        }
-        _ => {
-            let res = map_http_requests(&req, context.clone()).await;
-            let resp = ethrex_rpc::rpc_response(req.id, res).ok()?;
-            Some(resp.to_string())
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ethrex_rpc::{SubscriptionManager, subscription_manager::build_subscription_notification};
-    use serde_json::{Value, json};
-    use tokio::sync::mpsc::unbounded_channel;
-
-    use super::*;
-
-    // ── build_subscription_notification ──────────────────────────────────────
-
-    #[test]
-    fn notification_has_correct_jsonrpc_method_and_params() {
-        let sub_id = "0x0000000000000001";
-        let header = json!({"number": "0x1", "hash": "0xabc"});
-
-        let notification_str = build_subscription_notification(sub_id, header.clone());
-        let notification: Value =
-            serde_json::from_str(&notification_str).expect("must be valid JSON");
-
-        assert_eq!(notification["jsonrpc"], "2.0");
-        assert_eq!(notification["method"], "eth_subscription");
-        assert_eq!(notification["params"]["subscription"], sub_id);
-        assert_eq!(notification["params"]["result"], header);
-    }
-
-    // ── SubscriptionManager actor ─────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn subscription_manager_subscribe_returns_hex_id() {
-        let manager = SubscriptionManager::spawn();
-        let (tx, _rx) = unbounded_channel::<String>();
-        let id = manager.subscribe(tx).await.expect("subscribe must succeed");
-        assert!(id.starts_with("0x"), "subscription ID must start with 0x");
-        let hex_part = id.strip_prefix("0x").expect("must start with 0x");
-        assert_eq!(hex_part.len(), 16, "hex part should be 16 chars (u64)");
-    }
-
-    #[tokio::test]
-    async fn subscription_manager_ids_are_unique() {
-        let manager = SubscriptionManager::spawn();
-        let mut ids = Vec::new();
-        for _ in 0..10 {
-            let (tx, _rx) = unbounded_channel::<String>();
-            let id = manager.subscribe(tx).await.expect("subscribe must succeed");
-            ids.push(id);
-        }
-        let unique: std::collections::HashSet<&String> = ids.iter().collect();
-        assert_eq!(ids.len(), unique.len(), "all IDs must be unique");
-    }
-
-    #[tokio::test]
-    async fn subscription_manager_delivers_new_head_to_subscriber() {
-        let manager = SubscriptionManager::spawn();
-        let (tx, mut rx) = unbounded_channel::<String>();
-        let sub_id = manager.subscribe(tx).await.expect("subscribe must succeed");
-
-        let header = ethrex_common::types::BlockHeader {
-            number: 0x42,
-            ..Default::default()
-        };
-        manager
-            .new_head(header.clone())
-            .expect("new_head send must succeed");
-
-        // Give the actor time to process the message.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        let msg = rx.try_recv().expect("receiver must have a message");
-        let notification: Value = serde_json::from_str(&msg).expect("must be valid JSON");
-        assert_eq!(notification["params"]["subscription"], sub_id);
-        // The actor serializes the header and injects the hash.
-        assert!(notification["params"]["result"]["number"].is_string());
-        assert!(notification["params"]["result"]["hash"].is_string());
-    }
-
-    #[tokio::test]
-    async fn subscription_manager_unsubscribe_returns_true_when_exists() {
-        let manager = SubscriptionManager::spawn();
-        let (tx, _rx) = unbounded_channel::<String>();
-        let sub_id = manager.subscribe(tx).await.expect("subscribe must succeed");
-
-        let removed = manager
-            .unsubscribe(sub_id)
-            .await
-            .expect("unsubscribe must succeed");
-        assert!(removed, "must return true when subscription existed");
-    }
-
-    #[tokio::test]
-    async fn subscription_manager_unsubscribe_returns_false_when_not_exists() {
-        let manager = SubscriptionManager::spawn();
-        let removed = manager
-            .unsubscribe("0x0000000000000099".to_string())
-            .await
-            .expect("unsubscribe must succeed");
-        assert!(!removed, "must return false when subscription not found");
-    }
-
+    ethrex_rpc::handle_websocket(&mut socket, &context.l1_ctx).await;
 }

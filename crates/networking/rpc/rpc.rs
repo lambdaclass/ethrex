@@ -593,8 +593,10 @@ pub async fn start_api(
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
     if let Some(ref ws_config) = ws {
-        let ws_handler = |ws: WebSocketUpgrade, ctx| async {
-            ws.on_upgrade(|socket| handle_websocket(socket, ctx))
+        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async {
+            ws.on_upgrade(|mut socket| async move {
+                handle_websocket(&mut socket, &ctx).await;
+            })
         };
         let ws_router = Router::new()
             .route("/", axum::routing::any(ws_handler))
@@ -686,16 +688,12 @@ pub async fn handle_authrpc_request(
 
 /// Handle a WebSocket connection.
 ///
+/// Handle a WebSocket connection.
+///
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
-async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
-    let context = state.0;
-
-    // Each connection gets its own mpsc channel for receiving subscription
-    // notifications. The channel is only used if the client calls eth_subscribe.
+pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
     let (out_tx, mut out_rx) = unbounded_channel::<String>();
-
-    // Subscription ID for this connection. Set when the client calls eth_subscribe.
     let mut subscription_id: Option<String> = None;
 
     loop {
@@ -710,7 +708,7 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
                 };
 
                 let response = handle_ws_request(
-                    &body, &context, &out_tx, &mut subscription_id,
+                    &body, context, &out_tx, &mut subscription_id,
                 ).await;
                 if let Some(resp) = response
                     && socket.send(Message::Text(resp.into())).await.is_err()
@@ -727,15 +725,11 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
         }
     }
 
-    // Unsubscribe on disconnect if the client had an active subscription.
-    if let (Some(id), Some(ref ws)) = (subscription_id, context.ws) {
+    if let (Some(id), Some(ws)) = (subscription_id, &context.ws) {
         let _ = ws.subscription_manager.unsubscribe(id).await;
     }
 }
 
-/// Process an incoming JSON-RPC request over WebSocket.
-/// Returns `Some(response_text)` for request-response calls.
-/// For eth_subscribe / eth_unsubscribe the response is also returned inline.
 async fn handle_ws_request(
     body: &str,
     context: &RpcApiContext,

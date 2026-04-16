@@ -89,8 +89,8 @@ pub use eth::{
 };
 pub use rpc::{
     ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
-    handle_eth_subscribe, handle_eth_unsubscribe, map_debug_requests, map_eth_requests,
-    map_http_requests, rpc_response, shutdown_signal,
+    handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
+    map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };
 pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};
