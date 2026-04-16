@@ -741,8 +741,11 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
+            // If resolved_target has neither code nor an EIP-7702 delegation indicator,
+            // execute the default code. EIP-7702 delegations are stored as bytecode
+            // (0xef0100 || address, 23 bytes), so they are non-empty.
             let (frame_success, frame_gas_used, frame_logs) = if bytecode.bytecode.is_empty() {
-                // Default code for EOA (no deployed code)
+                // Default code for EOA (no deployed code and no EIP-7702 delegation)
                 use crate::opcode_handlers::frame_tx::execute_default_code;
                 match execute_default_code(self, frame, sender, target) {
                     Ok((success, gas_used, logs)) => {

@@ -177,6 +177,7 @@ pub enum Opcode {
     TXPARAM = 0xB0,
     FRAMEDATALOAD = 0xB1,
     FRAMEDATACOPY = 0xB2,
+    FRAMEPARAM = 0xB3,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -336,6 +337,7 @@ impl From<u8> for Opcode {
             table[0xB0] = Opcode::TXPARAM;
             table[0xB1] = Opcode::FRAMEDATALOAD;
             table[0xB2] = Opcode::FRAMEDATACOPY;
+            table[0xB3] = Opcode::FRAMEPARAM;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -624,6 +626,7 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
         opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
         opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
+        opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
 
         opcode_table
     }
