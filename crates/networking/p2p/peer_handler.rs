@@ -600,10 +600,10 @@ impl PeerHandler {
         })) = connection
             .outgoing_request(request, PEER_REPLY_TIMEOUT)
             .await
+            && !block_bodies.is_empty()
+            && block_bodies.len() <= block_hashes_len
         {
-            if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                return Ok(block_bodies);
-            }
+            return Ok(block_bodies);
         }
         Err(PeerHandlerError::NoResponseFromPeer)
     }
@@ -734,10 +734,8 @@ impl PeerHandler {
 
         // Reassemble in order
         let mut all_bodies = Vec::with_capacity(all_headers.len());
-        for slot in results {
-            if let Some(bodies) = slot {
-                all_bodies.extend(bodies);
-            }
+        for bodies in results.into_iter().flatten() {
+            all_bodies.extend(bodies);
         }
 
         debug!(
