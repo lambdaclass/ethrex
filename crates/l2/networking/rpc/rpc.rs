@@ -9,7 +9,7 @@ use crate::l2::fees::{
 use crate::l2::messages::GetL1MessageProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
-use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+use axum::extract::ws::WebSocketUpgrade;
 use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -164,8 +164,10 @@ pub async fn start_api(
     info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
     if let Some(ref ws_config) = ws {
-        let ws_handler = |ws: WebSocketUpgrade, ctx: State<RpcApiContext>| async move {
-            ws.on_upgrade(|socket| handle_websocket(socket, ctx.0))
+        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
+            ws.on_upgrade(|mut socket| async move {
+                ethrex_rpc::handle_websocket(&mut socket, &ctx.l1_ctx).await;
+            })
         };
         let ws_router = Router::new()
             .route("/", axum::routing::any(ws_handler))
@@ -279,6 +281,3 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
     }
 }
 
-async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
-    ethrex_rpc::handle_websocket(&mut socket, &context.l1_ctx).await;
-}
