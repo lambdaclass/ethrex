@@ -2898,13 +2898,12 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?
         .clone();
 
-    if is_batch && flat_cache.is_some() {
+    if let Some(flat_cache) = flat_cache.filter(|_| is_batch) {
         // --- Fast path for full sync batch mode ---
         //
         // Instead of building diff layers, bloom filters, and RCU clones,
         // we write all trie nodes directly to disk and cache them in the
         // LRU for subsequent reads within the same batch.
-        let flat_cache = flat_cache.unwrap();
 
         // Populate the LRU cache so subsequent trie opens within this batch
         // can read these nodes without hitting disk.

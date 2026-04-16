@@ -301,7 +301,7 @@ impl Clone for FlatTrieCache {
         let cap = self.cache.cap();
         Self {
             cache: LruCache::with_hasher(
-                NonZeroUsize::new(cap.into()).unwrap_or(NonZeroUsize::new(1).unwrap()),
+                NonZeroUsize::new(cap.into()).unwrap_or(NonZeroUsize::MIN),
                 FxBuildHasher,
             ),
         }
@@ -319,7 +319,7 @@ impl FlatTrieCache {
     pub fn new(capacity: usize) -> Self {
         Self {
             cache: LruCache::with_hasher(
-                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap()),
+                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::MIN),
                 FxBuildHasher,
             ),
         }
