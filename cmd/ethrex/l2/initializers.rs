@@ -331,13 +331,12 @@ pub async fn init_l2(
 
     // Create broadcast channel for new block headers when WS is enabled.
     // L2 uses the same --ws.enabled / --ws.addr / --ws.port flags as L1.
-    let (new_heads_sender, new_heads_sender_for_block_producer) =
-        if opts.node_opts.ws_enabled {
-            let (sender, _) = broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-            (Some(sender.clone()), Some(sender))
-        } else {
-            (None, None)
-        };
+    let new_heads_sender = if opts.node_opts.ws_enabled {
+        let (sender, _) = broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
+        Some(sender)
+    } else {
+        None
+    };
 
     init_rpc_api(
         &opts.node_opts,
@@ -352,7 +351,7 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         l2_gas_limit,
-        new_heads_sender,
+        new_heads_sender.clone(),
     );
 
     // Initialize metrics if enabled
@@ -376,7 +375,7 @@ pub async fn init_l2(
         genesis,
         checkpoints_dir,
         l2_gas_limit,
-        new_heads_sender_for_block_producer,
+        new_heads_sender,
     )
     .await?;
     join_set.spawn(l2_sequencer);
