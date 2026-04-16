@@ -9,9 +9,9 @@ use crate::utils::{
     read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_common::Address;
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
 use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
 use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
 use ethrex_p2p::{
@@ -48,7 +48,7 @@ fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
+    l2_gas_limit: u64,
 ) {
     init_datadir(&opts.datadir);
 
@@ -67,7 +67,7 @@ fn init_rpc_api(
         l2_opts.sponsor_private_key,
         rollup_store,
         log_filter_handler,
-        gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        l2_gas_limit,
         l2_opts.sponsored_gas_limit,
     );
 
@@ -227,7 +227,7 @@ pub async fn init_l2(
 
     let signer = get_signer(&datadir);
 
-    let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
+    let (local_p2p_node, network_config) = get_local_p2p_node(&opts.node_opts, &signer);
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
@@ -241,9 +241,14 @@ pub async fn init_l2(
         if !opts.sequencer_opts.based {
             blockchain.set_synced();
         }
-        let peer_table = PeerTableServer::spawn(opts.node_opts.target_peers, store.clone());
+        let peer_table = PeerTableServer::spawn(
+            local_p2p_node.node_id(),
+            opts.node_opts.target_peers,
+            store.clone(),
+        );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
+            network_config,
             tracker.clone(),
             signer,
             peer_table.clone(),
@@ -304,6 +309,15 @@ pub async fn init_l2(
         (None, None)
     };
 
+    let l2_gas_limit = ethrex_l2::sequencer::utils::get_l2_gas_limit(
+        opts.sequencer_opts.eth_opts.rpc_url.clone(),
+        opts.sequencer_opts
+            .watcher_opts
+            .bridge_address
+            .ok_or_else(|| eyre::eyre!("Bridge address required to fetch L2 gas limit"))?,
+    )
+    .await?;
+
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -316,7 +330,7 @@ pub async fn init_l2(
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
-        Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
+        l2_gas_limit,
     );
 
     // Initialize metrics if enabled
@@ -339,6 +353,7 @@ pub async fn init_l2(
         l2_url,
         genesis,
         checkpoints_dir,
+        l2_gas_limit,
     )
     .await?;
     join_set.spawn(l2_sequencer);

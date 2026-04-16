@@ -87,7 +87,7 @@ pub async fn start_api(
     sponsor_pk: SecretKey,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: u64,
+    l2_gas_limit: u64,
     sponsored_gas_limit: u64,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
@@ -116,10 +116,8 @@ pub async fn start_api(
             },
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
-            gas_ceil,
+            gas_ceil: l2_gas_limit,
             block_worker_channel,
-            #[cfg(feature = "eip-8025")]
-            proof_coordinator: None,
         },
         valid_delegation_addresses,
         sponsor_pk,

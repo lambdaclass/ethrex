@@ -163,7 +163,7 @@ impl StateUpdater {
                 let Some(l2_client) = &self.l2_client else {
                     return Ok(());
                 };
-                let latest_block = l2_client.get_block_number().await?;
+                let latest_block = U256::from(l2_client.get_block_number().await?);
                 let can_sequence = current_block >= latest_block;
 
                 if latest_block < self.start_at.into() {
