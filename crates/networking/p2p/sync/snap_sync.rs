@@ -175,6 +175,10 @@ pub async fn sync_cycle_snap(
             pivot_header.number,
             pivot_header.hash()
         );
+        METRICS
+            .sync_head_block
+            .store(pivot_header.number, Ordering::Relaxed);
+        *METRICS.sync_head_hash.lock().await = pivot_header.hash();
 
         let mut block_sync_state = SnapBlockSyncState::new(store.clone());
         info!(
@@ -857,6 +861,9 @@ pub async fn update_pivot(
         block_sync_state
             .process_incoming_headers(block_headers.into_iter())
             .await?;
+        METRICS
+            .sync_head_block
+            .store(pivot.number, Ordering::Relaxed);
         *METRICS.sync_head_hash.lock().await = pivot.hash();
         return Ok(pivot.clone());
     }
@@ -1023,6 +1030,9 @@ pub async fn update_pivot_bsc(
         // Retry with different peer on failure
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+    METRICS
+        .sync_head_block
+        .store(new_pivot.number, Ordering::Relaxed);
     *METRICS.sync_head_hash.lock().await = new_pivot.hash();
     Ok(new_pivot)
 }
