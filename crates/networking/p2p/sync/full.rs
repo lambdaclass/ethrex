@@ -203,7 +203,10 @@ pub async fn sync_cycle_full(
         if single_batch {
             let final_batch = true;
             let mut batch_headers = headers;
-            let bodies = match download_peers.request_block_bodies_parallel(&batch_headers).await {
+            let bodies = match download_peers
+                .request_block_bodies_parallel(&batch_headers)
+                .await
+            {
                 Ok(bodies) => bodies,
                 Err(e) => {
                     let _ = body_tx.send(Err(e.into())).await;
@@ -254,7 +257,10 @@ pub async fn sync_cycle_full(
             };
 
             // Download block bodies in parallel from multiple peers.
-            let bodies = match download_peers.request_block_bodies_parallel(&batch_headers).await {
+            let bodies = match download_peers
+                .request_block_bodies_parallel(&batch_headers)
+                .await
+            {
                 Ok(bodies) => bodies,
                 Err(e) => {
                     let _ = body_tx.send(Err(e.into())).await;
