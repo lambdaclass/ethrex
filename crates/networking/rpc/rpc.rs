@@ -691,38 +691,27 @@ pub async fn handle_authrpc_request(
 async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
     let context = state.0;
 
-    // Each connection gets its own mpsc channel. The SubscriptionManager actor
-    // delivers notifications through this channel when new heads are broadcast.
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // Each connection gets its own mpsc channel for receiving subscription
+    // notifications. The channel is only used if the client calls eth_subscribe.
+    let (out_tx, mut out_rx) = unbounded_channel::<String>();
 
-    // Register this connection with the SubscriptionManager if WS is enabled.
-    // The subscription_id is returned and stored so we can unsubscribe on disconnect.
-    let subscription_id: Option<String> = if let Some(ref ws) = context.ws {
-        ws.subscription_manager
-            .subscribe(out_tx.clone())
-            .await
-            .ok()
-    } else {
-        None
-    };
+    // Subscription ID for this connection. Set when the client calls eth_subscribe.
+    let mut subscription_id: Option<String> = None;
 
     loop {
         tokio::select! {
-            // Process incoming WS messages (JSON-RPC requests).
             msg = socket.recv() => {
-                let Some(msg) = msg else {
-                    // Connection closed.
-                    break;
-                };
+                let Some(msg) = msg else { break };
                 let body = match msg {
                     Ok(Message::Text(text)) => text.to_string(),
                     Ok(Message::Close(_)) => break,
-                    // Ignore ping/pong/binary frames.
                     Ok(_) => continue,
                     Err(_) => break,
                 };
 
-                let response = handle_ws_request(&body, &context, &subscription_id).await;
+                let response = handle_ws_request(
+                    &body, &context, &out_tx, &mut subscription_id,
+                ).await;
                 if let Some(resp) = response
                     && socket.send(Message::Text(resp.into())).await.is_err()
                 {
@@ -730,7 +719,6 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
                 }
             }
 
-            // Send any pending outbound notifications from the SubscriptionManager.
             Some(msg) = out_rx.recv() => {
                 if socket.send(Message::Text(msg.into())).await.is_err() {
                     break;
@@ -739,7 +727,7 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
         }
     }
 
-    // Connection closed — unregister this connection from the SubscriptionManager.
+    // Unsubscribe on disconnect if the client had an active subscription.
     if let (Some(id), Some(ref ws)) = (subscription_id, context.ws) {
         let _ = ws.subscription_manager.unsubscribe(id).await;
     }
@@ -751,7 +739,8 @@ async fn handle_websocket(mut socket: WebSocket, state: State<RpcApiContext>) {
 async fn handle_ws_request(
     body: &str,
     context: &RpcApiContext,
-    subscription_id: &Option<String>,
+    out_tx: &UnboundedSender<String>,
+    subscription_id: &mut Option<String>,
 ) -> Option<String> {
     use crate::utils::{RpcRequest, RpcRequestId};
 
@@ -769,7 +758,7 @@ async fn handle_ws_request(
 
     match req.method.as_str() {
         "eth_subscribe" => {
-            let result = handle_eth_subscribe(&req, subscription_id);
+            let result = handle_eth_subscribe(&req, context, out_tx, subscription_id).await;
             let resp = rpc_response(req.id, result).ok()?;
             Some(resp.to_string())
         }
@@ -788,12 +777,13 @@ async fn handle_ws_request(
 
 /// Handle `eth_subscribe`.
 ///
-/// Only `"newHeads"` is supported. The connection is already subscribed
-/// when it is established (see `handle_websocket`), so this handler simply
-/// returns the pre-assigned subscription ID.
-pub fn handle_eth_subscribe(
+/// Only `"newHeads"` is supported. Registers this connection with the
+/// `SubscriptionManager` actor and returns the subscription ID.
+pub async fn handle_eth_subscribe(
     req: &crate::utils::RpcRequest,
-    subscription_id: &Option<String>,
+    context: &RpcApiContext,
+    out_tx: &UnboundedSender<String>,
+    subscription_id: &mut Option<String>,
 ) -> Result<Value, RpcErr> {
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_type = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
@@ -802,9 +792,23 @@ pub fn handle_eth_subscribe(
 
     match sub_type {
         "newHeads" => {
-            let id = subscription_id
-                .clone()
+            // Already subscribed on this connection — return the existing ID.
+            if let Some(id) = subscription_id {
+                return Ok(Value::String(id.clone()));
+            }
+
+            let ws = context
+                .ws
+                .as_ref()
                 .ok_or_else(|| RpcErr::Internal("WebSocket server not enabled".to_string()))?;
+
+            let id = ws
+                .subscription_manager
+                .subscribe(out_tx.clone())
+                .await
+                .map_err(|e| RpcErr::Internal(format!("Subscription failed: {e}")))?;
+
+            *subscription_id = Some(id.clone());
             Ok(Value::String(id))
         }
         other => Err(RpcErr::Internal(format!(
@@ -820,7 +824,7 @@ pub fn handle_eth_subscribe(
 pub async fn handle_eth_unsubscribe(
     req: &crate::utils::RpcRequest,
     context: &RpcApiContext,
-    subscription_id: &Option<String>,
+    subscription_id: &mut Option<String>,
 ) -> Result<Value, RpcErr> {
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_id = params
@@ -849,6 +853,11 @@ pub async fn handle_eth_unsubscribe(
     } else {
         false
     };
+
+    if removed {
+        *subscription_id = None;
+    }
+
     Ok(Value::Bool(removed))
 }
 

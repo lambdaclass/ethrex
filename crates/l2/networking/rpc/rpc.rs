@@ -285,37 +285,23 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
 async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
-    // Each connection gets its own mpsc channel. The SubscriptionManager actor
-    // delivers notifications through this channel when new heads are broadcast.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-
-    // Register this connection with the SubscriptionManager if WS is enabled.
-    let subscription_id: Option<String> = if let Some(ref ws) = context.l1_ctx.ws {
-        ws.subscription_manager
-            .subscribe(out_tx.clone())
-            .await
-            .ok()
-    } else {
-        None
-    };
+    let mut subscription_id: Option<String> = None;
 
     loop {
         tokio::select! {
-            // Process incoming WS messages (JSON-RPC requests).
             msg = socket.recv() => {
-                let Some(msg) = msg else {
-                    // Connection closed.
-                    break;
-                };
+                let Some(msg) = msg else { break };
                 let body = match msg {
                     Ok(Message::Text(text)) => text.to_string(),
                     Ok(Message::Close(_)) => break,
-                    // Ignore ping/pong/binary frames.
                     Ok(_) => continue,
                     Err(_) => break,
                 };
 
-                let response = handle_ws_request(&body, &context, &subscription_id).await;
+                let response = handle_ws_request(
+                    &body, &context, &out_tx, &mut subscription_id,
+                ).await;
                 if let Some(resp) = response
                     && socket.send(Message::Text(resp.into())).await.is_err()
                 {
@@ -323,7 +309,6 @@ async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
                 }
             }
 
-            // Send any pending outbound notifications from the SubscriptionManager.
             Some(msg) = out_rx.recv() => {
                 if socket.send(Message::Text(msg.into())).await.is_err() {
                     break;
@@ -332,7 +317,6 @@ async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
         }
     }
 
-    // Connection closed — unregister from the SubscriptionManager.
     if let (Some(id), Some(ref ws)) = (subscription_id, context.l1_ctx.ws) {
         let _ = ws.subscription_manager.unsubscribe(id).await;
     }
@@ -344,7 +328,8 @@ async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
 async fn handle_ws_request(
     body: &str,
     context: &RpcApiContext,
-    subscription_id: &Option<String>,
+    out_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    subscription_id: &mut Option<String>,
 ) -> Option<String> {
     let req: RpcRequest = match serde_json::from_str(body) {
         Ok(r) => r,
@@ -362,14 +347,15 @@ async fn handle_ws_request(
 
     match req.method.as_str() {
         "eth_subscribe" => {
-
-            let result = ethrex_rpc::handle_eth_subscribe(&req, subscription_id)
+            let result = ethrex_rpc::handle_eth_subscribe(
+                &req, &context.l1_ctx, out_tx, subscription_id,
+            )
+                .await
                 .map_err(RpcErr::L1RpcErr);
             let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
             Some(resp.to_string())
         }
         "eth_unsubscribe" => {
-
             let result =
                 ethrex_rpc::handle_eth_unsubscribe(&req, &context.l1_ctx, subscription_id)
                     .await
