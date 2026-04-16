@@ -1,7 +1,6 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
-use super::openvm_subgroup_check::SubgroupCheck;
 use super::shared::{k256_ecrecover, k256_recover_signer};
 
 /// OpenVM crypto provider.
@@ -555,4 +554,141 @@ fn modexp_fallback(base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, C
         out.copy_from_slice(&res_bytes[res_bytes.len() - modulus.len()..]);
     }
     Ok(out)
+}
+
+// ── Subgroup checks ──────────────────────────────────────────────────────────
+//
+// For pairing-based cryptography, points must lie in the correct prime-order
+// subgroup. A point on the curve is not necessarily in the correct subgroup
+// when the cofactor > 1. Without these checks, malicious transactions could
+// pass invalid points to precompiles and get wrong pairing results.
+//
+// | Curve       | Group | Cofactor | Check needed? |
+// |-------------|-------|----------|---------------|
+// | BN254       | G1    | 1        | No            |
+// | BN254       | G2    | > 1      | Yes           |
+// | BLS12-381   | G1    | > 1      | Yes           |
+// | BLS12-381   | G2    | > 1      | Yes           |
+//
+// Reference: https://github.com/eth-act/ere-guests
+
+use openvm_ecc_guest::weierstrass::WeierstrassPoint;
+
+/// Scalar multiplication using double-and-add.
+/// `scalar` is given as little-endian u64 limbs.
+fn scalar_mul<P: WeierstrassPoint, const CHECK_SETUP: bool>(
+    base: &P,
+    scalar: impl AsRef<[u64]>,
+) -> P {
+    let mut result = P::IDENTITY;
+    let mut temp = base.clone();
+    for limb in scalar.as_ref() {
+        for bit_idx in 0..64u32 {
+            if (limb >> bit_idx) & 1 == 1 {
+                result.add_assign_impl::<CHECK_SETUP>(&temp);
+            }
+            temp.double_assign_impl::<CHECK_SETUP>();
+        }
+    }
+    result
+}
+
+/// Checks whether an elliptic curve point belongs to the correct prime-order
+/// subgroup. Assumes the point is already verified to lie on the curve.
+trait SubgroupCheck: WeierstrassPoint {
+    fn is_in_correct_subgroup(&self) -> bool;
+}
+
+// BN254 G1: cofactor = 1, every point on the curve is in the subgroup.
+impl SubgroupCheck for openvm_pairing::bn254::G1Affine {
+    fn is_in_correct_subgroup(&self) -> bool {
+        true
+    }
+}
+
+// BN254 G2: check [6x²]P == ψ(P). Section 4.3 of https://eprint.iacr.org/2022/352.pdf
+impl SubgroupCheck for openvm_pairing::bn254::G2Affine {
+    fn is_in_correct_subgroup(&self) -> bool {
+        use openvm_algebra_guest::field::FieldExtension;
+        use openvm_pairing::bn254 as bn;
+
+        const SIX_X_SQUARED: [u64; 2] = [17887900258952609094, 8020209761171036667];
+
+        let coeff_0 = bn::Fp2::new(
+            bn::Fp::from_const_bytes(hex_literal::hex!(
+                "3d556f175795e3990c33c3c210c38cb743b159f53cec0b4cf711794f9847b32f"
+            )),
+            bn::Fp::from_const_bytes(hex_literal::hex!(
+                "a2cb0f641cd56516ce9d7c0b1d2aae3294075ad78bcca44b20aeeb6150e5c916"
+            )),
+        );
+        let coeff_1 = bn::Fp2::new(
+            bn::Fp::from_const_bytes(hex_literal::hex!(
+                "5a13a071460154dc9859c9a9ede0aadbb9f9e2b698c65edcdcf59a4805f33c06"
+            )),
+            bn::Fp::from_const_bytes(hex_literal::hex!(
+                "e3b02326637fd382d25ba28fc97d80212b6f79eca7b504079a0441acbc3cc007"
+            )),
+        );
+
+        let x_times_point = scalar_mul::<_, false>(self, SIX_X_SQUARED);
+        let psi_x = self.x().frobenius_map(1) * coeff_0;
+        let psi_y = self.y().frobenius_map(1) * coeff_1;
+        let endomorphism_point = Self::from_xy_unchecked(psi_x, psi_y);
+        x_times_point.eq(&endomorphism_point)
+    }
+}
+
+// BLS12-381 G1: GLV endomorphism check. Section 6 of https://eprint.iacr.org/2021/1130
+impl SubgroupCheck for openvm_pairing::bls12_381::G1Affine {
+    fn is_in_correct_subgroup(&self) -> bool {
+        use core::ops::{MulAssign, Neg};
+        use openvm_ecc_guest::Group;
+        use openvm_pairing::bls12_381 as bls;
+
+        const X: [u64; 1] = [0xd201000000010000];
+        let beta = bls::Fp::from_const_bytes(hex_literal::hex!(
+            "fefffeffffff012e02000a6213d817de8896f8e63ba9b3ddea770f6a07c669ba51ce76df2f67195f0000000000000000"
+        ));
+
+        let x_times_point = scalar_mul::<_, true>(self, X);
+        if self.eq(&x_times_point) && !self.is_identity() {
+            return false;
+        }
+
+        let minus_x_squared_times_point = scalar_mul::<_, false>(&x_times_point, X).neg();
+        let mut endomorphism_point = self.clone();
+        endomorphism_point.x_mut().mul_assign(&beta);
+        minus_x_squared_times_point.eq(&endomorphism_point)
+    }
+}
+
+// BLS12-381 G2: untwist-Frobenius-twist check. Section 4 of https://eprint.iacr.org/2021/1130
+impl SubgroupCheck for openvm_pairing::bls12_381::G2Affine {
+    fn is_in_correct_subgroup(&self) -> bool {
+        use core::ops::Neg;
+        use openvm_algebra_guest::field::FieldExtension;
+        use openvm_pairing::bls12_381 as bls;
+
+        const X: [u64; 1] = [0xd201000000010000];
+
+        let coeff_0_c1 = bls::Fp::from_const_bytes(hex_literal::hex!(
+            "adaa00000000fd8bfdff494feb2794409b5fb80f65297d89d49a75897d850daa85ded463864002ec99e67f39ea11011a"
+        ));
+        let coeff_1 = bls::Fp2::new(
+            bls::Fp::from_const_bytes(hex_literal::hex!(
+                "a2de1b12047beef10afa673ecf6644305eb41ef6896439ef60cfb130d9ed3d1cd92c7ad748c4e9e28ea68001e6035213"
+            )),
+            bls::Fp::from_const_bytes(hex_literal::hex!(
+                "09cce3edfb8410c8f405ec722f9967eec5419200176ef7775e43d3c2ab5d3948fe7fd16b6de331680b40ff37040eaf06"
+            )),
+        );
+
+        let x_times_point = scalar_mul::<_, true>(self, X).neg();
+        let tmp_x = self.x().frobenius_map(1);
+        let psi_x = bls::Fp2::new(-coeff_0_c1.clone() * tmp_x.c1, coeff_0_c1 * tmp_x.c0);
+        let psi_y = self.y().frobenius_map(1) * coeff_1;
+        let endomorphism_point = Self::from_xy_unchecked(psi_x, psi_y);
+        x_times_point.eq(&endomorphism_point)
+    }
 }
