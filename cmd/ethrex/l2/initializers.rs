@@ -14,7 +14,7 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
 use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
-use ethrex_l2_rpc::broadcast;
+use ethrex_rpc::{WebSocketConfig, broadcast};
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
@@ -51,7 +51,7 @@ fn init_rpc_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
-    ws: Option<ethrex_rpc::WebSocketConfig>,
+    ws: Option<WebSocketConfig>,
 ) {
     init_datadir(&opts.datadir);
 
@@ -323,10 +323,9 @@ pub async fn init_l2(
     .await?;
 
     // Create WebSocket config when WS is enabled.
-    // L2 uses the same --ws.enabled / --ws.addr / --ws.port flags as L1.
     let ws_config = if opts.node_opts.ws_enabled {
         let (sender, _) = broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-        Some(ethrex_rpc::WebSocketConfig {
+        Some(WebSocketConfig {
             addr: get_ws_socket_addr(&opts.node_opts),
             new_heads_sender: sender,
         })

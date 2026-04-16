@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_rpc::WebSocketConfig;
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
@@ -210,7 +211,7 @@ pub async fn init_rpc_api(
 
     let ws_config = if opts.ws_enabled {
         let (sender, _) = ethrex_rpc::broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-        Some(ethrex_rpc::WebSocketConfig {
+        Some(WebSocketConfig {
             addr: get_ws_socket_addr(opts),
             new_heads_sender: sender,
         })

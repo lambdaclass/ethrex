@@ -21,7 +21,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
-    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper,
+    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, WebSocketConfig,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
@@ -78,7 +78,7 @@ pub const FILTER_DURATION: Duration = {
 #[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
-    ws: Option<ethrex_rpc::WebSocketConfig>,
+    ws: Option<WebSocketConfig>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -177,7 +177,7 @@ pub async fn start_api(
         let ws_server = axum::serve(ws_listener, ws_router)
             .with_graceful_shutdown(ethrex_rpc::shutdown_signal())
             .into_future();
-        info!("Starting L2 WS server at {}", ws_config.addr);
+        info!("Starting WS server at {}", ws_config.addr);
 
         let _ = tokio::try_join!(http_server, ws_server)
             .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
@@ -283,7 +283,6 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
 ///
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
-/// Subscription functionality is provided by ethrex_rpc (L1 crate).
 async fn handle_websocket(mut socket: WebSocket, context: RpcApiContext) {
     // subscription_id -> broadcast::Receiver<Value>
     let mut subscriptions: HashMap<String, broadcast::Receiver<Value>> = HashMap::new();
