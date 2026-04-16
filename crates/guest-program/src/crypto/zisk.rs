@@ -65,11 +65,8 @@ unsafe extern "C" {
 
 /// ZisK crypto provider.
 ///
-/// Uses k256 for ECDSA (secp256k1) and substrate-bn for all BN254 operations.
-/// Overrides `mulmod256` and `modexp` with ZisK's native circuit instructions via `ziskos`.
-///
-/// When building actual ZisK guest binaries, ZisK's patched crate versions
-/// of k256 and substrate-bn are used transparently via Cargo patches.
+/// Uses ZisK's native FFI crypto accelerators (keccak256, SHA-256, ECDSA secp256k1/r1,
+/// BN254, BLS12-381, modexp, blake2, KZG) exposed via `ziskos`.
 #[derive(Debug)]
 pub struct ZiskCrypto;
 
@@ -96,6 +93,17 @@ impl Crypto for ZiskCrypto {
     }
 
     fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
+        // EIP-2: reject high-s signatures (s > secp256k1n/2)
+        const SECP256K1_N_HALF: [u8; 32] = [
+            0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46,
+            0x68, 0x1b, 0x20, 0xa0,
+        ];
+        #[allow(clippy::indexing_slicing)]
+        if sig[32..64] > SECP256K1_N_HALF[..] {
+            return Err(CryptoError::InvalidSignature);
+        }
+
         // Extract signature (first 64 bytes) and recovery id (last byte)
         let mut sig_bytes = [0u8; 64];
         sig_bytes.copy_from_slice(&sig[..64]);
