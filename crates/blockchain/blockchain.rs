@@ -2227,6 +2227,12 @@ impl Blockchain {
             transactions_count += block.body.transactions.len();
             all_receipts.push((block.hash(), receipts));
 
+            // Normalize VM cache for next block to prevent metadata pollution (issue #6467)
+            // This resets transient flags (exists, status) while preserving state changes
+            if i + 1 < blocks_len {
+                vm.normalize_cache_for_next_block();
+            }
+
             // Conversion is safe because EXECUTE_BATCH_SIZE=1024
             log_batch_progress(blocks_len as u32, i as u32);
             tokio::task::yield_now().await;

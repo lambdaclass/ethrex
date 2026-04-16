@@ -1,0 +1,85 @@
+networks:
+  eth-ipv6:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: "172.28.0.0/16"
+        - subnet: "fd12:3456::/64"
+
+services:
+  node-a:
+    image: ethrex:local
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      - RUST_LOG=ethrex_p2p=debug
+    networks:
+      eth-ipv6:
+        ipv4_address: "172.28.0.2"
+        ipv6_address: "fd12:3456::2"
+    volumes:
+      - ./genesis.json:/genesis.json
+    command: >
+      --network /genesis.json
+      --datadir memory
+      --p2p.addr ::
+      --p2p.port 30303
+      --nat.extip fd12:3456::2
+      --http.addr 0.0.0.0
+      --http.port 8545
+
+  node-b:
+    image: ethrex:local
+    environment:
+      - RUST_LOG=ethrex_p2p=debug
+    networks:
+      eth-ipv6:
+        ipv4_address: "172.28.0.3"
+        ipv6_address: "fd12:3456::3"
+    volumes:
+      - ./genesis.json:/genesis.json
+      - ./start-node-b.sh:/start-node-b.sh
+    depends_on:
+      - node-a
+    entrypoint: ["/bin/bash", "/start-node-b.sh"]
+
+  reth:
+    image: ghcr.io/paradigmxyz/reth:latest
+    networks:
+      eth-ipv6:
+        ipv4_address: "172.28.0.4"
+        ipv6_address: "fd12:3456::4"
+    volumes:
+      - ./genesis.json:/genesis.json
+      - ./start-reth.sh:/start-reth.sh
+    depends_on:
+      - node-a
+    entrypoint: ["/bin/bash", "/start-reth.sh"]
+
+  geth:
+    image: ethereum/client-go:latest
+    networks:
+      eth-ipv6:
+        ipv4_address: "172.28.0.5"
+        ipv6_address: "fd12:3456::5"
+    volumes:
+      - ./genesis.json:/genesis.json
+      - ./start-geth.sh:/start-geth.sh
+    depends_on:
+      - node-a
+    entrypoint: ["/bin/sh", "/start-geth.sh"]
+
+  besu:
+    image: hyperledger/besu:latest
+    networks:
+      eth-ipv6:
+        ipv4_address: "172.28.0.6"
+        ipv6_address: "fd12:3456::6"
+    volumes:
+      - ./genesis.json:/genesis.json
+      - ./start-besu.sh:/start-besu.sh
+    depends_on:
+      - node-a
+    entrypoint: ["/bin/bash", "/start-besu.sh"]

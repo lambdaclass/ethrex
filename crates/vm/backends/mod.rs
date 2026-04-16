@@ -195,6 +195,13 @@ impl Evm {
         LEVM::get_state_transitions(&mut self.db)
     }
 
+    /// Normalizes VM cache metadata between blocks in batch execution.
+    /// Fixes issue #6467 where transient account metadata (exists, status) leaks
+    /// between blocks, causing incorrect EIP-7702 gas refund calculations.
+    pub fn normalize_cache_for_next_block(&mut self) {
+        self.db.normalize_cache_for_next_block();
+    }
+
     /// Wraps [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
