@@ -7,7 +7,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{Address, H256, U256, types::Fork};
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
@@ -184,6 +184,12 @@ pub const BLOB_GAS_PER_BLOB: u64 = 131072;
 // Access lists costs
 pub const ACCESS_LIST_STORAGE_KEY_COST: u64 = 1900;
 pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
+// Byte lengths for access list entries, used to compute floor tokens per EIP-7981.
+pub const ACCESS_LIST_ADDRESS_BYTES: u64 = 20;
+pub const ACCESS_LIST_STORAGE_KEY_BYTES: u64 = 32;
+// EIP-7976 (Amsterdam): TOTAL_COST_FLOOR_PER_TOKEN raised to 16.
+// Duplicated here so EIP-7981 can use the Amsterdam multiplier without depending on EIP-7976.
+pub const TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM: u64 = 16;
 
 // Precompile costs
 pub const ECRECOVER_COST: u64 = 3000;
@@ -597,6 +603,19 @@ pub fn selfdestruct(
     SELFDESTRUCT_STATIC
         .checked_add(dynamic_cost)
         .ok_or(OutOfGas.into())
+}
+
+/// EIP-7981: floor_tokens_in_access_list = access_list_bytes * STANDARD_TOKEN_COST,
+/// where access_list_bytes = 20 * addresses + 32 * storage_keys (flat, not zero/nonzero weighted).
+pub fn tokens_in_access_list_data(access_list: &[(Address, Vec<H256>)]) -> u64 {
+    let mut total_bytes: u64 = 0;
+    for (_, storage_keys) in access_list {
+        total_bytes = total_bytes.saturating_add(ACCESS_LIST_ADDRESS_BYTES);
+        total_bytes = total_bytes.saturating_add(
+            (storage_keys.len() as u64).saturating_mul(ACCESS_LIST_STORAGE_KEY_BYTES),
+        );
+    }
+    total_bytes.saturating_mul(STANDARD_TOKEN_COST)
 }
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {

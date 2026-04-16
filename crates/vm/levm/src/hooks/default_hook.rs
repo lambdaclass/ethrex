@@ -2,7 +2,9 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{
+        self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM,
+    },
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -391,18 +393,33 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
-    // calldata_cost = tokens_in_calldata * 4
+    // EIP-7623: tokens_in_calldata = nonzero_bytes * 4 + zero_bytes
     let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
-
-    // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
 
-    // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-    let floor_cost_by_tokens = tokens_in_calldata
-        .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-        .ok_or(InternalError::Overflow)?
-        .checked_add(TX_BASE_COST)
-        .ok_or(InternalError::Overflow)?;
+    // EIP-7981 (Amsterdam): use unweighted calldata length, include access list tokens,
+    // and use the Amsterdam floor multiplier.
+    // floor_tokens_in_calldata = (zero_bytes + nonzero_bytes) * 4 = calldata.len() * 4
+    let floor_cost_by_tokens = if vm.env.config.fork >= Fork::Amsterdam {
+        let floor_tokens_in_calldata = (calldata.len() as u64)
+            .checked_mul(STANDARD_TOKEN_COST)
+            .ok_or(InternalError::Overflow)?;
+        let access_list_tokens = gas_cost::tokens_in_access_list_data(vm.tx.access_list());
+        let total_tokens = floor_tokens_in_calldata
+            .checked_add(access_list_tokens)
+            .ok_or(InternalError::Overflow)?;
+        total_tokens
+            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM)
+            .ok_or(InternalError::Overflow)?
+            .checked_add(TX_BASE_COST)
+            .ok_or(InternalError::Overflow)?
+    } else {
+        tokens_in_calldata
+            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+            .ok_or(InternalError::Overflow)?
+            .checked_add(TX_BASE_COST)
+            .ok_or(InternalError::Overflow)?
+    };
 
     // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if
     // intrinsic regular gas or calldata floor exceeds the cap (no amount of gas_limit
