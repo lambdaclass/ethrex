@@ -309,8 +309,8 @@ async fn handle_ws_request(
         }
         "eth_unsubscribe" => {
             // Delegate to L1's implementation.
-            let result = ethrex_rpc::handle_eth_unsubscribe(&req, subscriptions)
-                .map_err(RpcErr::L1RpcErr);
+            let result =
+                ethrex_rpc::handle_eth_unsubscribe(&req, subscriptions).map_err(RpcErr::L1RpcErr);
             let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
             Some(resp.to_string())
         }

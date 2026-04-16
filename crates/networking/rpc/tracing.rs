@@ -142,18 +142,11 @@ impl RpcHandler for TraceTransactionRequest {
                 };
                 let (pre_trace, pre_post) = context
                     .blockchain
-                    .trace_transaction_prestate(
-                        self.tx_hash,
-                        reexec,
-                        timeout,
-                        config.diff_mode,
-                    )
+                    .trace_transaction_prestate(self.tx_hash, reexec, timeout, config.diff_mode)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 if config.diff_mode {
-                    Ok(serde_json::to_value(
-                        pre_post.unwrap_or_default(),
-                    )?)
+                    Ok(serde_json::to_value(pre_post.unwrap_or_default())?)
                 } else {
                     Ok(serde_json::to_value(pre_trace)?)
                 }
