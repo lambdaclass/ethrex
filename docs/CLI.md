@@ -692,12 +692,6 @@ Credible Layer options:
 
           [env: ETHREX_CREDIBLE_LAYER_URL=]
 
-      --credible-layer-aeges-url <URL>
-          gRPC endpoint for the Aeges mempool pre-filter service.
-          When set, transactions are validated before mempool admission.
-
-          [env: ETHREX_CREDIBLE_LAYER_AEGES_URL=]
-
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]

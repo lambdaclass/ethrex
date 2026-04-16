@@ -21,13 +21,11 @@ pub struct SequencerConfig {
 }
 
 /// Configuration for the Credible Layer sidecar integration.
-/// Both URLs are optional; if absent, the feature is disabled.
+/// URL is optional; if absent, the feature is disabled.
 #[derive(Clone, Debug, Default)]
 pub struct CredibleLayerConfig {
     /// gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
     pub sidecar_url: Option<String>,
-    /// gRPC endpoint for the Aeges mempool pre-filter service.
-    pub aeges_url: Option<String>,
     /// Address of the already-deployed State Oracle contract on L2.
     /// Required by the Credible Layer sidecar for assertion registry lookups.
     /// Deploy the State Oracle separately using the Phylax toolchain before starting ethrex.

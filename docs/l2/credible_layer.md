@@ -13,7 +13,6 @@ Credible Layer integrates ethrex L2 with [Phylax Systems' Credible Layer](https:
 - **Assertion**: A Solidity contract that defines a security invariant (e.g., "ownership of contract X must not change"). Written using the [`credible-std`](https://github.com/phylaxsystems/credible-std) library.
 - **Assertion Enforcer (Sidecar)**: A separate process that receives candidate transactions from the block builder, simulates them, runs applicable assertions through the PhEVM, and returns pass/fail verdicts.
 - **State Oracle**: An on-chain contract that maps protected contracts to their assertions.
-- **Aeges**: An optional mempool pre-filter that rejects transactions before they enter the pool.
 - **Permissive on failure**: If the sidecar is unreachable or times out, transactions are included anyway. Liveness is prioritized over safety.
 
 ### Communication Protocol
@@ -25,12 +24,6 @@ ethrex communicates with the sidecar via **gRPC** using the protocol defined in 
 | `StreamEvents` | Bidirectional stream | Send block lifecycle events (CommitHead, NewIteration, Transaction) |
 | `SubscribeResults` | Server stream | Receive transaction verdicts as they complete |
 | `GetTransaction` | Unary | Fallback polling for a single result |
-
-The Aeges pre-filter uses [`aeges.proto`](../../crates/l2/proto/aeges.proto):
-
-| RPC | Type | Purpose |
-|-----|------|---------|
-| `VerifyTransaction` | Unary | Check if a transaction should be admitted to the mempool |
 
 ### Block Building Flow
 
@@ -56,13 +49,10 @@ Privileged transactions (L1→L2 deposits) bypass the Credible Layer in this fir
 |------|------|
 | `crates/l2/sequencer/credible_layer/mod.rs` | Module root, proto imports |
 | `crates/l2/sequencer/credible_layer/client.rs` | `CredibleLayerClient` — gRPC client for the sidecar; handles block building validation (StreamEvents, GetTransaction) |
-| `crates/l2/sequencer/credible_layer/aeges.rs` | `AegesClient` — gRPC client for the Aeges mempool pre-filter; validates transactions before pool admission (VerifyTransaction) |
 | `crates/l2/sequencer/credible_layer/errors.rs` | Error types |
 | `crates/l2/proto/sidecar.proto` | Sidecar gRPC protocol definition |
-| `crates/l2/proto/aeges.proto` | Aeges gRPC protocol definition |
 | `crates/l2/sequencer/block_producer.rs` | Block producer — sends CommitHead + NewIteration |
 | `crates/l2/sequencer/block_producer/payload_builder.rs` | Transaction selection — sends Transaction events |
-| `crates/l2/networking/rpc/rpc.rs` | L2 RPC — WebSocket server + Aeges mempool filter |
 | `crates/networking/rpc/tracing.rs` | prestateTracer implementation |
 
 ### Configuration
@@ -73,7 +63,6 @@ CLI flags:
 |------|-------------|---------|
 | `--credible-layer` | Enable the Credible Layer integration (required gate flag) | `false` |
 | `--credible-layer-url` | gRPC endpoint for the sidecar (requires `--credible-layer`) | (none) |
-| `--credible-layer-aeges-url` | gRPC endpoint for Aeges pre-filter (requires `--credible-layer`) | (none) |
 | `--credible-layer-state-oracle` | Address of the deployed State Oracle contract on L2 (requires `--credible-layer`) | (none) |
 
 When `--credible-layer` is not set, Credible Layer is completely disabled with zero overhead.
@@ -466,4 +455,3 @@ rm -rf /tmp/credible-layer-contracts /tmp/credible-layer-starter /tmp/sidecar-in
 - [Besu Plugin Reference](https://github.com/phylaxsystems/credible-layer-besu-plugin)
 - [credible-sdk (sidecar source)](https://github.com/phylaxsystems/credible-sdk)
 - [sidecar.proto](../../crates/l2/proto/sidecar.proto)
-- [aeges.proto](../../crates/l2/proto/aeges.proto)

@@ -51,15 +51,7 @@ use secp256k1::SecretKey;
 /// A value of 128 handles bursts without blocking block production.
 pub const NEW_HEADS_CHANNEL_CAPACITY: usize = 128;
 
-/// Async callback for mempool pre-filtering (Aeges integration).
-///
-/// Receives the raw transaction bytes and returns `true` if the transaction
-/// should be admitted to the mempool, `false` if it should be rejected.
-/// On any error or timeout the implementation should return `true` (permissive).
-pub type MempoolFilter =
-    Arc<dyn (Fn(bytes::Bytes) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>) + Send + Sync>;
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RpcApiContext {
     pub l1_ctx: ethrex_rpc::RpcApiContext,
     pub valid_delegation_addresses: Vec<Address>,
@@ -69,16 +61,6 @@ pub struct RpcApiContext {
     /// Broadcast sender for new block header notifications (eth_subscribe "newHeads").
     /// `None` when the WS server is disabled.
     pub new_heads_sender: Option<broadcast::Sender<Value>>,
-    /// Mempool pre-filter callback (Aeges integration). `None` when not configured.
-    pub mempool_filter: Option<MempoolFilter>,
-}
-
-impl std::fmt::Debug for RpcApiContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RpcApiContext")
-            .field("sponsored_gas_limit", &self.sponsored_gas_limit)
-            .finish_non_exhaustive()
-    }
 }
 
 pub trait RpcHandler: Sized {
@@ -100,7 +82,6 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
-#[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
     ws_addr: Option<SocketAddr>,
@@ -124,9 +105,6 @@ pub async fn start_api(
     // here. The same sender clone should be given to the block producer so it
     // can publish headers after sealing each block.
     new_heads_sender: Option<broadcast::Sender<Value>>,
-    // Optional mempool pre-filter (Aeges integration). When `Some`, every
-    // `eth_sendRawTransaction` call is checked before mempool admission.
-    mempool_filter: Option<MempoolFilter>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -163,7 +141,6 @@ pub async fn start_api(
         rollup_store,
         sponsored_gas_limit,
         new_heads_sender,
-        mempool_filter,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -497,28 +474,6 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),
                 ));
-            }
-            // Task 3.2/3.3: Check with Aeges before admitting to mempool.
-            // Privileged transactions are added directly by the L1Watcher, never via
-            // eth_sendRawTransaction, so all transactions here are regular user txs.
-            if let Some(filter) = &context.mempool_filter {
-                // Extract the raw transaction bytes from the first param.
-                let raw_bytes = req
-                    .params
-                    .as_deref()
-                    .and_then(|p| p.first())
-                    .and_then(|v| v.as_str())
-                    .map(|hex| {
-                        let hex = hex.strip_prefix("0x").unwrap_or(hex);
-                        hex::decode(hex).unwrap_or_default()
-                    })
-                    .unwrap_or_default();
-                if !filter(raw_bytes.into()).await {
-                    debug!("Aeges pre-filter rejected transaction");
-                    return Err(RpcErr::InvalidEthrexL2Message(
-                        "Transaction rejected by Aeges pre-filter".to_string(),
-                    ));
-                }
             }
             SendRawTransactionRequest::call(req, context.l1_ctx)
                 .await

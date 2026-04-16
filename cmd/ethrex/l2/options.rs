@@ -299,7 +299,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             credible_layer: if opts.credible_layer_opts.credible_layer {
                 CredibleLayerConfig {
                     sidecar_url: opts.credible_layer_opts.credible_layer_url,
-                    aeges_url: opts.credible_layer_opts.credible_layer_aeges_url,
                     state_oracle_address: opts.credible_layer_opts.credible_layer_state_oracle,
                 }
             } else {
@@ -1129,15 +1128,6 @@ pub struct CredibleLayerOptions {
         help_heading = "Credible Layer options"
     )]
     pub credible_layer_url: Option<String>,
-    #[arg(
-        long = "credible-layer-aeges-url",
-        value_name = "URL",
-        env = "ETHREX_CREDIBLE_LAYER_AEGES_URL",
-        requires = "credible_layer",
-        help = "gRPC endpoint for the Aeges mempool pre-filter service (e.g. http://localhost:8080). When set, Aeges pre-filtering is enabled.",
-        help_heading = "Credible Layer options"
-    )]
-    pub credible_layer_aeges_url: Option<String>,
     #[arg(
         long = "credible-layer-state-oracle",
         value_name = "ADDRESS",

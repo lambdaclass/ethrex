@@ -304,7 +304,6 @@ init-l2-credible-layer: ## 🛡️ Start L2 with Credible Layer enabled
 	cargo run --release --features l2 --manifest-path ../../Cargo.toml -- \
 		l2 \
 		--credible-layer-url http://localhost:50051 \
-		--credible-layer-aeges-url http://localhost:8080 \
 		--l2.ws-enabled \
 		--l2.ws-port 1730 \
 		2>&1 | tee /tmp/l2_cb.log
