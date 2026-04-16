@@ -556,9 +556,8 @@ async fn run_stateless_from_fixture(
             continue;
         };
 
-        let expect_stateless_valid = expected_stateless_valid(
-            block_data.stateless_output_bytes.as_deref(),
-        );
+        let expect_stateless_valid =
+            expected_stateless_valid(block_data.stateless_output_bytes.as_deref());
 
         let block: CoreBlock = block_data.clone().into();
         let block_number = block.header.number;
@@ -568,7 +567,8 @@ async fn run_stateless_from_fixture(
                 format!("Failed to parse executionWitness for block {block_number}: {e}")
             })?;
 
-        let witness_conversion_result = rpc_witness.into_execution_witness(*chain_config, block_number);
+        let witness_conversion_result =
+            rpc_witness.into_execution_witness(*chain_config, block_number);
         let execution_witness = match witness_conversion_result {
             Ok(w) => w,
             Err(e) => {

@@ -151,15 +151,26 @@ impl RpcExecutionWitness {
             ));
         }
 
-        let mut initial_state_root = None;
-
-        for h in &self.headers {
-            let header = BlockHeader::decode(h)?;
-            if header.number == first_block_number - 1 {
-                initial_state_root = Some(header.state_root);
-                break;
+        // Decode headers up front so we can validate the ordering invariant:
+        // an RPC witness must provide headers in ascending, contiguous block-number
+        // order. Reordered or gapped inputs would otherwise be silently normalized
+        // by the BTreeMap in `GuestProgramState::from_witness` and yield an
+        // incorrect conclusion about the block's validity.
+        let decoded_headers: Vec<BlockHeader> = self
+            .headers
+            .iter()
+            .map(|h| BlockHeader::decode(h))
+            .collect::<Result<_, _>>()?;
+        for window in decoded_headers.windows(2) {
+            if window[1].number != window[0].number + 1 {
+                return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
         }
+
+        let initial_state_root = decoded_headers
+            .iter()
+            .find(|h| h.number == first_block_number - 1)
+            .map(|h| h.state_root);
 
         let initial_state_root = initial_state_root.ok_or_else(|| {
             GuestProgramStateError::Custom(format!(
@@ -328,25 +339,14 @@ impl GuestProgramState {
         value: ExecutionWitness,
         crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
-        let decoded_headers: Vec<BlockHeader> = value
+        let block_headers: BTreeMap<u64, BlockHeader> = value
             .block_headers_bytes
             .into_iter()
             .map(|bytes| BlockHeader::decode(bytes.as_ref()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
                 GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
-            })?;
-
-        // The witness must provide headers in ascending block-number order (oldest
-        // first) so they form a contiguous chain. Reordered or gapped inputs are
-        // rejected here rather than silently normalized by the BTreeMap below.
-        for window in decoded_headers.windows(2) {
-            if window[1].number != window[0].number + 1 {
-                return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
-            }
-        }
-
-        let block_headers: BTreeMap<u64, BlockHeader> = decoded_headers
+            })?
             .into_iter()
             .map(|header| (header.number, header))
             .collect();

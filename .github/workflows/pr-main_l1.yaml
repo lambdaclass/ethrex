@@ -127,7 +127,7 @@ jobs:
           make -C tooling/ef_tests/blockchain test
 
   test-stateless-zkevm:
-    name: Blockchain EF tests - Stateless zkEVM (EIP-8025)
+    name: Test - Stateless zkEVM
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-22.04
@@ -141,7 +141,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Run stateless zkEVM EF tests
+      - name: Run Blockchain EF tests
         run: make -C tooling/ef_tests/blockchain test-stateless-zkevm
 
   docker_build:
