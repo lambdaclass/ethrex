@@ -41,9 +41,13 @@ ARG PROFILE="release"
 ARG BUILD_FLAGS=""
 
 COPY --from=planner /ethrex/recipe.json recipe.json
+# cargo-chef cook may fail on git dependencies (ethrex-monitor/ethrex-repl)
+# because the [patch] section references local paths that don't have real
+# source code yet (only stubs). This is fine — cook is a caching optimization,
+# and the real build below has all sources available.
 COPY Cargo.* ./
 COPY .cargo/ ./.cargo
-RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
+RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS || true
 
 RUN  if [ "$(uname -m)" = aarch64 ]; \
     then \
