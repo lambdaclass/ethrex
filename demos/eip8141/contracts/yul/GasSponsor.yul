@@ -35,7 +35,7 @@ object "GasSponsor" {
             // checks their ERC20 balance, and APPROVE(0,0,1) as payer.
             case 0xfc735e99 {
                 // TXPARAMLOAD(param_id=0x02, index=0) → sender address
-                let sender := verbatim_2i_1o(hex"B0", 0x02, 0)
+                let sender := verbatim_1i_1o(hex"B0", 0x02)
                 sender := and(sender, 0xffffffffffffffffffffffffffffffffffffffff)
 
                 // Read token address from storage slot 0

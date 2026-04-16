@@ -115,7 +115,7 @@ object "EphemeralKeyAccount" {
             //
             function ecrecoverAndApprove(scope) {
                 // Read sig_hash via TXPARAMLOAD(param_id=0x08, index=0)
-                let sigHash := verbatim_2i_1o(hex"B0", 0x08, 0)
+                let sigHash := verbatim_1i_1o(hex"B0", 0x08)
 
                 // Read v, r, s from calldata
                 let v := calldataload(4)
