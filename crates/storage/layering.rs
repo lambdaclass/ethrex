@@ -1,8 +1,9 @@
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
+use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, sync::Arc};
+use std::{fmt, num::NonZeroUsize, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -262,6 +263,134 @@ impl TrieLayerCache {
     }
 }
 
+/// Default capacity for the flat LRU trie cache used during full sync batch mode.
+///
+/// 2 million entries covers the hot working set of ~1024 blocks comfortably.
+/// Each entry is a trie node path (typically 33-131 bytes) plus its RLP value,
+/// so 2M entries ≈ 300-600 MB depending on average node size.
+const FLAT_CACHE_DEFAULT_CAPACITY: usize = 2_000_000;
+
+/// Simple LRU-based trie node cache for full sync batch mode.
+///
+/// Unlike [`TrieLayerCache`], this has no layer chains, no parent pointers,
+/// no bloom filter, and no RCU overhead. Nodes are inserted on write and
+/// evicted in LRU order when the cache is full. On commit, all cached nodes
+/// are written to disk and the cache is cleared.
+///
+/// This cache is only used during `add_blocks_in_batch` (full sync). Normal
+/// CL block processing continues to use `TrieLayerCache`.
+pub struct FlatTrieCache {
+    cache: LruCache<Vec<u8>, Vec<u8>, FxBuildHasher>,
+}
+
+impl fmt::Debug for FlatTrieCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlatTrieCache")
+            .field("len", &self.cache.len())
+            .field("cap", &self.cache.cap())
+            .finish()
+    }
+}
+
+impl Clone for FlatTrieCache {
+    fn clone(&self) -> Self {
+        // LruCache doesn't expose an iterator for cloning, so we create a fresh
+        // empty one with the same capacity. This is acceptable because the flat
+        // cache is only a performance optimization; losing cached entries on clone
+        // just means a few extra disk reads.
+        let cap = self.cache.cap();
+        Self {
+            cache: LruCache::with_hasher(
+                NonZeroUsize::new(cap.into()).unwrap_or(NonZeroUsize::MIN),
+                FxBuildHasher,
+            ),
+        }
+    }
+}
+
+impl Default for FlatTrieCache {
+    fn default() -> Self {
+        Self::new(FLAT_CACHE_DEFAULT_CAPACITY)
+    }
+}
+
+impl FlatTrieCache {
+    /// Creates a new LRU cache with the given capacity (number of entries).
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            cache: LruCache::with_hasher(
+                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::MIN),
+                FxBuildHasher,
+            ),
+        }
+    }
+
+    /// Look up a trie node by its path key. Returns `Some(value)` if cached.
+    pub fn get(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+        self.cache.get(key).cloned()
+    }
+
+    /// Insert a trie node into the cache. If the cache is full, the least
+    /// recently used entry is evicted.
+    pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        self.cache.put(key, value);
+    }
+
+    /// Insert a batch of trie nodes into the cache.
+    pub fn put_batch(&mut self, key_values: Vec<(Vec<u8>, Vec<u8>)>) {
+        for (key, value) in key_values {
+            self.cache.put(key, value);
+        }
+    }
+
+    /// Clear the cache entirely.
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+}
+
+/// Enum that lets [`TrieWrapper`] use either the layered cache (normal block processing)
+/// or the flat LRU cache (full sync batch mode) without requiring separate wrapper types.
+#[derive(Clone)]
+pub enum TrieCacheRef {
+    /// Standard diff-layer cache for normal CL block processing.
+    Layered(Arc<TrieLayerCache>),
+    /// Simple LRU cache for full sync batch mode. Uses `Arc<std::sync::Mutex<_>>` because
+    /// `LruCache::get` requires `&mut self`.
+    Flat(Arc<std::sync::Mutex<FlatTrieCache>>),
+}
+
+impl fmt::Debug for TrieCacheRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Layered(c) => write!(f, "TrieCacheRef::Layered({c:?})"),
+            Self::Flat(c) => write!(f, "TrieCacheRef::Flat({c:?})"),
+        }
+    }
+}
+
+impl TrieCacheRef {
+    /// Look up a trie node. Dispatches to the appropriate cache variant.
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Self::Layered(cache) => cache.get(state_root, key),
+            Self::Flat(cache) => cache.lock().ok()?.get(key),
+        }
+    }
+}
+
+impl From<Arc<TrieLayerCache>> for TrieCacheRef {
+    fn from(cache: Arc<TrieLayerCache>) -> Self {
+        Self::Layered(cache)
+    }
+}
+
+impl From<Arc<std::sync::Mutex<FlatTrieCache>>> for TrieCacheRef {
+    fn from(cache: Arc<std::sync::Mutex<FlatTrieCache>>) -> Self {
+        Self::Flat(cache)
+    }
+}
+
 /// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
 /// falling back to the on-disk trie only for keys not found in any layer.
 ///
@@ -269,7 +398,7 @@ impl TrieLayerCache {
 /// waiting for a disk flush.
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<TrieLayerCache>,
+    pub inner: TrieCacheRef,
     pub db: Box<dyn TrieDB>,
     /// Pre-computed prefix nibbles for storage tries.
     /// For state tries this is None; for storage tries this is
@@ -280,10 +409,11 @@ pub struct TrieWrapper {
 impl TrieWrapper {
     pub fn new(
         state_root: H256,
-        inner: Arc<TrieLayerCache>,
+        inner: impl Into<TrieCacheRef>,
         db: Box<dyn TrieDB>,
         prefix: Option<H256>,
     ) -> Self {
+        let inner = inner.into();
         let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
             state_root,
