@@ -668,6 +668,7 @@ impl<'a> VM<'a> {
         // which frames belong to it so we can revert them all on failure.
         let mut in_atomic_batch = false;
         let mut batch_start_idx: usize = 0;
+        let mut batch_logs_start: usize = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
 
         // Execute frames sequentially
@@ -700,6 +701,7 @@ impl<'a> VM<'a> {
                 self.substate.push_backup(); // batch-level snapshot
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
+                batch_logs_start = all_logs.len();
             }
 
             let ctx =
@@ -838,20 +840,20 @@ impl<'a> VM<'a> {
                 self.substate.revert_backup(); // revert batch-level snapshot
                 self.restore_cache_state()?;
 
-                // Rewrite results for all prior frames in this batch as failed
+                // Rewrite results for all frames in this batch (inclusive) as failed,
+                // charging each frame its full gas_limit per EIP-8141.
                 let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
-                for i in batch_start_idx..frame_idx {
+                for i in batch_start_idx..=frame_idx {
                     if let Some(result) = ctx.frame_results.get_mut(i) {
                         let charged_gas = frame_tx.frames[i].gas_limit;
-                        // Adjust total_gas_used: remove what was counted, add full gas_limit
                         total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
                         *result = (false, charged_gas, Vec::new());
                     }
                 }
-                // Remove logs from reverted batch frames
-                all_logs.retain(|_| false); // TODO: track per-batch logs more precisely
+                // Remove only logs from the batch, preserving pre-batch logs
+                all_logs.truncate(batch_logs_start);
 
                 // Find the end of this batch (the next SENDER frame without the flag)
                 let batch_end = frame_tx.frames[frame_idx..]
