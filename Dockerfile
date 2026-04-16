@@ -41,6 +41,8 @@ ARG PROFILE="release"
 ARG BUILD_FLAGS=""
 
 COPY --from=planner /ethrex/recipe.json recipe.json
+COPY Cargo.* ./
+COPY .cargo/ ./.cargo
 RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
 
 RUN  if [ "$(uname -m)" = aarch64 ]; \
