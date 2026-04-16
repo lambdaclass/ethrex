@@ -13,7 +13,6 @@ use super::shared::{k256_ecrecover, k256_recover_signer};
 pub struct OpenVmCrypto;
 
 impl Crypto for OpenVmCrypto {
-    // ── ECDSA (secp256k1) — via patched k256 ─────────────────────────────
 
     fn secp256k1_ecrecover(
         &self,
@@ -28,7 +27,6 @@ impl Crypto for OpenVmCrypto {
         k256_recover_signer(sig, msg)
     }
 
-    // ── Hashing ──────────────────────────────────────────────────────────
 
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
         openvm_keccak256::keccak256(input)
@@ -39,7 +37,6 @@ impl Crypto for OpenVmCrypto {
         openvm_sha2::Sha256::digest(input).into()
     }
 
-    // ── BN254 (alt_bn128) ────────────────────────────────────────────────
 
     fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
         use openvm_ecc_guest::Group;
@@ -150,7 +147,6 @@ impl Crypto for OpenVmCrypto {
         }
     }
 
-    // ── secp256r1 (P-256) ────────────────────────────────────────────────
 
     fn secp256r1_verify(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
         use openvm_p256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
@@ -172,7 +168,6 @@ impl Crypto for OpenVmCrypto {
         verifier.verify_prehash(msg, &signature).is_ok()
     }
 
-    // ── BLS12-381 (EIP-2537) ─────────────────────────────────────────────
 
     fn bls12_381_g1_add(
         &self,
@@ -341,7 +336,6 @@ impl Crypto for OpenVmCrypto {
         }
     }
 
-    // ── Modular arithmetic ───────────────────────────────────────────────
 
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
         if is_bn254_fr(modulus) {
@@ -352,7 +346,6 @@ impl Crypto for OpenVmCrypto {
     }
 }
 
-// ── BN254 helpers ─────────────────────────────────────────────────────────────
 
 type Bn254G1 = openvm_pairing::bn254::G1Affine;
 
@@ -396,7 +389,6 @@ fn encode_bn254_g1(point: &Bn254G1) -> Result<[u8; 64], CryptoError> {
     Ok(out)
 }
 
-// ── BLS12-381 helpers ─────────────────────────────────────────────────────────
 
 type Bls12G1 = openvm_pairing::bls12_381::G1Affine;
 type Bls12G2 = openvm_pairing::bls12_381::G2Affine;
@@ -491,7 +483,6 @@ fn encode_bls12_g2(point: &Bls12G2) -> Result<[u8; 192], CryptoError> {
     Ok(out)
 }
 
-// ── Modexp helpers ────────────────────────────────────────────────────────────
 
 /// Returns true if the modulus (big-endian, possibly with leading zeros) equals BN254 Fr.
 fn is_bn254_fr(modulus: &[u8]) -> bool {
@@ -556,21 +547,6 @@ fn modexp_fallback(base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, C
     Ok(out)
 }
 
-// ── Subgroup checks ──────────────────────────────────────────────────────────
-//
-// For pairing-based cryptography, points must lie in the correct prime-order
-// subgroup. A point on the curve is not necessarily in the correct subgroup
-// when the cofactor > 1. Without these checks, malicious transactions could
-// pass invalid points to precompiles and get wrong pairing results.
-//
-// | Curve       | Group | Cofactor | Check needed? |
-// |-------------|-------|----------|---------------|
-// | BN254       | G1    | 1        | No            |
-// | BN254       | G2    | > 1      | Yes           |
-// | BLS12-381   | G1    | > 1      | Yes           |
-// | BLS12-381   | G2    | > 1      | Yes           |
-//
-// Reference: https://github.com/eth-act/ere-guests
 
 use openvm_ecc_guest::weierstrass::WeierstrassPoint;
 
