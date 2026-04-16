@@ -6,11 +6,9 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      - "tooling/ef_tests/state/**"
       - "crates/vm/levm/**"
       - "crates/common/crypto/**"
       - ".github/workflows/pr-main_levm.yaml"
-      - "tooling/ef_tests/state"
   workflow_dispatch:
 
 concurrency:
