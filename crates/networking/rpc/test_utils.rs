@@ -259,8 +259,6 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            #[cfg(feature = "eip-8025")]
-            None,
         )
         .await
         .unwrap()
@@ -295,8 +293,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator: None,
     }
 }
 
@@ -320,7 +316,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTableServer::spawn(TARGET_PEERS, store);
+    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
     PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
 }
 

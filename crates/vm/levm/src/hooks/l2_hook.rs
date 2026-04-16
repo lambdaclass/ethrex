@@ -806,7 +806,9 @@ fn simulate_common_bridge_call(
     let nonce = db_clone.get_account(origin)?.info.nonce;
     let simulation_tx = EIP1559Transaction {
         // we are simulating the transaction
-        chain_id: vm.env.chain_id.as_u64(),
+        chain_id: u64::try_from(vm.env.chain_id).map_err(|_| {
+            VMError::Internal(InternalError::Custom("chain_id overflows u64".to_string()))
+        })?,
         nonce,
         max_priority_fee_per_gas: SIMULATION_MAX_FEE,
         max_fee_per_gas: SIMULATION_MAX_FEE,

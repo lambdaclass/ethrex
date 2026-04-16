@@ -1045,6 +1045,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "rayon",
  "rustc-hash",
  "thiserror 2.0.18",
  "tokio",
