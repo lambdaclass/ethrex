@@ -843,6 +843,13 @@ pub fn apply_plain_transaction(
     // EIP-8037 (Amsterdam+): post-execution block gas overflow check
     // Reject the transaction if adding it would cause max(regular, state) to exceed the gas limit
     if context.is_amsterdam && new_regular.max(new_state) > context.payload.header.gas_limit {
+        // Rollback transaction state before returning error:
+        // 1. Undo DB mutations (nonce, balance, storage, etc.)
+        // 2. Revert cumulative gas counter inflation
+        // This ensures the next transaction executes against clean state.
+        context.vm.undo_last_tx()?;
+        context.cumulative_gas_spent -= report.gas_spent;
+
         return Err(EvmError::Custom(format!(
             "block gas limit exceeded (state gas overflow): \
              max({new_regular}, {new_state}) = {} > gas_limit {}",
