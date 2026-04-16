@@ -24,7 +24,6 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
-  "tooling/repl",
   "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
@@ -77,8 +76,8 @@ ethrex-guest-program = { path = "./crates/guest-program", default-features = fal
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
-ethrex-monitor = { path = "./tooling/monitor" }
-ethrex-repl = { path = "./tooling/repl" }
+ethrex-monitor = { git = "https://github.com/lambdaclass/ethrex-tooling", branch = "main" }
+ethrex-repl = { git = "https://github.com/lambdaclass/ethrex-tooling", branch = "main" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
@@ -143,6 +142,30 @@ libssz = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 libssz-types = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 libssz-merkle = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 libssz-derive = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+
+# Ensure ethrex-tooling's transitive deps resolve to local workspace crates
+# instead of fetching a second copy from git (avoids "two versions of the same crate" errors).
+[patch."https://github.com/lambdaclass/ethrex"]
+ethrex = { path = "./cmd/ethrex" }
+ethrex-blockchain = { path = "./crates/blockchain" }
+ethrex-common = { path = "./crates/common" }
+ethrex-config = { path = "./crates/common/config" }
+ethrex-crypto = { path = "./crates/common/crypto" }
+ethrex-guest-program = { path = "./crates/guest-program" }
+ethrex-l2 = { path = "./crates/l2" }
+ethrex-l2-common = { path = "./crates/l2/common" }
+ethrex-l2-prover = { path = "./crates/l2/prover" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-levm = { path = "./crates/vm/levm" }
+ethrex-p2p = { path = "./crates/networking/p2p" }
+ethrex-prover = { path = "./crates/prover" }
+ethrex-rlp = { path = "./crates/common/rlp" }
+ethrex-rpc = { path = "./crates/networking/rpc" }
+ethrex-sdk = { path = "./crates/l2/sdk" }
+ethrex-storage = { path = "./crates/storage" }
+ethrex-storage-rollup = { path = "./crates/l2/storage" }
+ethrex-trie = { path = "./crates/common/trie" }
+ethrex-vm = { path = "./crates/vm" }
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

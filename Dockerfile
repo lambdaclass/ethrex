@@ -22,7 +22,6 @@ COPY crates ./crates
 COPY metrics ./metrics
 COPY cmd ./cmd
 COPY test ./test
-COPY tooling ./tooling
 COPY Cargo.* .
 COPY .cargo/ ./.cargo
 
@@ -42,7 +41,13 @@ ARG PROFILE="release"
 ARG BUILD_FLAGS=""
 
 COPY --from=planner /ethrex/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
+# cargo-chef cook may fail on git dependencies (ethrex-monitor/ethrex-repl)
+# because the [patch] section references local paths that don't have real
+# source code yet (only stubs). This is fine — cook is a caching optimization,
+# and the real build below has all sources available.
+COPY Cargo.* ./
+COPY .cargo/ ./.cargo
+RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS || true
 
 RUN  if [ "$(uname -m)" = aarch64 ]; \
     then \
@@ -57,7 +62,6 @@ COPY benches ./benches
 COPY crates ./crates
 COPY cmd ./cmd
 COPY metrics ./metrics
-COPY tooling ./tooling
 COPY fixtures/genesis ./fixtures/genesis
 COPY .git ./.git
 COPY Cargo.* ./

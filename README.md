@@ -12,6 +12,10 @@ Minimalist, stable, modular, fast, and ZK native implementation of the Ethereum 
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fethrex_client%2F&logo=telegram&label=chat&color=neon
 [tg-url]: https://t.me/ethrex_client
 
+## Tooling
+
+Development tools (EF tests, load tests, monitor TUI, REPL, benchmarks, etc.) live in a separate repository: [lambdaclass/ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling).
+
 ## Getting started
 
 For instructions on how to get started using ethrex L1 and/or L2, please refer to the ["Getting started" section of the docs](https://docs.ethrex.xyz/getting-started/index.html).

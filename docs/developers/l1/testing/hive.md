@@ -248,7 +248,7 @@ Log files include:
 To generate a formatted report from test results:
 
 ```bash
-cargo run --manifest-path tooling/Cargo.toml -p hive_report
+cargo run --manifest-path ethrex-tooling/Cargo.toml -p hive_report
 ```
 
 This reads all JSON files in `hive/workspace/logs/` and produces:
@@ -300,8 +300,8 @@ fi
 
 ### Fixtures URL Files
 
-- `tooling/ef_tests/blockchain/.fixtures_url` — Used by `run-hive-eels` Makefile target (non-Amsterdam forks)
-- `tooling/ef_tests/blockchain/.fixtures_url_amsterdam` — Amsterdam-specific fixtures with BAL support
+- `ethrex-tooling/ef_tests/blockchain/.fixtures_url` — Used by `run-hive-eels` Makefile target (non-Amsterdam forks)
+- `ethrex-tooling/ef_tests/blockchain/.fixtures_url_amsterdam` — Amsterdam-specific fixtures with BAL support
 
 Contents:
 
@@ -345,14 +345,14 @@ To update to a different fork or newer versions:
 
    ```bash
    # For Amsterdam fixtures
-   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url_amsterdam
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal@<version>/fixtures_bal.tar.gz" > ethrex-tooling/ef_tests/blockchain/.fixtures_url_amsterdam
    # For other forks
-   echo "https://github.com/ethereum/execution-spec-tests/releases/download/v<version>/fixtures_develop.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/v<version>/fixtures_develop.tar.gz" > ethrex-tooling/ef_tests/blockchain/.fixtures_url
    ```
 
 4. **Update fork references** in code if switching to a different fork:
    - `.github/workflows/daily_hive_report.yaml` - Test names and patterns
-   - `tooling/hive_report/src/main.rs` - Fork ranking and result processing
+   - `ethrex-tooling/hive_report/src/main.rs` - Fork ranking and result processing
 
 ## Troubleshooting
 
@@ -381,7 +381,7 @@ If EELS tests fail due to missing fixtures:
 
 ```bash
 # Verify fixtures URL is accessible
-curl -I $(cat tooling/ef_tests/blockchain/.fixtures_url)
+curl -I $(cat ethrex-tooling/ef_tests/blockchain/.fixtures_url)
 
 # Re-download fixtures (they're downloaded automatically during test execution)
 ```
