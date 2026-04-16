@@ -14,7 +14,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
-    layering::{TrieLayerCache, TrieWrapper},
+    layering::{FlatTrieCache, TrieCacheRef, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -63,10 +63,6 @@ pub const MAX_WITNESSES: u64 = 128;
 #[allow(unused)]
 const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
-
-/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
-/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
-const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -188,6 +184,13 @@ pub struct Store {
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
     background_threads: Arc<ThreadList>,
+
+    /// Optional flat LRU trie cache used exclusively during full sync batch mode.
+    ///
+    /// When active (`Some`), trie opens in batch mode use this cache instead of
+    /// the layered `trie_cache`, bypassing the diff-layer chain, bloom filter,
+    /// and RCU overhead. Set to `Some` before a batch run and cleared after.
+    batch_trie_cache: Arc<RwLock<Option<Arc<Mutex<FlatTrieCache>>>>>,
 }
 
 #[derive(Debug, Default)]
@@ -1505,6 +1508,7 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
+            batch_trie_cache: Arc::new(RwLock::new(None)),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -1528,6 +1532,7 @@ impl Store {
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
+        let batch_trie_cache = store.batch_trie_cache.clone();
         /*
             When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
             This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
@@ -1547,6 +1552,9 @@ impl Store {
             again for FlatKeyValue generation to continue.
 
             - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
+
+            In batch (full sync) mode, when a FlatTrieCache is active, this thread takes a simpler path:
+            nodes are written directly to disk and cached in an LRU, bypassing the diff-layer chain entirely.
         */
         background_threads.push(std::thread::spawn(move || {
             let rx = trie_upd_rx;
@@ -1558,6 +1566,7 @@ impl Store {
                             backend.as_ref(),
                             &flatkeyvalue_control_tx,
                             &trie_cache,
+                            &batch_trie_cache,
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
@@ -2136,11 +2145,7 @@ impl Store {
 
         // Pre-acquire shared resources once for both trie opens
         let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let cache = self.trie_cache_ref()?;
         let last_written = self.last_written()?;
         let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
 
@@ -2188,11 +2193,7 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let cache = self.trie_cache_ref()?;
         let last_written = self.last_written()?;
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
@@ -2530,6 +2531,55 @@ impl Store {
         self.open_state_trie(*EMPTY_TRIE_HASH)
     }
 
+    // --- Batch (full sync) trie cache management ---
+
+    /// Activate the flat LRU trie cache for batch mode (full sync).
+    ///
+    /// While active, `open_storage_trie` and `open_state_trie` will use the
+    /// flat LRU cache instead of the layered diff-chain cache, and
+    /// `apply_trie_updates` will write directly to disk + LRU instead of
+    /// building layer chains.
+    pub fn enable_batch_trie_cache(&self) -> Result<(), StoreError> {
+        let cache = Arc::new(Mutex::new(FlatTrieCache::default()));
+        *self
+            .batch_trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)? = Some(cache);
+        Ok(())
+    }
+
+    /// Deactivate the flat LRU trie cache, reverting to the layered cache.
+    pub fn disable_batch_trie_cache(&self) -> Result<(), StoreError> {
+        *self
+            .batch_trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)? = None;
+        Ok(())
+    }
+
+    /// Returns the appropriate [`TrieCacheRef`] for trie opens.
+    ///
+    /// If batch mode is active, returns the flat LRU cache; otherwise returns
+    /// the layered diff-chain cache.
+    fn trie_cache_ref(&self) -> Result<TrieCacheRef, StoreError> {
+        // Check batch cache first
+        if let Some(flat) = self
+            .batch_trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .as_ref()
+        {
+            return Ok(TrieCacheRef::Flat(flat.clone()));
+        }
+        // Fall back to layered cache
+        Ok(TrieCacheRef::Layered(
+            self.trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
+        ))
+    }
+
     // Methods exclusive for trie management during snap-syncing
 
     /// Obtain a state trie from the given state root
@@ -2538,10 +2588,7 @@ impl Store {
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache_ref()?,
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2570,10 +2617,7 @@ impl Store {
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache_ref()?,
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2593,10 +2637,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache_ref()?,
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2613,7 +2654,7 @@ impl Store {
         &self,
         state_root: H256,
         read_view: Arc<dyn StorageReadView>,
-        cache: Arc<TrieLayerCache>,
+        cache: TrieCacheRef,
         last_written: Vec<u8>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
@@ -2636,7 +2677,7 @@ impl Store {
         state_root: H256,
         storage_root: H256,
         read_view: Arc<dyn StorageReadView>,
-        cache: Arc<TrieLayerCache>,
+        cache: TrieCacheRef,
         last_written: Vec<u8>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
@@ -2679,10 +2720,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.trie_cache_ref()?,
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -2831,6 +2869,7 @@ fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    batch_trie_cache: &Arc<RwLock<Option<Arc<Mutex<FlatTrieCache>>>>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2842,8 +2881,8 @@ fn apply_trie_updates(
         is_batch,
     } = trie_update;
 
-    // Phase 1: update the in-memory diff-layers only, then notify block production.
-    let new_layer = storage_updates
+    // Flatten storage updates with account-prefix keys, then chain account updates.
+    let new_layer: Vec<(Nibbles, Vec<u8>)> = storage_updates
         .into_iter()
         .flat_map(|(account_hash, nodes)| {
             nodes
@@ -2852,6 +2891,83 @@ fn apply_trie_updates(
         })
         .chain(account_updates)
         .collect();
+
+    // Check if we have an active flat batch cache.
+    let flat_cache = batch_trie_cache
+        .read()
+        .map_err(|_| StoreError::LockError)?
+        .clone();
+
+    if is_batch && flat_cache.is_some() {
+        // --- Fast path for full sync batch mode ---
+        //
+        // Instead of building diff layers, bloom filters, and RCU clones,
+        // we write all trie nodes directly to disk and cache them in the
+        // LRU for subsequent reads within the same batch.
+        let flat_cache = flat_cache.unwrap();
+
+        // Populate the LRU cache so subsequent trie opens within this batch
+        // can read these nodes without hitting disk.
+        {
+            let mut cache = flat_cache.lock().map_err(|_| StoreError::LockError)?;
+            for (path, value) in &new_layer {
+                cache.put(path.as_ref().to_vec(), value.clone());
+            }
+        }
+
+        // Signal the caller that the in-memory view is updated (they can proceed).
+        result_sender
+            .send(Ok(()))
+            .map_err(|_| StoreError::LockError)?;
+
+        // Write nodes to disk immediately (no layer accumulation).
+        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
+
+        let last_written = backend
+            .begin_read()?
+            .get(MISC_VALUES, "last_written".as_bytes())?
+            .unwrap_or_default();
+
+        let mut write_tx = backend.begin_write()?;
+        let mut result = Ok(());
+        for (path, value) in new_layer {
+            let key = path.into_vec();
+            let is_leaf = key.len() == 65 || key.len() == 131;
+            let is_account = key.len() <= 65;
+
+            if is_leaf && key > last_written {
+                continue;
+            }
+            let table = if is_leaf {
+                if is_account {
+                    &ACCOUNT_FLATKEYVALUE
+                } else {
+                    &STORAGE_FLATKEYVALUE
+                }
+            } else if is_account {
+                &ACCOUNT_TRIE_NODES
+            } else {
+                &STORAGE_TRIE_NODES
+            };
+            if value.is_empty() {
+                result = write_tx.delete(table, &key);
+            } else {
+                result = write_tx.put(table, &key, &value);
+            }
+            if result.is_err() {
+                break;
+            }
+        }
+        if result.is_ok() {
+            result = write_tx.commit();
+        }
+        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
+        return result;
+    }
+
+    // --- Normal path: layered diff-chain cache ---
+
+    // Phase 1: update the in-memory diff-layers only, then notify block production.
     // Read-Copy-Update the trie cache with a new layer.
     let trie = trie_cache
         .read()
@@ -2867,11 +2983,7 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let commitable = if is_batch {
-        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
-    } else {
-        trie.get_commitable(parent_state_root)
-    };
+    let commitable = trie.get_commitable(parent_state_root);
     let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
