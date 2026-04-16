@@ -2274,7 +2274,12 @@ impl Blockchain {
 
         info!(
             "[FULLSYNC TIMING] Batch {}: exec={}ms, transitions={}ms, merkle={}ms, store={}ms, total={}ms",
-            blocks_len, exec_ms, transitions_ms, merkle_ms, store_ms, interval.elapsed().as_millis()
+            blocks_len,
+            exec_ms,
+            transitions_ms,
+            merkle_ms,
+            store_ms,
+            interval.elapsed().as_millis()
         );
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
