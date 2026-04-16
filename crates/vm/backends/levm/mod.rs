@@ -169,6 +169,20 @@ impl LEVM {
                     report.gas_used,
                     report.gas_spent,
                 );
+
+                // DoS protection: early exit if either regular or state gas exceeds the limit.
+                // Since block_gas_used = max(regular, state), if either component exceeds
+                // the limit, we know the block is invalid and can safely reject without
+                // violating EIP-8037 semantics.
+                if block_regular_gas_used > block.header.gas_limit
+                    || block_state_gas_used > block.header.gas_limit
+                {
+                    return Err(EvmError::Transaction(format!(
+                        "Gas allowance exceeded: Block gas used overflow: \
+                         block_gas_used {block_gas_used} > block_gas_limit {}",
+                        block.header.gas_limit
+                    )));
+                }
             } else {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
