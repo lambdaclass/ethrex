@@ -362,14 +362,14 @@ async fn handle_ws_request(
 
     match req.method.as_str() {
         "eth_subscribe" => {
-            // Delegate to L1's implementation, which uses the subscription_id for this connection.
+
             let result = ethrex_rpc::handle_eth_subscribe(&req, subscription_id)
                 .map_err(RpcErr::L1RpcErr);
             let resp = ethrex_rpc::rpc_response(req.id, result).ok()?;
             Some(resp.to_string())
         }
         "eth_unsubscribe" => {
-            // Delegate to L1's implementation.
+
             let result =
                 ethrex_rpc::handle_eth_unsubscribe(&req, &context.l1_ctx, subscription_id)
                     .await
