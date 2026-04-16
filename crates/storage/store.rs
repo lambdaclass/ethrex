@@ -1341,7 +1341,43 @@ impl Store {
     }
 
     pub async fn clear_fullsync_headers(&self) -> Result<(), StoreError> {
+        self.clear_fullsync_progress()?;
         self.backend.clear_table(FULLSYNC_HEADERS)
+    }
+
+    /// Stores the lowest block number reached during header download and the hash
+    /// to resume fetching from, so the next sync cycle can continue where it left off.
+    pub fn set_fullsync_progress(
+        &self,
+        lowest_block: BlockNumber,
+        resume_hash: H256,
+    ) -> Result<(), StoreError> {
+        let mut data = lowest_block.to_le_bytes().to_vec();
+        data.extend_from_slice(resume_hash.as_bytes());
+        self.write(MISC_VALUES, b"fullsync_progress".to_vec(), data)
+    }
+
+    /// Returns the saved fullsync progress: (lowest_block_number, resume_hash).
+    pub fn get_fullsync_progress(&self) -> Result<Option<(BlockNumber, H256)>, StoreError> {
+        let Some(data) = self.read(MISC_VALUES, b"fullsync_progress".to_vec())? else {
+            return Ok(None);
+        };
+        if data.len() != 8 + 32 {
+            return Ok(None);
+        }
+        let lowest_block = u64::from_le_bytes(
+            data[..8]
+                .try_into()
+                .expect("fullsync_progress: lowest_block slice is exactly 8 bytes"),
+        );
+        let resume_hash = H256::from_slice(&data[8..40]);
+        Ok(Some((lowest_block, resume_hash)))
+    }
+
+    pub fn clear_fullsync_progress(&self) -> Result<(), StoreError> {
+        // Ignore error if the key doesn't exist
+        let _ = self.delete(MISC_VALUES, b"fullsync_progress".to_vec());
+        Ok(())
     }
 
     /// Delete a key from a table

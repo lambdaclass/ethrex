@@ -17,7 +17,7 @@ use tracing::{debug, info, warn};
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
 
-use super::{EXECUTE_BATCH_SIZE, SyncError};
+use super::{EXECUTE_BATCH_SIZE, RETRY_DELAYS, SyncError};
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
@@ -47,12 +47,20 @@ pub async fn sync_cycle_full(
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
-    let mut start_block_number;
+    let mut start_block_number = 0;
     let mut end_block_number = 0;
     let mut headers = vec![];
     let mut single_batch = true;
 
     let mut attempts = 0;
+
+    // Check for progress saved from a previous aborted cycle
+    let prior_progress = store.get_fullsync_progress()?;
+    if let Some((prev_lowest, _)) = &prior_progress {
+        info!(
+            "Found prior fullsync progress: headers stored down to block {prev_lowest}, will resume from there"
+        );
+    }
 
     // Request and store all block headers from the advertised sync head
     loop {
@@ -60,19 +68,26 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
-            if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
                     "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
                 );
+                // Save progress so the next cycle can resume from here
+                if end_block_number > 0 {
+                    info!("Saving fullsync progress at block {start_block_number} for next cycle");
+                    store.set_fullsync_progress(start_block_number, sync_head)?;
+                }
                 return Ok(());
             }
             attempts += 1;
+            let delay = RETRY_DELAYS[(attempts as usize - 1).min(RETRY_DELAYS.len() - 1)];
             warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in {delay}s"
             );
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(delay)).await;
             continue;
         };
+        attempts = 0;
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
 
         let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
@@ -112,6 +127,36 @@ pub async fn sync_cycle_full(
         }
         store.add_fullsync_batch(block_headers).await?;
         single_batch = false;
+
+        // Check if we've connected to headers stored from a previous cycle
+        if let Some((prev_lowest, prev_resume_hash)) = &prior_progress
+            && start_block_number >= *prev_lowest
+        {
+            // Either we've landed exactly at the previous lowest block, or we're
+            // above it and can verify a stored header exists just below our batch
+            let connected = start_block_number == *prev_lowest
+                || store
+                    .read_fullsync_batch(start_block_number - 1, 1)
+                    .await?
+                    .first()
+                    .map(|o| o.is_some())
+                    .unwrap_or(false);
+
+            if connected {
+                info!(
+                    "Connected to previously stored headers at block {start_block_number}, resuming from block {prev_lowest}",
+                );
+                // Jump to where the previous cycle left off
+                sync_head = *prev_resume_hash;
+                start_block_number = *prev_lowest;
+
+                if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
+                    break;
+                }
+                // Continue downloading from the previous cycle's resume point
+                continue;
+            }
+        }
     }
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
