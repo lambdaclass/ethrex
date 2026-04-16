@@ -43,6 +43,7 @@ use crate::eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
@@ -71,6 +72,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
+use spawned_concurrency::tasks::ActorRef;
 use std::{
     collections::HashMap,
     future::IntoFuture,
@@ -85,8 +87,6 @@ use tokio::sync::{
     oneshot,
 };
 use tokio::time::timeout;
-use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
-use spawned_concurrency::tasks::ActorRef;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -691,8 +691,9 @@ pub async fn handle_authrpc_request(
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
 pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
-    let (out_tx, mut out_rx) =
-        tokio::sync::mpsc::channel::<String>(crate::subscription_manager::SUBSCRIBER_CHANNEL_CAPACITY);
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(
+        crate::subscription_manager::SUBSCRIBER_CHANNEL_CAPACITY,
+    );
     let mut subscription_id: Option<String> = None;
 
     loop {

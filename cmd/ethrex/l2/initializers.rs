@@ -14,7 +14,6 @@ use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
 use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
 use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
-use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
@@ -23,6 +22,7 @@ use ethrex_p2p::{
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
+use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;

@@ -34,10 +34,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{
-    net::TcpListener,
-    sync::Mutex as TokioMutex,
-};
+use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -280,4 +277,3 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         }
     }
 }
-

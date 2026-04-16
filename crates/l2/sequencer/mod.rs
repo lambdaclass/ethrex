@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_monitor::{EthrexMonitor, MonitorConfig as ExternalMonitorConfig};
+use ethrex_rpc::SubscriptionManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -18,7 +19,6 @@ use l1_watcher::L1Watcher;
 #[cfg(feature = "metrics")]
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
-use ethrex_rpc::SubscriptionManager;
 use reqwest::Url;
 use spawned_concurrency::tasks::ActorRef;
 use std::pin::Pin;
