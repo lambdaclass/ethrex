@@ -78,7 +78,7 @@ pub const FILTER_DURATION: Duration = {
 #[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
-    ws_addr: Option<SocketAddr>,
+    ws: Option<ethrex_rpc::WebSocketConfig>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -94,11 +94,6 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
     sponsored_gas_limit: u64,
-    // Broadcast sender for new block header notifications. When `ws_addr` is
-    // `Some`, callers should create a `broadcast::channel` and pass the sender
-    // here. The same sender clone should be given to the block producer so it
-    // can publish headers after sealing each block.
-    new_heads_sender: Option<broadcast::Sender<Value>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -128,7 +123,7 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil: l2_gas_limit,
             block_worker_channel,
-            new_heads_sender,
+            ws: ws.clone(),
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -168,7 +163,7 @@ pub async fn start_api(
 
     info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
-    if let Some(address) = ws_addr {
+    if let Some(ref ws_config) = ws {
         let ws_handler = |ws: WebSocketUpgrade, ctx: State<RpcApiContext>| async move {
             ws.on_upgrade(|socket| handle_websocket(socket, ctx.0))
         };
@@ -176,13 +171,13 @@ pub async fn start_api(
             .route("/", axum::routing::any(ws_handler))
             .layer(cors)
             .with_state(service_context);
-        let ws_listener = TcpListener::bind(address)
+        let ws_listener = TcpListener::bind(ws_config.addr)
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let ws_server = axum::serve(ws_listener, ws_router)
             .with_graceful_shutdown(ethrex_rpc::shutdown_signal())
             .into_future();
-        info!("Starting L2 WS server at {address}");
+        info!("Starting L2 WS server at {}", ws_config.addr);
 
         let _ = tokio::try_join!(http_server, ws_server)
             .inspect_err(|e| info!("Error shutting down servers: {e:?}"));

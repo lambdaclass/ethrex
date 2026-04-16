@@ -208,16 +208,19 @@ pub async fn init_rpc_api(
     )
     .await;
 
-    let (ws_socket_opts, new_heads_sender) = if opts.ws_enabled {
+    let ws_config = if opts.ws_enabled {
         let (sender, _) = ethrex_rpc::broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-        (Some(get_ws_socket_addr(opts)), Some(sender))
+        Some(ethrex_rpc::WebSocketConfig {
+            addr: get_ws_socket_addr(opts),
+            new_heads_sender: sender,
+        })
     } else {
-        (None, None)
+        None
     };
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_socket_opts,
+        ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -230,7 +233,6 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
-        new_heads_sender,
     );
 
     tracker.spawn(rpc_api);

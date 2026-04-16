@@ -27,7 +27,7 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
-use serde_json::Value;
+
 use spawned_concurrency::tasks::ActorRef;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
@@ -51,19 +51,13 @@ fn init_rpc_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
-    new_heads_sender: Option<broadcast::Sender<Value>>,
+    ws: Option<ethrex_rpc::WebSocketConfig>,
 ) {
     init_datadir(&opts.datadir);
 
-    let ws_addr = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
-    } else {
-        None
-    };
-
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_addr,
+        ws,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -79,7 +73,6 @@ fn init_rpc_api(
         log_filter_handler,
         l2_gas_limit,
         l2_opts.sponsored_gas_limit,
-        new_heads_sender,
     );
 
     tracker.spawn(rpc_api);
@@ -329,11 +322,14 @@ pub async fn init_l2(
     )
     .await?;
 
-    // Create broadcast channel for new block headers when WS is enabled.
+    // Create WebSocket config when WS is enabled.
     // L2 uses the same --ws.enabled / --ws.addr / --ws.port flags as L1.
-    let new_heads_sender = if opts.node_opts.ws_enabled {
+    let ws_config = if opts.node_opts.ws_enabled {
         let (sender, _) = broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-        Some(sender)
+        Some(ethrex_rpc::WebSocketConfig {
+            addr: get_ws_socket_addr(&opts.node_opts),
+            new_heads_sender: sender,
+        })
     } else {
         None
     };
@@ -351,7 +347,7 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         l2_gas_limit,
-        new_heads_sender.clone(),
+        ws_config.clone(),
     );
 
     // Initialize metrics if enabled
@@ -375,7 +371,7 @@ pub async fn init_l2(
         genesis,
         checkpoints_dir,
         l2_gas_limit,
-        new_heads_sender,
+        ws_config.as_ref().map(|ws| ws.new_heads_sender.clone()),
     )
     .await?;
     join_set.spawn(l2_sequencer);

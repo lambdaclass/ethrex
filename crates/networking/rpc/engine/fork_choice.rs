@@ -304,10 +304,9 @@ async fn handle_forkchoice(
             };
 
             // Broadcast the new head to eth_subscribe("newHeads") subscribers.
-            if let Some(sender) = &context.new_heads_sender {
+            if let Some(ws) = &context.ws {
                 if let Ok(header_value) = serde_json::to_value(&head) {
-                    // A send error means there are no active subscribers; ignore it.
-                    let _ = sender.send(header_value);
+                    let _ = ws.new_heads_sender.send(header_value);
                 }
             }
 

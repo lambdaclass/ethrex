@@ -88,7 +88,7 @@ pub use eth::{
 };
 pub use rpc::{
     ClientVersion, NEW_HEADS_CHANNEL_CAPACITY, NodeData, RpcApiContext, RpcHandler,
-    RpcRequestWrapper, build_subscription_notification, drain_subscriptions,
+    RpcRequestWrapper, WebSocketConfig, build_subscription_notification, drain_subscriptions,
     generate_subscription_id, handle_eth_subscribe, handle_eth_unsubscribe, map_debug_requests,
     map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };

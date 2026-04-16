@@ -209,9 +209,17 @@ pub struct RpcApiContext {
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
+    /// WebSocket configuration. `None` when the WS server is disabled.
+    pub ws: Option<WebSocketConfig>,
+}
+
+/// Configuration for the WebSocket RPC server.
+#[derive(Clone)]
+pub struct WebSocketConfig {
+    /// Socket address the WS server listens on.
+    pub addr: SocketAddr,
     /// Broadcast sender for new block header notifications (eth_subscribe "newHeads").
-    /// `None` when the WS server is disabled or subscriptions are not needed.
-    pub new_heads_sender: Option<broadcast::Sender<Value>>,
+    pub new_heads_sender: broadcast::Sender<Value>,
 }
 
 impl std::fmt::Debug for RpcApiContext {
@@ -483,7 +491,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
-    ws_addr: Option<SocketAddr>,
+    ws: Option<WebSocketConfig>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -496,7 +504,6 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
-    new_heads_sender: Option<broadcast::Sender<Value>>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -519,7 +526,7 @@ pub async fn start_api(
         log_filter_handler,
         gas_ceil,
         block_worker_channel,
-        new_heads_sender,
+        ws: ws.clone(),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -588,7 +595,7 @@ pub async fn start_api(
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
-    if let Some(address) = ws_addr {
+    if let Some(ref ws_config) = ws {
         let ws_handler = |ws: WebSocketUpgrade, ctx| async {
             ws.on_upgrade(|socket| handle_websocket(socket, ctx))
         };
@@ -596,13 +603,13 @@ pub async fn start_api(
             .route("/", axum::routing::any(ws_handler))
             .layer(cors)
             .with_state(service_context);
-        let ws_listener = TcpListener::bind(address)
+        let ws_listener = TcpListener::bind(ws_config.addr)
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let ws_server = axum::serve(ws_listener, ws_router)
             .with_graceful_shutdown(shutdown_signal())
             .into_future();
-        info!("Starting WS server at {address}");
+        info!("Starting WS server at {}", ws_config.addr);
 
         let _ = tokio::try_join!(authrpc_server, http_server, ws_server)
             .inspect_err(|e| error!("Error shutting down servers: {e:?}"));
@@ -789,10 +796,11 @@ pub fn handle_eth_subscribe(
 
     match sub_type {
         "newHeads" => {
-            let sender = context
-                .new_heads_sender
+            let sender = &context
+                .ws
                 .as_ref()
-                .ok_or_else(|| RpcErr::Internal("WebSocket server not enabled".to_string()))?;
+                .ok_or_else(|| RpcErr::Internal("WebSocket server not enabled".to_string()))?
+                .new_heads_sender;
 
             let sub_id = generate_subscription_id();
             let receiver = sender.subscribe();
