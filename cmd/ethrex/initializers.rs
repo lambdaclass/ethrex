@@ -208,17 +208,11 @@ pub async fn init_rpc_api(
     )
     .await;
 
-    let ws_socket_opts = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
-    } else {
-        None
-    };
-
-    let new_heads_sender = if ws_socket_opts.is_some() {
+    let (ws_socket_opts, new_heads_sender) = if opts.ws_enabled {
         let (sender, _) = ethrex_rpc::broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
-        Some(sender)
+        (Some(get_ws_socket_addr(opts)), Some(sender))
     } else {
-        None
+        (None, None)
     };
 
     let rpc_api = ethrex_rpc::start_api(
