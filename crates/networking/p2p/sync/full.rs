@@ -345,7 +345,7 @@ async fn add_blocks_in_batch(
 }
 
 /// Max request failures before giving up on forward sync.
-const MAX_FORWARD_SYNC_FAILURES: u64 = 10;
+const MAX_FORWARD_SYNC_FAILURES: u64 = 200;
 
 /// Max time to wait for peers.
 const FORWARD_SYNC_PEER_WAIT: Duration = Duration::from_secs(300);
