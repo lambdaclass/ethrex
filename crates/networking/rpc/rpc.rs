@@ -694,7 +694,10 @@ pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(
         crate::subscription_manager::SUBSCRIBER_CHANNEL_CAPACITY,
     );
-    let mut subscription_id: Option<String> = None;
+    // Currently only "newHeads" subscriptions are supported. When additional
+    // subscription types (e.g., "logs", "newPendingTransactions") are added,
+    // the subscription tracking below will need per-type handling.
+    let mut subscription_ids: Vec<String> = Vec::new();
 
     loop {
         tokio::select! {
@@ -708,7 +711,7 @@ pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
                 };
 
                 let response = handle_ws_request(
-                    &body, context, &out_tx, &mut subscription_id,
+                    &body, context, &out_tx, &mut subscription_ids,
                 ).await;
                 if let Some(resp) = response
                     && socket.send(Message::Text(resp.into())).await.is_err()
@@ -725,8 +728,10 @@ pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
         }
     }
 
-    if let (Some(id), Some(ws)) = (subscription_id, &context.ws) {
-        let _ = ws.subscription_manager.unsubscribe(id).await;
+    if let Some(ws) = &context.ws {
+        for id in subscription_ids {
+            let _ = ws.subscription_manager.unsubscribe(id).await;
+        }
     }
 }
 
@@ -734,7 +739,7 @@ async fn handle_ws_request(
     body: &str,
     context: &RpcApiContext,
     out_tx: &tokio::sync::mpsc::Sender<String>,
-    subscription_id: &mut Option<String>,
+    subscription_ids: &mut Vec<String>,
 ) -> Option<String> {
     use crate::utils::{RpcRequest, RpcRequestId};
 
@@ -752,12 +757,12 @@ async fn handle_ws_request(
 
     match req.method.as_str() {
         "eth_subscribe" => {
-            let result = handle_eth_subscribe(&req, context, out_tx, subscription_id).await;
+            let result = handle_eth_subscribe(&req, context, out_tx, subscription_ids).await;
             let resp = rpc_response(req.id, result).ok()?;
             Some(resp.to_string())
         }
         "eth_unsubscribe" => {
-            let result = handle_eth_unsubscribe(&req, context, subscription_id).await;
+            let result = handle_eth_unsubscribe(&req, context, subscription_ids).await;
             let resp = rpc_response(req.id, result).ok()?;
             Some(resp.to_string())
         }
@@ -777,7 +782,7 @@ pub async fn handle_eth_subscribe(
     req: &crate::utils::RpcRequest,
     context: &RpcApiContext,
     out_tx: &tokio::sync::mpsc::Sender<String>,
-    subscription_id: &mut Option<String>,
+    subscription_ids: &mut Vec<String>,
 ) -> Result<Value, RpcErr> {
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_type = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
@@ -786,11 +791,6 @@ pub async fn handle_eth_subscribe(
 
     match sub_type {
         "newHeads" => {
-            // Already subscribed on this connection — return the existing ID.
-            if let Some(id) = subscription_id {
-                return Ok(Value::String(id.clone()));
-            }
-
             let ws = context
                 .ws
                 .as_ref()
@@ -802,7 +802,7 @@ pub async fn handle_eth_subscribe(
                 .await
                 .map_err(|e| RpcErr::Internal(format!("Subscription failed: {e}")))?;
 
-            *subscription_id = Some(id.clone());
+            subscription_ids.push(id.clone());
             Ok(Value::String(id))
         }
         other => Err(RpcErr::Internal(format!(
@@ -818,7 +818,7 @@ pub async fn handle_eth_subscribe(
 pub async fn handle_eth_unsubscribe(
     req: &crate::utils::RpcRequest,
     context: &RpcApiContext,
-    subscription_id: &mut Option<String>,
+    subscription_ids: &mut Vec<String>,
 ) -> Result<Value, RpcErr> {
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_id = params
@@ -829,15 +829,10 @@ pub async fn handle_eth_unsubscribe(
         })?
         .to_string();
 
-    // Only unsubscribe if the requested ID matches this connection's subscription.
-    let is_owned = subscription_id
-        .as_deref()
-        .map(|owned| owned == sub_id)
-        .unwrap_or(false);
-
-    if !is_owned {
+    // Only unsubscribe if the requested ID belongs to this connection.
+    let Some(pos) = subscription_ids.iter().position(|id| id == &sub_id) else {
         return Ok(Value::Bool(false));
-    }
+    };
 
     let removed = if let Some(ref ws) = context.ws {
         ws.subscription_manager
@@ -849,7 +844,7 @@ pub async fn handle_eth_unsubscribe(
     };
 
     if removed {
-        *subscription_id = None;
+        subscription_ids.swap_remove(pos);
     }
 
     Ok(Value::Bool(removed))
