@@ -230,6 +230,8 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         None,
+        #[cfg(feature = "eip-8025")]
+        proof_coordinator,
     );
 
     tracker.spawn(rpc_api);

@@ -212,6 +212,10 @@ pub struct RpcApiContext {
     /// Broadcast sender for new block header notifications (eth_subscribe "newHeads").
     /// `None` when the WS server is disabled or subscriptions are not needed.
     pub new_heads_sender: Option<broadcast::Sender<Value>>,
+    /// EIP-8025 proof coordinator handle for sending proof requests.
+    #[cfg(feature = "eip-8025")]
+    pub proof_coordinator:
+        Option<ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle>,
 }
 
 impl std::fmt::Debug for RpcApiContext {
@@ -496,6 +500,9 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     new_heads_sender: Option<broadcast::Sender<Value>>,
+    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
+        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
+    >,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -519,6 +526,8 @@ pub async fn start_api(
         gas_ceil,
         block_worker_channel,
         new_heads_sender,
+        #[cfg(feature = "eip-8025")]
+        proof_coordinator,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
