@@ -102,6 +102,7 @@ pub async fn request_account_range(
     METRICS
         .current_step
         .set(CurrentStepValue::RequestingAccountRanges);
+    let chain_id = block_sync_state.chain_id();
     // 1) split the range in chunks of same length
     let start_u256 = U256::from_big_endian(&start.0);
     let limit_u256 = U256::from_big_endian(&limit.0);
@@ -249,11 +250,17 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        // Note: pivot staleness check removed here. For fast-block-time chains
-        // (BSC: 3s blocks), the pivot becomes "stale" instantly and updating it
-        // restarts the entire account download. The pivot's state root remains
-        // servable by peers within their pruning window. Staleness is handled
-        // after account download completes in snap_sync().
+        if block_is_stale(pivot_header, chain_id) {
+            info!("request_account_range became stale, updating pivot");
+            *pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+            )
+            .await
+            .expect("Should be able to update pivot")
+        }
 
         // Reserve a request slot before spawning so get_best_peer sees
         // this peer as busy immediately, preventing spawn floods.

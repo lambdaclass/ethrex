@@ -63,6 +63,11 @@ impl SnapBlockSyncState {
         }
     }
 
+    /// Returns the chain ID of the backing store's genesis config.
+    pub fn chain_id(&self) -> u64 {
+        self.store.get_chain_config().chain_id
+    }
+
     /// Obtain the current head from where to start or resume block sync
     pub async fn get_current_head(&self) -> Result<H256, SyncError> {
         if let Some(head) = self.store.get_header_download_checkpoint().await? {
