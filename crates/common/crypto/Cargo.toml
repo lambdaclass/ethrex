@@ -50,7 +50,7 @@ openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]
 
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
-openvm = ["openvm-kzg"]
+openvm = []
 
 [lints]
 workspace = true

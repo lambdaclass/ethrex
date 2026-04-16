@@ -1,5 +1,7 @@
 #[cfg(feature = "openvm")]
 pub mod openvm;
+#[cfg(feature = "openvm")]
+mod openvm_subgroup_check;
 #[cfg(feature = "risc0")]
 pub mod risc0;
 #[cfg(any(feature = "sp1", feature = "risc0", feature = "openvm"))]
