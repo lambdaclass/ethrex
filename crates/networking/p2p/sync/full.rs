@@ -3,7 +3,6 @@
 //! This module contains the logic for full synchronization mode where all blocks
 //! are fetched via p2p eth requests and executed to rebuild the state.
 
-use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::MAX_HEADER_FETCH_ATTEMPTS;
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
@@ -129,22 +128,17 @@ pub async fn sync_cycle_full(
                 .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
                 .collect::<Result<Vec<_>, SyncError>>()?;
         }
-        let mut blocks = Vec::new();
-        // Request block bodies
-        // Download block bodies
-        while !headers.is_empty() {
-            let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
-            let bodies = peers
-                .request_block_bodies(header_batch)
-                .await?
-                .ok_or(SyncError::BodiesNotFound)?;
-            debug!("Obtained: {} block bodies", bodies.len());
-            let block_batch = headers
-                .drain(..bodies.len())
-                .zip(bodies)
-                .map(|(header, body)| Block { header, body });
-            blocks.extend(block_batch);
+        // Download block bodies in parallel from multiple peers
+        let bodies = peers.request_block_bodies_parallel(&headers).await?;
+        if bodies.len() != headers.len() {
+            return Err(SyncError::BodiesNotFound);
         }
+        debug!("Obtained: {} block bodies in parallel", bodies.len());
+        let blocks: Vec<Block> = headers
+            .drain(..)
+            .zip(bodies)
+            .map(|(header, body)| Block { header, body })
+            .collect();
         if !blocks.is_empty() {
             // Execute blocks
             info!(
