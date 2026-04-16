@@ -187,6 +187,8 @@ impl L1ProofVerifier {
             let mut current_batch_public_inputs = None;
 
             for (prover_type, proof) in proofs_for_batch {
+                // ProverOutput::Proof (e.g. Groth16) has no public values.
+                // Only ProverOutput::ProofWithPublicValues carries them.
                 let public_inputs = proof
                     .public_values()
                     .ok_or(ProofVerifierError::MissingPublicValues {
