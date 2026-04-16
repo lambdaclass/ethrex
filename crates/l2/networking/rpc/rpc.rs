@@ -397,9 +397,10 @@ mod tests {
 
     #[test]
     fn channel_capacity_constant_is_sensible() {
+        // Capacity matches Geth's chainEvChanSize (10).
         assert!(
-            NEW_HEADS_CHANNEL_CAPACITY >= 16,
-            "channel capacity should handle at least 16 buffered headers"
+            NEW_HEADS_CHANNEL_CAPACITY >= 1,
+            "channel capacity must be at least 1"
         );
     }
 

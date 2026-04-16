@@ -396,8 +396,9 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
 }
 
 /// Broadcast channel capacity for new block header notifications.
-/// A value of 128 handles bursts without blocking block production.
-pub const NEW_HEADS_CHANNEL_CAPACITY: usize = 128;
+/// Matches Geth's `chainEvChanSize` (10). Lagging subscribers are dropped
+/// rather than blocking block production.
+pub const NEW_HEADS_CHANNEL_CAPACITY: usize = 10;
 
 /// Duration after which inactive filters are cleaned up.
 ///

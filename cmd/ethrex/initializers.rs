@@ -214,6 +214,13 @@ pub async fn init_rpc_api(
         None
     };
 
+    let new_heads_sender = if ws_socket_opts.is_some() {
+        let (sender, _) = ethrex_rpc::broadcast::channel(ethrex_rpc::NEW_HEADS_CHANNEL_CAPACITY);
+        Some(sender)
+    } else {
+        None
+    };
+
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
         ws_socket_opts,
@@ -229,7 +236,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
-        None,
+        new_heads_sender,
     );
 
     tracker.spawn(rpc_api);
