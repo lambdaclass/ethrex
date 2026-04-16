@@ -691,7 +691,8 @@ pub async fn handle_authrpc_request(
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
 pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
-    let (out_tx, mut out_rx) = unbounded_channel::<String>();
+    let (out_tx, mut out_rx) =
+        tokio::sync::mpsc::channel::<String>(crate::subscription_manager::SUBSCRIBER_CHANNEL_CAPACITY);
     let mut subscription_id: Option<String> = None;
 
     loop {
@@ -731,7 +732,7 @@ pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
 async fn handle_ws_request(
     body: &str,
     context: &RpcApiContext,
-    out_tx: &UnboundedSender<String>,
+    out_tx: &tokio::sync::mpsc::Sender<String>,
     subscription_id: &mut Option<String>,
 ) -> Option<String> {
     use crate::utils::{RpcRequest, RpcRequestId};
@@ -774,7 +775,7 @@ async fn handle_ws_request(
 pub async fn handle_eth_subscribe(
     req: &crate::utils::RpcRequest,
     context: &RpcApiContext,
-    out_tx: &UnboundedSender<String>,
+    out_tx: &tokio::sync::mpsc::Sender<String>,
     subscription_id: &mut Option<String>,
 ) -> Result<Value, RpcErr> {
     let params = req.params.as_deref().unwrap_or(&[]);

@@ -19,16 +19,23 @@ use spawned_concurrency::{
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
 };
 use std::collections::HashMap;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, warn};
+
+/// Maximum number of buffered notifications per subscriber.
+/// If a subscriber's channel is full (slow WebSocket client), the notification
+/// is dropped rather than blocking the actor. Matches Geth's approach of
+/// dropping slow clients (Geth uses 20,000; we use a smaller buffer since
+/// each notification is already serialized JSON).
+pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
 
 /// Actor that manages all active WebSocket subscriptions.
 ///
-/// Each subscription is identified by a hex-encoded string ID and backed by an
-/// `UnboundedSender<String>` that delivers serialised notification JSON to the
+/// Each subscription is identified by a hex-encoded string ID and backed by a
+/// bounded `Sender<String>` that delivers serialised notification JSON to the
 /// corresponding WebSocket write-loop.
 pub struct SubscriptionManager {
-    subscribers: HashMap<String, UnboundedSender<String>>,
+    subscribers: HashMap<String, Sender<String>>,
     next_id: u64,
 }
 
@@ -55,7 +62,7 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     ///
     /// Returns the subscription ID that the client should use in subsequent
     /// `eth_unsubscribe` calls.
-    fn subscribe(&self, sender: UnboundedSender<String>) -> Response<String>;
+    fn subscribe(&self, sender: Sender<String>) -> Response<String>;
 
     /// Remove a subscriber by ID.
     ///
@@ -102,8 +109,14 @@ impl SubscriptionManager {
 
         for (sub_id, sender) in &self.subscribers {
             let notification = build_subscription_notification(sub_id, header_value.clone());
-            if sender.send(notification).is_err() {
-                dead_ids.push(sub_id.clone());
+            match sender.try_send(notification) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    dead_ids.push(sub_id.clone());
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    warn!(sub_id = %sub_id, "Subscriber channel full, dropping notification");
+                }
             }
         }
 
