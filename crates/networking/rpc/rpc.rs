@@ -741,16 +741,20 @@ async fn handle_ws_request(
     out_tx: &tokio::sync::mpsc::Sender<String>,
     subscription_ids: &mut Vec<String>,
 ) -> Option<String> {
-    use crate::utils::{RpcRequest, RpcRequestId};
+    use crate::utils::RpcRequest;
 
     let req: RpcRequest = match serde_json::from_str(body) {
         Ok(r) => r,
         Err(_) => {
-            let resp = rpc_response(
-                RpcRequestId::String("".to_string()),
-                Err::<Value, _>(RpcErr::BadParams("Invalid request body".to_string())),
-            )
-            .ok()?;
+            // JSON-RPC 2.0 spec: parse error responses must have "id": null.
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": {
+                    "code": -32700,
+                    "message": "Parse error"
+                }
+            });
             return Some(resp.to_string());
         }
     };
@@ -805,7 +809,7 @@ pub async fn handle_eth_subscribe(
             subscription_ids.push(id.clone());
             Ok(Value::String(id))
         }
-        other => Err(RpcErr::Internal(format!(
+        other => Err(RpcErr::BadParams(format!(
             "Unsupported subscription type: {other}"
         ))),
     }
