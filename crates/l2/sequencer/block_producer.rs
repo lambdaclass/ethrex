@@ -303,6 +303,7 @@ impl BlockProducer {
 
 #[actor(protocol = BlockProducerProtocol)]
 impl BlockProducer {
+    #[expect(clippy::too_many_arguments)]
     pub async fn spawn(
         store: Store,
         rollup_store: StoreRollup,
