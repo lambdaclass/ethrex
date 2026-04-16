@@ -17,7 +17,7 @@ use tracing::{debug, info, warn};
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
 
-use super::{EXECUTE_BATCH_SIZE, SyncError};
+use super::{EXECUTE_BATCH_SIZE, PIPELINE_SUB_BATCH_SIZE, SyncError};
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
@@ -266,37 +266,19 @@ async fn add_blocks_in_batch(
     Ok(())
 }
 
-/// Executes the given blocks and stores them
-/// If sync_head_found is true, they will be executed one by one
-/// If sync_head_found is false, they will be executed in a single batch
+/// Executes the given blocks and stores them using pipelined execution.
+///
+/// Blocks are processed in sub-batches (configured via `PIPELINE_SUB_BATCH_SIZE`),
+/// where each block goes through the pipeline with concurrent execution + merkleization.
+/// For the final batch (near sync head), this also stores each block's state individually.
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
-    sync_head_found: bool,
+    _final_batch: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-    // If we found the sync head, run the blocks sequentially to store all the blocks's state
-    if sync_head_found {
-        tokio::task::spawn_blocking(move || {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block, None).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
-        })
+    let sub_batch_size = *PIPELINE_SUB_BATCH_SIZE;
+    blockchain
+        .add_blocks_in_pipeline_batches(blocks, sub_batch_size, cancel_token)
         .await
-        .map_err(|e| (ChainError::Custom(e.to_string()), None))?
-    } else {
-        blockchain.add_blocks_in_batch(blocks, cancel_token).await
-    }
 }

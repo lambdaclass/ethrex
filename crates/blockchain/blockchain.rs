@@ -2302,6 +2302,102 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Adds multiple blocks using pipelined execution in sub-batches.
+    ///
+    /// Instead of running all blocks sequentially then doing one giant merkle at the end
+    /// (as `add_blocks_in_batch` does), this method processes blocks in sub-batches using
+    /// the block pipeline (`add_block_pipeline`). Each block gets concurrent
+    /// execution + merkleization, with warmer prefetching and 16 parallel shard workers.
+    ///
+    /// The trade-off: per-block merkleization instead of one collapsed batch, but the
+    /// pipeline overlap (merkle runs concurrently with execution) should more than compensate.
+    ///
+    /// Sub-batch boundaries are used for progress logging and yielding to the async runtime.
+    pub async fn add_blocks_in_pipeline_batches(
+        &self,
+        blocks: Vec<Block>,
+        sub_batch_size: usize,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        let blocks_len = blocks.len();
+        let mut last_valid_hash = H256::default();
+        let mut total_gas_used: u64 = 0;
+        let mut transactions_count: usize = 0;
+
+        let interval = Instant::now();
+
+        for (sub_batch_idx, sub_batch) in blocks.chunks(sub_batch_size).enumerate() {
+            if cancellation_token.is_cancelled() {
+                info!("Received shutdown signal, aborting");
+                return Err((ChainError::Custom(String::from("shutdown signal")), None));
+            }
+
+            for block in sub_batch {
+                let block_hash = block.hash();
+                self.add_block_pipeline(block.clone(), None).map_err(|e| {
+                    (
+                        e,
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block_hash,
+                            last_valid_hash,
+                        }),
+                    )
+                })?;
+                last_valid_hash = block_hash;
+                total_gas_used += block.header.gas_used;
+                transactions_count += block.body.transactions.len();
+            }
+
+            let blocks_done = (sub_batch_idx + 1) * sub_batch_size;
+            let blocks_done = blocks_done.min(blocks_len);
+            debug!(
+                "Pipeline sub-batch {}: processed {}/{} blocks",
+                sub_batch_idx + 1,
+                blocks_done,
+                blocks_len,
+            );
+
+            // Yield to the async runtime between sub-batches
+            tokio::task::yield_now().await;
+        }
+
+        let last_block = blocks
+            .last()
+            .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
+
+        let last_block_number = last_block.header.number;
+        let last_block_gas_limit = last_block.header.gas_limit;
+
+        let elapsed_seconds = interval.elapsed().as_secs_f64();
+        let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
+            let as_gigas = (total_gas_used as f64) / 1e9;
+            as_gigas / elapsed_seconds
+        } else {
+            0.0
+        };
+
+        metrics!(
+            METRICS_BLOCKS.set_block_number(last_block_number);
+            METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
+            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
+            METRICS_BLOCKS.set_latest_gigagas(throughput);
+        );
+
+        if self.options.perf_logs_enabled {
+            info!(
+                "[METRICS] Pipeline executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                blocks_len,
+                last_block_number,
+                last_block_gas_limit,
+                transactions_count,
+                total_gas_used,
+                throughput
+            );
+        }
+
+        Ok(())
+    }
+
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
