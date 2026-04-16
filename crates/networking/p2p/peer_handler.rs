@@ -578,6 +578,176 @@ impl PeerHandler {
         }
         Ok(None)
     }
+
+    /// Downloads block bodies from a specific peer connection.
+    /// The caller must already hold a request reservation for this peer
+    /// (via `inc_requests` before spawning). Validates bodies against the
+    /// provided headers before returning.
+    async fn download_bodies_from_peer(
+        _peer_id: H256,
+        connection: &mut PeerConnection,
+        block_hashes: Vec<H256>,
+    ) -> Result<Vec<BlockBody>, PeerHandlerError> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+            id: request_id,
+            block_hashes,
+        });
+        if let Ok(RLPxMessage::BlockBodies(BlockBodies {
+            id: _,
+            block_bodies,
+        })) = connection
+            .outgoing_request(request, PEER_REPLY_TIMEOUT)
+            .await
+        {
+            if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                return Ok(block_bodies);
+            }
+        }
+        Err(PeerHandlerError::NoResponseFromPeer)
+    }
+
+    /// Requests block bodies for all given headers in parallel from multiple peers.
+    /// Headers are split into chunks of `MAX_BLOCK_BODIES_TO_REQUEST` and each chunk
+    /// is dispatched to a different peer. Failed chunks are retried with other peers.
+    /// Returns the block bodies in the same order as the input headers.
+    pub async fn request_block_bodies_parallel(
+        &mut self,
+        all_headers: &[BlockHeader],
+    ) -> Result<Vec<BlockBody>, PeerHandlerError> {
+        // Split headers into chunks, each tagged with its index for ordered reassembly
+        let mut tasks_queue: VecDeque<(usize, Vec<BlockHeader>)> = all_headers
+            .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
+            .enumerate()
+            .map(|(i, chunk)| (i, chunk.to_vec()))
+            .collect();
+
+        let total_chunks = tasks_queue.len();
+        // Pre-allocate results slots; each slot is filled when its chunk completes
+        let mut results: Vec<Option<Vec<BlockBody>>> = vec![None; total_chunks];
+
+        // Channel for completed tasks to report back
+        // Each result contains: chunk_index, bodies (empty on failure), peer_id, headers (for retry)
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(
+            usize,
+            Vec<BlockBody>,
+            H256,
+            PeerConnection,
+            Vec<BlockHeader>,
+        )>(total_chunks + 1);
+
+        loop {
+            // Collect completed tasks (non-blocking)
+            while let Ok((chunk_idx, bodies, peer_id, _connection, chunk_headers)) = rx.try_recv()
+            {
+                self.peer_table.dec_requests(peer_id)?;
+
+                if bodies.is_empty() {
+                    self.peer_table.record_failure(peer_id)?;
+                    debug!(
+                        "Failed to download body chunk {chunk_idx} from peer {peer_id}, re-queuing"
+                    );
+                    tasks_queue.push_back((chunk_idx, chunk_headers));
+                    continue;
+                }
+
+                // Validate bodies against headers
+                let mut validated = Vec::new();
+                let mut valid = true;
+                for (header, body) in chunk_headers[..bodies.len()].iter().zip(bodies) {
+                    if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
+                        warn!(
+                            "Invalid block body error {e}, discarding peer {peer_id} and retrying chunk {chunk_idx}..."
+                        );
+                        valid = false;
+                        self.peer_table.record_critical_failure(peer_id)?;
+                        break;
+                    }
+                    validated.push(body);
+                }
+
+                if !valid {
+                    tasks_queue.push_back((chunk_idx, chunk_headers));
+                    continue;
+                }
+
+                // If peer returned fewer bodies than requested, re-queue the remainder
+                if validated.len() < chunk_headers.len() {
+                    let remaining_headers = chunk_headers[validated.len()..].to_vec();
+                    debug!(
+                        "Chunk {chunk_idx}: got {}/{} bodies, re-queuing remainder",
+                        validated.len(),
+                        chunk_headers.len()
+                    );
+                    // Store partial result and create a new chunk index for the remainder
+                    // We'll append to the results vec
+                    let new_idx = results.len();
+                    results.push(None);
+                    tasks_queue.push_back((new_idx, remaining_headers));
+                }
+
+                self.peer_table.record_success(peer_id)?;
+                results[chunk_idx] = Some(validated);
+            }
+
+            // Check if all original data has been collected
+            if results.iter().all(|r| r.is_some()) && tasks_queue.is_empty() {
+                break;
+            }
+
+            // Try to dispatch a task to a peer
+            let Some((peer_id, mut connection)) = self
+                .peer_table
+                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .await?
+            else {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            };
+
+            let Some((chunk_idx, chunk_headers)) = tasks_queue.pop_front() else {
+                // All tasks dispatched but not all completed yet; wait for results
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            };
+
+            let task_tx = tx.clone();
+            let block_hashes: Vec<H256> = chunk_headers.iter().map(|h| h.hash()).collect();
+
+            self.peer_table.inc_requests(peer_id)?;
+
+            tokio::spawn(async move {
+                let bodies =
+                    Self::download_bodies_from_peer(peer_id, &mut connection, block_hashes)
+                        .await
+                        .unwrap_or_default();
+
+                task_tx
+                    .send((chunk_idx, bodies, peer_id, connection, chunk_headers))
+                    .await
+                    .inspect_err(|err| {
+                        error!("Failed to send body result through channel. Error: {err}")
+                    })
+            });
+        }
+
+        // Reassemble in order
+        let mut all_bodies = Vec::with_capacity(all_headers.len());
+        for slot in results {
+            if let Some(bodies) = slot {
+                all_bodies.extend(bodies);
+            }
+        }
+
+        debug!(
+            "Parallel body download complete: {} bodies for {} headers",
+            all_bodies.len(),
+            all_headers.len()
+        );
+
+        Ok(all_bodies)
+    }
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
         self.peer_table
