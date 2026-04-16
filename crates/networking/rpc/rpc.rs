@@ -894,7 +894,9 @@ pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<V
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex),
+        "txpool_contentFrom" => mempool::content_from(&req.params, contex),
         "txpool_status" => mempool::status(contex),
+        "txpool_inspect" => mempool::inspect(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
