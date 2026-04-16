@@ -351,8 +351,15 @@ fn cost(memory_size: usize) -> Result<u64, VMError> {
     #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
     {
         let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
+        // Split into hi*2^16 + lo to compute words^2 without u64*u64 (which
+        // emits MULH on rv32, unsupported by Airbender). Each partial product
+        // fits in u32, and we assemble the u64 result from the three terms.
+        let hi = words >> 16;
+        let lo = words & 0xFFFF;
+        let words_squared =
+            (u64::from(hi * hi) << 32) + (u64::from(2 * hi * lo) << 16) + u64::from(lo * lo);
         let w = u64::from(words);
-        let gas_cost = w * w / MEMORY_EXPANSION_QUOTIENT + 3 * w;
+        let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * w;
 
         Ok(gas_cost)
     }
