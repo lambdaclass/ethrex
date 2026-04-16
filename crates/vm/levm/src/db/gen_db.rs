@@ -409,6 +409,35 @@ impl GeneralizedDatabase {
         Ok(account_updates)
     }
 
+    /// Normalizes cached accounts between blocks in batch execution.
+    ///
+    /// After executing block N, accounts in current_accounts_state represent the
+    /// post-block state. These accounts will be the base for block N+1, but their
+    /// transient metadata (status, exists) must be reset to prevent pollution.
+    ///
+    /// This fixes issue #6467 where mark_modified() sets exists=true, which then
+    /// incorrectly persists into the next block, causing wrong EIP-7702 refunds.
+    ///
+    /// Called between blocks in add_blocks_in_batch.
+    pub fn normalize_cache_for_next_block(&mut self) {
+        // Normalize metadata in current_accounts_state (the working cache)
+        for (address, account) in self.current_accounts_state.iter_mut() {
+            // Reset status - these accounts are now the "unmodified" base for next block
+            account.status = AccountStatus::Unmodified;
+
+            // Recalculate exists based on actual account content, not mark_modified flag.
+            // An account exists if it's non-empty (has balance, nonce, code, or storage).
+            // This matches the semantics of loading from DB (see From<AccountState>).
+            account.exists = !account.info.is_empty() || account.has_storage;
+
+            // Ensure account exists in initial_accounts_state for storage access
+            // If it was created in a previous block of this batch, add it now
+            if !self.initial_accounts_state.contains_key(address) {
+                self.initial_accounts_state.insert(*address, account.clone());
+            }
+        }
+    }
+
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.drain() {
