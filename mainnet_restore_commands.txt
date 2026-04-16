@@ -1,0 +1,36 @@
+MAINNET RESTORE COMMANDS FOR admin@ethrex-mainnet-2
+=====================================================
+
+Date saved: 2026-04-13
+Purpose: Backup before switching to Holesky for snap sync testing
+
+LIGHTHOUSE (session: lighthouse):
+---------------------------------
+tmux new-session -d -s lighthouse \
+  lighthouse bn --network mainnet \
+  --execution-endpoint http://localhost:8551 \
+  --execution-jwt /home/admin/secrets/jwt.hex \
+  --checkpoint-sync-url https://mainnet-checkpoint-sync.attestant.io \
+  --port 9000 \
+  --http --http-address 0.0.0.0 --http-port 5052 --http-allow-origin "*" \
+  --metrics --metrics-port 5054 --metrics-address 0.0.0.0 \
+  2>&1 | tee ~/lighthouse.log
+
+ETHREX (session: 8):
+--------------------
+# Note: Run from ethrex directory where ./target/release/ethrex exists
+tmux new-session -d -s ethrex \
+  ./target/release/ethrex --network mainnet \
+  --http.addr 0.0.0.0 --http.port 8545 \
+  --authrpc.port 8551 \
+  --authrpc.jwtsecret /home/admin/secrets/jwt.hex \
+  --p2p.port 30303 --discovery.port 30303 \
+  --metrics --metrics.port 3701 \
+  --log.dir /var/log/ethrex
+
+TO RESTORE:
+-----------
+1. Stop any running sessions: tmux kill-session -t lighthouse && tmux kill-session -t 8
+2. Run the lighthouse command above
+3. Run the ethrex command above (from the ethrex directory)
+4. Attach to sessions: tmux attach -t lighthouse (or -t ethrex)

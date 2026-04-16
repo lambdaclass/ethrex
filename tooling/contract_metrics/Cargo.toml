@@ -1,0 +1,18 @@
+[package]
+name = "contract_metrics"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "contract_metrics"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+eyre.workspace = true
+ethrex-common.workspace = true
+ethrex-storage = { features = ["rocksdb"], workspace = true }
+tokio = { features = ["full"], workspace = true }
