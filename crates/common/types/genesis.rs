@@ -321,6 +321,7 @@ pub struct ChainConfig {
     pub terminal_total_difficulty_passed: bool,
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
+    #[serde(default)]
     #[rkyv(with = rkyv_utils::H160Wrapper)]
     // Deposits system contract address
     pub deposit_contract_address: Address,
