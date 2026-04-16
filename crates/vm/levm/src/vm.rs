@@ -32,13 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
-    sync::atomic::{AtomicBool, Ordering},
 };
-
-/// Debug toggle used to print an opcode-level trace while executing a specific
-/// tx. Enabled/cleared from the backend around a targeted tx (e.g. BSC block
-/// 101687062 tx 1) so the output is bounded.
-pub static BSC_OPCODE_TRACE: AtomicBool = AtomicBool::new(false);
 
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
@@ -583,80 +577,6 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        // Env dump for the target tx (block 101687062 tx1) — prints for BOTH the
-        // sync execute path AND RPC simulate_tx_from_generic/estimate_gas paths
-        // so we can diff environments across code paths.
-        const TARGET_ADDR: [u8; 20] = [
-            0xd8, 0xbe, 0x7f, 0x00, 0xda, 0xdb, 0xbe, 0x24, 0x17, 0x32, 0xa1, 0xec, 0x9d, 0xec,
-            0x94, 0x4a, 0x9b, 0x53, 0xe9, 0x6a,
-        ];
-        let is_target_tx = matches!(self.tx.to(), ethrex_common::types::TxKind::Call(to) if to.0 == TARGET_ADDR)
-            && self.tx.data().starts_with(&[0x18, 0x14, 0x85, 0x5e]);
-        // RAII guard that restores BSC_OPCODE_TRACE on return so the flag leaks
-        // neither into subsequent iterations of estimate_gas binary search nor
-        // into unrelated txs. For the target tx, force the flag on so both sync
-        // and RPC paths produce identical trace output.
-        struct TraceGuard {
-            prev: bool,
-            armed: bool,
-        }
-        impl Drop for TraceGuard {
-            fn drop(&mut self) {
-                if self.armed {
-                    BSC_OPCODE_TRACE.store(self.prev, Ordering::Relaxed);
-                }
-            }
-        }
-        let _trace_guard = if is_target_tx {
-            let prev = BSC_OPCODE_TRACE.load(Ordering::Relaxed);
-            BSC_OPCODE_TRACE.store(true, Ordering::Relaxed);
-            TraceGuard { prev, armed: true }
-        } else {
-            TraceGuard {
-                prev: false,
-                armed: false,
-            }
-        };
-        {
-            use std::io::Write;
-            if is_target_tx {
-                let stderr = std::io::stderr();
-                let mut lock = stderr.lock();
-                let env = &self.env;
-                let _ = writeln!(
-                    lock,
-                    "ENV[target] origin={:?} gas_limit={} block_num={} coinbase={:?} timestamp={} prev_randao={:?} slot_number={:?} chain_id={:?} base_fee={:?} base_blob_fee={:?} gas_price={:?} block_excess_blob_gas={:?} block_blob_gas_used={:?} tx_blob_hashes={:?} tx_max_priority_fee={:?} tx_max_fee={:?} tx_max_fee_per_blob_gas={:?} tx_nonce={} block_gas_limit={} difficulty={:?} is_privileged={} fee_token={:?} disable_balance_check={} fork={:?} vm_type={:?} initial_gas={} access_list={:?}",
-                    env.origin,
-                    env.gas_limit,
-                    env.block_number,
-                    env.coinbase,
-                    env.timestamp,
-                    env.prev_randao,
-                    env.slot_number,
-                    env.chain_id,
-                    env.base_fee_per_gas,
-                    env.base_blob_fee_per_gas,
-                    env.gas_price,
-                    env.block_excess_blob_gas,
-                    env.block_blob_gas_used,
-                    env.tx_blob_hashes,
-                    env.tx_max_priority_fee_per_gas,
-                    env.tx_max_fee_per_gas,
-                    env.tx_max_fee_per_blob_gas,
-                    env.tx_nonce,
-                    env.block_gas_limit,
-                    env.difficulty,
-                    env.is_privileged,
-                    env.fee_token,
-                    env.disable_balance_check,
-                    env.config.fork,
-                    self.vm_type,
-                    self.current_call_frame.gas_limit,
-                    self.tx.access_list(),
-                );
-            }
-        }
-
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -740,25 +660,6 @@ impl<'a> VM<'a> {
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
-
-            // BSC opcode trace (gated; turned on only around a specific tx).
-            // Use stderr + flush to avoid buffered interleaving with other log output.
-            if BSC_OPCODE_TRACE.load(Ordering::Relaxed) {
-                use std::io::Write;
-                let pc = self.current_call_frame.pc.saturating_sub(1);
-                let gas_rem = self.current_call_frame.gas_remaining;
-                let depth = self.call_frames.len();
-                let to = self.current_call_frame.to;
-                let code_addr = self.current_call_frame.code_address;
-                let op_enum = crate::opcodes::Opcode::from(opcode);
-                let stderr = std::io::stderr();
-                let mut lock = stderr.lock();
-                let _ = writeln!(
-                    lock,
-                    "TRACE d={} pc={:>5} op=0x{:02x}({:?}) gas_rem={:>10} to={:?} code={:?}",
-                    depth, pc, opcode, op_enum, gas_rem, to, code_addr
-                );
-            }
 
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]

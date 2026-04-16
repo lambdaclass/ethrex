@@ -134,16 +134,6 @@ impl OpcodeHandler for OpPrevRandaoHandler {
                 mem::transmute_copy::<[u8; 32], [u64; 4]>(&bytes)
             })
         };
-        if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-            use std::io::Write;
-            let stderr = std::io::stderr();
-            let mut lock = stderr.lock();
-            let _ = writeln!(
-                lock,
-                "  PREVRANDAO push={:?} (difficulty={:?})",
-                val, vm.env.difficulty
-            );
-        }
         vm.current_call_frame.stack.push(val)?;
 
         Ok(OpcodeResult::Continue)

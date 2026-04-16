@@ -707,30 +707,10 @@ impl<'a> VM<'a> {
     ) -> Result<U256, InternalError> {
         if let Some(account) = self.db.current_accounts_state.get(&address) {
             if let Some(value) = account.storage.get(&key) {
-                if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-                    use std::io::Write;
-                    let stderr = std::io::stderr();
-                    let mut lock = stderr.lock();
-                    let _ = writeln!(
-                        lock,
-                        "  DBREAD cache addr={:?} key={:?} value={:?}",
-                        address, key, value
-                    );
-                }
                 return Ok(*value);
             }
             // If the account was destroyed and then created then we cannot rely on the DB to obtain storage values
             if account.status == AccountStatus::DestroyedModified {
-                if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-                    use std::io::Write;
-                    let stderr = std::io::stderr();
-                    let mut lock = stderr.lock();
-                    let _ = writeln!(
-                        lock,
-                        "  DBREAD destroyed addr={:?} key={:?} value=0 (DestroyedModified)",
-                        address, key
-                    );
-                }
                 return Ok(U256::zero());
             }
         } else {
@@ -739,16 +719,6 @@ impl<'a> VM<'a> {
         }
 
         let value = self.db.get_value_from_database(address, key)?;
-        if crate::vm::BSC_OPCODE_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
-            use std::io::Write;
-            let stderr = std::io::stderr();
-            let mut lock = stderr.lock();
-            let _ = writeln!(
-                lock,
-                "  DBREAD store addr={:?} key={:?} value={:?}",
-                address, key, value
-            );
-        }
 
         // Cache-fill only: this is a read-path miss, not a state mutation.
         let account = self

@@ -821,6 +821,14 @@ fn validate_excess_blob_gas(
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
+    // BSC (BEP-657, Mendel fork) uses a different excess-blob-gas formula
+    // that accounts for blob-eligible vs non-eligible blocks. Skip the
+    // Ethereum-standard validation for BSC until BEP-657 is implemented.
+    // TODO: implement BSC-specific excess_blob_gas calculation (BEP-657).
+    if chain_config.chain_id == 56 || chain_config.chain_id == 97 {
+        return Ok(());
+    }
+
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
