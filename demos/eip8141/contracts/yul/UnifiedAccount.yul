@@ -11,10 +11,10 @@
 ///   pubKeyY (uint256) — P256 public key Y coordinate
 ///
 /// Functions:
-///   verify(sig, metadata)                  0x182ffd20 — WebAuthn P256, APPROVE scope=1
-///   verifyAndPay(sig, metadata)            0x5a27d2e0 — WebAuthn P256, APPROVE scope=3
-///   verifyEcdsa(uint8,bytes32,bytes32)     0xe2454522 — ECDSA ephemeral, APPROVE scope=1
-///   verifyEcdsaAndPay(uint8,bytes32,bytes32) 0x450beed2 — ECDSA ephemeral, APPROVE scope=3
+///   verify(sig, metadata)                  0x182ffd20 — WebAuthn P256, APPROVE scope=2 (EXECUTION)
+///   verifyAndPay(sig, metadata)            0x5a27d2e0 — WebAuthn P256, APPROVE scope=3 (PAYMENT+EXECUTION)
+///   verifyEcdsa(uint8,bytes32,bytes32)     0xe2454522 — ECDSA ephemeral, APPROVE scope=2 (EXECUTION)
+///   verifyEcdsaAndPay(uint8,bytes32,bytes32) 0x450beed2 — ECDSA ephemeral, APPROVE scope=3 (PAYMENT+EXECUTION)
 ///   transfer(address,uint256)              0xa9059cbb — Transfer ETH
 ///   execute(address,uint256,bytes)         0xb61d27f6 — Arbitrary call
 ///   publicKeyX()                           0xfa6df55d — Read pubkey X
@@ -57,9 +57,9 @@ object "UnifiedAccount" {
             switch selector
 
             // ── verify((uint256,uint256),(bytes,string,uint16,uint16,bool)) ──
-            // Verify WebAuthn signature, APPROVE as sender (scope=1)
+            // Verify WebAuthn signature, APPROVE as sender (scope=2, APPROVE_EXECUTION)
             case 0x182ffd20 {
-                verifyAndApprove(1)
+                verifyAndApprove(2)
                 stop() // unreachable — APPROVE halts
             }
 
@@ -71,9 +71,9 @@ object "UnifiedAccount" {
             }
 
             // ── verifyEcdsa(uint8 v, bytes32 r, bytes32 s) ────────────
-            // Verify ECDSA signature against currentSigner, APPROVE scope=1
+            // Verify ECDSA signature against currentSigner, APPROVE scope=2 (APPROVE_EXECUTION)
             case 0xe2454522 {
-                ecrecoverAndApprove(1)
+                ecrecoverAndApprove(2)
                 stop()
             }
 

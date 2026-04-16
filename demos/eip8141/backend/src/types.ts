@@ -17,6 +17,7 @@ export const DEPLOYER_PROXY_ADDRESS =
 
 export interface Frame {
   mode: number; // 0=DEFAULT, 1=VERIFY, 2=SENDER
+  flags: number; // bits 0-1: approval scope (0x1=PAYMENT, 0x2=EXECUTION, 0x3=both), bit 2: atomic batch
   target: Uint8Array; // 20-byte address, empty for null (calls tx.sender per spec)
   gasLimit: bigint;
   data: Uint8Array;

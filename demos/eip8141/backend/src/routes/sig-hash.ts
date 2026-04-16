@@ -54,6 +54,7 @@ function buildRotationFrame(sender: Uint8Array, nextSignerAddress: string): Fram
   const execCalldata = encodeExecuteCalldata(senderHex, "0", rotateCalldata);
   return {
     mode: FRAME_MODE_SENDER,
+    flags: 0x00,
     target: sender,
     gasLimit: DEFAULT_FRAME_GAS,
     data: execCalldata,
@@ -100,6 +101,7 @@ async function buildSkeleton(
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
+          flags: 0x03, // PAYMENT+EXECUTION (verifyAndPay / verifyEcdsaAndPay)
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
@@ -108,6 +110,7 @@ async function buildSkeleton(
       if (rotationFrame) frames.push(rotationFrame);
       frames.push({
         mode: FRAME_MODE_SENDER,
+        flags: 0x00,
         target: sender,
         gasLimit: DEFAULT_FRAME_GAS,
         data: transferCalldata,
@@ -129,12 +132,14 @@ async function buildSkeleton(
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
+          flags: 0x02, // EXECUTION only (verify / verifyEcdsa, sender-only)
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
         },
         {
           mode: FRAME_MODE_VERIFY,
+          flags: 0x01, // PAYMENT only (GasSponsor.verify, payer-only)
           target: hexToBytes(sponsorAddr),
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
@@ -143,6 +148,7 @@ async function buildSkeleton(
       if (rotationFrame) frames.push(rotationFrame);
       frames.push({
         mode: FRAME_MODE_SENDER,
+        flags: 0x00,
         target: sender,
         gasLimit: DEFAULT_FRAME_GAS,
         data: executeCalldata,
@@ -155,6 +161,7 @@ async function buildSkeleton(
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
+          flags: 0x03, // PAYMENT+EXECUTION (verifyAndPay / verifyEcdsaAndPay)
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
@@ -169,6 +176,7 @@ async function buildSkeleton(
         );
         frames.push({
           mode: FRAME_MODE_SENDER,
+          flags: 0x00,
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
           data: executeCalldata,
@@ -212,6 +220,7 @@ async function buildSkeleton(
       frames = [
         {
           mode: FRAME_MODE_VERIFY,
+          flags: 0x03, // PAYMENT+EXECUTION (verifyAndPay / verifyEcdsaAndPay)
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
           data: new Uint8Array(0),
@@ -221,12 +230,14 @@ async function buildSkeleton(
       frames.push(
         {
           mode: FRAME_MODE_DEFAULT,
+          flags: 0x00,
           target: hexToBytes(DEPLOYER_PROXY_ADDRESS),
           gasLimit: 1_000_000n,
           data: deployData,
         },
         {
           mode: FRAME_MODE_SENDER,
+          flags: 0x00,
           target: sender,
           gasLimit: DEFAULT_FRAME_GAS,
           data: executeCalldata,
@@ -294,6 +305,7 @@ function serializeTxSkeleton(tx: FrameTransaction): Record<string, unknown> {
     sender: bytesToHex(tx.params.sender),
     frames: tx.params.frames.map((f) => ({
       mode: f.mode,
+      flags: f.flags,
       target: bytesToHex(f.target),
       gasLimit: f.gasLimit.toString(),
       data: bytesToHex(f.data),

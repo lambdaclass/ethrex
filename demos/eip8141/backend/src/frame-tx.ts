@@ -22,12 +22,13 @@ function bigintToBytes(value: bigint): Uint8Array {
 }
 
 /**
- * Encode a single Frame as an RLP list: [mode, target, gasLimit, data]
+ * Encode a single Frame as an RLP list: [mode, flags, target, gasLimit, data]
  * target: 20-byte address for Call, empty bytes for Create (null target)
  */
 function encodeFrame(frame: Frame): Uint8Array[] {
   return [
     bigintToBytes(BigInt(frame.mode)),
+    bigintToBytes(BigInt(frame.flags)),
     frame.target.length === 0 ? new Uint8Array(0) : frame.target,
     bigintToBytes(frame.gasLimit),
     frame.data,
@@ -36,7 +37,7 @@ function encodeFrame(frame: Frame): Uint8Array[] {
 
 /**
  * Build the RLP input for the transaction fields.
- * Field order: [chainId, nonce, sender, [[mode, target, gasLimit, data], ...],
+ * Field order: [chainId, nonce, sender, [[mode, flags, target, gasLimit, data], ...],
  *               maxPriorityFee, maxFee, maxBlobFee, blobHashes]
  */
 function buildRlpFields(

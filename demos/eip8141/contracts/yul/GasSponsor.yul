@@ -1,11 +1,11 @@
 /// @title GasSponsor
 /// @notice Gas sponsor for EIP-8141 frame transactions.
-///         Approves as payer (scope=2) if the TX sender holds ERC20 tokens.
+///         Approves as payer (scope=1, APPROVE_PAYMENT) if the TX sender holds ERC20 tokens.
 /// @dev Storage layout:
 ///   slot 0: ERC20 token address for balance checks
 ///
 /// Functions:
-///   verify()              0xfc735e99 — Check sender token balance, APPROVE scope=2
+///   verify()              0xfc735e99 — Check sender token balance, APPROVE scope=1 (APPROVE_PAYMENT)
 ///   setConfig(address)    0x20e3dbd4 — Set the ERC20 token address
 ///   token()               0xfc0c546a — Read the token address
 ///   receive()             (no selector) — Accept ETH
@@ -64,9 +64,9 @@ object "GasSponsor" {
                     revert(0x00, 0x64)
                 }
 
-                // APPROVE scope=2 (payer approval)
-                // Stack: offset=0, length=0, scope=2
-                verbatim_3i_0o(hex"AA", 0, 0, 2)
+                // APPROVE scope=1 (APPROVE_PAYMENT)
+                // Stack: offset=0, length=0, scope=1
+                verbatim_3i_0o(hex"AA", 0, 0, 1)
             }
 
             // ── setConfig(address _token) ─────────────────────────────
