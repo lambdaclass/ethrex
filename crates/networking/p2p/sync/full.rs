@@ -3,7 +3,6 @@
 //! This module contains the logic for full synchronization mode where all blocks
 //! are fetched via p2p eth requests and executed to rebuild the state.
 
-use std::cmp::min;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::MAX_HEADER_FETCH_ATTEMPTS;
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
@@ -208,29 +207,25 @@ pub async fn sync_cycle_full(
         if single_batch {
             let final_batch = true;
             let mut batch_headers = headers;
-            let mut blocks = Vec::new();
-            while !batch_headers.is_empty() {
-                let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
-                let header_batch = &batch_headers[..end];
-                match download_peers.request_block_bodies(header_batch).await {
-                    Ok(Some(bodies)) => {
-                        debug!("Obtained: {} block bodies", bodies.len());
-                        let block_batch = batch_headers
-                            .drain(..bodies.len())
-                            .zip(bodies)
-                            .map(|(header, body)| Block { header, body });
-                        blocks.extend(block_batch);
-                    }
-                    Ok(None) => {
-                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
-                        return;
-                    }
-                    Err(e) => {
-                        let _ = body_tx.send(Err(e.into())).await;
-                        return;
-                    }
+
+            // Download block bodies in parallel from multiple peers
+            let bodies = match download_peers.request_block_bodies_parallel(&batch_headers).await {
+                Ok(bodies) => bodies,
+                Err(e) => {
+                    let _ = body_tx.send(Err(e.into())).await;
+                    return;
                 }
+            };
+            if bodies.len() != batch_headers.len() {
+                let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                return;
             }
+            debug!("Obtained: {} block bodies in parallel", bodies.len());
+            let blocks: Vec<Block> = batch_headers
+                .drain(..)
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body })
+                .collect();
             if !blocks.is_empty() {
                 let _ = body_tx.send(Ok((blocks, final_batch))).await;
             }
@@ -264,29 +259,24 @@ pub async fn sync_cycle_full(
                 }
             };
 
-            let mut blocks = Vec::new();
-            while !batch_headers.is_empty() {
-                let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
-                let header_batch = &batch_headers[..end];
-                match download_peers.request_block_bodies(header_batch).await {
-                    Ok(Some(bodies)) => {
-                        debug!("Obtained: {} block bodies", bodies.len());
-                        let block_batch = batch_headers
-                            .drain(..bodies.len())
-                            .zip(bodies)
-                            .map(|(header, body)| Block { header, body });
-                        blocks.extend(block_batch);
-                    }
-                    Ok(None) => {
-                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
-                        return;
-                    }
-                    Err(e) => {
-                        let _ = body_tx.send(Err(e.into())).await;
-                        return;
-                    }
+            // Download block bodies in parallel from multiple peers
+            let bodies = match download_peers.request_block_bodies_parallel(&batch_headers).await {
+                Ok(bodies) => bodies,
+                Err(e) => {
+                    let _ = body_tx.send(Err(e.into())).await;
+                    return;
                 }
+            };
+            if bodies.len() != batch_headers.len() {
+                let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                return;
             }
+            debug!("Obtained: {} block bodies in parallel", bodies.len());
+            let blocks: Vec<Block> = batch_headers
+                .drain(..)
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body })
+                .collect();
             if !blocks.is_empty() && body_tx.send(Ok((blocks, final_batch))).await.is_err() {
                 // Receiver dropped (execution loop stopped), stop downloading
                 return;
