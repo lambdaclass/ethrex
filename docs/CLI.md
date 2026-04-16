@@ -107,7 +107,7 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
+          The address to bind the TCP RLPx socket to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
 
@@ -121,6 +121,11 @@ P2P options:
 
           [env: ETHREX_P2P_PORT=]
           [default: 30303]
+
+      --discovery.addr <ADDRESS>
+          The address to bind the discv4/discv5 UDP socket to. Defaults to --p2p.addr (or 0.0.0.0 if unset). Allows running discovery on a different interface than RLPx.
+
+          [env: ETHREX_P2P_DISCOVERY_ADDR=]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
@@ -329,7 +334,7 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
+          The address to bind the TCP RLPx socket to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
 
@@ -343,6 +348,11 @@ P2P options:
 
           [env: ETHREX_P2P_PORT=]
           [default: 30303]
+
+      --discovery.addr <ADDRESS>
+          The address to bind the discv4/discv5 UDP socket to. Defaults to --p2p.addr (or 0.0.0.0 if unset). Allows running discovery on a different interface than RLPx.
+
+          [env: ETHREX_P2P_DISCOVERY_ADDR=]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.

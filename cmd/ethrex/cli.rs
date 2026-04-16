@@ -253,8 +253,8 @@ pub struct Options {
     #[arg(
         long = "p2p.addr",
         value_name = "ADDRESS",
-        help = "Bind address for the P2P protocol (UDP discovery and TCP RLPx).",
-        long_help = "The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.",
+        help = "Bind address for the TCP RLPx socket. Also used as the default bind address for UDP discovery unless --discovery.addr is set.",
+        long_help = "The address to bind the TCP RLPx socket to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_ADDR"
     )]
@@ -277,6 +277,15 @@ pub struct Options {
         env = "ETHREX_P2P_PORT"
     )]
     pub p2p_port: String,
+    #[arg(
+        long = "discovery.addr",
+        value_name = "ADDRESS",
+        help = "Bind address for the UDP discovery socket.",
+        long_help = "The address to bind the discv4/discv5 UDP socket to. Defaults to --p2p.addr (or 0.0.0.0 if unset). Allows running discovery on a different interface than RLPx.",
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_DISCOVERY_ADDR"
+    )]
+    pub discovery_addr: Option<String>,
     #[arg(
         long = "discovery.port",
         default_value = "30303",
@@ -429,6 +438,7 @@ impl Default for Options {
             p2p_addr: None,
             nat_extip: None,
             p2p_port: Default::default(),
+            discovery_addr: None,
             discovery_port: Default::default(),
             discv4_enabled: true,
             discv5_enabled: true,

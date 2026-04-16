@@ -357,6 +357,8 @@ fn encode_ping_handshake_packet_with_enr() {
             ip6: None,
             tcp_port: None,
             udp_port: None,
+            tcp6_port: None,
+            udp6_port: None,
             secp256k1: Some(H264::from_str(key).unwrap()),
             eth: None,
             snap: None,
