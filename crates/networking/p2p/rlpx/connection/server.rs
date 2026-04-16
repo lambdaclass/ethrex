@@ -75,6 +75,15 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often to flush buffered transaction hash requests into a single
+/// batched GetPooledTransactions message.
+const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
+/// Fixed (tumbling) time window for incoming request rate limiting.
+const SERVE_REQUEST_WINDOW: Duration = Duration::from_secs(60);
+/// Maximum number of data-serving requests allowed per peer within the rate-limit window.
+const MAX_SERVE_REQUESTS_PER_WINDOW: u64 = 500;
+/// Number of transactions sent to a peer before checking for leeching behaviour.
+const LEECH_TX_SENT_THRESHOLD: u64 = 10_000;
 
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
@@ -92,6 +101,7 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
     fn block_range_update(&self) -> Result<(), ActorError>;
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
     fn sweep_inflight_txs(&self) -> Result<(), ActorError>;
+    fn flush_pending_tx_requests(&self) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -203,6 +213,9 @@ pub struct Established {
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
     pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
+    /// Buffered transaction requests waiting to be flushed as a single batch.
+    /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
+    pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -224,6 +237,14 @@ pub struct Established {
     pub(crate) disconnect_reason: Option<DisconnectReason>,
     // Indicates if the peer has been validated (ie. the connection was established successfully)
     pub(crate) is_validated: bool,
+    // Rate limiting: start of the current incoming-request window
+    pub(crate) serve_request_window_start: Instant,
+    // Rate limiting: number of data-serving requests received in the current window
+    pub(crate) serve_requests_in_window: u64,
+    // Leech detection: total transactions sent to this peer via GetPooledTransactions responses
+    pub(crate) txs_sent_to_peer: u64,
+    // Leech detection: whether we have received any transactions from this peer
+    pub(crate) received_txs_from_peer: bool,
 }
 
 impl Established {
@@ -234,6 +255,10 @@ impl Established {
                 .blockchain
                 .mempool
                 .clear_in_flight_txs(&requested_hashes);
+        }
+        // Also clear hashes that were buffered but not yet sent.
+        for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
+            let _ = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes);
         }
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
@@ -493,6 +518,18 @@ impl PeerConnectionServer {
     }
 
     #[send_handler]
+    async fn handle_flush_pending_tx_requests(
+        &mut self,
+        _msg: peer_connection_server_protocol::FlushPendingTxRequests,
+        ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut established_state) = self.state {
+            let result = flush_pending_tx_requests(established_state).await;
+            Self::process_cast_error(&self.state, result, ctx);
+        }
+    }
+
+    #[send_handler]
     async fn handle_broadcast_message(
         &mut self,
         msg: peer_connection_server_protocol::BroadcastMessage,
@@ -668,6 +705,13 @@ where
         INFLIGHT_TX_SWEEP_INTERVAL,
         ctx.clone(),
         peer_connection_server_protocol::SweepInflightTxs,
+    );
+
+    // Periodic flush of buffered transaction requests.
+    send_interval(
+        TX_REQUEST_BATCH_INTERVAL,
+        ctx.clone(),
+        peer_connection_server_protocol::FlushPendingTxRequests,
     );
 
     #[cfg(feature = "l2")]
@@ -1020,6 +1064,18 @@ where
     stream.next().await
 }
 
+/// Returns true if the peer is within its rate limit for data-serving requests, false if exceeded.
+/// Resets the window counter when the window duration has elapsed.
+fn check_serve_request_rate(state: &mut Established) -> bool {
+    let now = Instant::now();
+    if now.duration_since(state.serve_request_window_start) >= SERVE_REQUEST_WINDOW {
+        state.serve_request_window_start = now;
+        state.serve_requests_in_window = 0;
+    }
+    state.serve_requests_in_window += 1;
+    state.serve_requests_in_window <= MAX_SERVE_REQUESTS_PER_WINDOW
+}
+
 async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
@@ -1029,6 +1085,33 @@ async fn handle_incoming_message(
         use ethrex_metrics::p2p::METRICS_P2P;
         METRICS_P2P.inc_incoming_message(message.metric_label());
     }
+
+    // Rate-limit incoming data-serving requests to prevent resource exhaustion.
+    let is_data_request = matches!(
+        message,
+        Message::GetBlockHeaders(_)
+            | Message::GetBlockBodies(_)
+            | Message::GetReceipts68(_)
+            | Message::GetReceipts69(_)
+            | Message::GetReceipts70(_)
+            | Message::GetPooledTransactions(_)
+            | Message::GetAccountRange(_)
+            | Message::GetStorageRanges(_)
+            | Message::GetByteCodes(_)
+            | Message::GetTrieNodes(_)
+    );
+    if is_data_request && !check_serve_request_rate(state) {
+        warn!(
+            peer = %state.node,
+            window_requests = state.serve_requests_in_window,
+            "Disconnecting peer: exceeded incoming request rate limit",
+        );
+        send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
+        return Err(PeerConnectionError::DisconnectSent(
+            DisconnectReason::UselessPeer,
+        ));
+    }
+
     let peer_supports_eth = state.negotiated_eth_capability.is_some();
     #[cfg(feature = "l2")]
     let peer_supports_l2 = state.l2_state.connection_state().is_ok();
@@ -1074,6 +1157,9 @@ async fn handle_incoming_message(
         }
         Message::Transactions(txs) if peer_supports_eth => {
             // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
+            if !txs.transactions.is_empty() {
+                state.received_txs_from_peer = true;
+            }
             if state.blockchain.is_synced() {
                 let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash()).collect();
 
@@ -1219,23 +1305,43 @@ async fn handle_incoming_message(
             }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
-            let hashes =
-                new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
-            if !hashes.is_empty() {
-                // hashes are already marked as in-flight by get_transactions_to_request
-                let request = GetPooledTransactions::new(random(), hashes.clone());
-                state.requested_pooled_txs.insert(
-                    request.id,
-                    (new_pooled_transaction_hashes, hashes, Instant::now()),
-                );
-                send(state, Message::GetPooledTransactions(request)).await?;
+            // Don't request transactions if we're not synced — we won't be building blocks soon.
+            if state.blockchain.is_synced() {
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+                if !hashes.is_empty() {
+                    // Buffer hashes for batched requesting instead of sending immediately.
+                    // The periodic flush_pending_tx_requests handler will send them.
+                    state
+                        .pending_tx_requests
+                        .push((new_pooled_transaction_hashes, hashes));
+                }
             }
         }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
+            let batch_size = response.pooled_transactions.len() as u64;
+            // Leech detection: disconnect peers that drain transactions but never contribute any.
+            if state.txs_sent_to_peer + batch_size > LEECH_TX_SENT_THRESHOLD
+                && !state.received_txs_from_peer
+            {
+                warn!(
+                    peer = %state.node,
+                    txs_sent = state.txs_sent_to_peer,
+                    "Disconnecting peer: leech detected (sent many txs but received none)",
+                );
+                send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
+                return Err(PeerConnectionError::DisconnectSent(
+                    DisconnectReason::UselessPeer,
+                ));
+            }
             send(state, Message::PooledTransactions(response)).await?;
+            state.txs_sent_to_peer += batch_size;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
+            if !msg.pooled_transactions.is_empty() {
+                state.received_txs_from_peer = true;
+            }
             // Always clear in-flight tracking for this response, regardless of sync status,
             // so other connections can re-request these hashes if needed.
             let removed_request = state.requested_pooled_txs.remove(&msg.id);
@@ -1420,4 +1526,59 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerCo
     } else {
         Ok(())
     }
+}
+
+/// Drains the pending transaction request buffer and sends batched
+/// GetPooledTransactions requests, respecting the 256-hash-per-request
+/// limit from the devp2p ETH spec.
+async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_tx_requests.is_empty() {
+        return Ok(());
+    }
+
+    let pending = std::mem::take(&mut state.pending_tx_requests);
+
+    // Build a trimmed announcement containing only the hashes we're actually requesting,
+    // with their original types and sizes for response validation.
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut all_types: Vec<u8> = Vec::new();
+    let mut all_sizes: Vec<usize> = Vec::new();
+
+    for (announcement, hashes) in &pending {
+        let trimmed = announcement.filter_to(hashes);
+        all_hashes.extend_from_slice(&trimmed.transaction_hashes);
+        all_types.extend_from_slice(&trimmed.transaction_types);
+        all_sizes.extend(trimmed.transaction_sizes);
+    }
+
+    // Send in chunks of MAX_HASHES_PER_REQUEST per the devp2p spec.
+    const MAX_HASHES_PER_REQUEST: usize = 256;
+    for (i, chunk) in all_hashes.chunks(MAX_HASHES_PER_REQUEST).enumerate() {
+        let offset = i * MAX_HASHES_PER_REQUEST;
+        let chunk_types = &all_types[offset..offset + chunk.len()];
+        let chunk_sizes = &all_sizes[offset..offset + chunk.len()];
+
+        let announcement = NewPooledTransactionHashes::from_raw(
+            chunk_types.to_vec().into(),
+            chunk_sizes.to_vec(),
+            chunk.to_vec(),
+        );
+        let request = GetPooledTransactions::new(random(), chunk.to_vec());
+        let request_id = request.id;
+        // Send first, only register in requested_pooled_txs on success.
+        // This ensures we never track hashes for messages that were not transmitted.
+        if let Err(e) = send(state, Message::GetPooledTransactions(request)).await {
+            // Clear in-flight for the current chunk (failed to send) and all remaining chunks.
+            let unsent = &all_hashes[offset..];
+            if !unsent.is_empty() {
+                let _ = state.blockchain.mempool.clear_in_flight_txs(unsent);
+            }
+            return Err(e);
+        }
+        state
+            .requested_pooled_txs
+            .insert(request_id, (announcement, chunk.to_vec(), Instant::now()));
+    }
+
+    Ok(())
 }
