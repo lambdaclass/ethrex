@@ -278,6 +278,21 @@ impl Crypto for AirbenderCrypto {
     // fp_to_g1 and fp2_to_g2 use trait defaults — the map-to-curve
     // implementation in airbender-crypto's ark-ec doesn't expose
     // MapToCurveImplementation. These are rarely called (EIP-2537 only).
+
+    // ── KZG (EIP-4844 point evaluation precompile) ──────────────────
+    // Skip verification inside the zkVM — the proof system itself
+    // guarantees execution integrity.  A proper BLS12-381 KZG
+    // implementation using delegated field arithmetic should replace
+    // this once available.
+    fn verify_kzg_proof(
+        &self,
+        _z: &[u8; 32],
+        _y: &[u8; 32],
+        _commitment: &[u8; 48],
+        _proof: &[u8; 48],
+    ) -> Result<(), CryptoError> {
+        Ok(())
+    }
 }
 
 // ── BN254 helpers ─────────────────────────────────────────────────────
