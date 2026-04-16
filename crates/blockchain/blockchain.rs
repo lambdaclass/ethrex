@@ -1138,13 +1138,16 @@ impl Blockchain {
         block: &Block,
         chain_config: &ChainConfig,
         vm: &mut Evm,
+        skip_receipt_validation: bool,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         validate_gas_used(execution_result.block_gas_used, &block.header)?;
-        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+        if !skip_receipt_validation {
+            validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+        }
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -2211,7 +2214,7 @@ impl Blockchain {
             };
 
             let BlockExecutionResult { receipts, .. } = self
-                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
+                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm, true)
                 .map_err(|err| {
                     (
                         err,
