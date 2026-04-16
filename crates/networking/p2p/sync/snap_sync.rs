@@ -761,7 +761,12 @@ pub async fn update_pivot(
 
     // TODO: should come from ChainSpec/Network; duplicated with
     // calculate_staleness_timestamp for now.
-    let seconds_per_block = SECONDS_PER_BLOCK;
+    // BSC (mainnet 56 / Chapel 97) runs sub-second blocks post-Fermi; using
+    // 12s underestimates and the pivot can't catch up to real head.
+    let seconds_per_block = match block_sync_state.chain_id() {
+        56 | 97 => 1,
+        _ => SECONDS_PER_BLOCK,
+    };
     // We multiply the estimation by 0.9 in order to account for missing slots (~9% in tesnets)
     let new_pivot_block_number = block_number
         + ((current_unix_time().saturating_sub(block_timestamp) / seconds_per_block) as f64
