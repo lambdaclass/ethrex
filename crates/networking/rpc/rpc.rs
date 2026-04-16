@@ -688,8 +688,6 @@ pub async fn handle_authrpc_request(
 
 /// Handle a WebSocket connection.
 ///
-/// Handle a WebSocket connection.
-///
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
 pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
