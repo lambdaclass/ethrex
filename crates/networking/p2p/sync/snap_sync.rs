@@ -136,6 +136,9 @@ pub async fn sync_cycle_snap(
     let mut attempts = 0;
 
     loop {
+        // Prune dead/unresponsive peers periodically to allow replacements to be promoted
+        let _ = peers.peer_table.prune_table();
+
         debug!("Requesting Block Headers from {current_head}");
 
         let Some(mut block_headers) = peers

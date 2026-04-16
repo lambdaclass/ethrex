@@ -1089,15 +1089,37 @@ impl PeerTableServer {
 
     // --- Contact operations ---
 
+    /// Prune disposable contacts from both main and replacement lists.
+    /// When a main contact is removed, a replacement is automatically promoted.
     fn prune(&mut self) {
-        let disposable_contacts: Vec<H256> = self
-            .iter_contacts()
-            .filter_map(|(id, c)| c.disposable.then_some(*id))
-            .collect();
+        for bucket in &mut self.buckets {
+            // Collect disposable contacts from main list
+            let main_disposable: Vec<H256> = bucket
+                .contacts
+                .iter()
+                .filter(|(_, c)| c.disposable)
+                .map(|(id, _)| *id)
+                .collect();
 
-        for node_id in disposable_contacts {
-            if let Some(idx) = self.bucket_for(&node_id) {
-                self.buckets[idx].remove_and_promote(&node_id);
+            // Remove from main list and promote replacements
+            for node_id in main_disposable {
+                bucket.remove_and_promote(&node_id);
+                self.discarded_contacts.insert(node_id);
+            }
+
+            // Remove disposable contacts from replacement list
+            // (these don't get promoted, just removed)
+            let replacement_disposable: Vec<H256> = bucket
+                .replacements
+                .iter()
+                .filter(|(_, c)| c.disposable)
+                .map(|(id, _)| *id)
+                .collect();
+
+            bucket
+                .replacements
+                .retain(|(id, _)| !replacement_disposable.contains(id));
+            for node_id in replacement_disposable {
                 self.discarded_contacts.insert(node_id);
             }
         }
