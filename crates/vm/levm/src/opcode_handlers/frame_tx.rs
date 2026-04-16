@@ -27,12 +27,13 @@ fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
-/// Compute the max transaction cost for APPROVE payment logic.
-fn compute_max_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
+/// Compute the transaction cost for APPROVE payment deduction.
+/// Uses effective_gas_price (not max_fee_per_gas) to match standard EIP-1559
+/// behavior where only the effective price is deducted, not the max fee cap.
+fn compute_tx_cost(ctx: &crate::vm::FrameTxContext, effective_gas_price: U256) -> Result<U256, VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-    let max_fee = U256::from(ctx.tx.max_fee_per_gas);
     let gas_limit = U256::from(ctx.tx.total_gas_limit());
-    let max_tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
+    let tx_cost = effective_gas_price.checked_mul(gas_limit).ok_or(halt_err.clone())?;
     let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
     let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
     let blob_fee = blob_count
@@ -40,7 +41,7 @@ fn compute_max_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError>
         .ok_or(halt_err.clone())?
         .checked_mul(ctx.tx.max_fee_per_blob_gas)
         .ok_or(halt_err.clone())?;
-    max_tx_cost
+    tx_cost
         .checked_add(blob_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
@@ -49,6 +50,7 @@ fn compute_max_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError>
 /// This is shared between OpApproveHandler and (future) default code.
 pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::Address) -> Result<(), VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
+    let effective_gas_price = vm.env.gas_price;
 
     match scope {
         0x1 => {
@@ -72,11 +74,11 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             if !ctx.sender_approved {
                 return Err(VMError::RevertOpcode);
             }
-            let max_tx_cost = compute_max_tx_cost(ctx)?;
+            let tx_cost = compute_tx_cost(ctx, effective_gas_price)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            vm.decrease_account_balance(frame_target, max_tx_cost)?;
+            vm.decrease_account_balance(frame_target, tx_cost)?;
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.payer_approved = true;
@@ -91,11 +93,11 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let max_tx_cost = compute_max_tx_cost(ctx)?;
+            let tx_cost = compute_tx_cost(ctx, effective_gas_price)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            vm.decrease_account_balance(frame_target, max_tx_cost)?;
+            vm.decrease_account_balance(frame_target, tx_cost)?;
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
@@ -626,6 +628,15 @@ fn execute_default_sender(
         // Allocate gas for subcall using 63/64 rule (EIP-150)
         let subcall_gas = gas_remaining - gas_remaining / 64;
 
+        // Validate sender has enough balance for the value transfer
+        // (must be before call frame swap to avoid leaking frame state on early return)
+        if !call.value.is_zero() {
+            let sender_balance = vm.db.get_account(sender)?.info.balance;
+            if sender_balance < call.value {
+                return Ok((false, gas_remaining, all_logs));
+            }
+        }
+
         let call_frame = CallFrame::new(
             sender,            // msg_sender = tx.sender per spec
             call.target,       // to
@@ -647,14 +658,6 @@ fn execute_default_sender(
         // Save and swap in the subcall frame
         let saved_call_frame = mem::replace(&mut vm.current_call_frame, call_frame);
         let saved_call_frames = mem::take(&mut vm.call_frames);
-
-        // Validate sender has enough balance for the value transfer
-        if !call.value.is_zero() {
-            let sender_balance = vm.db.get_account(sender)?.info.balance;
-            if sender_balance < call.value {
-                return Ok((false, gas_remaining, all_logs));
-            }
-        }
 
         vm.substate.push_backup();
         let subcall_result = vm.run_execution();
