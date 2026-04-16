@@ -70,10 +70,13 @@ where
 
     // Validate execution witness' block hashes
     report_cycles("get_first_invalid_block_hash", || {
-        if let Ok(Some(invalid_block_header)) = wrapped_db.get_first_invalid_block_hash() {
-            return Err(ExecutionError::InvalidBlockHash(invalid_block_header));
+        match wrapped_db.get_first_invalid_block_hash() {
+            Ok(Some(invalid_block_header)) => {
+                Err(ExecutionError::InvalidBlockHash(invalid_block_header))
+            }
+            Ok(None) => Ok(()),
+            Err(e) => Err(ExecutionError::GuestProgramState(e)),
         }
-        Ok(())
     })?;
 
     // Validate initial state

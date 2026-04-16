@@ -529,6 +529,11 @@ async fn re_run_stateless(
 /// trie nodes, codes, and ancestor headers needed for that specific block.
 /// Following the spec, we execute each block
 /// independently with its own witness.
+///
+/// The fixture's `statelessOutputBytes` encodes the expected output as
+/// `new_payload_request_root (32 bytes) || valid (1 byte) || padding`. When
+/// `valid == 0`, the witness is intentionally invalid and stateless execution
+/// is expected to fail (or conclude the block is invalid).
 #[cfg(feature = "stateless")]
 async fn run_stateless_from_fixture(
     test: &TestUnit,
@@ -551,6 +556,10 @@ async fn run_stateless_from_fixture(
             continue;
         };
 
+        let expect_stateless_valid = expected_stateless_valid(
+            block_data.stateless_output_bytes.as_deref(),
+        );
+
         let block: CoreBlock = block_data.clone().into();
         let block_number = block.header.number;
 
@@ -559,9 +568,20 @@ async fn run_stateless_from_fixture(
                 format!("Failed to parse executionWitness for block {block_number}: {e}")
             })?;
 
-        let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number)
-            .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+        let witness_conversion_result = rpc_witness.into_execution_witness(*chain_config, block_number);
+        let execution_witness = match witness_conversion_result {
+            Ok(w) => w,
+            Err(e) => {
+                // An intentionally invalid witness may fail conversion — that's a valid
+                // "block is invalid" conclusion when the fixture marks this block invalid.
+                if !expect_stateless_valid {
+                    continue;
+                }
+                return Err(format!(
+                    "Witness conversion failed for block {block_number}: {e}"
+                ));
+            }
+        };
 
         let program_input = ProgramInput::new(vec![block], execution_witness);
 
@@ -571,12 +591,39 @@ async fn run_stateless_from_fixture(
             BackendType::SP1 => Sp1Backend::new().execute(program_input),
         };
 
-        if let Err(e) = execute_result {
-            return Err(format!(
-                "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
-            ));
+        match execute_result {
+            Ok(()) => {
+                if !expect_stateless_valid {
+                    return Err(format!(
+                        "Expected stateless execution to fail for {test_key} block {block_number} (fixture valid=0x00) but it succeeded"
+                    ));
+                }
+            }
+            Err(e) => {
+                if expect_stateless_valid {
+                    return Err(format!(
+                        "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
+                    ));
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+/// Parse the `valid` flag (byte 32) from a fixture's `statelessOutputBytes`.
+///
+/// Layout: `new_payload_request_root (32 bytes) || valid (1 byte) || padding`.
+/// If absent or unparseable, default to expecting success (true) to preserve
+/// the prior behavior for fixtures without this field.
+#[cfg(feature = "stateless")]
+fn expected_stateless_valid(hex_str: Option<&str>) -> bool {
+    let Some(s) = hex_str else { return true };
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    // valid byte is at hex offset 64..66 (bytes[32])
+    match s.get(64..66).and_then(|b| u8::from_str_radix(b, 16).ok()) {
+        Some(0) => false,
+        _ => true,
+    }
 }
