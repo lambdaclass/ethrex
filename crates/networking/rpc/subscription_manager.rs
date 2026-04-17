@@ -150,7 +150,7 @@ impl SubscriptionManager {
 ///
 /// Takes a pre-serialized `result_json` string to avoid re-serializing the
 /// header for every subscriber during fan-out.
-pub fn build_subscription_notification(sub_id: &str, result_json: &str) -> String {
+fn build_subscription_notification(sub_id: &str, result_json: &str) -> String {
     format!(
         r#"{{"jsonrpc":"2.0","method":"eth_subscription","params":{{"subscription":"{sub_id}","result":{result_json}}}}}"#
     )
