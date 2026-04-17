@@ -86,9 +86,12 @@ impl KBucket {
         })
     }
 
-    /// Find a mutable reference to a contact by node ID within this bucket.
+    /// Find a mutable reference to a contact by node ID (main or replacement list).
     fn get_mut(&mut self, node_id: &H256) -> Option<&mut Contact> {
-        self.contacts
+        if let Some((_, c)) = self.contacts.iter_mut().find(|(id, _)| id == node_id) {
+            return Some(c);
+        }
+        self.replacements
             .iter_mut()
             .find(|(id, _)| id == node_id)
             .map(|(_, c)| c)
@@ -976,10 +979,10 @@ impl PeerTableServer {
         bucket_index(&self.local_node_id, node_id)
     }
 
-    /// Look up a contact by node ID (O(K) within the bucket).
+    /// Look up a contact by node ID in main or replacement list (O(K) within the bucket).
     fn get_contact(&self, node_id: &H256) -> Option<&Contact> {
         let idx = self.bucket_for(node_id)?;
-        self.buckets[idx].get(node_id)
+        self.buckets[idx].get_any(node_id)
     }
 
     /// Look up a mutable reference to a contact by node ID.
