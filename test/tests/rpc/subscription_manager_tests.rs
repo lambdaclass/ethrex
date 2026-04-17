@@ -1,6 +1,6 @@
 use ethrex_common::types::BlockHeader;
 use ethrex_rpc::subscription_manager::{
-    SubscriptionManager, SubscriptionManagerProtocol, SUBSCRIBER_CHANNEL_CAPACITY,
+    SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager, SubscriptionManagerProtocol,
 };
 use tokio::sync::mpsc;
 
@@ -34,10 +34,7 @@ async fn unsubscribe_existing_returns_true() {
 async fn unsubscribe_nonexistent_returns_false() {
     let manager = SubscriptionManager::spawn();
 
-    let removed = manager
-        .unsubscribe("0xdeadbeef".to_string())
-        .await
-        .unwrap();
+    let removed = manager.unsubscribe("0xdeadbeef".to_string()).await.unwrap();
     assert!(!removed);
 }
 
@@ -141,5 +138,8 @@ async fn notification_contains_block_hash() {
         .expect("channel closed");
 
     let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
-    assert_eq!(v["params"]["result"]["hash"].as_str().unwrap(), expected_hash);
+    assert_eq!(
+        v["params"]["result"]["hash"].as_str().unwrap(),
+        expected_hash
+    );
 }
