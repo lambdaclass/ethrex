@@ -17,6 +17,7 @@ use ethrex_common::{
 };
 use ethrex_config::networks::Network;
 use ethrex_l2_rpc::signer::{Signable, Signer};
+use ethrex_trie::genesis_block;
 use ethrex_p2p::snap::constants::PEER_REPLY_TIMEOUT;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rpc::{
@@ -494,7 +495,7 @@ pub struct Chain {
 
 impl Chain {
     fn new(genesis: Genesis) -> Self {
-        let genesis_block = genesis.get_block();
+        let genesis_block = genesis_block(&genesis);
         Self {
             block_hashes: vec![genesis_block.hash()],
             blocks: vec![genesis_block],

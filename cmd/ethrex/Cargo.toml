@@ -12,6 +12,7 @@ build = "build.rs"
 [dependencies]
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
+ethrex-trie.workspace = true
 ethrex-config.workspace = true
 ethrex-crypto = { workspace = true, default-features = true }
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }

@@ -11,6 +11,8 @@ use ethrex_blockchain::{
 };
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+#[cfg(feature = "stateless")]
+use ethrex_trie::rpc_witness_to_execution;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
@@ -559,9 +561,9 @@ async fn run_stateless_from_fixture(
                 format!("Failed to parse executionWitness for block {block_number}: {e}")
             })?;
 
-        let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number)
-            .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+        let execution_witness =
+            rpc_witness_to_execution(rpc_witness, *chain_config, block_number)
+                .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
 
         let program_input = ProgramInput::new(vec![block], execution_witness);
 

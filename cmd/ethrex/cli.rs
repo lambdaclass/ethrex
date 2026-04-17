@@ -13,13 +13,14 @@ use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, L2Config,
     error::{ChainError, InvalidBlockError},
 };
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis};
 use ethrex_p2p::{
     discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, has_valid_db};
+use ethrex_trie::{genesis_compute_state_root, validate_block_body};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -651,7 +652,7 @@ impl Subcommand {
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
-                let state_root = genesis.compute_state_root();
+                let state_root = genesis_compute_state_root(&genesis);
                 println!("{state_root:#x}");
             }
             Subcommand::Repl {

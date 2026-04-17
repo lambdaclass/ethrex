@@ -7,11 +7,10 @@ use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CA
 use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
-use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
@@ -74,21 +73,6 @@ pub fn validate_gas_used(
         ));
     }
     Ok(())
-}
-
-/// Validates that the receipts root matches the block header.
-pub fn validate_receipts_root(
-    block_header: &BlockHeader,
-    receipts: &[Receipt],
-    crypto: &dyn Crypto,
-) -> Result<(), InvalidBlockError> {
-    let receipts_root = compute_receipts_root(receipts, crypto);
-
-    if receipts_root == block_header.receipts_root {
-        Ok(())
-    } else {
-        Err(InvalidBlockError::ReceiptsRootMismatch)
-    }
 }
 
 /// Validates that the requests hash matches the block header (Prague+).

@@ -176,7 +176,7 @@ impl TrieLayerCache {
         &mut self,
         parent: H256,
         state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
+        key_values: Vec<(Vec<u8>, Vec<u8>)>,
     ) {
         if parent == state_root && key_values.is_empty() {
             return;
@@ -194,13 +194,10 @@ impl TrieLayerCache {
 
         // Add keys to the global bloom filter
         for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref());
+            self.bloom.insert(p);
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
+        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values.into_iter().collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
@@ -295,13 +292,19 @@ impl TrieWrapper {
 }
 
 /// Prepends an account address prefix (with an invalid nibble `17` as separator) to a
-/// trie path, distinguishing storage trie entries from state trie entries in the flat
-/// key-value namespace. Returns the path unchanged if `prefix` is `None` (state trie).
-pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
+/// trie path (raw nibble data), distinguishing storage trie entries from state trie
+/// entries in the flat key-value namespace. Returns the path unchanged if `prefix` is
+/// `None` (state trie).
+pub fn apply_prefix(prefix: Option<H256>, path: Vec<u8>) -> Vec<u8> {
     match prefix {
-        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
-            .append_new(17)
-            .concat(&path),
+        Some(prefix) => {
+            let prefix_nibbles = Nibbles::from_bytes(prefix.as_bytes());
+            let mut result = Vec::with_capacity(prefix_nibbles.len() + 1 + path.len());
+            result.extend_from_slice(prefix_nibbles.as_ref());
+            result.push(17);
+            result.extend_from_slice(&path);
+            result
+        }
         None => path,
     }
 }

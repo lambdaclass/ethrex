@@ -23,6 +23,7 @@ use ethrex_common::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
+use ethrex_trie::genesis_block;
 use secp256k1::SecretKey;
 
 pub struct GasMeasurement;
@@ -246,7 +247,7 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                     );
                     fill_mempool(&block_chain, accounts).await;
 
-                    (block_chain, genesis.get_block(), store_with_genesis)
+                    (block_chain, genesis_block(&genesis), store_with_genesis)
                 };
                 let input = (Arc::new(blockchain), genesis_block, &store);
                 let (duration, gas_used) = bench_payload(&input).await;

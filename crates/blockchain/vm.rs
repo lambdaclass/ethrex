@@ -1,10 +1,12 @@
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCACK_HASH,
-    types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
+    types::{
+        AccountStateInfo, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata,
+    },
 };
-use ethrex_crypto::keccak::keccak_hash;
-use ethrex_storage::Store;
+use ethrex_state_backend::StateReader;
+use ethrex_storage::{StateBackend, Store};
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
@@ -14,13 +16,7 @@ use std::{
 };
 use tracing::instrument;
 
-#[derive(Clone, Copy)]
-struct AccountStateCacheEntry {
-    state: AccountState,
-    hashed_address: H256,
-}
-
-type AccountStateCache = FxHashMap<Address, Option<AccountStateCacheEntry>>;
+type AccountStateCache = FxHashMap<Address, Option<AccountStateInfo>>;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -30,11 +26,14 @@ pub struct StoreVmDatabase {
     // We will also pre-load this when executing blocks in batches, as we will only add the blocks at the end
     // and may need to access hashes of blocks previously executed in the batch
     pub block_hash_cache: Arc<Mutex<BTreeMap<BlockNumber, BlockHash>>>,
-    /// Memoized account states and hashed addresses for storage reads.
-    /// This avoids repeated state-trie account decodes when reading many slots
+    /// Memoized account state info for storage reads.
+    /// Avoids repeated state-trie account decodes when reading many slots
     /// from the same account during execution.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
     pub state_root: H256,
+    /// DB-backed state reader for the pre-block state, used for account and
+    /// storage reads during execution.
+    state_backend: Arc<StateBackend>,
 }
 
 impl StoreVmDatabase {
@@ -49,12 +48,16 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
+        let state_backend = store
+            .new_state_reader(block_header.state_root)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
+            state_backend: Arc::new(state_backend),
         })
     }
 
@@ -70,19 +73,23 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
+        let state_backend = store
+            .new_state_reader(block_header.state_root)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
+            state_backend: Arc::new(state_backend),
         })
     }
 
-    fn get_cached_account_state_entry(
+    fn get_cached_account_state_info(
         &self,
         address: Address,
-    ) -> Result<Option<AccountStateCacheEntry>, EvmError> {
+    ) -> Result<Option<AccountStateInfo>, EvmError> {
         if let Some(entry) = self
             .account_state_cache
             .read()
@@ -94,18 +101,14 @@ impl StoreVmDatabase {
         }
 
         let loaded = self
-            .store
-            .get_account_state_by_root(self.state_root, address)
+            .state_backend
+            .account_state_info(address)
             .map_err(|e| EvmError::DB(e.to_string()))?;
-        let cached = loaded.map(|state| AccountStateCacheEntry {
-            state,
-            hashed_address: H256::from(keccak_hash(address.to_fixed_bytes())),
-        });
         self.account_state_cache
             .write()
             .map_err(|_| EvmError::Custom("LockError".to_string()))?
-            .insert(address, cached);
-        Ok(cached)
+            .insert(address, loaded);
+        Ok(loaded)
     }
 }
 
@@ -116,10 +119,8 @@ impl VmDatabase for StoreVmDatabase {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
-        Ok(self
-            .get_cached_account_state_entry(address)?
-            .map(|entry| entry.state))
+    fn get_account_state(&self, address: Address) -> Result<Option<AccountStateInfo>, EvmError> {
+        self.get_cached_account_state_info(address)
     }
 
     #[instrument(
@@ -129,17 +130,18 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
-        let Some(entry) = self.get_cached_account_state_entry(address)? else {
+        let Some(_) = self.get_cached_account_state_info(address)? else {
             return Ok(None);
         };
-        self.store
-            .get_storage_at_root_with_known_storage_root(
-                self.state_root,
-                entry.hashed_address,
-                entry.state.storage_root,
-                key,
-            )
-            .map_err(|e| EvmError::DB(e.to_string()))
+        let value = self
+            .state_backend
+            .storage(address, key)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+        if value.is_zero() {
+            Ok(None)
+        } else {
+            Ok(Some(U256::from_big_endian(value.as_bytes())))
+        }
     }
 
     #[instrument(

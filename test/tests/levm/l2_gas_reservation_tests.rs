@@ -10,7 +10,7 @@ use ethrex_common::{
     Address, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
+        Account, AccountStateInfo, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
         SAFE_BYTES_PER_BLOB, Transaction, TxKind,
         fee_config::{FeeConfig, L1FeeConfig},
     },
@@ -32,8 +32,8 @@ use std::sync::Arc;
 struct TestDatabase;
 
 impl Database for TestDatabase {
-    fn get_account_state(&self, _address: Address) -> Result<AccountState, DatabaseError> {
-        Ok(AccountState::default())
+    fn get_account_state(&self, _address: Address) -> Result<AccountStateInfo, DatabaseError> {
+        Ok(AccountStateInfo::default())
     }
 
     fn get_storage_value(&self, _address: Address, _key: H256) -> Result<U256, DatabaseError> {
