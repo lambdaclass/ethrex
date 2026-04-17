@@ -60,9 +60,10 @@ def rlp_encode_list(items: list[bytes]) -> bytes:
 # Frame TX
 # ---------------------------------------------------------------------------
 
-def encode_frame(mode: int, target: bytes, gas_limit: int, data: bytes) -> bytes:
+def encode_frame(mode: int, flags: int, target: bytes, gas_limit: int, data: bytes) -> bytes:
     return rlp_encode_list([
         rlp_encode_uint(mode),
+        rlp_encode_uint(flags),
         rlp_encode_address(target),
         rlp_encode_uint(gas_limit),
         rlp_encode_bytes(data),
@@ -84,9 +85,9 @@ def compute_sig_hash(chain_id, nonce, sender, frames, max_priority_fee, max_fee)
     elided = []
     for f in frames:
         if f["exec_mode"] == 1:  # VERIFY
-            elided.append(encode_frame(f["mode"], f["target"], f["gas_limit"], b""))
+            elided.append(encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], b""))
         else:
-            elided.append(encode_frame(f["mode"], f["target"], f["gas_limit"], f["data"]))
+            elided.append(encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f["data"]))
     payload = build_payload(chain_id, nonce, sender, elided, max_priority_fee, max_fee)
     return keccak(b"\x06" + payload)
 
@@ -133,22 +134,20 @@ def main():
     max_priority_fee = 1_000_000_000  # 1 gwei
     max_fee = max(gas_price * 2, 10_000_000_000)
 
-    # ── Frame 0: VERIFY, scope=1 (sender only) ──
+    # Post-spec-update: mode/flags are separate u8 fields.
+    # ── Frame 0: VERIFY, scope=0x01 (sender only) ──
     # Target = sender (default EOA code verifies ECDSA)
-    # mode = 1 (VERIFY) | (1 << 8) (scope=1: sender only)
-    verify_sender_mode = 1 | (1 << 8)  # 0x101
+    verify_sender_mode, verify_sender_flags = 1, 0x01  # VERIFY, scope=PAYMENT... wait spec: 0x01=PAYMENT, 0x02=EXECUTION. Sender auth is scope=EXECUTION (0x02).
+    verify_sender_flags = 0x02  # scope=EXECUTION for sender self-auth
+    # (kept the two-line form to make the renaming explicit vs the old 0x101 / 0x201 mode encoding.)
 
-    # ── Frame 1: VERIFY, scope=2 (payer only) ──
-    # Target = GasSponsor contract
-    # mode = 1 (VERIFY) | (2 << 8) (scope=2: payer only)
-    # data = verify() selector = 0xfc735e99
-    verify_payer_mode = 1 | (2 << 8)  # 0x201
+    # ── Frame 1: VERIFY, scope=0x01 (payment only) ──
+    # Target = GasSponsor contract; data = verify() selector
+    verify_payer_mode, verify_payer_flags = 1, 0x01  # VERIFY, scope=PAYMENT
     sponsor_calldata = bytes.fromhex("fc735e99")
 
     # ── Frame 2: SENDER ──
-    # Target = sender (default EOA code dispatches subcalls)
-    # data = RLP [[recipient, value, calldata]]
-    sender_mode = 2
+    sender_mode, sender_flags = 2, 0x00
     transfer_value = 10**16  # 0.01 ETH
     sender_call = rlp_encode_list([
         rlp_encode_address(recipient_addr),
@@ -158,9 +157,9 @@ def main():
     sender_data = rlp_encode_list([sender_call])
 
     frames = [
-        {"mode": verify_sender_mode, "exec_mode": 1, "target": sender_addr, "gas_limit": 100_000, "data": b""},
-        {"mode": verify_payer_mode,  "exec_mode": 1, "target": sponsor_addr, "gas_limit": 200_000, "data": sponsor_calldata},
-        {"mode": sender_mode,        "exec_mode": 2, "target": sender_addr, "gas_limit": 100_000, "data": sender_data},
+        {"mode": verify_sender_mode, "flags": verify_sender_flags, "exec_mode": 1, "target": sender_addr, "gas_limit": 100_000, "data": b""},
+        {"mode": verify_payer_mode,  "flags": verify_payer_flags,  "exec_mode": 1, "target": sponsor_addr, "gas_limit": 200_000, "data": sponsor_calldata},
+        {"mode": sender_mode,        "flags": sender_flags,        "exec_mode": 2, "target": sender_addr, "gas_limit": 100_000, "data": sender_data},
     ]
 
     print("Frames:")
@@ -182,7 +181,7 @@ def main():
     frames[0]["data"] = bytes([0x00, v]) + r + s
 
     # Build raw tx
-    frames_rlp = [encode_frame(f["mode"], f["target"], f["gas_limit"], f["data"]) for f in frames]
+    frames_rlp = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f["data"]) for f in frames]
     payload = build_payload(chain_id, nonce, sender_addr, frames_rlp, max_priority_fee, max_fee)
     raw_tx = "0x" + (b"\x06" + payload).hex()
 

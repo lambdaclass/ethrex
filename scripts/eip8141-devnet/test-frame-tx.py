@@ -66,10 +66,11 @@ def rlp_encode_u256(value: int) -> bytes:
 # Frame TX construction
 # ---------------------------------------------------------------------------
 
-def encode_frame(mode: int, target: bytes, gas_limit: int, data: bytes) -> bytes:
-    """RLP-encode a single frame: [mode, target, gas_limit, data]."""
+def encode_frame(mode: int, flags: int, target: bytes, gas_limit: int, data: bytes) -> bytes:
+    """RLP-encode a single frame: [mode, flags, target, gas_limit, data] (post-spec-update)."""
     return rlp_encode_list([
         rlp_encode_uint(mode),
+        rlp_encode_uint(flags),
         rlp_encode_address(target),
         rlp_encode_uint(gas_limit),
         rlp_encode_bytes(data),
@@ -109,9 +110,9 @@ def compute_sig_hash(
     elided_frames = []
     for f in frames:
         if f["execution_mode"] == 1:  # VERIFY
-            elided_frames.append(encode_frame(f["mode"], f["target"], f["gas_limit"], b""))
+            elided_frames.append(encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], b""))
         else:
-            elided_frames.append(encode_frame(f["mode"], f["target"], f["gas_limit"], f["data"]))
+            elided_frames.append(encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f["data"]))
 
     payload = build_frame_tx_payload(chain_id, nonce, sender, elided_frames, max_priority_fee, max_fee)
     return keccak(b"\x06" + payload)
@@ -161,14 +162,14 @@ def main():
     print(f"Recipient: {args.recipient}")
     print()
 
-    # Frame layout:
-    #   Frame 0: VERIFY, target=sender, mode = 1 | (3 << 8) = 0x301 (scope=3: combined sender+payer)
+    # Frame layout (post-spec-update: separate mode/flags u8 fields):
+    #   Frame 0: VERIFY, target=sender, mode=1, flags=0x03 (scope=3: sender+payer)
     #            Data = [0x00 (secp256k1), v(1), r(32), s(32)] = 66 bytes (filled after signing)
-    #   Frame 1: SENDER, target=sender (default code requires target==sender)
-    #            Data = RLP [[recipient, value, calldata]] — default code dispatches subcalls
+    #   Frame 1: SENDER, target=sender, mode=2, flags=0x00
+    #            Data = RLP [[recipient, value, calldata]]
 
-    verify_mode = 1 | (3 << 8)  # VERIFY + scope=3 (combined sender+payer)
-    sender_mode = 2              # SENDER
+    verify_mode, verify_flags = 1, 0x03  # VERIFY + scope=3 (combined sender+payer)
+    sender_mode, sender_flags = 2, 0x00  # SENDER, no flags
 
     # Build SENDER frame data: RLP-encoded list of SenderCall = [target, value, data]
     transfer_value = 10**16  # 0.01 ETH
@@ -181,8 +182,8 @@ def main():
 
     # Define frames (VERIFY data will be filled with signature)
     frames = [
-        {"mode": verify_mode, "execution_mode": 1, "target": sender_addr, "gas_limit": 100_000, "data": b""},
-        {"mode": sender_mode, "execution_mode": 2, "target": sender_addr, "gas_limit": 100_000, "data": sender_data},
+        {"mode": verify_mode, "flags": verify_flags, "execution_mode": 1, "target": sender_addr, "gas_limit": 100_000, "data": b""},
+        {"mode": sender_mode, "flags": sender_flags, "execution_mode": 2, "target": sender_addr, "gas_limit": 100_000, "data": sender_data},
     ]
 
     max_priority_fee = 1_000_000_000  # 1 gwei
@@ -207,7 +208,7 @@ def main():
 
     # Step 4: RLP-encode the full transaction
     frames_rlp = [
-        encode_frame(f["mode"], f["target"], f["gas_limit"], f["data"])
+        encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f["data"])
         for f in frames
     ]
     tx_payload = build_frame_tx_payload(chain_id, nonce, sender_addr, frames_rlp, max_priority_fee, max_fee)
