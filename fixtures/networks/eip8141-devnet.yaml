@@ -1,0 +1,36 @@
+participants:
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.0.0-rc.1
+    validator_count: 32
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.0.0-rc.1
+    validator_count: 32
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.0.0-rc.1
+    validator_count: 32
+
+network_params:
+  seconds_per_slot: 6
+  # Activate Osaka from genesis — enables EIP-8141 frame tx opcodes
+  # (APPROVE 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1, FRAMEDATACOPY 0xB2)
+  fulu_fork_epoch: 0
+
+additional_services:
+  - dora
+
+port_publisher:
+  el:
+    enabled: true
+    public_port_start: 32000
+  cl:
+    enabled: true
+    public_port_start: 33000
+  additional_services:
+    enabled: true
+    public_port_start: 34000
