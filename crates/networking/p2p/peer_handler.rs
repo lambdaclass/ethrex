@@ -90,6 +90,8 @@ async fn ask_peer_head_number(
         }
         Ok(_other_msgs) => Err(PeerHandlerError::UnexpectedResponseFromPeer(peer_id)),
         Err(PeerConnectionError::Timeout) => {
+            // Mark this peer as disposable so it gets pruned and replaced
+            let _ = peer_table.set_disposable(peer_id);
             Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id))
         }
         Err(_other_err) => Err(PeerHandlerError::ReceiveMessageFromPeer(peer_id)),
@@ -448,13 +450,15 @@ impl PeerHandler {
                         warn!(
                             "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                         );
+                        let _ = self.peer_table.set_disposable(peer_id);
                         return Ok(None);
                     }
                 }
-                // Timeouted
+                // Timeout or invalid response - mark peer as disposable
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
+                let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
         }
@@ -536,6 +540,7 @@ impl PeerHandler {
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
                 self.peer_table.record_failure(peer_id)?;
+                let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
         }
