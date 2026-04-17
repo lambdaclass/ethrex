@@ -34,6 +34,15 @@ pub trait TrieDB: Send + Sync {
     fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
         false
     }
+
+    /// Returns true if this DB uses the flat key-value cache and therefore
+    /// requires dirty-path tracking in the Trie to correctly invalidate
+    /// stale cached values on insert/remove.
+    ///
+    /// The default is `false` (in-memory / stateless DBs do not need tracking).
+    fn needs_dirty_tracking(&self) -> bool {
+        false
+    }
 }
 
 // TODO: we should replace this with BackendTrieDB

@@ -307,6 +307,10 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 }
 
 impl TrieDB for TrieWrapper {
+    fn needs_dirty_tracking(&self) -> bool {
+        self.db.needs_dirty_tracking()
+    }
+
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.

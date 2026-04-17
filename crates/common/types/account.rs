@@ -188,6 +188,9 @@ impl From<GenesisAccount> for Account {
 }
 
 pub fn code_hash(code: &Bytes, crypto: &dyn Crypto) -> H256 {
+    if code.is_empty() {
+        return *EMPTY_KECCACK_HASH;
+    }
     H256(crypto.keccak256(code.as_ref()))
 }
 
@@ -340,6 +343,11 @@ impl RLPDecode for AccountStateSlimCodec {
 }
 
 pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
+    // Short-circuit for empty storage: the vast majority of accounts have no storage.
+    // Avoids constructing a Trie (heap allocation) just to return EMPTY_TRIE_HASH.
+    if storage.is_empty() {
+        return *EMPTY_TRIE_HASH;
+    }
     let iter = storage.iter().filter_map(|(k, v)| {
         (!v.is_zero()).then_some((
             crypto.keccak256(&k.to_big_endian()).to_vec(),

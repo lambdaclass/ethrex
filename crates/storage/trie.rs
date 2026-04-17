@@ -123,6 +123,10 @@ impl BackendTrieDB {
 }
 
 impl TrieDB for BackendTrieDB {
+    fn needs_dirty_tracking(&self) -> bool {
+        true
+    }
+
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         let key = apply_prefix(self.address_prefix, key);
         self.last_computed_flatkeyvalue >= key
@@ -196,6 +200,10 @@ impl BackendTrieDBLocked {
 }
 
 impl TrieDB for BackendTrieDBLocked {
+    fn needs_dirty_tracking(&self) -> bool {
+        true
+    }
+
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         self.last_computed_flatkeyvalue >= key
     }

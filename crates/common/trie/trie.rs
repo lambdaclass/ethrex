@@ -59,6 +59,10 @@ pub struct Trie {
     pub root: NodeRef,
     pending_removal: FxHashSet<Nibbles>,
     dirty: FxHashSet<Nibbles>,
+    /// When true, skip maintaining `dirty` and `pending_removal`.
+    /// Safe for DBs whose `flatkeyvalue_computed` always returns false
+    /// (e.g. in-memory and stateless tries).
+    skip_dirty: bool,
 }
 
 impl Default for Trie {
@@ -70,16 +74,19 @@ impl Default for Trie {
 impl Trie {
     /// Creates a new Trie from a clean DB
     pub fn new(db: Box<dyn TrieDB>) -> Self {
+        let skip_dirty = !db.needs_dirty_tracking();
         Self {
             db,
             root: NodeRef::default(),
             pending_removal: Default::default(),
             dirty: Default::default(),
+            skip_dirty,
         }
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+        let skip_dirty = !db.needs_dirty_tracking();
         Self {
             db,
             root: if root != *EMPTY_TRIE_HASH {
@@ -89,6 +96,7 @@ impl Trie {
             },
             pending_removal: Default::default(),
             dirty: Default::default(),
+            skip_dirty,
         }
     }
 
@@ -104,7 +112,7 @@ impl Trie {
     pub fn get(&self, pathrlp: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
         let path = Nibbles::from_bytes(pathrlp);
 
-        if !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
+        if !self.skip_dirty && !self.dirty.contains(&path) && self.db().flatkeyvalue_computed(path.clone()) {
             let Some(value_rlp) = self.db.get(path)? else {
                 return Ok(None);
             };
@@ -132,8 +140,10 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let path = Nibbles::from_bytes(&path);
-        self.pending_removal.remove(&path);
-        self.dirty.insert(path.clone());
+        if !self.skip_dirty {
+            self.pending_removal.remove(&path);
+            self.dirty.insert(path.clone());
+        }
 
         if self.root.is_valid() {
             // If the trie is not empty, call the root node's insertion logic.
@@ -155,11 +165,15 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
-        self.dirty.insert(Nibbles::from_bytes(path));
+        if !self.skip_dirty {
+            self.dirty.insert(Nibbles::from_bytes(path));
+        }
         if !self.root.is_valid() {
             return Ok(None);
         }
-        self.pending_removal.insert(Nibbles::from_bytes(path));
+        if !self.skip_dirty {
+            self.pending_removal.insert(Nibbles::from_bytes(path));
+        }
 
         // If the trie is not empty, call the root node's removal logic.
         let (is_trie_empty, value) = self
@@ -393,6 +407,12 @@ impl Trie {
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
         crypto: &dyn Crypto,
     ) -> H256 {
+        let mut iter = iter.peekable();
+        // Short-circuit for empty input: avoids allocating a Trie for the common case
+        // of empty transaction/receipt/withdrawal/storage lists.
+        if iter.peek().is_none() {
+            return *EMPTY_TRIE_HASH;
+        }
         let mut trie = Trie::stateless();
         for (path, value) in iter {
             // Unwraping here won't panic as our in_memory trie DB won't fail
