@@ -59,9 +59,8 @@ pub struct Trie {
     pub root: NodeRef,
     pending_removal: FxHashSet<Nibbles>,
     dirty: FxHashSet<Nibbles>,
-    /// When true, skip maintaining `dirty` and `pending_removal`.
-    /// Safe for DBs whose `flatkeyvalue_computed` always returns false
-    /// (e.g. in-memory and stateless tries).
+    /// When true, skip `dirty`/`pending_removal` maintenance.
+    /// Safe for DBs whose `flatkeyvalue_computed` always returns false.
     skip_dirty: bool,
 }
 
@@ -407,12 +406,6 @@ impl Trie {
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
         crypto: &dyn Crypto,
     ) -> H256 {
-        let mut iter = iter.peekable();
-        // Short-circuit for empty input: avoids allocating a Trie for the common case
-        // of empty transaction/receipt/withdrawal/storage lists.
-        if iter.peek().is_none() {
-            return *EMPTY_TRIE_HASH;
-        }
         let mut trie = Trie::stateless();
         for (path, value) in iter {
             // Unwraping here won't panic as our in_memory trie DB won't fail
