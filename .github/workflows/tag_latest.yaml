@@ -77,3 +77,21 @@ jobs:
       APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
       APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
       APT_SSH_COMMIT_KEY: ${{ secrets.APT_SSH_COMMIT_KEY }}
+
+  # Dispatch a repository_dispatch event to lambdaclass/homebrew-tap to update
+  # the Homebrew formula with the new release version and build a bottle.
+  # Requires a HOMEBREW_DISPATCH_TOKEN secret: a fine-grained PAT with
+  # actions:write permission on the lambdaclass/homebrew-tap repository.
+  update-homebrew:
+    needs: [publish-apt]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Homebrew formula update
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_DISPATCH_TOKEN }}
+          LATEST_TAG: ${{ needs.get_latest_release.outputs.latest_tag }}
+        run: |
+          VERSION=$(echo "$LATEST_TAG" | tr -d v)
+          gh api repos/lambdaclass/homebrew-tap/dispatches \
+            -f event_type=update-formula \
+            -f "client_payload[version]=$VERSION"
