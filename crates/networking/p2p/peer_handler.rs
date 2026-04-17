@@ -28,9 +28,9 @@ use tracing::{debug, error, info, trace, warn};
 
 // Re-export constants from snap::constants for backward compatibility
 pub use crate::snap::constants::{
-    HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK, MAX_RESPONSE_BYTES,
-    PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE, REQUEST_RETRY_ATTEMPTS,
-    SNAP_LIMIT,
+    HASH_MAX, HEADER_REQUEST_TIMEOUT, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK,
+    MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE,
+    REQUEST_RETRY_ATTEMPTS, SNAP_LIMIT,
 };
 
 // Re-export snap client types for backward compatibility
@@ -442,7 +442,11 @@ impl PeerHandler {
             skip: 0,
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+        match self
+            .peer_table
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await?
+        {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
                 match PeerHandler::make_request(
@@ -450,7 +454,7 @@ impl PeerHandler {
                     peer_id,
                     &mut connection,
                     request,
-                    PEER_REPLY_TIMEOUT,
+                    HEADER_REQUEST_TIMEOUT,
                 )
                 .await
                 {
@@ -464,7 +468,7 @@ impl PeerHandler {
                         Ok(Some(block_headers))
                     }
                     _ => {
-                        // Penalize peer so get_random_peer picks a different one next time
+                        // Penalize peer so get_best_peer scores it lower next time
                         self.peer_table.record_failure(peer_id)?;
                         Ok(None)
                     }
@@ -486,29 +490,36 @@ impl PeerHandler {
             skip: 0,
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+        match self
+            .peer_table
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await?
+        {
             None => Ok(None),
             Some((peer_id, mut connection)) => {
-                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
-                    id: _,
-                    block_headers,
-                })) = PeerHandler::make_request(
+                let result = PeerHandler::make_request(
                     &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
-                    PEER_REPLY_TIMEOUT,
+                    HEADER_REQUEST_TIMEOUT,
                 )
-                .await
+                .await;
+                if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                    id: _,
+                    block_headers,
+                })) = result
                 {
                     if !block_headers.is_empty()
                         && are_block_headers_chained(&block_headers, &order)
                     {
+                        self.peer_table.record_success(peer_id)?;
                         return Ok(Some(block_headers));
                     } else {
                         warn!(
                             "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
                         );
+                        self.peer_table.record_failure(peer_id)?;
                         return Ok(None);
                     }
                 }
@@ -516,6 +527,7 @@ impl PeerHandler {
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
+                self.peer_table.record_failure(peer_id)?;
                 Ok(None)
             }
         }

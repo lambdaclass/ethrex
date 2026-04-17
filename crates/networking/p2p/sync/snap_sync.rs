@@ -129,6 +129,7 @@ pub async fn sync_cycle_snap(
         // probe forward by requesting headers at a higher block number,
         // walking up until peers stop responding (= we've found their tip).
         let mut best_pivot: Option<ethrex_common::types::BlockHeader> = None;
+        let mut prev_best_number: u64 = 0;
         for attempt in 0..15 {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -159,11 +160,19 @@ pub async fn sync_cycle_snap(
             if let Some(seed) = best_pivot.clone() {
                 best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
             }
+            let best_number = best_pivot.as_ref().map(|h| h.number).unwrap_or(0);
             info!(
                 "BSC pivot: {} candidates seen, best so far: block {}",
                 candidates.len(),
-                best_pivot.as_ref().map(|h| h.number).unwrap_or(0),
+                best_number,
             );
+            // Converged: if we already have a pivot and this iteration advanced
+            // it by fewer than 10 blocks, further attempts just chase chain
+            // progression, not a better peer view. Bail out.
+            if attempt > 0 && best_number > 0 && best_number.saturating_sub(prev_best_number) < 10 {
+                break;
+            }
+            prev_best_number = best_number;
         }
 
         let Some(pivot_header) = best_pivot else {
