@@ -1,5 +1,5 @@
 use crate::backends::levm::LEVM;
-use ethrex_common::tracing::CallTrace;
+use ethrex_common::tracing::{CallTrace, PrestateResult};
 use ethrex_common::types::Block;
 
 use crate::{Evm, EvmError};
@@ -30,6 +30,32 @@ impl Evm {
             tx,
             only_top_call,
             with_log,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Executes a single tx and captures the pre/post account state (prestateTracer).
+    /// Assumes that the received state already contains changes from previous transactions.
+    pub fn trace_tx_prestate(
+        &mut self,
+        block: &Block,
+        tx_index: usize,
+        diff_mode: bool,
+    ) -> Result<PrestateResult, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
+        LEVM::trace_tx_prestate(
+            &mut self.db,
+            &block.header,
+            tx,
+            diff_mode,
             self.vm_type,
             self.crypto.as_ref(),
         )
