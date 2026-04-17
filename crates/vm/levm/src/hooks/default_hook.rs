@@ -2,7 +2,9 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{
+        self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM,
+    },
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -391,15 +393,19 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
-    // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
-
-    // same as calculated in gas_used()
-    let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
-
-    // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-    let floor_cost_by_tokens = tokens_in_calldata
-        .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+    // Pre-Amsterdam (EIP-7623): tokens_in_calldata = zero_bytes + nonzero_bytes * 4
+    // Amsterdam (EIP-7976): floor_tokens_in_calldata = (zero_bytes + nonzero_bytes) * 4
+    let (floor_tokens, floor_per_token) = if vm.env.config.fork >= Fork::Amsterdam {
+        let tokens = (calldata.len() as u64)
+            .checked_mul(STANDARD_TOKEN_COST)
+            .ok_or(InternalError::Overflow)?;
+        (tokens, TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM)
+    } else {
+        let tokens = gas_cost::tx_calldata(&calldata)? / STANDARD_TOKEN_COST;
+        (tokens, TOTAL_COST_FLOOR_PER_TOKEN)
+    };
+    let floor_cost_by_tokens = floor_tokens
+        .checked_mul(floor_per_token)
         .ok_or(InternalError::Overflow)?
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
