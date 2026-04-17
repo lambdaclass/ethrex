@@ -51,8 +51,8 @@ if [ -z "$GS_BYTECODE" ]; then
     exit 1
 fi
 
-# Verify APPROVE has scope=2 (not the solc optimization bug with scope=1)
-# Pattern: PUSH1(2) [optional DUP1] PUSH0 PUSH0 APPROVE
+# Verify APPROVE has scope=1 (APPROVE_PAYMENT under the post-update bitmask)
+# Pattern: PUSH1(1) [optional DUP1] PUSH0 PUSH0 APPROVE
 echo "$GS_BYTECODE" | python3 -c "
 import sys
 code = bytes.fromhex(sys.stdin.read().strip())
@@ -64,8 +64,8 @@ for i, b in enumerate(code):
         j -= 1
     if j >= 1 and code[j-1] == 0x60:  # PUSH1
         scope = code[j]
-        if scope != 2:
-            print(f'ERROR: APPROVE scope is {scope}, expected 2. solc optimization bug!')
+        if scope != 1:
+            print(f'ERROR: APPROVE scope is {scope}, expected 1 (APPROVE_PAYMENT). solc optimization bug!')
             sys.exit(1)
         print(f'  APPROVE scope verified: {scope} (payer approval)')
 " || exit 1
@@ -110,8 +110,8 @@ for i, b in enumerate(code):
     while j >= 0 and code[j] in (0x5f, 0x80): j -= 1
     if j >= 1 and code[j-1] == 0x60:
         scope = code[j]
-        if scope != 2:
-            print(f'ERROR: APPROVE scope is {scope}, expected 2')
+        if scope != 1:
+            print(f'ERROR: APPROVE scope is {scope}, expected 1 (APPROVE_PAYMENT)')
             sys.exit(1)
         print(f'  APPROVE scope verified: {scope}')
 " || exit 1
