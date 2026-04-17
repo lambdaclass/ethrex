@@ -52,12 +52,18 @@ if [ -z "$GS_BYTECODE" ]; then
 fi
 
 # Verify APPROVE has scope=2 (not the solc optimization bug with scope=1)
+# Pattern: PUSH1(2) [optional DUP1] PUSH0 PUSH0 APPROVE
 echo "$GS_BYTECODE" | python3 -c "
 import sys
 code = bytes.fromhex(sys.stdin.read().strip())
 for i, b in enumerate(code):
-    if b == 0xAA and i >= 3 and code[i-1] == 0x5f and code[i-2] == 0x5f:
-        scope = code[i-3]
+    if b != 0xAA: continue
+    # Walk backwards past PUSH0s and DUP1s to find the PUSH1 scope value
+    j = i - 1
+    while j >= 0 and code[j] in (0x5f, 0x80):  # PUSH0=0x5f, DUP1=0x80
+        j -= 1
+    if j >= 1 and code[j-1] == 0x60:  # PUSH1
+        scope = code[j]
         if scope != 2:
             print(f'ERROR: APPROVE scope is {scope}, expected 2. solc optimization bug!')
             sys.exit(1)
@@ -99,20 +105,20 @@ else
 import sys
 code = bytes.fromhex(sys.stdin.read().strip())
 for i, b in enumerate(code):
-    if b == 0xAA and i >= 3 and code[i-1] == 0x5f and code[i-2] == 0x5f:
-        scope = code[i-3]
+    if b != 0xAA: continue
+    j = i - 1
+    while j >= 0 and code[j] in (0x5f, 0x80): j -= 1
+    if j >= 1 and code[j-1] == 0x60:
+        scope = code[j]
         if scope != 2:
             print(f'ERROR: APPROVE scope is {scope}, expected 2')
             sys.exit(1)
         print(f'  APPROVE scope verified: {scope}')
 " || exit 1
 
-        # Append constructor arg (owner address, 32 bytes left-padded)
-        OWNER_CLEAN=$(echo "$DEPLOYER_ADDR" | sed 's/0x//')
-        OWNER_PADDED=$(printf '%064s' "$OWNER_CLEAN" | tr ' ' '0')
-
         CANONICAL_ADDR=$(rex deploy \
-            --bytecode "${CP_BYTECODE}${OWNER_PADDED}" \
+            --bytecode "$CP_BYTECODE" \
+            --constructor-args "address:$DEPLOYER_ADDR" \
             --private-key "$PRIVATE_KEY" \
             --rpc-url "$RPC_URL" \
             --value 100000000000000000000 \
@@ -136,14 +142,17 @@ echo "  Balance:          $(rex balance "$CANONICAL_ADDR" --rpc-url "$RPC_URL") 
 fi
 echo ""
 echo "Test commands:"
-echo "  # Self-verified frame tx"
-echo "  python3 test-frame-tx.py --rpc-url $RPC_URL --private-key <key>"
+echo "  # Self-verified frame tx (rex)"
+echo "  rex frame send --to 0xC0FFEE --value 0.01ether --private-key <key> --rpc-url $RPC_URL"
 echo ""
-echo "  # Sponsored with GasSponsor (open, no co-signing)"
-echo "  python3 test-sponsored-tx.py --rpc-url $RPC_URL --private-key <key> --sponsor $SPONSOR_ADDR"
+echo "  # Sponsored with GasSponsor (rex)"
+echo "  rex frame send --to 0xC0FFEE --value 0.01ether --sponsor $SPONSOR_ADDR --sponsor-calldata 0xfc735e99 --private-key <key> --rpc-url $RPC_URL"
+echo ""
+echo "  # Check frame tx receipt (rex)"
+echo "  rex frame receipt <TX_HASH> --rpc-url $RPC_URL"
 echo ""
 if [ -n "${CANONICAL_ADDR:-}" ]; then
-echo "  # Sponsored with CanonicalPaymaster (owner must co-sign)"
-echo "  python3 test-canonical-paymaster.py --rpc-url $RPC_URL --sender-key <key> --owner-key $PRIVATE_KEY --paymaster $CANONICAL_ADDR"
+echo "  # CanonicalPaymaster (requires Python — owner must co-sign sig_hash)"
+echo "  python3 test-canonical-paymaster.py --rpc-url $RPC_URL --sender-key <key> --owner-key <owner-key> --paymaster $CANONICAL_ADDR"
 fi
 echo "============================================"
