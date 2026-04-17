@@ -138,4 +138,3 @@ core.*
 *.log
 
 __pycache__/
-.claude/
