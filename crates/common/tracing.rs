@@ -178,9 +178,12 @@ mod tests {
         };
 
         let json = serde_json::to_value(&state).expect("serialization must succeed");
-        assert!(json.get("storage").is_some(), "storage must be present when non-empty");
-        let slot = &json["storage"]
-            ["0x0000000000000000000000000000000000000000000000000000000000000001"];
+        assert!(
+            json.get("storage").is_some(),
+            "storage must be present when non-empty"
+        );
+        let slot =
+            &json["storage"]["0x0000000000000000000000000000000000000000000000000000000000000001"];
         assert_eq!(
             slot,
             "0x0000000000000000000000000000000000000000000000000000000000000064"
@@ -275,10 +278,8 @@ mod tests {
     fn pre_post_state_roundtrips_through_json() {
         let mut storage = HashMap::new();
         storage.insert(
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
-            "0x0000000000000000000000000000000000000000000000000000000000000001"
-                .to_string(),
+            "0x0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            "0x0000000000000000000000000000000000000000000000000000000000000001".to_string(),
         );
 
         let mut pre = HashMap::new();
@@ -343,9 +344,8 @@ mod tests {
             diff_mode: bool,
         }
 
-        let cfg: PrestateTracerConfig =
-            serde_json::from_value(serde_json::json!({}))
-                .expect("empty object must deserialize to defaults");
+        let cfg: PrestateTracerConfig = serde_json::from_value(serde_json::json!({}))
+            .expect("empty object must deserialize to defaults");
         assert!(!cfg.diff_mode);
     }
 }

@@ -15,11 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Compile Credible Layer protobuf definitions (client + server for mock sidecar)
-    tonic_build::configure()
-        .compile_protos(
-            &["proto/sidecar.proto"],
-            &["proto/"],
-        )?;
+    tonic_build::configure().compile_protos(&["proto/sidecar.proto"], &["proto/"])?;
 
     Ok(())
 }

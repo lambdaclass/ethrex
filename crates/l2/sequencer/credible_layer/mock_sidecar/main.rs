@@ -23,7 +23,6 @@ pub mod sidecar_proto {
 use sidecar_proto::{
     Event, GetTransactionRequest, GetTransactionResponse, GetTransactionsRequest,
     GetTransactionsResponse, ResultStatus, StreamAck, SubscribeResultsRequest, TransactionResult,
-    TxExecutionId,
     get_transaction_response::Outcome,
     sidecar_transport_server::{SidecarTransport, SidecarTransportServer},
 };
@@ -85,16 +84,10 @@ impl SidecarTransport for MockSidecar {
 
                 match &event.event {
                     Some(sidecar_proto::event::Event::CommitHead(ch)) => {
-                        eprintln!(
-                            "[MOCK] CommitHead: n_transactions={}",
-                            ch.n_transactions
-                        );
+                        eprintln!("[MOCK] CommitHead: n_transactions={}", ch.n_transactions);
                     }
                     Some(sidecar_proto::event::Event::NewIteration(ni)) => {
-                        eprintln!(
-                            "[MOCK] NewIteration: iteration_id={}",
-                            ni.iteration_id
-                        );
+                        eprintln!("[MOCK] NewIteration: iteration_id={}", ni.iteration_id);
                     }
                     Some(sidecar_proto::event::Event::Transaction(t)) => {
                         let tx_hash = t
@@ -218,7 +211,9 @@ impl SidecarTransport for MockSidecar {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "0.0.0.0:50051".parse()?;
     eprintln!("[MOCK SIDECAR] Starting on {addr}");
-    eprintln!("[MOCK SIDECAR] Will reject transactions calling transferOwnership(address) [0xf2fde38b]");
+    eprintln!(
+        "[MOCK SIDECAR] Will reject transactions calling transferOwnership(address) [0xf2fde38b]"
+    );
 
     Server::builder()
         .add_service(SidecarTransportServer::new(MockSidecar::new()))

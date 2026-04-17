@@ -1,16 +1,15 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
 use super::errors::CredibleLayerError;
 use super::sidecar_proto::{
-    self, sidecar_transport_client::SidecarTransportClient, CommitHead, Event,
-    GetTransactionRequest, NewIteration, ResultStatus, Transaction, TransactionResult,
-    TxExecutionId,
+    self, CommitHead, Event, GetTransactionRequest, NewIteration, ResultStatus, Transaction,
+    TransactionResult, TxExecutionId, sidecar_transport_client::SidecarTransportClient,
 };
 
 /// Configuration for the Credible Layer gRPC client.
@@ -261,22 +260,35 @@ impl CredibleLayerClient {
         let poll_interval = Duration::from_millis(200);
         for attempt in 0..poll_attempts {
             tokio::time::sleep(poll_interval).await;
-            let result = self.poll_transaction_result(&tx_hash, &block_number, index).await;
+            let result = self
+                .poll_transaction_result(&tx_hash, &block_number, index)
+                .await;
             match result {
                 PollResult::Found(include) => return include,
                 PollResult::NotFound => {
-                    debug!("GetTransaction poll attempt {}/{}: not found yet", attempt + 1, poll_attempts);
+                    debug!(
+                        "GetTransaction poll attempt {}/{}: not found yet",
+                        attempt + 1,
+                        poll_attempts
+                    );
                     continue;
                 }
                 PollResult::Error => return true, // permissive
             }
         }
-        warn!("GetTransaction: no result after {poll_attempts} attempts, including tx (permissive)");
+        warn!(
+            "GetTransaction: no result after {poll_attempts} attempts, including tx (permissive)"
+        );
         true
     }
 
     /// Poll for a transaction result via GetTransaction unary RPC.
-    async fn poll_transaction_result(&self, tx_hash: &[u8], block_number: &[u8], index: u64) -> PollResult {
+    async fn poll_transaction_result(
+        &self,
+        tx_hash: &[u8],
+        block_number: &[u8],
+        index: u64,
+    ) -> PollResult {
         let tx_exec_id = TxExecutionId {
             block_number: block_number.to_vec(),
             iteration_id: self.current_iteration_id(),
@@ -368,7 +380,9 @@ mod tests {
 
     #[test]
     fn assertion_failed_returns_true_for_assertion_failed_status() {
-        assert!(is_assertion_failed(&make_result(ResultStatus::AssertionFailed)));
+        assert!(is_assertion_failed(&make_result(
+            ResultStatus::AssertionFailed
+        )));
     }
 
     #[test]
@@ -393,16 +407,28 @@ mod tests {
 
     #[test]
     fn assertion_failed_returns_false_for_unspecified_status() {
-        assert!(!is_assertion_failed(&make_result(ResultStatus::Unspecified)));
+        assert!(!is_assertion_failed(&make_result(
+            ResultStatus::Unspecified
+        )));
     }
 
     #[test]
     fn commit_head_fields_are_set_correctly() {
-        let block_number: Vec<u8> = std::iter::repeat(0u8).take(31).chain(std::iter::once(42u8)).collect();
-        let timestamp: Vec<u8> = std::iter::repeat(0u8).take(31).chain(std::iter::once(1u8)).collect();
+        let block_number: Vec<u8> = std::iter::repeat(0u8)
+            .take(31)
+            .chain(std::iter::once(42u8))
+            .collect();
+        let timestamp: Vec<u8> = std::iter::repeat(0u8)
+            .take(31)
+            .chain(std::iter::once(1u8))
+            .collect();
         let ch = CommitHead {
-            last_tx_hash: None, n_transactions: 5, block_number: block_number.clone(),
-            selected_iteration_id: 3, block_hash: None, parent_beacon_block_root: None,
+            last_tx_hash: None,
+            n_transactions: 5,
+            block_number: block_number.clone(),
+            selected_iteration_id: 3,
+            block_hash: None,
+            parent_beacon_block_root: None,
             timestamp: timestamp.clone(),
         };
         assert_eq!(ch.n_transactions, 5);
@@ -412,7 +438,12 @@ mod tests {
 
     #[test]
     fn tx_execution_id_fields_are_set_correctly() {
-        let id = TxExecutionId { block_number: vec![0; 32], iteration_id: 7, tx_hash: vec![0xab; 32], index: 2 };
+        let id = TxExecutionId {
+            block_number: vec![0; 32],
+            iteration_id: 7,
+            tx_hash: vec![0xab; 32],
+            index: 2,
+        };
         assert_eq!(id.iteration_id, 7);
         assert_eq!(id.index, 2);
     }
@@ -421,8 +452,19 @@ mod tests {
     fn new_iteration_has_expected_iteration_id() {
         use crate::sequencer::credible_layer::sidecar_proto::BlockEnv;
         let ni = NewIteration {
-            block_env: Some(BlockEnv { number: vec![0; 32], beneficiary: vec![0; 20], timestamp: vec![0; 32], gas_limit: 30_000_000, basefee: 1_000_000_000, difficulty: vec![0; 32], prevrandao: None, blob_excess_gas_and_price: None }),
-            iteration_id: 42, parent_block_hash: None, parent_beacon_block_root: None,
+            block_env: Some(BlockEnv {
+                number: vec![0; 32],
+                beneficiary: vec![0; 20],
+                timestamp: vec![0; 32],
+                gas_limit: 30_000_000,
+                basefee: 1_000_000_000,
+                difficulty: vec![0; 32],
+                prevrandao: None,
+                blob_excess_gas_and_price: None,
+            }),
+            iteration_id: 42,
+            parent_block_hash: None,
+            parent_beacon_block_root: None,
         };
         assert_eq!(ni.iteration_id, 42);
     }

@@ -16,7 +16,7 @@ use ethrex_common::H256;
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{
-    EthClient,
+    EthClient, SubscriptionManager, SubscriptionManagerProtocol,
     clients::{EthClientError, Overrides},
 };
 use ethrex_storage::Store;
@@ -35,9 +35,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
-use serde_json::Value;
+
 use std::str::FromStr;
-use tokio::sync::broadcast;
 
 use super::credible_layer::{
     CredibleLayerClient,
@@ -71,8 +70,8 @@ pub struct BlockProducer {
     eth_client: EthClient,
     router_address: Address,
     credible_layer: Option<Arc<CredibleLayerClient>>,
-    /// Broadcast sender for new block header notifications to WS subscribers.
-    new_heads_sender: Option<broadcast::Sender<Value>>,
+    /// Actor handle for sending new block headers to WS subscribers.
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -95,7 +94,7 @@ impl BlockProducer {
         router_address: Address,
         l2_gas_limit: u64,
         credible_layer_url: Option<String>,
-        new_heads_sender: Option<broadcast::Sender<Value>>,
+        subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
             block_time_ms,
@@ -132,7 +131,9 @@ impl BlockProducer {
                     Some(Arc::new(client))
                 }
                 Err(e) => {
-                    warn!("Failed to connect to Credible Layer sidecar: {e}. Proceeding without credible layer.");
+                    warn!(
+                        "Failed to connect to Credible Layer sidecar: {e}. Proceeding without credible layer."
+                    );
                     None
                 }
             }
@@ -154,7 +155,7 @@ impl BlockProducer {
             eth_client,
             router_address,
             credible_layer,
-            new_heads_sender,
+            subscription_manager,
         })
     }
 
@@ -300,7 +301,12 @@ impl BlockProducer {
                 .await
                 .ok()
                 .flatten()
-                .and_then(|b| b.body.transactions.last().map(|tx| tx.hash().to_fixed_bytes().to_vec()));
+                .and_then(|b| {
+                    b.body
+                        .transactions
+                        .last()
+                        .map(|tx| tx.hash().to_fixed_bytes().to_vec())
+                });
             #[allow(clippy::as_conversions)]
             let commit_head = CommitHead {
                 last_tx_hash,
@@ -316,25 +322,9 @@ impl BlockProducer {
             }
         }
 
-        // Broadcast the new block header to any active eth_subscribe("newHeads") connections.
-        if let Some(sender) = &self.new_heads_sender {
-            match serde_json::to_value(&block_header) {
-                Ok(mut header_value) => {
-                    // Inject the computed block hash into the serialized header
-                    // so subscribers see a complete header including the "hash" field.
-                    if let Value::Object(ref mut map) = header_value {
-                        map.insert(
-                            "hash".to_string(),
-                            Value::String(format!("{block_hash:#x}")),
-                        );
-                    }
-                    // Ignore send errors — they just mean no subscribers are connected.
-                    let _ = sender.send(header_value);
-                }
-                Err(e) => {
-                    warn!("Failed to serialize block header for newHeads broadcast: {e}");
-                }
-            }
+        // Notify all eth_subscribe("newHeads") subscribers.
+        if let Some(ref manager) = self.subscription_manager {
+            let _ = manager.new_head(block_header);
         }
 
         metrics!(
@@ -418,6 +408,7 @@ fn u64_to_u256_bytes(value: u64) -> Vec<u8> {
 
 #[actor(protocol = BlockProducerProtocol)]
 impl BlockProducer {
+    #[expect(clippy::too_many_arguments)]
     pub async fn spawn(
         store: Store,
         rollup_store: StoreRollup,
@@ -426,7 +417,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
-        new_heads_sender: Option<broadcast::Sender<Value>>,
+        subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
         let credible_layer_url = cfg.credible_layer.sidecar_url.clone();
         let block_producer = Self::new(
@@ -439,7 +430,7 @@ impl BlockProducer {
             router_address,
             l2_gas_limit,
             credible_layer_url,
-            new_heads_sender,
+            subscription_manager,
         )
         .await?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);

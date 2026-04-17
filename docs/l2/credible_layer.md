@@ -149,7 +149,7 @@ RUST_LOG=info ../../target/release/ethrex l2 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
   --credible-layer \
   --credible-layer-url http://localhost:50051 \
-  --l2.ws-enabled --l2.ws-port 1730 &
+  --ws.enabled --ws.port 1730 &
 
 # Verify (wait ~10s for L2 to start)
 rex block-number --rpc-url http://localhost:1729
@@ -170,7 +170,7 @@ PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
 STATE_ORACLE_MAX_ASSERTIONS_PER_AA=100 \
 STATE_ORACLE_ASSERTION_TIMELOCK_BLOCKS=1 \
-STATE_ORACLE_ADMIN_ADDRESS=$(rex address -k $PK) \
+STATE_ORACLE_ADMIN_ADDRESS=$(rex address --private-key $PK) \
 DA_PROVER_ADDRESS=0xb0d60c09103F4a5c04EE8537A22ECD6a34382B36 \
 DEPLOY_ADMIN_VERIFIER_OWNER=true \
 DEPLOY_ADMIN_VERIFIER_WHITELIST=false \
@@ -210,7 +210,7 @@ PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
 rex deploy \
   --contract-path <ethrex_repo>/crates/l2/contracts/src/credible_layer/OwnableTarget.sol \
-  --private-key $PK --rpc-url http://localhost:1729 --print-address
+  --private-key $PK --rpc-url http://localhost:1729 --print-address --remappings ""
 ```
 
 Note the contract address from the output. Example: `0x00c042c4d5d913277ce16611a2ce6e9003554ad5`
@@ -269,9 +269,9 @@ rex send $STATE_ORACLE "addAssertion(address,bytes32,address,bytes,bytes)" \
   -k $PK --rpc-url http://localhost:1729
 
 # Verify
-rex call $STATE_ORACLE "hasAssertion(address,bytes32)(bool)" \
+rex call $STATE_ORACLE "hasAssertion(address,bytes32)" \
   $OWNABLE_TARGET $ASSERTION_ID --rpc-url http://localhost:1729
-# Should return: true
+# Should return: 0x0000000000000000000000000000000000000000000000000000000000000001 (true)
 ```
 
 ### Step 8: Start the assertion indexer and sidecar

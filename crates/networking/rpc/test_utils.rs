@@ -224,7 +224,6 @@ pub fn example_local_node_record() -> NodeRecord {
 // ```
 pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
-    let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
     let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
     let mut storage =
         Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
@@ -239,7 +238,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         start_api(
             http_addr,
-            Some(ws_addr),
+            None,
             authrpc_addr,
             storage.clone(),
             blockchain.clone(),
@@ -259,7 +258,6 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            None,
             #[cfg(feature = "eip-8025")]
             None,
         )
@@ -296,7 +294,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
-        new_heads_sender: None,
+        ws: None,
         #[cfg(feature = "eip-8025")]
         proof_coordinator: None,
     }
