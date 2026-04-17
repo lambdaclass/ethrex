@@ -707,11 +707,11 @@ fn execute_default_sender(
                     if !call.value.is_zero() {
                         vm.transfer(sender, call.target, call.value)?;
                     }
+                    // Snapshot this subcall's own logs before commit merges them
+                    // into the parent (walking extract_logs() afterwards would pull
+                    // in logs from prior subcalls/frames).
+                    let logs = vm.substate.current_logs();
                     vm.substate.commit_backup();
-                    let logs = vm.substate.extract_logs();
-                    for log in &logs {
-                        vm.substate.add_log(log.clone());
-                    }
                     all_logs.extend(logs);
                     (true, gas_used)
                 } else {
@@ -730,6 +730,17 @@ fn execute_default_sender(
         // Restore call frame state
         let finished_frame = mem::replace(&mut vm.current_call_frame, saved_call_frame);
         vm.call_frames = saved_call_frames;
+
+        // On subcall success, merge the subcall's call-frame backup into the
+        // outer frame so that an atomic-batch revert can undo the subcall's
+        // state changes (including `vm.transfer(...)` above). Without this, the
+        // inner backup is dropped on swap-back and the mutation becomes
+        // permanently committed to `db.current_accounts_state`, breaking
+        // atomicity when a later batch frame reverts.
+        if success {
+            vm.merge_call_frame_backup_with_parent(&finished_frame.call_frame_backup)?;
+        }
+
         vm.stack_pool.push(finished_frame.stack);
 
         gas_remaining = gas_remaining.saturating_sub(subcall_gas_used);
