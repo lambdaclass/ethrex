@@ -30,6 +30,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::{OnceCell, RefCell},
     collections::{BTreeMap, BTreeSet},
+    io::Write,
     mem,
     rc::Rc,
 };
@@ -435,6 +436,8 @@ pub struct VM<'a> {
     pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
+    /// EIP-3155: When true, emit per-opcode JSON traces to stderr.
+    pub eip3155_trace: bool,
     /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
@@ -481,6 +484,7 @@ impl<'a> VM<'a> {
             hooks: get_hooks(&vm_type),
             storage_original_values: FxHashMap::default(),
             tracer,
+            eip3155_trace: false,
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
@@ -648,6 +652,25 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+
+            // EIP-3155: capture pre-execution state for trace output.
+            #[allow(clippy::as_conversions)]
+            let trace_snapshot = if self.eip3155_trace {
+                let pc = self.current_call_frame.pc;
+                let gas = self.current_call_frame.gas_remaining;
+                let depth = self.current_call_frame.depth + 1; // EIP-3155 depth is 1-indexed
+                let mem_size = self.current_call_frame.memory.len();
+                let stack: Vec<U256> = {
+                    let s = &self.current_call_frame.stack;
+                    let mut v = s.values[s.offset..].to_vec();
+                    v.reverse(); // EIP-3155: bottom-to-top order
+                    v
+                };
+                Some((pc, gas, depth, mem_size, stack))
+            } else {
+                None
+            };
+
             self.advance_pc(1)?;
 
             #[cfg(feature = "perf_opcode_timings")]
@@ -656,6 +679,14 @@ impl<'a> VM<'a> {
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = self.opcode_table[opcode as usize].call(self, &mut error);
+
+            // EIP-3155: emit trace line to stderr after opcode execution.
+            #[allow(clippy::as_conversions)]
+            if let Some((pc, gas_before, depth, mem_size, stack)) = trace_snapshot {
+                let gas_after = self.current_call_frame.gas_remaining;
+                let gas_cost = gas_before.saturating_sub(gas_after);
+                eip3155_emit(pc, opcode, gas_before, gas_cost, &stack, depth, mem_size);
+            }
 
             #[cfg(feature = "perf_opcode_timings")]
             {
@@ -812,4 +843,37 @@ impl Substate {
 
         Ok(substate)
     }
+}
+
+/// Emit a single EIP-3155 trace line to stderr.
+///
+/// Format: `{"pc":<N>,"op":<N>,"gas":"0x<hex>","gasCost":"0x<hex>","stack":[...],"depth":<N>,"memSize":<N>}`
+#[allow(clippy::as_conversions)]
+fn eip3155_emit(
+    pc: usize,
+    opcode: u8,
+    gas_before: i64,
+    gas_cost: i64,
+    stack: &[U256],
+    depth: usize,
+    mem_size: usize,
+) {
+    let mut stderr = std::io::stderr().lock();
+
+    // Build the JSON manually to avoid pulling in serde for the VM crate's hot path.
+    let _ = write!(
+        stderr,
+        r#"{{"pc":{},"op":{},"gas":"0x{:x}","gasCost":"0x{:x}","stack":["#,
+        pc,
+        opcode,
+        gas_before.max(0) as u64,
+        gas_cost.max(0) as u64,
+    );
+    for (i, val) in stack.iter().enumerate() {
+        if i > 0 {
+            let _ = write!(stderr, ",");
+        }
+        let _ = write!(stderr, "\"0x{:x}\"", val);
+    }
+    let _ = writeln!(stderr, r#"],"depth":{},"memSize":{}}}"#, depth, mem_size);
 }
