@@ -8,7 +8,7 @@ use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
+    sequencer::configs::{AdminConfig, AlignedConfig, CredibleLayerConfig, MonitorConfig},
 };
 use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
@@ -92,6 +92,8 @@ pub struct SequencerOptions {
     pub admin_opts: AdminOptions,
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
+    #[clap(flatten)]
+    pub credible_layer_opts: CredibleLayerOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -263,6 +265,14 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 start_at: opts.state_updater_opts.start_at,
                 l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
             },
+            credible_layer: if opts.credible_layer_opts.credible_layer {
+                CredibleLayerConfig {
+                    sidecar_url: opts.credible_layer_opts.credible_layer_url,
+                    state_oracle_address: opts.credible_layer_opts.credible_layer_state_oracle,
+                }
+            } else {
+                CredibleLayerConfig::default()
+            },
         })
     }
 }
@@ -298,6 +308,7 @@ impl SequencerOptions {
         self.state_updater_opts
             .populate_with_defaults(&defaults.state_updater_opts);
         // admin_opts contains only non-optional fields.
+        // credible_layer_opts contains only optional fields, nothing to populate.
     }
 }
 
@@ -1064,6 +1075,37 @@ impl Default for AdminOptions {
             admin_listen_port: 5555,
         }
     }
+}
+
+#[derive(Parser, Default, Debug)]
+pub struct CredibleLayerOptions {
+    #[arg(
+        long = "credible-layer",
+        action = clap::ArgAction::SetTrue,
+        default_value = "false",
+        env = "ETHREX_CREDIBLE_LAYER",
+        help = "Enable the Credible Layer integration. Required before using any --credible-layer-* flags.",
+        help_heading = "Credible Layer options"
+    )]
+    pub credible_layer: bool,
+    #[arg(
+        long = "credible-layer-url",
+        value_name = "URL",
+        env = "ETHREX_CREDIBLE_LAYER_URL",
+        requires = "credible_layer",
+        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051).",
+        help_heading = "Credible Layer options"
+    )]
+    pub credible_layer_url: Option<String>,
+    #[arg(
+        long = "credible-layer-state-oracle",
+        value_name = "ADDRESS",
+        env = "ETHREX_CREDIBLE_LAYER_STATE_ORACLE",
+        requires = "credible_layer",
+        help = "Address of the already-deployed State Oracle contract on L2. The State Oracle maps protected contracts to their active assertions and is required by the Credible Layer sidecar. Deploy it separately using the Phylax toolchain (see crates/l2/contracts/src/credible_layer/README.md).",
+        help_heading = "Credible Layer options"
+    )]
+    pub credible_layer_state_oracle: Option<Address>,
 }
 
 #[derive(Parser)]

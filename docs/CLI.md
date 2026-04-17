@@ -668,6 +668,30 @@ L2 options:
           [env: SPONSOR_PRIVATE_KEY=]
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
 
+      --l2.ws-enabled
+          Enable WebSocket RPC server for L2. Required by the Credible Layer sidecar.
+
+          [env: ETHREX_L2_WS_ENABLED=]
+
+      --l2.ws-addr <ADDRESS>
+          Listening address for the L2 WebSocket RPC server.
+
+          [env: ETHREX_L2_WS_ADDR=]
+          [default: 0.0.0.0]
+
+      --l2.ws-port <PORT>
+          Listening port for the L2 WebSocket RPC server.
+
+          [env: ETHREX_L2_WS_PORT=]
+          [default: 1729]
+
+Credible Layer options:
+      --credible-layer-url <URL>
+          gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
+          When set, enables transaction validation against assertions during block building.
+
+          [env: ETHREX_CREDIBLE_LAYER_URL=]
+
 Monitor options:
       --no-monitor
           [env: ETHREX_NO_MONITOR=]

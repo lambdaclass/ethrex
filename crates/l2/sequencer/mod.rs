@@ -39,6 +39,7 @@ pub use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 pub mod state_updater;
 
 pub mod configs;
+pub mod credible_layer;
 pub mod errors;
 pub mod setup;
 pub mod utils;

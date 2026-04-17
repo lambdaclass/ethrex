@@ -17,6 +17,19 @@ pub struct SequencerConfig {
     pub monitor: MonitorConfig,
     pub admin_server: AdminConfig,
     pub state_updater: StateUpdaterConfig,
+    pub credible_layer: CredibleLayerConfig,
+}
+
+/// Configuration for the Credible Layer sidecar integration.
+/// URL is optional; if absent, the feature is disabled.
+#[derive(Clone, Debug, Default)]
+pub struct CredibleLayerConfig {
+    /// gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
+    pub sidecar_url: Option<String>,
+    /// Address of the already-deployed State Oracle contract on L2.
+    /// Required by the Credible Layer sidecar for assertion registry lookups.
+    /// Deploy the State Oracle separately using the Phylax toolchain before starting ethrex.
+    pub state_oracle_address: Option<Address>,
 }
 
 // TODO: Move to blockchain/dev
