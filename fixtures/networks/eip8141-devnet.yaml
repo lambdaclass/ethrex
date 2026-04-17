@@ -20,6 +20,8 @@ network_params:
   # Activate Osaka from genesis — enables EIP-8141 frame tx opcodes
   # (APPROVE 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1, FRAMEDATACOPY 0xB2)
   fulu_fork_epoch: 0
+  # Required for Fulu: enable PeerDAS without needing 128+ validators per node
+  perfect_peerdas_enabled: true
 
 additional_services:
   - dora
