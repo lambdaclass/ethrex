@@ -1,4 +1,4 @@
-use std::{cmp, mem};
+use std::cmp;
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -398,6 +398,11 @@ fn count_common_prefix_scalar(a: &[u8], b: &[u8]) -> usize {
 // TODO: move path-tracking logic somewhere else
 // PERF: try using a stack-allocated array
 /// Struct representing a list of nibbles (half-bytes)
+///
+/// `data` holds the full nibble sequence including any already-consumed prefix.
+/// `consumed` tracks how many nibbles from the front have been consumed by
+/// `next()` / `skip_prefix()`.  This avoids O(n) Vec::remove(0) shifts and
+/// the separate `already_consumed` Vec that was needed before.
 #[derive(
     Debug,
     Clone,
@@ -410,16 +415,16 @@ fn count_common_prefix_scalar(a: &[u8], b: &[u8]) -> usize {
 )]
 pub struct Nibbles {
     data: Vec<u8>,
-    /// Parts of the path that have already been consumed (used for tracking
-    /// current position when visiting nodes). See `current()`.
-    already_consumed: Vec<u8>,
+    /// How many nibbles from the front of `data` have been consumed.
+    consumed: usize,
 }
 
-// NOTE: custom impls to ignore the `already_consumed` field
+// NOTE: custom impls so that equality/ordering/hashing compare only the
+// *remaining* (unconsumed) nibbles, not the full `data` slice.
 
 impl PartialEq for Nibbles {
     fn eq(&self, other: &Nibbles) -> bool {
-        self.data == other.data
+        self.as_ref() == other.as_ref()
     }
 }
 
@@ -433,23 +438,20 @@ impl PartialOrd for Nibbles {
 
 impl Ord for Nibbles {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.data.cmp(&other.data)
+        self.as_ref().cmp(other.as_ref())
     }
 }
 
 impl std::hash::Hash for Nibbles {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.data.hash(state);
+        self.as_ref().hash(state);
     }
 }
 
 impl Nibbles {
-    /// Create `Nibbles` from  hex-encoded nibbles
+    /// Create `Nibbles` from hex-encoded nibbles
     pub const fn from_hex(hex: Vec<u8>) -> Self {
-        Self {
-            data: hex,
-            already_consumed: vec![],
-        }
+        Self { data: hex, consumed: 0 }
     }
 
     /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end)
@@ -474,32 +476,34 @@ impl Nibbles {
             data.push(16);
         }
 
-        Self {
-            data,
-            already_consumed: vec![],
-        }
+        Self { data, consumed: 0 }
     }
 
     pub fn into_vec(self) -> Vec<u8> {
-        self.data
+        if self.consumed == 0 {
+            self.data
+        } else {
+            self.data[self.consumed..].to_vec()
+        }
     }
 
-    /// Returns the amount of nibbles
+    /// Returns the amount of remaining (unconsumed) nibbles
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.data.len() - self.consumed
     }
 
-    /// Returns true if there are no nibbles
+    /// Returns true if there are no remaining nibbles
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.consumed >= self.data.len()
     }
 
-    /// If `prefix` is a prefix of self, move the offset after
-    /// the prefix and return true, otherwise return false.
+    /// If `prefix` is a prefix of self, advance past it and return true,
+    /// otherwise return false.
     pub fn skip_prefix(&mut self, prefix: &Nibbles) -> bool {
-        if self.len() >= prefix.len() && &self.data[..prefix.len()] == prefix.as_ref() {
-            self.already_consumed.extend_from_slice(&prefix.data);
-            self.data.drain(..prefix.len());
+        let remaining = self.as_ref();
+        let prefix_data = prefix.as_ref();
+        if remaining.len() >= prefix_data.len() && &remaining[..prefix_data.len()] == prefix_data {
+            self.consumed += prefix_data.len();
             true
         } else {
             false
@@ -508,10 +512,12 @@ impl Nibbles {
 
     /// Compares self to another, comparing prefixes only in case of unequal lengths.
     pub fn compare_prefix(&self, prefix: &Nibbles) -> cmp::Ordering {
-        if self.len() > prefix.len() {
-            self.data[..prefix.len()].cmp(&prefix.data)
+        let s = self.as_ref();
+        let p = prefix.as_ref();
+        if s.len() > p.len() {
+            s[..p.len()].cmp(p)
         } else {
-            self.data[..].cmp(&prefix.data[..self.len()])
+            s.cmp(&p[..s.len()])
         }
     }
 
@@ -520,12 +526,14 @@ impl Nibbles {
         count_common_prefix(self.as_ref(), other.as_ref())
     }
 
-    /// Removes and returns the first nibble
+    /// Consumes and returns the first nibble, advancing the cursor by 1.
+    /// O(1) — does not shift the underlying Vec.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u8> {
-        (!self.is_empty()).then(|| {
-            self.already_consumed.push(self.data[0]);
-            self.data.remove(0)
+        (self.consumed < self.data.len()).then(|| {
+            let nibble = self.data[self.consumed];
+            self.consumed += 1;
+            nibble
         })
     }
 
@@ -534,20 +542,18 @@ impl Nibbles {
         self.next().filter(|choice| *choice < 16).map(usize::from)
     }
 
-    /// Returns the nibbles after the given offset
+    /// Returns a Nibbles advanced by `offset` more steps, preserving consumed history
+    /// so that `current()` continues to return the correct consumed prefix.
     pub fn offset(&self, offset: usize) -> Nibbles {
-        let mut already_consumed = Vec::with_capacity(self.already_consumed.len() + offset);
-        already_consumed.extend_from_slice(&self.already_consumed);
-        already_consumed.extend_from_slice(&self.data[..offset]);
         Nibbles {
-            data: self.data[offset..].to_vec(),
-            already_consumed,
+            data: self.data.clone(),
+            consumed: self.consumed + offset,
         }
     }
 
-    /// Returns the nibbles beween the start and end indexes
+    /// Returns the nibbles between the start and end indexes (relative to current position)
     pub fn slice(&self, start: usize, end: usize) -> Nibbles {
-        Nibbles::from_hex(self.data[start..end].to_vec())
+        Nibbles::from_hex(self.as_ref()[start..end].to_vec())
     }
 
     /// Extends the nibbles with another list of nibbles
@@ -555,14 +561,25 @@ impl Nibbles {
         self.data.extend_from_slice(other.as_ref());
     }
 
-    /// Return the nibble at the given index, will panic if the index is out of range
+    /// Return the nibble at the given index (relative to current position),
+    /// will panic if the index is out of range
     pub fn at(&self, i: usize) -> usize {
-        self.data[i] as usize
+        self.data[self.consumed + i] as usize
     }
 
-    /// Inserts a nibble at the start
+    /// Inserts a nibble at the start of the remaining (unconsumed) data.
     pub fn prepend(&mut self, nibble: u8) {
-        self.data.insert(0, nibble);
+        if self.consumed == 0 {
+            self.data.insert(0, nibble);
+        } else {
+            // Normalize: build a new Vec = [nibble] + remaining, reset consumed.
+            let remaining = &self.data[self.consumed..];
+            let mut new_data = Vec::with_capacity(1 + remaining.len());
+            new_data.push(nibble);
+            new_data.extend_from_slice(remaining);
+            self.data = new_data;
+            self.consumed = 0;
+        }
     }
 
     /// Inserts a nibble at the end
@@ -575,10 +592,11 @@ impl Nibbles {
     #[allow(unsafe_code)]
     pub fn encode_compact(&self) -> Vec<u8> {
         let is_leaf = self.is_leaf();
+        let remaining = self.as_ref();
         let mut hex = if is_leaf {
-            &self.data[0..self.data.len() - 1]
+            &remaining[..remaining.len() - 1]
         } else {
-            &self.data[0..]
+            remaining
         };
         // node type    path length    |    prefix    hexchar
         // --------------------------------------------------
@@ -618,20 +636,17 @@ impl Nibbles {
 
     /// Returns true if the nibbles contain the leaf flag (16) at the end
     pub fn is_leaf(&self) -> bool {
-        if self.is_empty() {
-            false
-        } else {
-            self.data[self.data.len() - 1] == 16
-        }
+        self.data.last() == Some(&16)
     }
 
     /// Combines the nibbles into bytes, trimming the leaf flag if necessary
     pub fn to_bytes(&self) -> Vec<u8> {
+        let remaining = self.as_ref();
         // Trim leaf flag
         let data = if !self.is_empty() && self.is_leaf() {
-            &self.data[..self.len() - 1]
+            &remaining[..remaining.len() - 1]
         } else {
-            &self.data[..]
+            remaining
         };
         // Combine nibbles into bytes
         data.chunks(2)
@@ -644,46 +659,41 @@ impl Nibbles {
 
     /// Concatenates self and another Nibbles returning a new Nibbles
     pub fn concat(&self, other: &Nibbles) -> Nibbles {
-        let mut data = Vec::with_capacity(self.data.len() + other.data.len());
-        data.extend_from_slice(&self.data);
-        data.extend_from_slice(&other.data);
-        Nibbles {
-            data,
-            already_consumed: self.already_consumed.clone(),
-        }
+        let s = self.as_ref();
+        let o = other.as_ref();
+        let mut data = Vec::with_capacity(s.len() + o.len());
+        data.extend_from_slice(s);
+        data.extend_from_slice(o);
+        Nibbles { data, consumed: 0 }
     }
 
     /// Returns a copy of self with the nibble added at the end
     pub fn append_new(&self, nibble: u8) -> Nibbles {
-        let mut data = Vec::with_capacity(self.data.len() + 1);
-        data.extend_from_slice(&self.data);
+        let s = self.as_ref();
+        let mut data = Vec::with_capacity(s.len() + 1);
+        data.extend_from_slice(s);
         data.push(nibble);
-        Nibbles {
-            data,
-            already_consumed: self.already_consumed.clone(),
-        }
+        Nibbles { data, consumed: 0 }
     }
 
-    /// Return already consumed parts of path
+    /// Returns the already-consumed portion of the path as a new Nibbles.
+    /// Used by `get_node_mut` to look up nodes from the persistent DB.
     pub fn current(&self) -> Nibbles {
-        Nibbles {
-            data: self.already_consumed.clone(),
-            already_consumed: vec![],
-        }
+        Nibbles::from_hex(self.data[..self.consumed].to_vec())
     }
 
-    /// Empties `self.data` and returns the content
+    /// Empties `self` and returns the remaining content
     pub fn take(&mut self) -> Self {
-        Nibbles {
-            data: mem::take(&mut self.data),
-            already_consumed: mem::take(&mut self.already_consumed),
-        }
+        let remaining = self.data[self.consumed..].to_vec();
+        self.data.clear();
+        self.consumed = 0;
+        Nibbles { data: remaining, consumed: 0 }
     }
 }
 
 impl AsRef<[u8]> for Nibbles {
     fn as_ref(&self) -> &[u8] {
-        &self.data
+        &self.data[self.consumed..]
     }
 }
 
@@ -697,13 +707,7 @@ impl RLPDecode for Nibbles {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (data, decoder) = decoder.decode_field("data")?;
-        Ok((
-            Self {
-                data,
-                already_consumed: vec![],
-            },
-            decoder.finish()?,
-        ))
+        Ok((Self { data, consumed: 0 }, decoder.finish()?))
     }
 }
 
