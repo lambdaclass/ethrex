@@ -120,8 +120,6 @@ pub async fn start_api(
             gas_ceil: l2_gas_limit,
             block_worker_channel,
             ws: ws.clone(),
-            #[cfg(feature = "eip-8025")]
-            proof_coordinator: None,
         },
         valid_delegation_addresses,
         sponsor_pk,

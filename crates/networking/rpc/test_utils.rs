@@ -258,8 +258,6 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            #[cfg(feature = "eip-8025")]
-            None,
         )
         .await
         .unwrap()
@@ -295,8 +293,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
         ws: None,
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator: None,
     }
 }
 

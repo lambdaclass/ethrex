@@ -213,10 +213,6 @@ pub struct RpcApiContext {
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
     /// WebSocket configuration. `None` when the WS server is disabled.
     pub ws: Option<WebSocketConfig>,
-    /// EIP-8025 proof coordinator handle for sending proof requests.
-    #[cfg(feature = "eip-8025")]
-    pub proof_coordinator:
-        Option<ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle>,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -505,9 +501,6 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
-    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
-        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
-    >,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -531,8 +524,6 @@ pub async fn start_api(
         gas_ceil,
         block_worker_channel,
         ws: ws.clone(),
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
