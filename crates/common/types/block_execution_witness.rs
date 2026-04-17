@@ -151,15 +151,26 @@ impl RpcExecutionWitness {
             ));
         }
 
-        let mut initial_state_root = None;
-
-        for h in &self.headers {
-            let header = BlockHeader::decode(h)?;
-            if header.number == first_block_number - 1 {
-                initial_state_root = Some(header.state_root);
-                break;
+        // Decode headers up front so we can validate the ordering invariant:
+        // an RPC witness must provide headers in ascending, contiguous block-number
+        // order. Reordered or gapped inputs would otherwise be silently normalized
+        // by the BTreeMap in `GuestProgramState::from_witness` and yield an
+        // incorrect conclusion about the block's validity.
+        let decoded_headers: Vec<BlockHeader> = self
+            .headers
+            .iter()
+            .map(|h| BlockHeader::decode(h))
+            .collect::<Result<_, _>>()?;
+        for window in decoded_headers.windows(2) {
+            if window[1].number != window[0].number + 1 {
+                return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
         }
+
+        let initial_state_root = decoded_headers
+            .iter()
+            .find(|h| h.number == first_block_number - 1)
+            .map(|h| h.state_root);
 
         let initial_state_root = initial_state_root.ok_or_else(|| {
             GuestProgramStateError::Custom(format!(
@@ -177,10 +188,13 @@ impl RpcExecutionWitness {
                     // which would fail to decode in ours
                     return None;
                 }
+                // Tolerate extra unused witness entries that don't decode as trie nodes.
+                // Nodes that are actually needed for state access are looked up by hash
+                // later; extra junk cannot be referenced.
                 let hash = keccak(&b);
-                Some(Node::decode(&b).map(|node| (hash, node)))
+                Node::decode(&b).ok().map(|node| (hash, node))
             })
-            .collect::<Result<_, RLPDecodeError>>()?;
+            .collect();
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
@@ -589,28 +603,25 @@ impl GuestProgramState {
     }
 
     /// Retrieves the account code for a specific account.
-    /// Returns an Err if the code is not found.
+    /// Returns an Err if the code is not found — a missing code hash means
+    /// the execution witness is invalid and the guest program must not
+    /// conclude anything about the state.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => {
-                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
-                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
-                // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                    hex::encode(code_hash)
-                );
-                Ok(Code::default())
-            }
-        }
+        self.codes_hashed.get(&code_hash).cloned().ok_or_else(|| {
+            GuestProgramStateError::Custom(format!(
+                "missing bytecode for hash {} in execution witness",
+                hex::encode(code_hash)
+            ))
+        })
     }
 
     /// Retrieves code metadata (length) for a specific code hash.
     /// This is an optimized path for EXTCODESIZE opcode.
+    /// Returns an Err if the code is not found — same rationale as
+    /// [`Self::get_account_code`].
     pub fn get_code_metadata(
         &self,
         code_hash: H256,
@@ -620,19 +631,17 @@ impl GuestProgramState {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(CodeMetadata {
+        self.codes_hashed
+            .get(&code_hash)
+            .map(|code| CodeMetadata {
                 length: code.bytecode.len() as u64,
-            }),
-            None => {
-                // Same as get_account_code - default to empty for missing bytecode
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
+            })
+            .ok_or_else(|| {
+                GuestProgramStateError::Custom(format!(
+                    "missing bytecode for hash {} in execution witness",
                     hex::encode(code_hash)
-                );
-                Ok(CodeMetadata { length: 0 })
-            }
-        }
+                ))
+            })
     }
 
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
