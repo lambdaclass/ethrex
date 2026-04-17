@@ -971,11 +971,15 @@ impl PeerTableServer {
         None
     }
 
-    /// Iterate over all contacts across all buckets.
+    /// Iterate over all contacts across all buckets (main and replacement lists).
     fn iter_contacts(&self) -> impl Iterator<Item = (&H256, &Contact)> {
-        self.buckets
-            .iter()
-            .flat_map(|bucket| bucket.contacts.iter().map(|(id, c)| (id, c)))
+        self.buckets.iter().flat_map(|bucket| {
+            bucket
+                .contacts
+                .iter()
+                .chain(bucket.replacements.iter())
+                .map(|(id, c)| (id, c))
+        })
     }
 
     // --- Peer selection ---
@@ -1048,8 +1052,10 @@ impl PeerTableServer {
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
+        // Check both main contacts and replacements in each bucket.
+        // Replacements may contain fresher peers that haven't been tried yet.
         for bucket in &self.buckets {
-            for (node_id, contact) in &bucket.contacts {
+            for (node_id, contact) in bucket.contacts.iter().chain(bucket.replacements.iter()) {
                 if !self.peers.contains_key(node_id)
                     && !self.already_tried_peers.contains(node_id)
                     && contact.knows_us
