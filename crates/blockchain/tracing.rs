@@ -5,7 +5,7 @@ use std::{
 
 use ethrex_common::{
     H256,
-    tracing::{CallTrace, PrePostState, PrestateTrace},
+    tracing::{CallTrace, PrestateResult},
     types::Block,
 };
 use ethrex_storage::Store;
@@ -95,7 +95,7 @@ impl Blockchain {
         reexec: u32,
         timeout: Duration,
         diff_mode: bool,
-    ) -> Result<(PrestateTrace, Option<PrePostState>), ChainError> {
+    ) -> Result<PrestateResult, ChainError> {
         let Some((_, block_hash, tx_index)) =
             self.storage.get_transaction_location(tx_hash).await?
         else {
@@ -127,7 +127,7 @@ impl Blockchain {
         reexec: u32,
         timeout: Duration,
         diff_mode: bool,
-    ) -> Result<Vec<(H256, PrestateTrace, Option<PrePostState>)>, ChainError> {
+    ) -> Result<Vec<(H256, PrestateResult)>, ChainError> {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
@@ -142,13 +142,13 @@ impl Blockchain {
             let block = block.clone();
             let vm = vm.clone();
             let tx_hash = block.as_ref().body.transactions[index].hash();
-            let (pre_trace, pre_post) = timeout_trace_operation(timeout, move || {
+            let result = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
                     .trace_tx_prestate(block.as_ref(), index, diff_mode)
             })
             .await?;
-            traces.push((tx_hash, pre_trace, pre_post));
+            traces.push((tx_hash, result));
         }
         Ok(traces)
     }
