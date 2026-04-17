@@ -88,6 +88,15 @@ pub struct PrestateAccountState {
 /// Maps account address (hex string) to its state before the transaction.
 pub type PrestateTrace = HashMap<String, PrestateAccountState>;
 
+/// Result of a prestateTracer execution — either a plain prestate map or a diff.
+#[derive(Debug, Clone)]
+pub enum PrestateResult {
+    /// Non-diff mode: map of address → pre-tx account state.
+    Prestate(PrestateTrace),
+    /// Diff mode: pre-tx and post-tx state for all touched accounts.
+    Diff(PrePostState),
+}
+
 /// Per-transaction prestate trace (diff mode).
 /// Contains the pre-tx and post-tx state for all touched accounts.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

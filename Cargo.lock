@@ -4496,6 +4496,7 @@ dependencies = [
  "ethrex-levm",
  "ethrex-rlp",
  "hex",
+ "once_cell",
  "rayon",
  "rustc-hash 2.1.2",
  "serde",
