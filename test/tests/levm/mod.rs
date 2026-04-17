@@ -1,3 +1,5 @@
+mod test_db;
+
 mod bls12_tests;
 mod eip7702_tests;
 mod eip7708_tests;
@@ -15,4 +17,5 @@ mod l2_hook_tests;
 mod l2_privileged_tx_tests;
 mod memory_tests;
 mod precompile_tests;
+mod prestate_tracer_tests;
 mod stack_tests;
