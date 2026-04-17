@@ -1,7 +1,7 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network, init_store,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
@@ -22,10 +22,12 @@ use ethrex_p2p::{
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
+use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_storage::Store;
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
+
 use spawned_concurrency::tasks::ActorRef;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
@@ -49,11 +51,13 @@ fn init_rpc_api(
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
+    ws: Option<WebSocketConfig>,
 ) {
     init_datadir(&opts.datadir);
 
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
+        ws,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -318,6 +322,16 @@ pub async fn init_l2(
     )
     .await?;
 
+    // Create WebSocket config when WS is enabled.
+    let ws_config = if opts.node_opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(&opts.node_opts),
+            subscription_manager: SubscriptionManager::spawn(),
+        })
+    } else {
+        None
+    };
+
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -331,6 +345,7 @@ pub async fn init_l2(
         rollup_store.clone(),
         log_filter_handler,
         l2_gas_limit,
+        ws_config.clone(),
     );
 
     // Initialize metrics if enabled
@@ -354,6 +369,7 @@ pub async fn init_l2(
         genesis,
         checkpoints_dir,
         l2_gas_limit,
+        ws_config.as_ref().map(|ws| ws.subscription_manager.clone()),
     )
     .await?;
     join_set.spawn(l2_sequencer);
