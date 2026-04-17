@@ -73,6 +73,7 @@ pub struct CallLog {
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct PrestateAccountState {
     pub balance: U256,
+    #[serde(default, skip_serializing_if = "is_zero_nonce")]
     pub nonce: u64,
     #[serde(
         default,
@@ -103,4 +104,8 @@ pub enum PrestateResult {
 pub struct PrePostState {
     pub pre: HashMap<Address, PrestateAccountState>,
     pub post: HashMap<Address, PrestateAccountState>,
+}
+
+fn is_zero_nonce(n: &u64) -> bool {
+    *n == 0
 }
