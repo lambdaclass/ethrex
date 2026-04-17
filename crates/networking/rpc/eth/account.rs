@@ -237,14 +237,13 @@ impl RpcHandler for GetProofRequest {
                 proof: sp.proof,
             })
             .collect();
-        let account = account_proof.account;
         let account_proof = AccountProof {
             account_proof: account_proof.proof,
             address: self.address,
-            balance: account.balance,
-            code_hash: account.code_hash,
-            nonce: account.nonce,
-            storage_hash: account.storage_root,
+            balance: account_proof.info.balance,
+            code_hash: account_proof.info.code_hash,
+            nonce: account_proof.info.nonce,
+            storage_hash: account_proof.storage_root,
             storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))

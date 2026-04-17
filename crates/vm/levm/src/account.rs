@@ -1,6 +1,5 @@
 use ethrex_common::H256;
-use ethrex_common::constants::EMPTY_TRIE_HASH;
-use ethrex_common::types::{AccountState, GenesisAccount};
+use ethrex_common::types::{AccountStateInfo, GenesisAccount};
 use ethrex_common::utils::keccak;
 use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
 use rustc_hash::FxHashMap;
@@ -64,18 +63,18 @@ impl From<GenesisAccount> for LevmAccount {
         }
     }
 }
-impl From<AccountState> for LevmAccount {
-    fn from(state: AccountState) -> Self {
-        let is_default = state == AccountState::default();
+impl From<AccountStateInfo> for LevmAccount {
+    fn from(state: AccountStateInfo) -> Self {
+        let is_default = state == AccountStateInfo::default();
         LevmAccount {
             info: AccountInfo {
-                code_hash: state.code_hash,
-                balance: state.balance,
-                nonce: state.nonce,
+                code_hash: state.info.code_hash,
+                balance: state.info.balance,
+                nonce: state.info.nonce,
             },
             storage: Default::default(),
             status: AccountStatus::Unmodified,
-            has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+            has_storage: state.has_storage,
             // An account with all default fields was not found in the DB.
             // Post-EIP-161, truly empty accounts are pruned from the trie,
             // so default == non-existent. Accounts with non-empty storage root

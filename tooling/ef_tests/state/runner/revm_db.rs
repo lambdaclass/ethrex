@@ -61,12 +61,12 @@ impl revm::Database for RevmDynVmDatabase {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-        let code = self.code_by_hash(acc_info.code_hash.0.into())?;
+        let code = self.code_by_hash(acc_info.info.code_hash.0.into())?;
 
         Ok(Some(RevmAccountInfo {
-            balance: RevmU256::from_limbs(acc_info.balance.0),
-            nonce: acc_info.nonce,
-            code_hash: RevmB256::from(acc_info.code_hash.0),
+            balance: RevmU256::from_limbs(acc_info.info.balance.0),
+            nonce: acc_info.info.nonce,
+            code_hash: RevmB256::from(acc_info.info.code_hash.0),
             code: Some(code),
         }))
     }
@@ -104,12 +104,12 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
-        let code = self.code_by_hash_ref(acc_info.code_hash.0.into())?;
+        let code = self.code_by_hash_ref(acc_info.info.code_hash.0.into())?;
 
         Ok(Some(RevmAccountInfo {
-            balance: RevmU256::from_limbs(acc_info.balance.0),
-            nonce: acc_info.nonce,
-            code_hash: RevmB256::from(acc_info.code_hash.0),
+            balance: RevmU256::from_limbs(acc_info.info.balance.0),
+            nonce: acc_info.info.nonce,
+            code_hash: RevmB256::from(acc_info.info.code_hash.0),
             code: Some(code),
         }))
     }

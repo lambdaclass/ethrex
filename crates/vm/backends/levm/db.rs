@@ -1,6 +1,6 @@
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
-use ethrex_common::types::{AccountState, Code, CodeMetadata};
+use ethrex_common::types::{AccountStateInfo, Code, CodeMetadata};
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
@@ -31,7 +31,7 @@ impl DatabaseLogger {
 }
 
 impl LevmDatabase for DatabaseLogger {
-    fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
+    fn get_account_state(&self, address: CoreAddress) -> Result<AccountStateInfo, DatabaseError> {
         self.state_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
@@ -85,7 +85,7 @@ impl LevmDatabase for DatabaseLogger {
 }
 
 impl LevmDatabase for DynVmDatabase {
-    fn get_account_state(&self, address: CoreAddress) -> Result<AccountState, DatabaseError> {
+    fn get_account_state(&self, address: CoreAddress) -> Result<AccountStateInfo, DatabaseError> {
         let acc_state = <dyn VmDatabase>::get_account_state(self.as_ref(), address)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();

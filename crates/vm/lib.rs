@@ -1,6 +1,7 @@
 mod db;
 mod errors;
 mod execution_result;
+pub mod guest_program_state;
 pub mod tracing;
 mod witness_db;
 
@@ -11,5 +12,6 @@ pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::EvmError;
 pub use ethrex_levm::precompiles::{PrecompileCache, precompiles_for_fork};
 pub use execution_result::ExecutionResult;
+pub use guest_program_state::{GuestProgramState, GuestProgramStateError};
 pub use witness_db::GuestProgramStateWrapper;
 pub mod system_contracts;

@@ -22,7 +22,8 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
-use ethrex_storage::{EngineType, Store};
+use ethrex_state_backend::BackendKind;
+use ethrex_storage::{EngineType, StateBackend, Store};
 use secp256k1::SecretKey;
 
 pub struct GasMeasurement;
@@ -124,7 +125,7 @@ async fn setup_genesis(accounts: &Vec<Address>) -> (Store, Genesis) {
     }
     let genesis_file = include_bytes!("../../fixtures/genesis/l1.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
-    let mut store = Store::new(storage_path, EngineType::RocksDB).unwrap();
+    let mut store = Store::new_mpt(storage_path, EngineType::RocksDB).unwrap();
     for address in accounts {
         let account_info = GenesisAccount {
             code: Bytes::new(),
@@ -246,7 +247,11 @@ pub fn build_block_benchmark(c: &mut Criterion<GasMeasurement>) {
                     );
                     fill_mempool(&block_chain, accounts).await;
 
-                    (block_chain, genesis.get_block(), store_with_genesis)
+                    (
+                        block_chain,
+                        StateBackend::compute_genesis_block(BackendKind::Mpt, &genesis),
+                        store_with_genesis,
+                    )
                 };
                 let input = (Arc::new(blockchain), genesis_block, &store);
                 let (duration, gas_used) = bench_payload(&input).await;

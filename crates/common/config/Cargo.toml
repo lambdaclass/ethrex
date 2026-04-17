@@ -13,6 +13,9 @@ serde_json.workspace = true
 serde.workspace = true
 hex.workspace = true
 
+[dev-dependencies]
+ethrex-trie.workspace = true
+
 [lib]
 path = "lib.rs"
 

@@ -576,7 +576,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     let fee_token_ratio = get_fee_token_ratio(vm, fee_token)?;
 
     let sender_address = vm.env.origin;
-    let sender_info = vm.db.get_account(sender_address)?.info.clone();
+    let sender_info = vm.db.get_account(sender_address)?.info;
 
     if vm.env.config.fork >= Fork::Prague {
         default_hook::validate_min_gas_limit(vm)?;

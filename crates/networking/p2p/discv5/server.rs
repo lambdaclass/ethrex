@@ -1345,7 +1345,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1386,7 +1386,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1464,7 +1464,7 @@ mod tests {
 
         let peer_table = PeerTableServer::spawn(
             10,
-            Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
         );
 
         // Add the remote node as a contact with its ENR record
@@ -1574,7 +1574,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1631,7 +1631,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1680,7 +1680,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1734,7 +1734,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1792,7 +1792,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1843,7 +1843,7 @@ mod tests {
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,

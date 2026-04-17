@@ -3107,40 +3107,12 @@ mod mempool {
 mod tests {
 
     use super::*;
-    use crate::types::{
-        AuthorizationTuple, BlockBody, Receipt, compute_receipts_root, compute_transactions_root,
-    };
+    use crate::types::AuthorizationTuple;
     use ethereum_types::H160;
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
     use std::str::FromStr;
 
-    #[test]
-    fn test_compute_transactions_root() {
-        let mut body = BlockBody::empty();
-        let tx = LegacyTransaction {
-            nonce: 0,
-            gas_price: U256::from(0x0a),
-            gas: 0x05f5e100,
-            to: TxKind::Call(hex!("1000000000000000000000000000000000000000").into()),
-            value: 0.into(),
-            data: Default::default(),
-            v: U256::from(0x1b),
-            r: U256::from_big_endian(&hex!(
-                "7e09e26678ed4fac08a249ebe8ed680bf9051a5e14ad223e4b2b9d26e0208f37"
-            )),
-            s: U256::from_big_endian(&hex!(
-                "5f6e3f188e3e6eab7d7d3b6568f5eac7d687b08d307d3154ccd8c87b4630509b"
-            )),
-            ..Default::default()
-        };
-        body.transactions.push(Transaction::LegacyTransaction(tx));
-        let expected_root =
-            hex!("8151d548273f6683169524b66ca9fe338b9ce42bc3540046c828fd939ae23bcb");
-        let result = compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto);
-
-        assert_eq!(result, expected_root.into());
-    }
     #[test]
     fn test_compute_hash() {
         // taken from Hive
@@ -3176,22 +3148,6 @@ mod tests {
             hex!("a0762610d794acddd2dca15fb7c437ada3611c886f3bea675d53d8da8a6c41b2");
         let hash = tx.compute_hash();
         assert_eq!(hash, expected_hash.into());
-    }
-
-    #[test]
-    fn test_compute_receipts_root() {
-        // example taken from
-        // https://github.com/ethereum/go-ethereum/blob/f8aa62353666a6368fb3f1a378bd0a82d1542052/cmd/evm/testdata/1/exp.json#L18
-        let tx_type = TxType::Legacy;
-        let succeeded = true;
-        let cumulative_gas_used = 0x5208;
-        let logs = vec![];
-        let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
-
-        let result = compute_receipts_root(&[receipt], &ethrex_crypto::NativeCrypto);
-        let expected_root =
-            hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
-        assert_eq!(result, expected_root.into());
     }
 
     #[test]

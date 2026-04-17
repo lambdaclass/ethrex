@@ -18,14 +18,14 @@ use ethrex_common::{
         ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        calculate_base_fee_per_gas,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
+use ethrex_trie::{compute_receipts_root, compute_transactions_root, compute_withdrawals_root};
 use ethrex_vm::{Evm, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
@@ -773,12 +773,12 @@ impl Blockchain {
 
         let account_updates = context.vm.get_state_transitions()?;
 
-        let ret_acount_updates_list = self
+        let merkle_output = self
             .storage
             .apply_account_updates_batch(context.parent_hash(), &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        let state_root = ret_acount_updates_list.state_trie_hash;
+        let state_root = merkle_output.root;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =

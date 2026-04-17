@@ -7,8 +7,10 @@ documentation.workspace = true
 license.workspace = true
 
 [dependencies]
+ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
+ethrex-state-backend.workspace = true
 
 ethereum-types.workspace = true
 anyhow = "1.0.86"
@@ -20,9 +22,15 @@ crossbeam.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 rkyv.workspace = true
+tracing.workspace = true
+hex.workspace = true
 
 [features]
 default = []
+
+[dev-dependencies]
+serde_json.workspace = true
+hex-literal.workspace = true
 
 [lib]
 path = "./trie.rs"

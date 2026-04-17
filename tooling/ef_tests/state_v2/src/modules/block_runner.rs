@@ -2,16 +2,14 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::get_total_blob_gas;
 use ethrex_common::constants::DEFAULT_REQUESTS_HASH;
-use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, Fork, Receipt, Transaction, compute_receipts_root,
-    compute_transactions_root,
-};
+use ethrex_common::types::{Block, BlockBody, BlockHeader, Fork, Receipt, Transaction};
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
+use ethrex_trie::{compute_receipts_root, compute_transactions_root};
 use std::str::FromStr;
 
 use crate::modules::types::TestCase;

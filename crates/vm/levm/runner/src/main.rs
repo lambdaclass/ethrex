@@ -143,7 +143,7 @@ fn main() {
 
     // DB
     let initial_state = setup_initial_state(&mut runner_input, bytecode);
-    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let in_memory_db = Store::new_mpt("", ethrex_storage::EngineType::InMemory).unwrap();
     let header = BlockHeader {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()

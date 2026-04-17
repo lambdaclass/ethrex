@@ -308,7 +308,7 @@ impl<'a> VM<'a> {
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             let authority_account = self.db.get_account(authority_address)?;
             let authority_exists = authority_account.exists;
-            let authority_info = authority_account.info.clone();
+            let authority_info = authority_account.info;
             let authority_code = self.db.get_code(authority_info.code_hash)?;
             self.substate.add_accessed_address(authority_address);
 

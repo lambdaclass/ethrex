@@ -1,4 +1,5 @@
 use ethrex_rlp::error::RLPDecodeError;
+use ethrex_state_backend::StateError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
 
@@ -44,6 +45,8 @@ pub enum StoreError {
     IoError(#[from] std::io::Error),
     #[error("Error serializing metadata: {0}")]
     DbMetadataError(#[from] serde_json::Error),
+    #[error("State backend error: {0}")]
+    StateBackend(#[from] StateError),
     #[error(
         "Cannot migrate the database: its version is unavailable, which means it predates versioning and migrations. A full resync (removedb) is required."
     )]

@@ -1,9 +1,9 @@
 use ethrex_common::InvalidBlockError;
 use ethrex_common::types::BlobsBundleError;
 use ethrex_common::types::InvalidBlockBodyError;
-use ethrex_common::types::block_execution_witness::GuestProgramStateError;
 use ethrex_l2_common::privileged_transactions::PrivilegedTransactionError;
 use ethrex_vm::EvmError;
+use ethrex_vm::GuestProgramStateError;
 
 /// Errors that can occur during L2 stateless block execution.
 #[derive(Debug, thiserror::Error)]

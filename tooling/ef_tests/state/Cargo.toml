@@ -9,7 +9,9 @@ license = "MIT OR Apache-2.0"
 ethrex-blockchain = { path = "../../../crates/blockchain", default-features = false }
 ethrex-common = { path = "../../../crates/common", default-features = false }
 ethrex-crypto = { path = "../../../crates/common/crypto", default-features = false }
+ethrex-state-backend = { path = "../../../crates/common/state-backend" }
 ethrex-storage = { path = "../../../crates/storage" }
+ethrex-trie = { path = "../../../crates/common/trie" }
 ethrex-rlp = { path = "../../../crates/common/rlp" }
 ethrex-vm = { path = "../../../crates/vm", default-features = false }
 ethrex-levm = { path = "../../../crates/vm/levm", default-features = false }

@@ -3,7 +3,7 @@ use crate::api::tables::{
 };
 use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
-use crate::layering::apply_prefix;
+use crate::mpt_wiring::mpt_apply_prefix;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
@@ -108,7 +108,7 @@ impl BackendTrieDB {
     }
 
     fn make_key(&self, path: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, path).into_vec()
+        mpt_apply_prefix(self.address_prefix, path.into_vec())
     }
 
     /// Key might be for an account or storage slot
@@ -124,8 +124,8 @@ impl BackendTrieDB {
 
 impl TrieDB for BackendTrieDB {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        let key = apply_prefix(self.address_prefix, key);
-        self.last_computed_flatkeyvalue >= key
+        let key = mpt_apply_prefix(self.address_prefix, key.into_vec());
+        self.last_computed_flatkeyvalue.as_ref() >= key.as_slice()
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {

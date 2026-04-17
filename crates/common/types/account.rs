@@ -1,9 +1,6 @@
-use std::collections::BTreeMap;
-
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
-use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -112,7 +109,7 @@ pub struct Account {
     pub storage: FxHashMap<H256, U256>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub struct AccountInfo {
     pub code_hash: H256,
     pub balance: U256,
@@ -125,6 +122,29 @@ pub struct AccountState {
     pub balance: U256,
     pub storage_root: H256,
     pub code_hash: H256,
+}
+
+/// Backend-agnostic account state for the VM layer.
+/// Wraps `AccountInfo` with derived flags that don't leak trie internals.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AccountStateInfo {
+    pub info: AccountInfo,
+    /// Whether the account has non-empty storage.
+    /// MPT: `storage_root != EMPTY_TRIE_HASH`. Other backends: backend-specific.
+    pub has_storage: bool,
+}
+
+impl From<AccountState> for AccountStateInfo {
+    fn from(state: AccountState) -> Self {
+        Self {
+            has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+            info: AccountInfo {
+                nonce: state.nonce,
+                balance: state.balance,
+                code_hash: state.code_hash,
+            },
+        }
+    }
 }
 
 /// A slim codec for an [`AccountState`].
@@ -339,22 +359,12 @@ impl RLPDecode for AccountStateSlimCodec {
     }
 }
 
-pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
-    let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((
-            crypto.keccak256(&k.to_big_endian()).to_vec(),
-            v.encode_to_vec(),
-        ))
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
-}
-
 impl From<&GenesisAccount> for AccountState {
     fn from(value: &GenesisAccount) -> Self {
         AccountState {
             nonce: value.nonce,
             balance: value.balance,
-            storage_root: compute_storage_root(&value.storage, &NativeCrypto),
+            storage_root: *EMPTY_TRIE_HASH,
             code_hash: code_hash(&value.code, &NativeCrypto),
         }
     }

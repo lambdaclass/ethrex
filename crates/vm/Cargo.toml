@@ -11,6 +11,9 @@ ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-rlp.workspace = true
+ethrex-state-backend = { path = "../common/state-backend" }
+ethrex-trie.workspace = true
+hex.workspace = true
 
 derive_more = { version = "1.0.0", features = ["full"] }
 bytes.workspace = true

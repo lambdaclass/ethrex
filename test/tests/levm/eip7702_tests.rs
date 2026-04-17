@@ -46,7 +46,7 @@ fn simple_return_code() -> Bytes {
 
 /// Creates an in-memory database with given accounts
 fn setup_db(accounts: FxHashMap<Address, Account>) -> GeneralizedDatabase {
-    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let in_memory_db = Store::new_mpt("", ethrex_storage::EngineType::InMemory).unwrap();
     let header = BlockHeader {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()

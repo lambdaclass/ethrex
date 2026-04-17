@@ -35,7 +35,7 @@ const ECRECOVER_ADDRESS: Address = H160([
 
 /// Creates an in-memory database with given accounts
 fn setup_db(accounts: FxHashMap<Address, Account>) -> GeneralizedDatabase {
-    let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+    let in_memory_db = Store::new_mpt("", ethrex_storage::EngineType::InMemory).unwrap();
     let header = BlockHeader {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()

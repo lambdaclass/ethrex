@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{Block, Receipt, validate_block_body};
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{Block, Receipt};
 use ethrex_common::{
-    H256, U256, validate_block_pre_execution, validate_gas_used, validate_receipts_root,
-    validate_requests_hash,
+    H256, U256, validate_block_pre_execution, validate_gas_used, validate_requests_hash,
 };
 use ethrex_crypto::Crypto;
-use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
+use ethrex_trie::{validate_block_body, validate_receipts_root};
+use ethrex_vm::{Evm, GuestProgramState, GuestProgramStateWrapper, VmDatabase};
 
 use crate::common::ExecutionError;
 use crate::report_cycles;
@@ -53,7 +53,7 @@ where
 
     let ethrex_guest_program_state: GuestProgramState =
         report_cycles("ethrex_guest_program_state_initialization", || {
-            GuestProgramState::from_witness(execution_witness, crypto.as_ref())
+            GuestProgramState::from_witness(execution_witness, Arc::clone(&crypto))
                 .map_err(ExecutionError::GuestProgramState)
         })?;
 

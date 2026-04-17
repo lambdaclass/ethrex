@@ -4,8 +4,6 @@ use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{fmt, sync::Arc};
 
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
-
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
@@ -17,6 +15,11 @@ struct TrieLayer {
 }
 
 /// In-memory cache of trie diff-layers, one per block (or per batch of blocks in full sync).
+///
+/// Keys and values are opaque bytes. The format is determined by whichever backend writes
+/// into the cache via `apply_trie_updates`. The MPT-side consumer (`MptTrieWrapper`, in
+/// `mpt_wiring.rs`) assumes MPT-nibble keys; other backends must provide their own `TrieDB`
+/// wrapper.
 ///
 /// Layers form a singly-linked chain from newest to oldest via the `parent` field:
 ///
@@ -104,7 +107,7 @@ impl TrieLayerCache {
         // Fast check to know if any layer may contain the given key.
         // We can only be certain it doesn't exist, but if it returns true it may or may not exist (false positive).
         if !self.bloom.contains(key) {
-            // TrieWrapper goes to db when returning None.
+            // Falls through to on-disk trie when returning None.
             return None;
         }
 
@@ -176,7 +179,7 @@ impl TrieLayerCache {
         &mut self,
         parent: H256,
         state_root: H256,
-        key_values: Vec<(Nibbles, Vec<u8>)>,
+        key_values: Vec<(Vec<u8>, Vec<u8>)>,
     ) {
         if parent == state_root && key_values.is_empty() {
             return;
@@ -194,13 +197,10 @@ impl TrieLayerCache {
 
         // Add keys to the global bloom filter
         for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref());
+            self.bloom.insert(p);
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
+        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values.into_iter().collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
@@ -259,77 +259,5 @@ impl TrieLayerCache {
             .flat_map(|layer| layer.nodes)
             .collect();
         Some(nodes_to_commit)
-    }
-}
-
-/// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
-/// falling back to the on-disk trie only for keys not found in any layer.
-///
-/// Used by the EVM during block execution: reads see the latest uncommitted state without
-/// waiting for a disk flush.
-pub struct TrieWrapper {
-    pub state_root: H256,
-    pub inner: Arc<TrieLayerCache>,
-    pub db: Box<dyn TrieDB>,
-    /// Pre-computed prefix nibbles for storage tries.
-    /// For state tries this is None; for storage tries this is
-    /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
-    prefix_nibbles: Option<Nibbles>,
-}
-
-impl TrieWrapper {
-    pub fn new(
-        state_root: H256,
-        inner: Arc<TrieLayerCache>,
-        db: Box<dyn TrieDB>,
-        prefix: Option<H256>,
-    ) -> Self {
-        let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
-        Self {
-            state_root,
-            inner,
-            db,
-            prefix_nibbles,
-        }
-    }
-}
-
-/// Prepends an account address prefix (with an invalid nibble `17` as separator) to a
-/// trie path, distinguishing storage trie entries from state trie entries in the flat
-/// key-value namespace. Returns the path unchanged if `prefix` is `None` (state trie).
-pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
-    match prefix {
-        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
-            .append_new(17)
-            .concat(&path),
-        None => path,
-    }
-}
-
-impl TrieDB for TrieWrapper {
-    fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        // NOTE: we apply the prefix here, since the underlying TrieDB should
-        // always be for the state trie.
-        let key = match &self.prefix_nibbles {
-            Some(prefix) => prefix.concat(&key),
-            None => key,
-        };
-        self.db.flatkeyvalue_computed(key)
-    }
-
-    fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let key = match &self.prefix_nibbles {
-            Some(prefix) => prefix.concat(&key),
-            None => key,
-        };
-        if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
-            return Ok(Some(value));
-        }
-        self.db.get(key)
-    }
-
-    fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // TODO: Get rid of this.
-        unimplemented!("This function should not be called");
     }
 }

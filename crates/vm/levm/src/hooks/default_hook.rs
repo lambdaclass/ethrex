@@ -29,7 +29,7 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_info = vm.db.get_account(sender_address)?.info.clone();
+        let sender_info = vm.db.get_account(sender_address)?.info;
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;

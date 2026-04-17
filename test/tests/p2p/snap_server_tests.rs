@@ -812,7 +812,7 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
     ];
 
     // Create a store and load it up with the accounts
-    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let store = Store::new_mpt("null", EngineType::InMemory).unwrap();
     let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for (address, account) in accounts {
         let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();

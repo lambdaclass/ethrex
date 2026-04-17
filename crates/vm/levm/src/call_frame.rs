@@ -309,7 +309,7 @@ impl CallFrameBackup {
         self.original_accounts_info
             .entry(address)
             .or_insert_with(|| LevmAccount {
-                info: account.info.clone(),
+                info: account.info,
                 storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,

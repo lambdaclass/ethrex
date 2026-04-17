@@ -2,7 +2,7 @@ use ethereum_types::H256;
 use ethrex_crypto::Crypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
 
-use crate::rkyv_utils::H256Wrapper;
+use ethrex_common::rkyv_utils::H256Wrapper;
 
 /// Struct representing a trie node hash
 /// If the encoded node is less than 32 bits, contains the encoded node itself

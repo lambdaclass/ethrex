@@ -1,0 +1,15 @@
+[package]
+name = "ethrex-state-backend"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-common.workspace = true
+ethereum-types.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

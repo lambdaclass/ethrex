@@ -1,10 +1,7 @@
-use crate::{EvmError, VmDatabase};
+use crate::{EvmError, GuestProgramState, GuestProgramStateError, VmDatabase};
 use ethrex_common::{
     Address, H256, U256,
-    types::{
-        AccountState, AccountUpdate, Block, BlockHeader, ChainConfig, Code, CodeMetadata,
-        block_execution_witness::{GuestProgramState, GuestProgramStateError},
-    },
+    types::{AccountStateInfo, AccountUpdate, Block, BlockHeader, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_crypto::Crypto;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -33,12 +30,11 @@ impl GuestProgramStateWrapper {
         &mut self,
         account_updates: &[AccountUpdate],
     ) -> Result<(), GuestProgramStateError> {
-        self.lock_mutex()?
-            .apply_account_updates(account_updates, self.crypto.as_ref())
+        self.lock_mutex()?.apply_account_updates(account_updates)
     }
 
     pub fn state_trie_root(&self) -> Result<H256, GuestProgramStateError> {
-        self.lock_mutex()?.state_trie_root(self.crypto.as_ref())
+        self.lock_mutex()?.state_trie_root()
     }
 
     pub fn get_first_invalid_block_hash(&self) -> Result<Option<u64>, GuestProgramStateError> {
@@ -72,11 +68,12 @@ impl VmDatabase for GuestProgramStateWrapper {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+    fn get_account_state(&self, address: Address) -> Result<Option<AccountStateInfo>, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_account_state(address, self.crypto.as_ref())
+            .get_account_state(address)
             .map_err(|e| EvmError::DB(e.to_string()))
+            .map(|opt| opt.map(AccountStateInfo::from))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
@@ -96,7 +93,7 @@ impl VmDatabase for GuestProgramStateWrapper {
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.lock_mutex()
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
-            .get_storage_slot(address, key, self.crypto.as_ref())
+            .get_storage_slot(address, key)
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 

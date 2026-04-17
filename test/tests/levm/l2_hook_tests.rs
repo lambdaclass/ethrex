@@ -4,10 +4,9 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_TRIE_HASH,
     types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        PrivilegedL2Transaction, Transaction, TxKind,
+        Account, AccountState, AccountStateInfo, ChainConfig, Code, CodeMetadata,
+        EIP1559Transaction, Fork, PrivilegedL2Transaction, Transaction, TxKind,
         fee_config::{FeeConfig, OperatorFeeConfig},
     },
 };
@@ -40,17 +39,18 @@ impl TestDatabase {
 }
 
 impl Database for TestDatabase {
-    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        Ok(self
-            .accounts
-            .get(&address)
-            .map(|acc| AccountState {
-                nonce: acc.info.nonce,
-                balance: acc.info.balance,
-                storage_root: *EMPTY_TRIE_HASH,
-                code_hash: acc.info.code_hash,
-            })
-            .unwrap_or_default())
+    fn get_account_state(&self, address: Address) -> Result<AccountStateInfo, DatabaseError> {
+        Ok(AccountStateInfo::from(
+            self.accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: Default::default(),
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default(),
+        ))
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {

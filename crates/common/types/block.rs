@@ -4,11 +4,8 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{
-        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
-        MIN_BASE_FEE_PER_BLOB_GAS,
-    },
-    types::{Receipt, Transaction},
+    constants::{BLOB_BASE_COST, DEFAULT_OMMERS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
+    types::Transaction,
 };
 use bytes::Bytes;
 use ethereum_types::Bloom;
@@ -19,7 +16,6 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use ethrex_trie::Trie;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -331,33 +327,6 @@ impl BlockBody {
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }
-}
-
-pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
-}
-
-pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
-    let iter = receipts
-        .iter()
-        .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
-}
-
-// See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
-pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
-    let iter = withdrawals
-        .iter()
-        .enumerate()
-        .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl RLPEncode for BlockBody {
@@ -695,44 +664,6 @@ pub fn validate_block_header(
     Ok(())
 }
 
-/// Validates that the body matches with the header
-pub fn validate_block_body(
-    block_header: &BlockHeader,
-    block_body: &BlockBody,
-    crypto: &dyn Crypto,
-) -> Result<(), InvalidBlockBodyError> {
-    // Validates that:
-    //  - Transactions root and withdrawals root matches with the header
-    //  - Ommers is empty -> https://eips.ethereum.org/EIPS/eip-3675
-    let computed_tx_root = compute_transactions_root(&block_body.transactions, crypto);
-
-    if block_header.transactions_root != computed_tx_root {
-        return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
-    }
-
-    if !block_body.ommers.is_empty() {
-        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
-    }
-
-    match (block_header.withdrawals_root, &block_body.withdrawals) {
-        (Some(withdrawals_root), Some(withdrawals)) => {
-            let computed_withdrawals_root = compute_withdrawals_root(withdrawals, crypto);
-            if withdrawals_root != computed_withdrawals_root {
-                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
-            }
-        }
-        (Some(withdrawals_root), None) => {
-            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
-                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
-            }
-        }
-        (None, None) => {}
-        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
-    }
-
-    Ok(())
-}
-
 /// Validates that only the required field are present for a Prague block
 /// Also validates excess_blob_gas value against parent's header
 pub fn validate_prague_header_fields(
@@ -852,34 +783,7 @@ mod test {
     use super::*;
     use crate::constants::EMPTY_KECCACK_HASH;
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
-    use ethereum_types::H160;
-    use hex_literal::hex;
     use std::str::FromStr;
-
-    #[test]
-    fn test_compute_withdrawals_root() {
-        // Source: https://github.com/ethereum/tests/blob/9760400e667eba241265016b02644ef62ab55de2/BlockchainTests/EIPTests/bc4895-withdrawals/amountIs0.json
-        // "withdrawals" : [
-        //             {
-        //                 "address" : "0xc94f5374fce5edbc8e2a8697c15331677e6ebf0b",
-        //                 "amount" : "0x00",
-        //                 "index" : "0x00",
-        //                 "validatorIndex" : "0x00"
-        //             }
-        //         ]
-        // "withdrawalsRoot" : "0x48a703da164234812273ea083e4ec3d09d028300cd325b46a6a75402e5a7ab95"
-        let withdrawals = vec![Withdrawal {
-            index: 0x00,
-            validator_index: 0x00,
-            address: H160::from_slice(&hex!("c94f5374fce5edbc8e2a8697c15331677e6ebf0b")),
-            amount: 0x00_u64,
-        }];
-        let expected_root = H256::from_slice(&hex!(
-            "48a703da164234812273ea083e4ec3d09d028300cd325b46a6a75402e5a7ab95"
-        ));
-        let root = compute_withdrawals_root(&withdrawals, &ethrex_crypto::NativeCrypto);
-        assert_eq!(root, expected_root);
-    }
 
     #[test]
     fn test_validate_block_header() {
@@ -974,30 +878,6 @@ mod test {
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
         assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
         assert_eq!(block.encode_to_vec().len(), block.length());
-    }
-
-    #[test]
-    fn test_compute_transactions_root() {
-        let encoded_transactions = [
-            "0x01f8d68330182404842daf517a830186a08080b880c1597f3c842558e64df52c3e0f0973067577c030c0c6578dbb2eef63155a21106fd4426057527f296b2ecdfabc81e34ffc82e89dec20f6b7c41fa1969d3c3bc44262c86f08b5b76077527fb7ece918787c50c878052c30a8b1d4abc07331e6d14b8ded52bbc58a6e9992b76097527f0110937c38cc13b914f201fc09dc6f7a80c001a09930cb92b4a27dce971c697a8c47fa34c98d076abc7b36e1239d6abcfc7c8403a041b35118447fe77c38c0b3a92a2dd3ecba4a9e4b35cc6534cd787f56c0cf2e21",
-            "0xf86e81fa843127403882f61894db8d964741c53e55df9c2d4e9414c6c96482874e870aa87bee538000808360306ca03aa421df67a101c45ff9cb06ce28f518a5d8d8dbb76a79361280071909650a27a05a447ff053c4ae601cfe81859b58d5603f2d0a73481c50f348089032feb0b073",
-            "0x02f8ef83301824048413f157f8842daf517a830186a094000000000000000000000000000000000000000080b8807a0a600060a0553db8600060c855c77fb29ecd7661d8aefe101a0db652a728af0fded622ff55d019b545d03a7532932a60ad52604260cd5360bf60ce53609460cf53603e60d05360f560d153bc596000609e55600060c6556000601f556000609155535660556057536055605853606e60595360e7605a5360d0605b5360eb60c080a03acb03b1fc20507bc66210f7e18ff5af65038fb22c626ae488ad9513d9b6debca05d38459e9d2a221eb345b0c2761b719b313d062ff1ea3d10cf5b8762c44385a6",
-            "0x01f8ea8330182402842daf517a830186a094000000000000000000000000000000000000000080b880bdb30d976000604e557145600060a155d67fe7e473caf6e33cba341136268fc1189ba07837ef8a266570289ff53afc43436260c7527f333dfe837f4838f6053e5e46e4151aeec28f356ec39a2db9769f36ec92e3e3f660e7527f0b261608674300d4621eff679096a6ed786591aca69f2b22a3ea6949621daade610107527f3cc080a01f3f906540fb56b0576c51b3ffa86df213fd1f407378c9441cfdd9d5f3c1df3da035691b16c053b68ec74683ae020293cbc6a47ac773dc8defb96cb680c576e5a3",
-        ];
-        let transactions: Vec<Transaction> = encoded_transactions
-            .iter()
-            .map(|hex| {
-                Transaction::decode_canonical(&hex::decode(hex.trim_start_matches("0x")).unwrap())
-                    .unwrap()
-            })
-            .collect();
-        let transactions_root =
-            compute_transactions_root(&transactions, &ethrex_crypto::NativeCrypto);
-        let expected_root = H256::from_slice(
-            &hex::decode("adf0387d2303fe80aeca23bf6828c979b44d8a8fe4a1ba1d3511bc1567ca80de")
-                .unwrap(),
-        );
-        assert_eq!(transactions_root, expected_root);
     }
 
     #[test]

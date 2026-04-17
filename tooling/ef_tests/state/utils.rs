@@ -10,31 +10,36 @@ use crate::{
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_storage::{EngineType, Store};
+use ethrex_state_backend::BackendKind;
+use ethrex_storage::{EngineType, StateBackend, Store};
 use ethrex_vm::DynVmDatabase;
 
 /// Loads initial state, used for REVM as it contains RevmState.
 pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) {
     let genesis = Genesis::from(test);
 
-    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage =
+        Store::new_mpt("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
+    let genesis_block = StateBackend::compute_genesis_block(BackendKind::Mpt, &genesis);
     let vm_db: DynVmDatabase =
-        Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
+        Box::new(StoreVmDatabase::new(storage.clone(), genesis_block.header.clone()).unwrap());
 
-    (revm_state(vm_db), genesis.get_block().hash(), storage)
+    (revm_state(vm_db), genesis_block.hash(), storage)
 }
 
 /// Loads initial state, function for LEVM as it does not require RevmState
 pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
-    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage =
+        Store::new_mpt("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
+    let genesis_block = StateBackend::compute_genesis_block(BackendKind::Mpt, &genesis);
     let store: DynVmDatabase =
-        Box::new(StoreVmDatabase::new(storage, genesis.get_block().header).unwrap());
+        Box::new(StoreVmDatabase::new(storage, genesis_block.header).unwrap());
 
     GeneralizedDatabase::new(Arc::new(store))
 }

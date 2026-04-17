@@ -1,7 +1,7 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountState, ChainConfig, Code, CodeMetadata},
+    types::{AccountStateInfo, ChainConfig, Code, CodeMetadata},
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
@@ -10,12 +10,12 @@ use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWrite
 pub mod gen_db;
 
 // Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, AccountState>;
+type AccountCache = FxHashMap<Address, AccountStateInfo>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
 
 pub trait Database: Send + Sync {
-    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
+    fn get_account_state(&self, address: Address) -> Result<AccountStateInfo, DatabaseError>;
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError>;
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError>;
@@ -111,7 +111,7 @@ fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
 }
 
 impl Database for CachingDatabase {
-    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+    fn get_account_state(&self, address: Address) -> Result<AccountStateInfo, DatabaseError> {
         // Check cache first
         if let Some(state) = self.read_accounts()?.get(&address).copied() {
             return Ok(state);
@@ -120,7 +120,7 @@ impl Database for CachingDatabase {
         // Cache miss: query underlying database
         let state = self.inner.get_account_state(address)?;
 
-        // Populate cache (AccountState is Copy, no clone needed)
+        // Populate cache (AccountStateInfo is Copy, no clone needed)
         self.write_accounts()?.insert(address, state);
 
         Ok(state)
@@ -185,7 +185,7 @@ impl Database for CachingDatabase {
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<(Address, AccountState)> = addresses
+        let fetched: Vec<(Address, AccountStateInfo)> = addresses
             .par_iter()
             .map(|&addr| self.inner.get_account_state(addr).map(|s| (addr, s)))
             .collect::<Result<_, _>>()?;

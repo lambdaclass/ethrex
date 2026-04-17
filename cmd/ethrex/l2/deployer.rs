@@ -27,6 +27,9 @@ use ethrex_rpc::{
     clients::Overrides,
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
+use ethrex_state_backend::BackendKind;
+use ethrex_storage::StateBackend;
+
 use tracing::{debug, error, info, trace, warn};
 
 use ethrex_l2_sdk::DeployError;
@@ -1204,7 +1207,12 @@ async fn initialize_contracts(
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
             Value::FixedBytes(commit_hash.0.to_vec().into()),
-            Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
+            Value::FixedBytes(
+                StateBackend::compute_genesis_root(BackendKind::Mpt, genesis)
+                    .0
+                    .to_vec()
+                    .into(),
+            ),
             Value::Address(contract_addresses.sequencer_registry_address),
             Value::Uint(genesis.config.chain_id.into()),
             Value::Address(contract_addresses.bridge_address),
@@ -1317,7 +1325,12 @@ async fn initialize_contracts(
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
             Value::FixedBytes(commit_hash.0.to_vec().into()),
-            Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
+            Value::FixedBytes(
+                StateBackend::compute_genesis_root(BackendKind::Mpt, genesis)
+                    .0
+                    .to_vec()
+                    .into(),
+            ),
             Value::Uint(genesis.config.chain_id.into()),
             Value::Address(contract_addresses.bridge_address),
         ];

@@ -193,7 +193,7 @@ impl BlockProducer {
             block_gas_used: block.header.gas_used,
         };
 
-        let account_updates_list = self
+        let merkle_output = self
             .store
             .apply_account_updates_batch(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
@@ -203,7 +203,7 @@ impl BlockProducer {
         let block_hash = block.hash();
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
-            .store_block(block, account_updates_list, execution_result)?;
+            .store_block(block, merkle_output, execution_result)?;
         info!(
             "Stored new block {:x}, transaction_count {}",
             block_hash, transactions_count

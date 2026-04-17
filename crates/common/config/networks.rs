@@ -173,12 +173,13 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
 #[cfg(test)]
 mod tests {
     use ethrex_common::H256;
+    use ethrex_trie::genesis_block;
 
     use super::*;
 
     fn assert_genesis_hash(network: PublicNetwork, expected_hash: &str) {
         let genesis = Network::PublicNetwork(network).get_genesis().unwrap();
-        let genesis_hash = genesis.get_block().hash();
+        let genesis_hash = genesis_block(&genesis).hash();
         let expected_hash = hex::decode(expected_hash).unwrap();
         assert_eq!(genesis_hash, H256::from_slice(&expected_hash));
     }
