@@ -37,9 +37,9 @@ sp1-recursion-gnark-ffi = { version = "=5.0.8", optional = true }
 openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", optional = true, features = [
     "evm-prove",
     "parallel",
-] }
-openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-continuations", optional = true }
-openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.2.1", optional = true }
+], tag = "v2.0.0-beta.1" }
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v2.0.0-beta.1", optional = true }
+openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-verify-stark-host", tag = "v2.0.0-beta.1", optional = true }
 
 [lib]
 name = "ethrex_prover"
@@ -59,7 +59,7 @@ openvm = [
     "ethrex-guest-program/openvm",
     "dep:openvm-sdk",
     "dep:openvm-stark-sdk",
-    "dep:openvm-continuations",
+    "dep:openvm-verify-stark-host",
 ]
 profiling = ["sp1-sdk?/profiling"]
 

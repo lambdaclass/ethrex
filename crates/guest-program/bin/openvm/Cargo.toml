@@ -9,11 +9,14 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 openvm = { git = "https://github.com/openvm-org/openvm.git", features = [
     "std",
-], tag = "v1.4.1" }
-openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1" }
-openvm-k256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1", package = "k256" }
-openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1" }
-openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1" }
+], tag = "v2.0.0-beta.1" }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1" }
+openvm-k256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1", package = "k256" }
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1" }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1" }
+openvm-pairing-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1", features = ["bn254", "bls12_381"] }
+openvm-pairing = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1", features = ["bn254", "bls12_381"] }
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0-beta.1" }
 rkyv = "0.8.10"
 
 ethrex-vm = { path = "../../../vm", default-features = false, features = [

@@ -2,23 +2,25 @@ use std::time::{Duration, Instant};
 
 use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::input::ProgramInput;
-use openvm_continuations::verifier::internal::types::VmStarkProof;
-use openvm_sdk::{Sdk, StdIn, types::EvmProof};
-use openvm_stark_sdk::config::baby_bear_poseidon2::BabyBearPoseidon2Config;
+use openvm_sdk::config::AggregationSystemParams;
+use openvm_sdk::{Sdk, StdIn};
+use openvm_stark_sdk::config::{app_params_with_100_bits_security, MAX_APP_LOG_STACKED_HEIGHT};
+use openvm_verify_stark_host::NonRootStarkProof;
 use rkyv::rancor::Error;
 
 use crate::backend::{BackendError, ProverBackend};
 
 static PROGRAM_ELF: &[u8] =
-    include_bytes!("../../../../guest-program/bin/openvm/out/riscv32im-openvm-elf");
+    include_bytes!("../../../guest-program/bin/openvm/out/riscv32im-openvm-elf");
 
-/// OpenVM-specific proof output.
-pub enum OpenVmProveOutput {
-    Compressed(VmStarkProof<BabyBearPoseidon2Config>),
-    Groth16(EvmProof),
-}
+/// OpenVM v2 proof output (Compressed STARK proof only).
+pub struct OpenVmProveOutput(pub NonRootStarkProof);
 
-/// OpenVM prover backend.
+/// OpenVM v2 prover backend.
+///
+/// The SDK is created per-call rather than stored in the struct because it
+/// contains `Rc` internally (in the Transpiler) and is therefore `!Send`.
+/// The Actor framework requires `Send` on backend structs.
 #[derive(Default)]
 pub struct OpenVmBackend;
 
@@ -29,7 +31,10 @@ impl OpenVmBackend {
 
     /// Execute using already-serialized input.
     fn execute_with_stdin(&self, stdin: StdIn) -> Result<(), BackendError> {
-        let sdk = Sdk::standard();
+        let sdk = Sdk::standard(
+            app_params_with_100_bits_security(MAX_APP_LOG_STACKED_HEIGHT),
+            AggregationSystemParams::default(),
+        );
         sdk.execute(PROGRAM_ELF, stdin)
             .map_err(BackendError::execution)?;
         Ok(())
@@ -41,22 +46,21 @@ impl OpenVmBackend {
         stdin: StdIn,
         format: ProofFormat,
     ) -> Result<OpenVmProveOutput, BackendError> {
-        let sdk = Sdk::standard();
-        let proof = match format {
+        match format {
             ProofFormat::Compressed => {
-                let (proof, _) = sdk
-                    .prove(PROGRAM_ELF, stdin)
+                let sdk = Sdk::standard(
+                    app_params_with_100_bits_security(MAX_APP_LOG_STACKED_HEIGHT),
+                    AggregationSystemParams::default(),
+                );
+                let (proof, _verification_baseline) = sdk
+                    .prove(PROGRAM_ELF, stdin, &[])
                     .map_err(BackendError::proving)?;
-                OpenVmProveOutput::Compressed(proof)
+                Ok(OpenVmProveOutput(proof))
             }
-            ProofFormat::Groth16 => {
-                let proof = sdk
-                    .prove_evm(PROGRAM_ELF, stdin)
-                    .map_err(BackendError::proving)?;
-                OpenVmProveOutput::Groth16(proof)
-            }
-        };
-        Ok(proof)
+            ProofFormat::Groth16 => Err(BackendError::not_implemented(
+                "Groth16 is not supported for OpenVM backend",
+            )),
+        }
     }
 }
 
