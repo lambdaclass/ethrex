@@ -274,6 +274,17 @@ async fn add_blocks_in_batch(
     // number→hash entries and break later BLOCKHASH lookups.
     let canonical_lock = blockchain.polygon_canonical_lock();
     let _canonical_guard = canonical_lock.lock().await;
+    // After acquiring the lock, check if another path (e.g. NewBlock handler)
+    // already advanced canonical past this batch. If so, skip to avoid
+    // forkchoice_update regressing canonical and creating a hole.
+    let current_latest = store.get_latest_block_number().await.unwrap_or(0);
+    if last_block_number <= current_latest {
+        info!(
+            batch_last = last_block_number,
+            current_latest, "Skipping stale sync batch (already canonical)"
+        );
+        return Ok(());
+    }
     // Run the batch
     if let Err((err, batch_failure)) =
         add_blocks(blockchain.clone(), blocks, final_batch, cancel_token).await
