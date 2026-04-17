@@ -283,6 +283,14 @@ where
             let _ = actor_ref.send(prover_protocol::Poll);
             actor_ref.join().await;
         }
+        #[cfg(feature = "airbender")]
+        BackendType::Airbender => {
+            use crate::backend::AirbenderBackend;
+            let prover: Prover<AirbenderBackend, I> = Prover::new(AirbenderBackend::new(), config);
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
+        }
     }
 }
 

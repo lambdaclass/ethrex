@@ -55,6 +55,7 @@ risc0 = [
 ]
 sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
 zisk = ["ethrex-guest-program/zisk"]
+airbender = ["ethrex-guest-program/airbender"]
 openvm = [
     "ethrex-guest-program/openvm",
     "dep:openvm-sdk",

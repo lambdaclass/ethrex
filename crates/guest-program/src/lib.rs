@@ -55,6 +55,11 @@ pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
 #[cfg(any(clippy, not(feature = "zisk-build-elf")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
+#[cfg(all(not(clippy), feature = "airbender-build-elf"))]
+pub static ZKVM_AIRBENDER_PROGRAM_ELF: &[u8] = include_bytes!("../bin/airbender/dist/app/app.bin");
+#[cfg(any(clippy, not(feature = "airbender-build-elf")))]
+pub const ZKVM_AIRBENDER_PROGRAM_ELF: &[u8] = &[];
+
 /// Report cycles used in a code block when running inside SP1 zkVM.
 ///
 /// When the feature "sp1-cycles" is enabled, it will print start and end cycle
