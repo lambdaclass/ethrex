@@ -1056,11 +1056,11 @@ pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
 // that's what the codebase actually targets, but adding more chains will become ugly.
 pub fn calculate_staleness_timestamp(timestamp: u64, chain_id: u64) -> u64 {
     match chain_id {
-        // BSC peers (geth in snap mode) retain only ~100-150 blocks of state.
-        // At 3s blocks that's ~5 minutes, so the pivot must rotate well before
-        // then. 40 blocks = 120s gives us 3-4 rotations before the initial
-        // pivot is pruned, keeping the active pivot always in-window.
-        56 | 97 => timestamp + 40 * 3,
+        // BSC peers retain exactly 128 blocks of state in their snapshot tree
+        // (bsc-geth: snapshot.New cap=TriesInMemory=128). At Fermi's 0.45s
+        // blocks that's ~57s. Refresh right before this so the next pivot is
+        // still servable when we install it.
+        56 | 97 => timestamp + 50,
         _ => timestamp + (SNAP_LIMIT as u64 * 12),
     }
 }

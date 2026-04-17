@@ -120,7 +120,7 @@ pub const SECONDS_PER_BLOCK: u64 = 12;
 ///
 /// This is used to adjust timestamp-based pivot updates and to find "safe"
 /// blocks in the chain that are unlikely to be re-orged.
-pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.98;
 
 // =============================================================================
 // PROGRESS REPORTING
