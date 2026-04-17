@@ -49,8 +49,10 @@ def rlp_encode_list(items):
     lb = len(p).to_bytes((len(p).bit_length() + 7) // 8, "big")
     return bytes([0xF7 + len(lb)]) + lb + p
 
-def encode_frame(mode, target, gas_limit, data):
-    return rlp_encode_list([rlp_encode_uint(mode), rlp_encode_address(target),
+def encode_frame(mode, flags, target, gas_limit, data):
+    # Post-spec-update: 5-field RLP [mode, flags, target, gas_limit, data]
+    return rlp_encode_list([rlp_encode_uint(mode), rlp_encode_uint(flags),
+                            rlp_encode_address(target),
                             rlp_encode_uint(gas_limit), rlp_encode_bytes(data)])
 
 def build_payload(chain_id, nonce, sender, frames_rlp, mpf, mf):
@@ -59,7 +61,7 @@ def build_payload(chain_id, nonce, sender, frames_rlp, mpf, mf):
         rlp_encode_uint(mpf), rlp_encode_uint(mf), rlp_encode_uint(0), rlp_encode_list([])])
 
 def compute_sig_hash(chain_id, nonce, sender, frames, mpf, mf):
-    elided = [encode_frame(f["mode"], f["target"], f["gas_limit"],
+    elided = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"],
               b"" if f["exec_mode"] == 1 else f["data"]) for f in frames]
     return keccak(b"\x06" + build_payload(chain_id, nonce, sender, elided, mpf, mf))
 
@@ -113,10 +115,15 @@ def main():
                                    rlp_encode_uint(transfer_value), rlp_encode_bytes(b"")])
     sender_data = rlp_encode_list([sender_call])
 
+    # Post-spec-update: mode/flags split.
+    # Scope bitmask: 0x01=PAYMENT, 0x02=EXECUTION.
+    # Frame 0: sender authorizes EXECUTION (scope=0x02) via self-ECDSA
+    # Frame 1: paymaster authorizes PAYMENT  (scope=0x01)
+    # Frame 2: SENDER-mode, no flags
     frames = [
-        {"mode": 1 | (1 << 8), "exec_mode": 1, "target": sender_addr,    "gas_limit": 100_000, "data": b""},
-        {"mode": 1 | (2 << 8), "exec_mode": 1, "target": paymaster_addr, "gas_limit": 200_000, "data": b""},
-        {"mode": 2,            "exec_mode": 2, "target": sender_addr,    "gas_limit": 100_000, "data": sender_data},
+        {"mode": 1, "flags": 0x02, "exec_mode": 1, "target": sender_addr,    "gas_limit": 100_000, "data": b""},
+        {"mode": 1, "flags": 0x01, "exec_mode": 1, "target": paymaster_addr, "gas_limit": 200_000, "data": b""},
+        {"mode": 2, "flags": 0x00, "exec_mode": 2, "target": sender_addr,    "gas_limit": 100_000, "data": sender_data},
     ]
 
     print("Frames:")
@@ -142,7 +149,7 @@ def main():
     print()
 
     # Build raw tx
-    frames_rlp = [encode_frame(f["mode"], f["target"], f["gas_limit"], f["data"]) for f in frames]
+    frames_rlp = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f["data"]) for f in frames]
     payload = build_payload(chain_id, nonce, sender_addr, frames_rlp, mpf, mf)
     raw_tx = "0x" + (b"\x06" + payload).hex()
     print(f"Tx size: {len(raw_tx)//2} bytes")

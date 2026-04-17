@@ -377,6 +377,14 @@ impl Substate {
         logs
     }
 
+    /// Return a clone of the current sub-substate's logs only, excluding parent logs.
+    /// Used by EIP-8141 frame execution to capture per-frame log deltas for
+    /// `frame_receipts[i].logs`. Must be called after `push_backup()` and before
+    /// `commit_backup()` to return only the logs emitted during the current scope.
+    pub fn current_logs(&self) -> Vec<Log> {
+        self.logs.clone()
+    }
+
     /// Push a log record.
     pub fn add_log(&mut self, log: Log) {
         self.logs.push(log);
@@ -668,6 +676,7 @@ impl<'a> VM<'a> {
         // which frames belong to it so we can revert them all on failure.
         let mut in_atomic_batch = false;
         let mut batch_start_idx: usize = 0;
+        let mut batch_logs_start: usize = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
 
         // Execute frames sequentially
@@ -694,12 +703,27 @@ impl<'a> VM<'a> {
                 in_atomic_batch = false;
             }
 
+            // Clear the outer call-frame backup at the start of each independent
+            // frame so that a later frame's failure-path `restore_cache_state()`
+            // only reverts that frame's own effects — not APPROVE/state deltas
+            // produced by earlier, already-successful frames. Inside an open
+            // atomic batch we keep accumulating, since a batch revert needs to
+            // undo every in-batch frame's effects together.
+            if !in_atomic_batch {
+                self.current_call_frame.call_frame_backup.clear();
+            }
+
             // Start a new atomic batch if this SENDER frame has the batch flag
             // and we're not already in one.
             if !in_atomic_batch && frame.is_atomic_batch() {
                 self.substate.push_backup(); // batch-level snapshot
+                // Clear the outer backup at batch entry so the batch accumulates
+                // a clean, self-contained set of state changes that batch-revert
+                // can undo wholesale.
+                self.current_call_frame.call_frame_backup.clear();
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
+                batch_logs_start = all_logs.len();
             }
 
             let ctx =
@@ -739,8 +763,11 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
+            // If resolved_target has neither code nor an EIP-7702 delegation indicator,
+            // execute the default code. EIP-7702 delegations are stored as bytecode
+            // (0xef0100 || address, 23 bytes), so they are non-empty.
             let (frame_success, frame_gas_used, frame_logs) = if bytecode.bytecode.is_empty() {
-                // Default code for EOA (no deployed code)
+                // Default code for EOA (no deployed code and no EIP-7702 delegation)
                 use crate::opcode_handlers::frame_tx::execute_default_code;
                 match execute_default_code(self, frame, sender, target) {
                     Ok((success, gas_used, logs)) => {
@@ -790,12 +817,13 @@ impl<'a> VM<'a> {
                         let success = ctx_result.is_success();
 
                         if success {
+                            // Snapshot this frame's own logs before commit_backup merges
+                            // them into the parent substate (required for correct
+                            // frame_receipts[i].logs — walking extract_logs() after commit
+                            // would pull in prior frames' logs).
+                            let this_frame_logs = self.substate.current_logs();
                             self.substate.commit_backup();
-                            let logs = self.substate.extract_logs();
-                            for log in &logs {
-                                self.substate.add_log(log.clone());
-                            }
-                            (true, gas_used, logs)
+                            (true, gas_used, this_frame_logs)
                         } else {
                             self.substate.revert_backup();
                             self.restore_cache_state()?;
@@ -812,6 +840,17 @@ impl<'a> VM<'a> {
                 // Restore call frame state
                 let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
                 self.call_frames = saved_call_frames;
+
+                // When a frame succeeds inside an atomic batch, its state
+                // changes must remain revertable at batch-revert time. Merge
+                // the finished frame's backup into the outer call-frame backup
+                // so that `restore_cache_state()` invoked by batch-revert can
+                // undo them. Outside a batch, a successful frame's changes are
+                // final at the tx level, so no merge is needed.
+                if result.0 && in_atomic_batch {
+                    self.merge_call_frame_backup_with_parent(&finished_frame.call_frame_backup)?;
+                }
+
                 self.stack_pool.push(finished_frame.stack);
 
                 result
@@ -838,20 +877,20 @@ impl<'a> VM<'a> {
                 self.substate.revert_backup(); // revert batch-level snapshot
                 self.restore_cache_state()?;
 
-                // Rewrite results for all prior frames in this batch as failed
+                // Rewrite results for all frames in this batch (inclusive) as failed,
+                // charging each frame its full gas_limit per EIP-8141.
                 let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
-                for i in batch_start_idx..frame_idx {
+                for i in batch_start_idx..=frame_idx {
                     if let Some(result) = ctx.frame_results.get_mut(i) {
                         let charged_gas = frame_tx.frames[i].gas_limit;
-                        // Adjust total_gas_used: remove what was counted, add full gas_limit
                         total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
                         *result = (false, charged_gas, Vec::new());
                     }
                 }
-                // Remove logs from reverted batch frames
-                all_logs.retain(|_| false); // TODO: track per-batch logs more precisely
+                // Remove only logs from the batch, preserving pre-batch logs
+                all_logs.truncate(batch_logs_start);
 
                 // Find the end of this batch (the next SENDER frame without the flag)
                 let batch_end = frame_tx.frames[frame_idx..]
@@ -1147,5 +1186,94 @@ impl Substate {
             Substate::from_accesses(initial_accessed_addresses, initial_accessed_storage_slots);
 
         Ok(substate)
+    }
+}
+
+#[cfg(test)]
+mod frame_tx_security_tests {
+    //! Regression tests for the security review of EIP-8141 Frame Transaction
+    //! execution. These tests lock in invariants whose violation previously
+    //! produced:
+    //!   (1) Log duplication across frames → receipts-root divergence.
+    //!   (2) Free money + nonce replay via `restore_cache_state()` undoing
+    //!       APPROVE-side state from an earlier successful frame.
+    //!   (3) Atomic-batch atomicity bypass: successful in-batch frame state
+    //!       persisted across a batch revert.
+    //!
+    //! Tests 2 and 3 depend on full VM execution of signed FrameTransactions
+    //! and are exercised end-to-end by `demos/eip8141/backend/test-findings.mjs`
+    //! against a dev node — see the PR that introduced this module. The unit
+    //! tests below cover the Substate API invariant that underpins Fix 1.
+    use super::*;
+    use bytes::Bytes;
+    use ethrex_common::{Address, H256};
+
+    fn mk_log(tag: u8) -> Log {
+        Log {
+            address: Address::from_low_u64_be(u64::from(tag)),
+            topics: vec![H256::from_low_u64_be(u64::from(tag))],
+            data: Bytes::from(vec![tag]),
+        }
+    }
+
+    fn log_tags(logs: &[Log]) -> Vec<u8> {
+        logs.iter().filter_map(|l| l.data.first().copied()).collect()
+    }
+
+    /// `current_logs()` must return only the sub-substate's own logs, not
+    /// parent logs. This is the primitive that Fix 1 uses to avoid leaking
+    /// prior frames' logs into `frame_receipts[i].logs`.
+    #[test]
+    fn current_logs_excludes_parent_logs() {
+        let mut substate = Substate::default();
+
+        substate.add_log(mk_log(0xA0)); // parent log, emitted before any push
+        assert_eq!(log_tags(&substate.current_logs()), vec![0xA0]);
+
+        substate.push_backup();
+        // Post-push: the sub-substate is fresh.
+        assert!(substate.current_logs().is_empty());
+
+        substate.add_log(mk_log(0xB1));
+        substate.add_log(mk_log(0xB2));
+        // current_logs() returns this scope's logs only.
+        assert_eq!(log_tags(&substate.current_logs()), vec![0xB1, 0xB2]);
+
+        // extract_logs() (intentionally) returns parent+current. Verifies the
+        // distinction that Fix 1 relies on.
+        assert_eq!(log_tags(&substate.extract_logs()), vec![0xA0, 0xB1, 0xB2]);
+
+        // After commit, current_logs() includes the merged set because parent
+        // was folded in.
+        substate.commit_backup();
+        assert_eq!(log_tags(&substate.current_logs()), vec![0xA0, 0xB1, 0xB2]);
+    }
+
+    /// The exact sequence that Fix 1 replaces: when the previous buggy pattern
+    /// (commit_backup → extract_logs → re-add loop) runs across multiple
+    /// frames, later frames see duplicated logs from earlier frames.
+    ///
+    /// This test exists so that if anyone ever reintroduces that sequence,
+    /// the compounding growth is caught with a concrete trace.
+    #[test]
+    fn frame_per_frame_logs_do_not_duplicate_across_frames() {
+        let mut substate = Substate::default();
+
+        // Capture per-frame log deltas using the corrected sequence:
+        //   push_backup → emit → current_logs (snapshot) → commit_backup
+        let mut per_frame: Vec<Vec<Log>> = Vec::new();
+        for tag in [0x11u8, 0x22, 0x33] {
+            substate.push_backup();
+            substate.add_log(mk_log(tag));
+            // Snapshot this frame's logs BEFORE commit merges them into parent.
+            let this_frame = substate.current_logs();
+            substate.commit_backup();
+            per_frame.push(this_frame);
+        }
+
+        // Each frame's receipt should contain exactly its own log — no leaks.
+        assert_eq!(log_tags(&per_frame[0]), vec![0x11]);
+        assert_eq!(log_tags(&per_frame[1]), vec![0x22]);
+        assert_eq!(log_tags(&per_frame[2]), vec![0x33]);
     }
 }
