@@ -5,9 +5,10 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
+use crate::U256;
 use crate::utils::keccak;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H256};
 use ethrex_crypto::{Crypto, CryptoError};
 use lru::LruCache;
 pub use mempool::MempoolTransaction;
@@ -3678,7 +3679,7 @@ mod tests {
         let s = U256::from_big_endian(&sig_bytes[32..64]);
 
         // Ensure the generated signature was indeed low-s (standard requirement)
-        let half_n = n / 2;
+        let half_n = n / 2u64;
         assert!(
             s <= half_n,
             "Generated signature was not low-s, cannot test high-s rejection"

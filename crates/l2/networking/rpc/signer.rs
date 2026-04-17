@@ -250,7 +250,7 @@ impl Signable for LegacyTransaction {
         let signature = signer.sign(self.encode_payload_to_vec().into()).await?;
 
         let recovery_id = U256::from(signature[64]);
-        self.v = recovery_id + 27;
+        self.v = recovery_id + 27u64;
         (self.r, self.s, _) = parse_signature(signature);
 
         Ok(())

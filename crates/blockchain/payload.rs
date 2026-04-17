@@ -890,7 +890,7 @@ pub fn apply_plain_transaction(
     }
 
     // Block value uses gas_spent (what the user actually pays) for tip calculation
-    context.block_value += U256::from(report.gas_spent) * head.tip;
+    context.block_value += U256::from(report.gas_spent) * U256::from(head.tip);
     Ok(receipt)
 }
 

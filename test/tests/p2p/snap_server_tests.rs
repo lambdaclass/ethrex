@@ -5,7 +5,7 @@
 
 use std::str::FromStr;
 
-use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
+use ethrex_common::{H256, U256, types::AccountStateSlimCodec};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::snap::GetAccountRange;
 use ethrex_p2p::snap::{SnapError, process_account_range_request};
@@ -27,10 +27,10 @@ lazy_static! {
     static ref HASH_SECOND: H256 =
         H256::from_str("0x00748bacab20da9ae19dd26a33bd10bbf825e28b3de84fc8fe1d15a21645067f")
             .unwrap();
-    static ref HASH_FIRST_MINUS_500: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() - 500));
-    static ref HASH_FIRST_MINUS_450: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() - 450));
-    static ref HASH_FIRST_MINUS_ONE: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() - 1));
-    static ref HASH_FIRST_PLUS_ONE: H256 = H256::from_uint(&((*HASH_FIRST).into_uint() + 1));
+    static ref HASH_FIRST_MINUS_500: H256 = (U256::from_h256(*HASH_FIRST) - 500u64).to_h256();
+    static ref HASH_FIRST_MINUS_450: H256 = (U256::from_h256(*HASH_FIRST) - 450u64).to_h256();
+    static ref HASH_FIRST_MINUS_ONE: H256 = (U256::from_h256(*HASH_FIRST) - 1u64).to_h256();
+    static ref HASH_FIRST_PLUS_ONE: H256 = (U256::from_h256(*HASH_FIRST) + 1u64).to_h256();
 }
 
 #[tokio::test]

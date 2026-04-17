@@ -1,5 +1,5 @@
 use ethrex_common::types::{AccountInfo, AccountUpdate, ChainConfig, Code};
-use ethrex_common::{Address as CoreAddress, BigEndianHash, H256, U256};
+use ethrex_common::{Address as CoreAddress, H256, U256};
 use ethrex_vm::{DynVmDatabase, EvmError, VmDatabase};
 use revm::context::DBErrorMarker;
 use revm::database::states::{AccountStatus, bundle_state::BundleRetention};
@@ -196,7 +196,7 @@ impl RevmState {
                             .iter()
                             .map(|(key, slot)| {
                                 (
-                                    H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                                    U256::from_little_endian(key.as_le_slice()).to_h256(),
                                     U256::from_little_endian(slot.present_value().as_le_slice()),
                                 )
                             })
@@ -236,10 +236,10 @@ impl RevmState {
                 if slot.is_changed() {
                     // TODO check if we need to remove the value from our db when value is zero
                     // if slot.present_value().is_zero() {
-                    //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
+                    //     account_update.removed_keys.push(U256::from_little_endian(key.as_le_slice()).to_h256())
                     // }
                     account_update.added_storage.insert(
-                        H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                        U256::from_little_endian(key.as_le_slice()).to_h256(),
                         U256::from_little_endian(slot.present_value().as_le_slice()),
                     );
                 }
