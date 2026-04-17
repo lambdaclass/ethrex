@@ -429,7 +429,7 @@ mod tests {
         json_req: serde_json::Value,
         filters_pointer: ActiveFilters,
     ) -> u64 {
-        let storage = Store::new("in-mem", EngineType::InMemory)
+        let storage = Store::new_mpt("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
         let mut context = default_context_with_storage(storage).await;
         context.active_filters = filters_pointer.clone();
@@ -485,7 +485,7 @@ mod tests {
         );
         let active_filters = Arc::new(Mutex::new(HashMap::from([filter])));
 
-        let storage = Store::new("in-mem", EngineType::InMemory)
+        let storage = Store::new_mpt("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
 
         let mut context = default_context_with_storage(storage).await;
@@ -505,7 +505,7 @@ mod tests {
     async fn removing_non_existing_filter_returns_false() {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
-        let storage = Store::new("in-mem", EngineType::InMemory)
+        let storage = Store::new_mpt("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
         let mut context = default_context_with_storage(storage).await;
         context.active_filters = active_filters.clone();

@@ -5,7 +5,6 @@ pub mod types;
 pub mod validation;
 pub use bytes::Bytes;
 pub mod base64;
-pub use ethrex_trie::{TrieLogger, TrieWitness};
 pub mod errors;
 pub mod evm;
 pub mod fd_limit;
@@ -19,5 +18,5 @@ pub use ethrex_crypto::{CryptoError, NativeCrypto};
 pub use validation::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_access_list_size,
     validate_block_pre_execution, validate_gas_used, validate_header_bal_indices,
-    validate_receipts_root, validate_requests_hash,
+    validate_requests_hash,
 };

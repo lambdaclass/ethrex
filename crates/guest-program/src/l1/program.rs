@@ -114,11 +114,9 @@ fn new_payload_request_to_block(
     use bytes::Bytes;
     use ethrex_common::constants::DEFAULT_OMMERS_HASH;
     use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-    use ethrex_common::types::{
-        Block, BlockBody, BlockHeader, Transaction, Withdrawal, compute_transactions_root,
-        compute_withdrawals_root,
-    };
+    use ethrex_common::types::{Block, BlockBody, BlockHeader, Transaction, Withdrawal};
     use ethrex_common::{Address, Bloom, H256};
+    use ethrex_trie::{compute_transactions_root, compute_withdrawals_root};
 
     let payload = &req.execution_payload;
 

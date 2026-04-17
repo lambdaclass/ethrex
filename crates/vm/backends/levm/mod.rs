@@ -653,20 +653,20 @@ impl LEVM {
                 .balance_changes
                 .last()
                 .map(|c| c.post_balance)
-                .unwrap_or(prestate.balance);
+                .unwrap_or(prestate.info.balance);
 
             // Final nonce: last entry or prestate
             let nonce = acct_changes
                 .nonce_changes
                 .last()
                 .map(|c| c.post_nonce)
-                .unwrap_or(prestate.nonce);
+                .unwrap_or(prestate.info.nonce);
 
             // Final code: last entry or prestate
             let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
                 Self::code_from_bal(&c.new_code)
             } else {
-                (prestate.code_hash, None)
+                (prestate.info.code_hash, None)
             };
 
             // Storage: per slot, last entry (highest index)
@@ -683,19 +683,19 @@ impl LEVM {
 
             // Detect account removal (EIP-161): post-state empty but pre-state existed
             let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCACK_HASH;
-            let pre_empty = prestate.balance.is_zero()
-                && prestate.nonce == 0
-                && prestate.code_hash == *EMPTY_KECCACK_HASH;
+            let pre_empty = prestate.info.balance.is_zero()
+                && prestate.info.nonce == 0
+                && prestate.info.code_hash == *EMPTY_KECCACK_HASH;
             let removed = post_empty && !pre_empty;
 
             let balance_changed = acct_changes
                 .balance_changes
                 .last()
-                .is_some_and(|c| c.post_balance != prestate.balance);
+                .is_some_and(|c| c.post_balance != prestate.info.balance);
             let nonce_changed = acct_changes
                 .nonce_changes
                 .last()
-                .is_some_and(|c| c.post_nonce != prestate.nonce);
+                .is_some_and(|c| c.post_nonce != prestate.info.nonce);
             let code_changed = acct_changes.code_changes.last().is_some();
             let acc_info_updated = balance_changed || nonce_changed || code_changed;
 
@@ -1120,7 +1120,7 @@ impl LEVM {
         } else {
             store
                 .get_account_state(acct.address)
-                .map(|a| a.balance)
+                .map(|a| a.info.balance)
                 .map_err(|e| {
                     BalValidationError::Database(format!(
                         "DB error reading balance for {:?}: {e}",
@@ -1148,7 +1148,7 @@ impl LEVM {
         } else {
             store
                 .get_account_state(acct.address)
-                .map(|a| a.nonce)
+                .map(|a| a.info.nonce)
                 .map_err(|e| {
                     BalValidationError::Database(format!(
                         "DB error reading nonce for {:?}: {e}",
@@ -1298,7 +1298,7 @@ impl LEVM {
                             } else {
                                 store
                                     .get_account_state(addr)
-                                    .map(|a| a.code_hash)
+                                    .map(|a| a.info.code_hash)
                                     .map_err(|e| {
                                         BalValidationError::Database(format!(
                                             "DB error reading account state for {addr:?}: {e}"
@@ -1378,7 +1378,7 @@ impl LEVM {
                         store
                             .get_account_state(*addr)
                             .ok()
-                            .map(|a| (a.balance, a.nonce, a.code_hash))
+                            .map(|a| (a.info.balance, a.info.nonce, a.info.code_hash))
                     })
                     .unwrap_or_default();
                 let post = (
@@ -1411,7 +1411,7 @@ impl LEVM {
                         .unwrap_or_else(|| {
                             store
                                 .get_account_state(*addr)
-                                .map(|a| a.balance)
+                                .map(|a| a.info.balance)
                                 .unwrap_or_default()
                         })
                 };
@@ -1438,7 +1438,7 @@ impl LEVM {
                         .unwrap_or_else(|| {
                             store
                                 .get_account_state(*addr)
-                                .map(|a| a.nonce)
+                                .map(|a| a.info.nonce)
                                 .unwrap_or_default()
                         })
                 };
@@ -1749,8 +1749,8 @@ impl LEVM {
                 store
                     .get_account_state(ac.address)
                     .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
-                    .map(|s| s.code_hash)
+                    .filter(|s| s.info.code_hash != *EMPTY_KECCACK_HASH)
+                    .map(|s| s.info.code_hash)
             })
             .collect();
         code_hashes.par_iter().for_each(|&h| {
@@ -2420,10 +2420,10 @@ pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
 mod bal_tests {
     use super::*;
     use ethrex_common::H256;
-    use ethrex_common::types::AccountState;
     use ethrex_common::types::block_access_list::{
         AccountChanges, BalanceChange, NonceChange, SlotChange, StorageChange,
     };
+    use ethrex_common::types::{AccountState, AccountStateInfo};
     use ethrex_levm::errors::DatabaseError;
 
     fn addr(byte: u8) -> Address {
@@ -2451,8 +2451,10 @@ mod bal_tests {
     }
 
     impl Database for MockStore {
-        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-            Ok(self.accounts.get(&address).copied().unwrap_or_default())
+        fn get_account_state(&self, address: Address) -> Result<AccountStateInfo, DatabaseError> {
+            Ok(AccountStateInfo::from(
+                self.accounts.get(&address).copied().unwrap_or_default(),
+            ))
         }
         fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
             Ok(U256::zero())

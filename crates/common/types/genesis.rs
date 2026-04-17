@@ -1,8 +1,5 @@
 use bytes::Bytes;
-use ethereum_types::{Address, Bloom, H256, U256};
-use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_trie::Trie;
+use ethereum_types::{Address, H256, U256};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,14 +9,8 @@ use std::{
 };
 use tracing::warn;
 
-use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-};
-use crate::{
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
-    rkyv_utils,
-};
+use super::{BlockHeader, BlockNumber};
+use crate::rkyv_utils;
 
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -676,105 +667,12 @@ pub struct GenesisAccount {
     pub nonce: u64,
 }
 
-impl Genesis {
-    pub fn get_block(&self) -> Block {
-        Block::new(self.get_block_header(), self.get_block_body())
-    }
-
-    fn get_block_header(&self) -> BlockHeader {
-        let mut blob_gas_used: Option<u64> = None;
-        let mut excess_blob_gas: Option<u64> = None;
-
-        if let Some(cancun_time) = self.config.cancun_time
-            && cancun_time <= self.timestamp
-        {
-            blob_gas_used = Some(self.blob_gas_used.unwrap_or(0));
-            excess_blob_gas = Some(self.excess_blob_gas.unwrap_or(0));
-        }
-        let base_fee_per_gas = self.base_fee_per_gas.or_else(|| {
-            self.config
-                .is_london_activated(0)
-                .then_some(INITIAL_BASE_FEE)
-        });
-
-        let withdrawals_root = self
-            .config
-            .is_shanghai_activated(self.timestamp)
-            .then_some(compute_withdrawals_root(&[], &NativeCrypto));
-
-        let parent_beacon_block_root = self
-            .config
-            .is_cancun_activated(self.timestamp)
-            .then_some(H256::zero());
-
-        let requests_hash = self
-            .config
-            .is_prague_activated(self.timestamp)
-            .then_some(self.requests_hash.unwrap_or(*DEFAULT_REQUESTS_HASH));
-
-        let block_access_list_hash = self
-            .config
-            .is_amsterdam_activated(self.timestamp)
-            .then_some(
-                self.block_access_list_hash
-                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
-            );
-        let slot_number = self.slot_number;
-
-        BlockHeader {
-            parent_hash: H256::zero(),
-            ommers_hash: *DEFAULT_OMMERS_HASH,
-            coinbase: self.coinbase,
-            state_root: self.compute_state_root(),
-            transactions_root: compute_transactions_root(&[], &NativeCrypto),
-            receipts_root: compute_receipts_root(&[], &NativeCrypto),
-            logs_bloom: Bloom::zero(),
-            difficulty: self.difficulty,
-            number: 0,
-            gas_limit: self.gas_limit,
-            gas_used: 0,
-            timestamp: self.timestamp,
-            extra_data: self.extra_data.clone(),
-            prev_randao: self.mix_hash,
-            nonce: self.nonce,
-            base_fee_per_gas,
-            withdrawals_root,
-            blob_gas_used,
-            excess_blob_gas,
-            parent_beacon_block_root,
-            requests_hash,
-            block_access_list_hash,
-            slot_number,
-            ..Default::default()
-        }
-    }
-
-    fn get_block_body(&self) -> BlockBody {
-        BlockBody {
-            transactions: vec![],
-            ommers: vec![],
-            withdrawals: Some(vec![]),
-        }
-    }
-
-    pub fn compute_state_root(&self) -> H256 {
-        let iter = self.alloc.iter().map(|(addr, account)| {
-            (
-                keccak_hash(addr).to_vec(),
-                AccountState::from(account).encode_to_vec(),
-            )
-        });
-        Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
-    }
-}
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
     use std::{fs::File, io::BufReader};
 
     use ethereum_types::H160;
-
-    use crate::types::INITIAL_BASE_FEE;
 
     use super::*;
 
@@ -879,93 +777,12 @@ mod tests {
     }
 
     #[test]
-    fn genesis_block() {
-        // Deserialize genesis file
-        let file = File::open("../../fixtures/genesis/kurtosis.json")
-            .expect("Failed to open genesis file");
-        let reader = BufReader::new(file);
-        let genesis: Genesis =
-            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let genesis_block = genesis.get_block();
-        let header = genesis_block.header;
-        let body = genesis_block.body;
-        assert_eq!(header.parent_hash, H256::from([0; 32]));
-        assert_eq!(header.ommers_hash, *DEFAULT_OMMERS_HASH);
-        assert_eq!(header.coinbase, Address::default());
-        assert_eq!(
-            header.state_root,
-            H256::from_str("0x2dab6a1d6d638955507777aecea699e6728825524facbd446bd4e86d44fa5ecd")
-                .unwrap()
-        );
-        assert_eq!(
-            header.transactions_root,
-            compute_transactions_root(&[], &NativeCrypto)
-        );
-        assert_eq!(
-            header.receipts_root,
-            compute_receipts_root(&[], &NativeCrypto)
-        );
-        assert_eq!(header.logs_bloom, Bloom::default());
-        assert_eq!(header.difficulty, U256::from(1));
-        assert_eq!(header.gas_limit, 25_000_000);
-        assert_eq!(header.gas_used, 0);
-        assert_eq!(header.timestamp, 1_718_040_081);
-        assert_eq!(header.extra_data, Bytes::default());
-        assert_eq!(header.prev_randao, H256::from([0; 32]));
-        assert_eq!(header.nonce, 4660);
-        assert_eq!(
-            header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
-            INITIAL_BASE_FEE
-        );
-        assert_eq!(
-            header.withdrawals_root,
-            Some(compute_withdrawals_root(&[], &NativeCrypto))
-        );
-        assert_eq!(header.blob_gas_used, Some(0));
-        assert_eq!(header.excess_blob_gas, Some(0));
-        assert_eq!(header.parent_beacon_block_root, Some(H256::zero()));
-        assert!(body.transactions.is_empty());
-        assert!(body.ommers.is_empty());
-        assert!(body.withdrawals.is_some_and(|w| w.is_empty()));
-    }
-
-    #[test]
-    // Parses genesis received by kurtosis and checks that the hash matches the next block's parent hash
-    fn read_and_compute_kurtosis_hash() {
-        let file = File::open("../../fixtures/genesis/kurtosis.json")
-            .expect("Failed to open genesis file");
-        let reader = BufReader::new(file);
-        let genesis: Genesis =
-            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let genesis_block_hash = genesis.get_block().hash();
-        assert_eq!(
-            genesis_block_hash,
-            H256::from_str("0xcb5306dd861d0f2c1f9952fbfbc75a46d0b6ce4f37bea370c3471fe8410bf40b")
-                .unwrap()
-        )
-    }
-
-    #[test]
     fn parse_hive_genesis_file() {
         let file =
             File::open("../../fixtures/genesis/hive.json").expect("Failed to open genesis file");
         let reader = BufReader::new(file);
         let _genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-    }
-
-    #[test]
-    fn read_and_compute_hive_hash() {
-        let file =
-            File::open("../../fixtures/genesis/hive.json").expect("Failed to open genesis file");
-        let reader = BufReader::new(file);
-        let genesis: Genesis =
-            serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-        let computed_block_hash = genesis.get_block().hash();
-        let genesis_block_hash =
-            H256::from_str("0x30f516e34fc173bb5fc4daddcc7532c4aca10b702c7228f3c806b4df2646fb7e")
-                .unwrap();
-        assert_eq!(genesis_block_hash, computed_block_hash)
     }
 
     #[test]

@@ -1342,7 +1342,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1385,7 +1385,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1464,7 +1464,7 @@ mod tests {
         let peer_table = PeerTableServer::spawn(
             local_node.node_id(),
             10,
-            Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
         );
 
         // Add the remote node as a contact with its ENR record
@@ -1574,7 +1574,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1633,7 +1633,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1684,7 +1684,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1740,7 +1740,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1800,7 +1800,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,
@@ -1853,7 +1853,7 @@ mod tests {
             peer_table: PeerTableServer::spawn(
                 local_node_id,
                 10,
-                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+                Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
             ),
             initial_lookup_interval: 1000.0,
             counter: 0,

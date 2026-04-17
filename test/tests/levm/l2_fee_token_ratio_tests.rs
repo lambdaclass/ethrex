@@ -12,10 +12,9 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_TRIE_HASH,
     types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        Transaction, TxKind, fee_config::FeeConfig,
+        Account, AccountState, AccountStateInfo, ChainConfig, Code, CodeMetadata,
+        EIP1559Transaction, Fork, Transaction, TxKind, fee_config::FeeConfig,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -49,17 +48,18 @@ impl Database for TestDatabase {
     fn get_account_state(
         &self,
         address: Address,
-    ) -> Result<AccountState, ethrex_levm::errors::DatabaseError> {
-        Ok(self
-            .accounts
-            .get(&address)
-            .map(|acc| AccountState {
-                nonce: acc.info.nonce,
-                balance: acc.info.balance,
-                storage_root: *EMPTY_TRIE_HASH,
-                code_hash: acc.info.code_hash,
-            })
-            .unwrap_or_default())
+    ) -> Result<AccountStateInfo, ethrex_levm::errors::DatabaseError> {
+        Ok(AccountStateInfo::from(
+            self.accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: Default::default(),
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default(),
+        ))
     }
 
     fn get_storage_value(

@@ -376,7 +376,7 @@ impl GeneralizedDatabase {
             }
 
             let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
+                Some(new_state_account.info)
             } else {
                 None
             };
@@ -481,7 +481,7 @@ impl GeneralizedDatabase {
                 }
             }
 
-            let info = acc_info_updated.then(|| new_state_account.info.clone());
+            let info = acc_info_updated.then_some(new_state_account.info);
 
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.

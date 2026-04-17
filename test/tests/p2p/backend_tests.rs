@@ -5,7 +5,8 @@ use ethrex_common::{
 use ethrex_p2p::backend::validate_status;
 use ethrex_p2p::rlpx::eth::eth68::status::StatusMessage68;
 use ethrex_p2p::rlpx::p2p::Capability;
-use ethrex_storage::{EngineType, Store};
+use ethrex_state_backend::BackendKind;
+use ethrex_storage::{EngineType, StateBackend, Store};
 use std::path::PathBuf;
 use std::{fs::File, io::BufReader};
 
@@ -16,7 +17,7 @@ fn workspace_root() -> PathBuf {
 #[tokio::test]
 async fn test_validate_status() {
     let mut storage =
-        Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
     let reader = BufReader::new(file);
@@ -28,7 +29,7 @@ async fn test_validate_status() {
         .expect("Failed to add genesis block to DB");
     let config = genesis.config;
     let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
-    let genesis_header = genesis.get_block().header;
+    let genesis_header = StateBackend::compute_genesis_block(BackendKind::Mpt, &genesis).header;
     let genesis_hash = genesis_header.hash();
     let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 

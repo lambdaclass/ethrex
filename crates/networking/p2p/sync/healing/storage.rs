@@ -224,9 +224,9 @@ pub async fn heal_storage_trie(
                     let mut account_nodes = vec![];
                     for (path, node) in nodes {
                         for i in 0..path.len() {
-                            account_nodes.push((path.slice(0, i), vec![]));
+                            account_nodes.push((path.slice(0, i).into_vec(), vec![]));
                         }
-                        account_nodes.push((path, node.encode_to_vec()));
+                        account_nodes.push((path.into_vec(), node.encode_to_vec()));
                     }
                     encoded_to_write.push((hashed_account, account_nodes));
                 }

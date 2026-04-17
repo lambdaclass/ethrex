@@ -1,10 +1,15 @@
+pub mod backend;
+pub mod compute_roots;
 pub mod db;
 pub mod error;
+pub mod genesis;
+pub mod merkleizer;
+pub use backend::{MptBackend, MptStorageTries, hash_address, hash_key};
+pub use merkleizer::{MptMerkleizer, TrieProvider};
 pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
-pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
@@ -31,7 +36,12 @@ pub use self::{
     node_hash::NodeHash,
 };
 
+pub use self::compute_roots::{
+    compute_receipts_root, compute_state_root, compute_storage_root, compute_transactions_root,
+    compute_withdrawals_root, validate_block_body, validate_receipts_root,
+};
 pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
+pub use self::genesis::{genesis_block, genesis_root};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;

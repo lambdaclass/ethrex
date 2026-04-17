@@ -73,7 +73,7 @@ async fn encode_node_record_to_enr_url() {
     let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
 
     let mut storage =
-        Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        Store::new_mpt("", EngineType::InMemory).expect("Failed to create in-memory storage");
     storage
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await
@@ -102,7 +102,7 @@ async fn encode_decode_node_record_with_forkid() {
     let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
 
     let mut storage =
-        Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        Store::new_mpt("", EngineType::InMemory).expect("Failed to create in-memory storage");
     storage
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await

@@ -21,6 +21,7 @@ ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
+ethrex-state-backend.workspace = true
 ethrex-storage.workspace = true
 ethrex-storage-rollup.workspace = true
 ethrex-trie.workspace = true

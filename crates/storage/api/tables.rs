@@ -80,17 +80,32 @@ pub const INVALID_CHAINS: &str = "invalid_ancestors";
 /// - [`Vec<u8>`] = `BlockHeaderRLP::from(block.header.clone()).bytes().clone()`
 pub const FULLSYNC_HEADERS: &str = "fullsync_headers";
 
-/// Account sate flat key-value store: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// Account flat key-value store: MPT nibble-path bytes => RLP-encoded value
+///
+/// Format: MPT nibble-path bytes. Currently shared across backends via a
+/// format discriminator stored in `MISC_VALUES` under key
+/// `state_backend_format`. A store opened with a mismatched `BackendKind`
+/// will refuse to start.
 pub const ACCOUNT_FLATKEYVALUE: &str = "account_flatkeyvalue";
 
-/// Storage slots key-value store: [`Nibbles`] => [`Vec<u8>`]
-/// - [`Nibbles`] = `node_hash.as_ref()`
-/// - [`Vec<u8>`] = `node_data`
+/// Storage slots flat key-value store: MPT nibble-path bytes => RLP-encoded value
+///
+/// Format: MPT nibble-path bytes. Currently shared across backends via a
+/// format discriminator stored in `MISC_VALUES` under key
+/// `state_backend_format`. A store opened with a mismatched `BackendKind`
+/// will refuse to start.
 pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
+
+/// Key used in `MISC_VALUES` to store the flat state format discriminator.
+///
+/// Value encoding: 1 byte.
+/// - `0` = MPT nibble-path format (current default).
+///
+/// When a new backend is added it must claim a unique byte value here and
+/// document it alongside this constant.
+pub const STATE_BACKEND_FORMAT_KEY: &[u8] = b"state_backend_format";
 
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key

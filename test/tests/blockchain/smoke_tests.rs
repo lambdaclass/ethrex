@@ -319,7 +319,7 @@ async fn test_store() -> Store {
 
     // Build store with genesis
     let mut store =
-        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+        Store::new_mpt("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
 
     store
         .add_initial_state(genesis)

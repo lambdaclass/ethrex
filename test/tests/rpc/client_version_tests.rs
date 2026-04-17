@@ -21,7 +21,8 @@ async fn test_get_client_version_v1() {
     let request: RpcRequest = serde_json::from_str(body).unwrap();
 
     // Setup storage
-    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    let storage =
+        Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
 
     // Process request
     let context = default_context_with_storage(storage).await;
@@ -93,7 +94,8 @@ async fn test_client_version_v1_accepts_unknown_client_codes() {
     }"#;
     let request: RpcRequest = serde_json::from_str(body).unwrap();
 
-    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    let storage =
+        Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
     let context = default_context_with_storage(storage).await;
     let result = GetClientVersionV1Request::call(&request, context).await;
 

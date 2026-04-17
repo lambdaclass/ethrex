@@ -3809,8 +3809,10 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",
+ "ethrex-state-backend",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "ethrex-trie",
  "ethrex-vm",
  "eyre",
  "hex",
@@ -3849,7 +3851,9 @@ dependencies = [
  "ethrex-common",
  "ethrex-config",
  "ethrex-l2-rpc",
+ "ethrex-state-backend",
  "ethrex-storage",
+ "ethrex-trie",
  "secp256k1",
  "serde_json",
  "tempfile",
@@ -3868,6 +3872,7 @@ dependencies = [
  "ethrex-metrics",
  "ethrex-prover",
  "ethrex-rlp",
+ "ethrex-state-backend",
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
@@ -3893,7 +3898,6 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-trie",
  "hex",
  "hex-literal 0.4.1",
  "hex-simd",
@@ -3924,6 +3928,7 @@ version = "9.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
+ "ethrex-trie",
  "hex",
  "serde",
  "serde_json",
@@ -3983,6 +3988,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-rlp",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
  "k256",
@@ -4027,6 +4033,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",
+ "ethrex-state-backend",
  "ethrex-storage",
  "ethrex-storage-rollup",
  "ethrex-trie",
@@ -4061,6 +4068,7 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-trie",
  "k256",
  "lambdaworks-crypto 0.13.0",
  "rkyv",
@@ -4126,6 +4134,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "ethrex-trie",
  "hex",
  "reqwest 0.12.28",
  "rustc-hex",
@@ -4387,6 +4396,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-state-backend"
+version = "9.0.0"
+dependencies = [
+ "ethereum-types 0.15.1",
+ "ethrex-common",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ethrex-storage"
 version = "9.0.0"
 dependencies = [
@@ -4395,6 +4413,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "ethrex-state-backend",
  "ethrex-trie",
  "fastbloom",
  "lru 0.16.4",
@@ -4446,6 +4465,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",
+ "ethrex-state-backend",
  "ethrex-storage",
  "ethrex-storage-rollup",
  "ethrex-trie",
@@ -4474,14 +4494,20 @@ dependencies = [
  "bytes",
  "crossbeam",
  "ethereum-types 0.15.1",
+ "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "ethrex-state-backend",
+ "hex",
+ "hex-literal 0.4.1",
  "lazy_static",
  "rayon",
  "rkyv",
  "rustc-hash 2.1.2",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -4495,6 +4521,9 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
+ "ethrex-state-backend",
+ "ethrex-trie",
+ "hex",
  "rayon",
  "rustc-hash 2.1.2",
  "serde",

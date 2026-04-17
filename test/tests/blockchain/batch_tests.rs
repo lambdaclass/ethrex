@@ -55,7 +55,7 @@ async fn setup_store(sender: Address) -> (Store, u64) {
     );
 
     let mut store =
-        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+        Store::new_mpt("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
 
     store
         .add_initial_state(genesis)
