@@ -1,4 +1,4 @@
-use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+use ethrex_trie::execution_witness_to_rpc;
 use serde_json::Value;
 use tracing::debug;
 
@@ -97,8 +97,7 @@ impl RpcHandler for ExecutionWitnessRequest {
             .await
             .map_err(|e| RpcErr::Internal(format!("Failed to build execution witness {e}")))?;
 
-        let rpc_execution_witness = RpcExecutionWitness::try_from(execution_witness)
-            .map_err(|e| RpcErr::Internal(format!("Failed to create rpc execution witness {e}")))?;
+        let rpc_execution_witness = execution_witness_to_rpc(execution_witness);
 
         serde_json::to_value(rpc_execution_witness)
             .map_err(|error| RpcErr::Internal(error.to_string()))

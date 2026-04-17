@@ -7,6 +7,8 @@ use ethrex_p2p::{
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
+use ethrex_trie::genesis_block;
+
 use hex::FromHexError;
 use secp256k1::{PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -194,7 +196,7 @@ pub fn display_chain_initialization(genesis: &Genesis) {
     }
 
     info!("");
-    let hash = genesis.get_block().hash();
+    let hash = genesis_block(&genesis).hash();
     info!("Genesis Block Hash: {hash:x}");
     info!("{border}");
 }

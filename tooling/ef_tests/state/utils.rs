@@ -11,6 +11,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::{H256, U256, types::Genesis};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::{EngineType, Store};
+use ethrex_trie::genesis_block;
 use ethrex_vm::DynVmDatabase;
 
 /// Loads initial state, used for REVM as it contains RevmState.
@@ -21,9 +22,9 @@ pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) 
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let vm_db: DynVmDatabase =
-        Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
+        Box::new(StoreVmDatabase::new(storage.clone(), genesis_block(&genesis).header).unwrap());
 
-    (revm_state(vm_db), genesis.get_block().hash(), storage)
+    (revm_state(vm_db), genesis_block(&genesis).hash(), storage)
 }
 
 /// Loads initial state, function for LEVM as it does not require RevmState
@@ -34,7 +35,7 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let store: DynVmDatabase =
-        Box::new(StoreVmDatabase::new(storage, genesis.get_block().header).unwrap());
+        Box::new(StoreVmDatabase::new(storage, genesis_block(&genesis).header).unwrap());
 
     GeneralizedDatabase::new(Arc::new(store))
 }

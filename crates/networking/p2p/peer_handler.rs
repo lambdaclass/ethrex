@@ -15,9 +15,10 @@ use crate::{
 };
 use ethrex_common::{
     H256,
-    types::{BlockBody, BlockHeader, validate_block_body},
+    types::{BlockBody, BlockHeader},
 };
 use ethrex_crypto::NativeCrypto;
+use ethrex_trie::validate_block_body;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},

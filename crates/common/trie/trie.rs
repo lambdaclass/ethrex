@@ -1,10 +1,18 @@
+pub mod compute_roots;
 pub mod db;
 pub mod error;
+pub mod execution_witness;
+pub mod execution_witness_ext;
+pub mod genesis_ext;
+pub mod guest_program_state;
+pub mod mpt_backend;
+pub mod mpt_merkleizer;
+pub use mpt_backend::{CodeReader, MptBackend, MptStorageTries, mpt_hash_address, mpt_hash_key};
+pub use mpt_merkleizer::{MptMerkleizer, StorageTrieOpener};
 pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
-pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
@@ -31,7 +39,17 @@ pub use self::{
     node_hash::NodeHash,
 };
 
+pub use self::compute_roots::{
+    compute_receipts_root, compute_state_root, compute_storage_root, compute_transactions_root,
+    compute_withdrawals_root, validate_block_body, validate_receipts_root,
+};
 pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
+pub use self::execution_witness::{ExecutionWitness, GuestProgramStateError};
+pub use self::execution_witness_ext::{execution_witness_to_rpc, rpc_witness_to_execution};
+pub use self::genesis_ext::{
+    genesis_block, genesis_body, genesis_compute_state_root, genesis_header,
+};
+pub use self::guest_program_state::GuestProgramState;
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;

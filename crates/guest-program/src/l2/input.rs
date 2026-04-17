@@ -1,6 +1,5 @@
-use ethrex_common::types::{
-    Block, blobs_bundle, block_execution_witness::ExecutionWitness, fee_config::FeeConfig,
-};
+use ethrex_common::types::{Block, blobs_bundle, fee_config::FeeConfig};
+use ethrex_trie::ExecutionWitness;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;

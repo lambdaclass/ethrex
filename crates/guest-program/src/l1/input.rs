@@ -1,5 +1,5 @@
 use ethrex_common::types::Block;
-use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_trie::ExecutionWitness;
 
 /// Input for the L1 stateless validation program.
 #[derive(

@@ -8,10 +8,10 @@ use ethrex_common::{
     serde_utils,
     types::{
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
-        requests::EncodedRequests,
+        block_access_list::BlockAccessList, requests::EncodedRequests,
     },
 };
+use ethrex_trie::{compute_transactions_root, compute_withdrawals_root};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

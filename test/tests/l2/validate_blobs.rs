@@ -12,6 +12,8 @@
 
 use ethrex_common::types::{BYTES_PER_BLOB, Block, Genesis, bytes_from_blob};
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_trie::genesis_block;
+
 use std::fs::File;
 use std::io::BufReader;
 
@@ -34,7 +36,7 @@ fn validate_blobs_match_genesis() {
     let reader = BufReader::new(genesis_file);
     let genesis: Genesis =
         serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
-    let genesis_block = genesis.get_block();
+    let genesis_block = genesis_block(&genesis);
     let genesis_hash = genesis_block.hash();
 
     // Read the first blob file

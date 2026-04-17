@@ -10,6 +10,7 @@ license.workspace = true
 ethereum-types.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
+ethrex-trie.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 serde.workspace = true
