@@ -27,12 +27,13 @@ fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
-/// Compute the max transaction cost for APPROVE payment logic.
-fn compute_max_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
+/// Compute the transaction's maximum cost for APPROVE payment deduction.
+/// Per spec, this is TXPARAM(0x06): max_fee_per_gas * total_gas_limit + blob cost.
+fn compute_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-    let max_fee = U256::from(ctx.tx.max_fee_per_gas);
     let gas_limit = U256::from(ctx.tx.total_gas_limit());
-    let max_tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
+    let max_fee = U256::from(ctx.tx.max_fee_per_gas);
+    let tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
     let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
     let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
     let blob_fee = blob_count
@@ -40,7 +41,7 @@ fn compute_max_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError>
         .ok_or(halt_err.clone())?
         .checked_mul(ctx.tx.max_fee_per_blob_gas)
         .ok_or(halt_err.clone())?;
-    max_tx_cost
+    tx_cost
         .checked_add(blob_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
@@ -52,7 +53,26 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
 
     match scope {
         0x1 => {
-            // Sender approval only
+            // APPROVE_PAYMENT: increment nonce, deduct max cost, set payer_approved
+            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            if ctx.payer_approved {
+                return Err(halt_err.clone());
+            }
+            if !ctx.sender_approved {
+                return Err(VMError::RevertOpcode);
+            }
+            let tx_cost = compute_tx_cost(ctx)?;
+            let sender = ctx.tx.sender;
+
+            vm.increment_account_nonce(sender)?;
+            vm.decrease_account_balance(frame_target, tx_cost)?;
+
+            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            ctx.payer_approved = true;
+            ctx.payer_address = Some(frame_target);
+        }
+        0x2 => {
+            // APPROVE_EXECUTION: set sender_approved (requires frame_target == tx.sender)
             let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
             if ctx.sender_approved {
                 return Err(halt_err);
@@ -63,27 +83,8 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
         }
-        0x2 => {
-            // Payer approval only
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
-            if ctx.payer_approved {
-                return Err(halt_err.clone());
-            }
-            if !ctx.sender_approved {
-                return Err(VMError::RevertOpcode);
-            }
-            let max_tx_cost = compute_max_tx_cost(ctx)?;
-            let sender = ctx.tx.sender;
-
-            vm.increment_account_nonce(sender)?;
-            vm.decrease_account_balance(frame_target, max_tx_cost)?;
-
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
-            ctx.payer_approved = true;
-            ctx.payer_address = Some(frame_target);
-        }
         0x3 => {
-            // Combined sender + payer approval
+            // APPROVE_PAYMENT_AND_EXECUTION: both
             let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
             if ctx.sender_approved || ctx.payer_approved {
                 return Err(halt_err.clone());
@@ -91,11 +92,11 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let max_tx_cost = compute_max_tx_cost(ctx)?;
+            let tx_cost = compute_tx_cost(ctx)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            vm.decrease_account_balance(frame_target, max_tx_cost)?;
+            vm.decrease_account_balance(frame_target, tx_cost)?;
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
@@ -144,10 +145,14 @@ impl OpcodeHandler for OpApproveHandler {
             return Err(VMError::RevertOpcode);
         }
 
-        // Enforce scope restriction from mode bits 8-9
-        let scope_restriction = current_frame.scope_restriction();
+        // Enforce scope restriction from flags bits 0-1
+        let allowed_scope = current_frame.scope_restriction();
         let scope_val = scope.as_u64();
-        if scope_restriction != 0 && scope_val != scope_restriction as u64 {
+        // scope must be a non-zero subset of allowed_scope
+        if scope_val == 0
+            || scope_val > 3
+            || (allowed_scope != 0 && (scope_val & allowed_scope as u64) != scope_val)
+        {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
@@ -182,7 +187,7 @@ pub struct OpTxParamHandler;
 impl OpcodeHandler for OpTxParamHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [param_id, index] = *vm.current_call_frame.stack.pop()?;
+        let [param_id] = *vm.current_call_frame.stack.pop()?;
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TXPARAM)?;
@@ -192,7 +197,7 @@ impl OpcodeHandler for OpTxParamHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let result = load_tx_param(ctx, param_id.as_u64(), index.as_u64())?;
+        let result = load_tx_param(ctx, param_id.as_u64())?;
         vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
@@ -307,15 +312,88 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
     }
 }
 
+/// FRAMEPARAM (0xB3) -- Load a frame parameter as a 32-byte word.
+/// Takes [param, frameIndex] from the stack. Gas cost: 2.
+pub struct OpFrameParamHandler;
+impl OpcodeHandler for OpFrameParamHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [param_id, frame_index] = *vm.current_call_frame.stack.pop()?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::FRAMEPARAM)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame = ctx
+            .frames
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let result: U256 = match param_id.as_u64() {
+            0x00 => {
+                // target
+                address_to_u256(frame.target.unwrap_or(ctx.tx.sender))
+            }
+            0x01 => {
+                // gas_limit
+                U256::from(frame.gas_limit)
+            }
+            0x02 => {
+                // mode
+                U256::from(frame.mode)
+            }
+            0x03 => {
+                // flags
+                U256::from(frame.flags)
+            }
+            0x04 => {
+                // len(data) -- returns 0 for VERIFY frames
+                if frame.execution_mode() == FrameMode::Verify {
+                    U256::zero()
+                } else {
+                    U256::from(frame.data.len())
+                }
+            }
+            0x05 => {
+                // status -- exceptional halt if current/future frame
+                if idx >= ctx.current_frame_index {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                let (success, _, _) = ctx
+                    .frame_results
+                    .get(idx)
+                    .ok_or(ExceptionalHalt::InvalidOpcode)?;
+                if *success { U256::one() } else { U256::zero() }
+            }
+            0x06 => {
+                // allowed_scope (flags & 0x03)
+                U256::from(frame.scope_restriction())
+            }
+            0x07 => {
+                // atomic_batch ((flags >> 2) & 1, returns 0 or 1)
+                U256::from(frame.is_atomic_batch() as u8)
+            }
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+
+        vm.current_call_frame.stack.push(result)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 // -- Helper functions --
 
 fn load_tx_param(
     ctx: &crate::vm::FrameTxContext,
     param_id: u64,
-    index: u64,
 ) -> Result<U256, VMError> {
     match param_id {
-        // Scalar parameters (index must be 0)
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce)),
         0x02 => Ok(address_to_u256(ctx.tx.sender)),
@@ -343,72 +421,7 @@ fn load_tx_param(
             Ok(U256::from_big_endian(&bytes))
         }
         0x09 => Ok(U256::from(ctx.frames.len())),
-
-        // Per-frame parameters (index = frame index)
-        0x10 => Ok(U256::from(ctx.current_frame_index)),
-        0x11 => {
-            let frame = ctx
-                .frames
-                .get(index_to_usize(index)?)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(address_to_u256(frame.target.unwrap_or(ctx.tx.sender)))
-        }
-        0x12 => {
-            // gas_limit
-            let frame = ctx
-                .frames
-                .get(index_to_usize(index)?)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(U256::from(frame.gas_limit))
-        }
-        0x13 => {
-            // mode (lower 8 bits only)
-            let frame = ctx
-                .frames
-                .get(index_to_usize(index)?)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(U256::from(frame.mode & 0xFF))
-        }
-        0x14 => {
-            // len(data) -- returns 0 for VERIFY frames
-            let frame = ctx
-                .frames
-                .get(index_to_usize(index)?)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            if frame.execution_mode() == FrameMode::Verify {
-                Ok(U256::zero())
-            } else {
-                Ok(U256::from(frame.data.len()))
-            }
-        }
-        0x15 => {
-            // status -- exceptional halt if current/future frame
-            let idx = index_to_usize(index)?;
-            if idx >= ctx.current_frame_index {
-                return Err(ExceptionalHalt::InvalidOpcode.into());
-            }
-            let (success, _, _) = ctx
-                .frame_results
-                .get(idx)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(if *success { U256::one() } else { U256::zero() })
-        }
-        0x16 => {
-            // scope (bits 8-9 from mode)
-            let frame = ctx
-                .frames
-                .get(index_to_usize(index)?)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(U256::from(frame.scope_restriction()))
-        }
-        0x17 => {
-            // atomic_batch (bit 10 from mode, returns 0 or 1)
-            let frame = ctx
-                .frames
-                .get(index_to_usize(index)?)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            Ok(U256::from(frame.is_atomic_batch() as u8))
-        }
+        0x0A => Ok(U256::from(ctx.current_frame_index)),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
@@ -460,6 +473,14 @@ pub fn execute_default_code(
 }
 
 /// VERIFY mode default code: validate a signature and call APPROVE.
+/// SECP256K1N / 2 -- signatures with s > this value are rejected
+const SECP256K1N_DIV_2: U256 = U256([
+    0xDFE92F46681B20A0,
+    0x5D576E7357A4501D,
+    0xFFFFFFFFFFFFFFFF,
+    0x7FFFFFFFFFFFFFFF,
+]);
+
 fn execute_default_verify(
     vm: &mut VM<'_>,
     frame: &ethrex_common::types::Frame,
@@ -470,14 +491,14 @@ fn execute_default_verify(
         .as_ref()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-    // frame.target must be tx.sender
-    if target != ctx.tx.sender {
+    // Read allowed scope from flags bits 0-1
+    let allowed_scope = frame.scope_restriction() as u64;
+    if allowed_scope == 0 {
         return Ok((false, 0, Vec::new()));
     }
 
-    // Read scope from mode bits 8-9
-    let scope = frame.scope_restriction() as u64;
-    if scope == 0 {
+    // If scope includes APPROVE_EXECUTION and resolved_target != tx.sender, revert
+    if (allowed_scope & 0x02) != 0 && target != ctx.tx.sender {
         return Ok((false, 0, Vec::new()));
     }
 
@@ -501,6 +522,12 @@ fn execute_default_verify(
             let r = &frame.data[2..34];
             let s = &frame.data[34..66];
 
+            // Reject high-s signatures
+            let s_val = U256::from_big_endian(s);
+            if s_val > SECP256K1N_DIV_2 {
+                return Ok((false, 0, Vec::new()));
+            }
+
             // Build ecrecover calldata: [hash(32), v_padded(32), r(32), s(32)]
             let mut calldata = vec![0u8; 128];
             calldata[..32].copy_from_slice(sig_hash.as_bytes());
@@ -515,8 +542,17 @@ fn execute_default_verify(
                 vm.env.config.fork,
             )?;
 
-            // Check recovered address matches target (result is 32-byte padded address)
-            if result.len() != 32 || result[12..] != *target.as_bytes() {
+            // Check recovered address is not zero (change 9)
+            if result.len() != 32 {
+                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
+            }
+            let recovered = Address::from_slice(&result[12..]);
+            if recovered == Address::zero() {
+                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
+            }
+
+            // Check recovered address matches target
+            if target != recovered {
                 return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
             }
         }
@@ -531,11 +567,14 @@ fn execute_default_verify(
             let qx = &frame.data[65..97];
             let qy = &frame.data[97..129];
 
-            // Check frame.target == keccak256(qx || qy)[12:]
-            let mut pubkey_bytes = [0u8; 64];
-            pubkey_bytes[..32].copy_from_slice(qx);
-            pubkey_bytes[32..].copy_from_slice(qy);
-            let hash = ethrex_crypto::keccak::keccak_hash(&pubkey_bytes);
+            // P256 address with domain separator (change 7):
+            // keccak256(P256_ADDRESS_DOMAIN || qx || qy)[12:]
+            // where P256_ADDRESS_DOMAIN = 0x01 (one byte)
+            let mut domain_input = Vec::with_capacity(1 + 32 + 32);
+            domain_input.push(0x01u8); // P256_ADDRESS_DOMAIN
+            domain_input.extend_from_slice(qx);
+            domain_input.extend_from_slice(qy);
+            let hash = ethrex_crypto::keccak::keccak_hash(&domain_input);
             let derived_address = Address::from_slice(&hash[12..]);
             if target != derived_address {
                 return Ok((false, 0, Vec::new()));
@@ -566,8 +605,8 @@ fn execute_default_verify(
 
     let gas_used = frame.gas_limit - gas_remaining;
 
-    // Call APPROVE
-    apply_approve(vm, scope, target)?;
+    // Call APPROVE with allowed_scope
+    apply_approve(vm, allowed_scope, target)?;
 
     // Mark approve as called in the current frame
     let ctx = vm
@@ -626,6 +665,15 @@ fn execute_default_sender(
         // Allocate gas for subcall using 63/64 rule (EIP-150)
         let subcall_gas = gas_remaining - gas_remaining / 64;
 
+        // Validate sender has enough balance for the value transfer
+        // (must be before call frame swap to avoid leaking frame state on early return)
+        if !call.value.is_zero() {
+            let sender_balance = vm.db.get_account(sender)?.info.balance;
+            if sender_balance < call.value {
+                return Ok((false, gas_remaining, all_logs));
+            }
+        }
+
         let call_frame = CallFrame::new(
             sender,            // msg_sender = tx.sender per spec
             call.target,       // to
@@ -648,14 +696,6 @@ fn execute_default_sender(
         let saved_call_frame = mem::replace(&mut vm.current_call_frame, call_frame);
         let saved_call_frames = mem::take(&mut vm.call_frames);
 
-        // Validate sender has enough balance for the value transfer
-        if !call.value.is_zero() {
-            let sender_balance = vm.db.get_account(sender)?.info.balance;
-            if sender_balance < call.value {
-                return Ok((false, gas_remaining, all_logs));
-            }
-        }
-
         vm.substate.push_backup();
         let subcall_result = vm.run_execution();
 
@@ -667,11 +707,11 @@ fn execute_default_sender(
                     if !call.value.is_zero() {
                         vm.transfer(sender, call.target, call.value)?;
                     }
+                    // Snapshot this subcall's own logs before commit merges them
+                    // into the parent (walking extract_logs() afterwards would pull
+                    // in logs from prior subcalls/frames).
+                    let logs = vm.substate.current_logs();
                     vm.substate.commit_backup();
-                    let logs = vm.substate.extract_logs();
-                    for log in &logs {
-                        vm.substate.add_log(log.clone());
-                    }
                     all_logs.extend(logs);
                     (true, gas_used)
                 } else {
@@ -690,6 +730,17 @@ fn execute_default_sender(
         // Restore call frame state
         let finished_frame = mem::replace(&mut vm.current_call_frame, saved_call_frame);
         vm.call_frames = saved_call_frames;
+
+        // On subcall success, merge the subcall's call-frame backup into the
+        // outer frame so that an atomic-batch revert can undo the subcall's
+        // state changes (including `vm.transfer(...)` above). Without this, the
+        // inner backup is dropped on swap-back and the mutation becomes
+        // permanently committed to `db.current_accounts_state`, breaking
+        // atomicity when a later batch frame reverts.
+        if success {
+            vm.merge_call_frame_backup_with_parent(&finished_frame.call_frame_backup)?;
+        }
+
         vm.stack_pool.push(finished_frame.stack);
 
         gas_remaining = gas_remaining.saturating_sub(subcall_gas_used);
