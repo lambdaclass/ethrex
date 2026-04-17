@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use ethrex_common::H256;
-use ethrex_common::{serde_utils, tracing::CallTraceFrame};
+use ethrex_common::{
+    serde_utils,
+    tracing::{CallTraceFrame, PrePostState, PrestateTrace},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -41,6 +44,7 @@ struct TraceConfig {
 enum TracerType {
     #[default]
     CallTracer,
+    PrestateTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -50,6 +54,13 @@ struct CallTracerConfig {
     only_top_call: bool,
     #[serde(default)]
     with_log: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PrestateTracerConfig {
+    #[serde(default)]
+    diff_mode: bool,
 }
 
 type BlockTrace<TxTrace> = Vec<BlockTraceComponent<TxTrace>>;
@@ -96,7 +107,6 @@ impl RpcHandler for TraceTransactionRequest {
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
         let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        // This match will make more sense once we support other tracers
         match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
@@ -123,6 +133,23 @@ impl RpcHandler for TraceTransactionRequest {
                     .next()
                     .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
                 Ok(serde_json::to_value(top_frame)?)
+            }
+            TracerType::PrestateTracer => {
+                let config = if let Some(value) = &self.trace_config.tracer_config {
+                    serde_json::from_value(value.clone())?
+                } else {
+                    PrestateTracerConfig::default()
+                };
+                let (pre_trace, pre_post) = context
+                    .blockchain
+                    .trace_transaction_prestate(self.tx_hash, reexec, timeout, config.diff_mode)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                if config.diff_mode {
+                    Ok(serde_json::to_value(pre_post.unwrap_or_default())?)
+                } else {
+                    Ok(serde_json::to_value(pre_trace)?)
+                }
             }
         }
     }
@@ -166,7 +193,6 @@ impl RpcHandler for TraceBlockByNumberRequest {
             .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
         let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        // This match will make more sense once we support other tracers
         match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
@@ -199,6 +225,31 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     })
                     .collect::<Result<_, RpcErr>>()?;
                 Ok(serde_json::to_value(block_trace)?)
+            }
+            TracerType::PrestateTracer => {
+                let config = if let Some(value) = &self.trace_config.tracer_config {
+                    serde_json::from_value(value.clone())?
+                } else {
+                    PrestateTracerConfig::default()
+                };
+                let prestate_traces = context
+                    .blockchain
+                    .trace_block_prestate(block, reexec, timeout, config.diff_mode)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                if config.diff_mode {
+                    let block_trace: BlockTrace<PrePostState> = prestate_traces
+                        .into_iter()
+                        .map(|(hash, _, pre_post)| (hash, pre_post.unwrap_or_default()).into())
+                        .collect();
+                    Ok(serde_json::to_value(block_trace)?)
+                } else {
+                    let block_trace: BlockTrace<PrestateTrace> = prestate_traces
+                        .into_iter()
+                        .map(|(hash, pre_trace, _)| (hash, pre_trace).into())
+                        .collect();
+                    Ok(serde_json::to_value(block_trace)?)
+                }
             }
         }
     }
