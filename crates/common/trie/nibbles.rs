@@ -591,6 +591,17 @@ impl Nibbles {
     /// Encodes the nibbles in compact form
     #[allow(unsafe_code)]
     pub fn encode_compact(&self) -> Vec<u8> {
+        let (buf, len) = self.encode_compact_fixed();
+        buf[..len].to_vec()
+    }
+
+    /// Encodes the nibbles in compact form into a stack-allocated fixed-size buffer.
+    /// Returns the buffer and the number of valid bytes in it.
+    ///
+    /// This avoids a heap allocation compared to `encode_compact()`.
+    /// The buffer is sized to handle paths up to 65 nibbles (32-byte keys + leaf flag).
+    #[allow(unsafe_code)]
+    pub fn encode_compact_fixed(&self) -> ([u8; 34], usize) {
         let is_leaf = self.is_leaf();
         let remaining = self.as_ref();
         let mut hex = if is_leaf {
@@ -613,20 +624,20 @@ impl Nibbles {
         };
 
         let pair_count = hex.len() / 2;
-        let mut compact = Vec::with_capacity(1 + pair_count);
-        compact.push(prefix_nibble + if is_leaf { 0x20 } else { 0x00 });
+        let len = 1 + pair_count;
+        debug_assert!(len <= 34, "encode_compact_fixed: path too long ({len} bytes)");
+
+        let mut buf = [0u8; 34];
+        buf[0] = prefix_nibble + if is_leaf { 0x20 } else { 0x00 };
 
         // SIMD-accelerated packing of nibble pairs → bytes.
-        // SAFETY: compact has capacity for `pair_count` bytes beyond the one already pushed.
-        // pack_nibble_pairs writes exactly `pair_count` bytes starting at offset 1;
-        // set_len then exposes those initialized bytes.
+        // SAFETY: buf has 34 bytes; len = 1 + pair_count ≤ 34; we write exactly
+        // pair_count bytes starting at offset 1.
         unsafe {
-            let out_ptr = compact.as_mut_ptr().add(1);
-            pack_nibble_pairs(hex, out_ptr);
-            compact.set_len(1 + pair_count);
+            pack_nibble_pairs(hex, buf.as_mut_ptr().add(1));
         }
 
-        compact
+        (buf, len)
     }
 
     /// Encodes the nibbles in compact form

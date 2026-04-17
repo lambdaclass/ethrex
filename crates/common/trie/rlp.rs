@@ -69,7 +69,8 @@ impl RLPEncode for BranchNode {
 
 impl RLPEncode for ExtensionNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let mut encoder = Encoder::new(buf).encode_bytes(&self.prefix.encode_compact());
+        let (compact, len) = self.prefix.encode_compact_fixed();
+        let mut encoder = Encoder::new(buf).encode_bytes(&compact[..len]);
         encoder = self.child.compute_hash(&NativeCrypto).encode(encoder);
         encoder.finish();
     }
@@ -77,8 +78,9 @@ impl RLPEncode for ExtensionNode {
 
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let (compact, len) = self.partial.encode_compact_fixed();
         Encoder::new(buf)
-            .encode_bytes(&self.partial.encode_compact())
+            .encode_bytes(&compact[..len])
             .encode_bytes(&self.value)
             .finish()
     }
