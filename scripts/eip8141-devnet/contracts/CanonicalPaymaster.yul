@@ -5,7 +5,7 @@
 /// Auth model: The paymaster owner's secp256k1 signature over the frame tx sig_hash
 /// must be provided as VERIFY frame calldata: r(32) || s(32) || v(1) = 65 bytes.
 ///
-/// Scope: Uses APPROVE(scope=2) for payer approval (ethrex numbering).
+/// Scope: Uses APPROVE(scope=1 = APPROVE_PAYMENT) under the post-update EIP-8141 bitmask.
 ///
 /// Withdrawal protection: 12-hour timelock prevents instant balance draining.
 ///
@@ -41,8 +41,8 @@ object "CanonicalPaymaster" {
                 if gt(s, sHalf) { revert(0, 0) }
                 if iszero(or(eq(v, 27), eq(v, 28))) { revert(0, 0) }
 
-                // TXPARAM(0x08, 0) → sig_hash
-                let sigHash := verbatim_2i_1o(hex"B0", 0x08, 0)
+                // TXPARAM(0x08) → sig_hash  (post-spec-update: TXPARAM takes 1 arg)
+                let sigHash := verbatim_1i_1o(hex"B0", 0x08)
 
                 // ecrecover(hash, v, r, s)
                 mstore(0x00, sigHash)
@@ -56,8 +56,8 @@ object "CanonicalPaymaster" {
                 let recovered := and(mload(0x00), 0xffffffffffffffffffffffffffffffffffffffff)
                 if iszero(eq(recovered, sload(0))) { revert(0, 0) }
 
-                // APPROVE scope=2 (payer)
-                let payerScope := 2
+                // APPROVE scope=1 (APPROVE_PAYMENT under post-update spec bitmask)
+                let payerScope := 1
                 verbatim_3i_0o(hex"AA", 0, 0, payerScope)
                 stop()
             }

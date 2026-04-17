@@ -14,7 +14,7 @@ RPC_URL="${1:?Usage: deploy-contracts.sh <rpc-url> <deployer-private-key>}"
 PRIVATE_KEY="${2:?Usage: deploy-contracts.sh <rpc-url> <deployer-private-key>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-DEPLOYER_ADDR=$(rex address --private-key "$PRIVATE_KEY")
+DEPLOYER_ADDR=$(rex address --from-private-key "$PRIVATE_KEY")
 
 echo "============================================"
 echo "  EIP-8141 Devnet Contract Deployment"

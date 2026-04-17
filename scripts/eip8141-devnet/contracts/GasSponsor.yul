@@ -1,20 +1,20 @@
 /// @title GasSponsor
 /// @notice Gas sponsor for EIP-8141 frame transactions.
-///         Approves as payer (scope=2) if the TX sender holds ERC20 tokens.
+///         Approves as payer (scope=1 = APPROVE_PAYMENT) if the TX sender holds ERC20 tokens.
 /// @dev Uses EIP-8141 opcodes via Yul verbatim:
 ///      - TXPARAM (0xB0): reads transaction parameters
 ///      - APPROVE (0xAA): approves sender/payer role
 ///
-/// IMPORTANT: The scope constant for APPROVE must be assigned to a variable
-/// (`let payerScope := 2`) before passing to verbatim. A bare literal `2`
-/// gets mis-optimized by solc (v0.8.28-0.8.30) to `1` due to constant
-/// folding interacting with the verbatim pseudo-function.
+/// Post-spec-update scope bitmask:
+///   0x01 = APPROVE_PAYMENT
+///   0x02 = APPROVE_EXECUTION
+///   0x03 = PAYMENT + EXECUTION
 ///
 /// Storage layout:
 ///   slot 0: ERC20 token address for balance checks
 ///
 /// Functions:
-///   verify()              0xfc735e99 — Check sender token balance, APPROVE scope=2
+///   verify()              0xfc735e99 — Check sender token balance, APPROVE scope=1
 ///   setConfig(address)    0x20e3dbd4 — Set the ERC20 token address
 ///   token()               0xfc0c546a — Read the token address
 ///   receive()             (no selector) — Accept ETH
@@ -34,8 +34,8 @@ object "GasSponsor" {
 
             // ── verify() ──────────────────────────────────────────────
             case 0xfc735e99 {
-                // TXPARAM(param_id=0x02, index=0) → sender address
-                let sender := verbatim_2i_1o(hex"B0", 0x02, 0)
+                // TXPARAM(0x02) → sender address  (post-spec-update: TXPARAM takes 1 arg)
+                let sender := verbatim_1i_1o(hex"B0", 0x02)
                 sender := and(sender, 0xffffffffffffffffffffffffffffffffffffffff)
 
                 let tokenAddr := sload(0)
@@ -62,9 +62,9 @@ object "GasSponsor" {
                     revert(0x00, 0x64)
                 }
 
-                // APPROVE scope=2 (payer approval)
-                // Variable assignment prevents solc constant optimization bug
-                let payerScope := 2
+                // APPROVE scope=1 (APPROVE_PAYMENT) under the post-update EIP-8141
+                // scope bitmask (0x01=PAYMENT, 0x02=EXECUTION, 0x03=both).
+                let payerScope := 1
                 verbatim_3i_0o(hex"AA", 0, 0, payerScope)
             }
 
