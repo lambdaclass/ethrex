@@ -70,10 +70,6 @@ hex = { workspace = true }
 [lib]
 path = "./l2.rs"
 
-[[bin]]
-name = "mock-sidecar"
-path = "sequencer/credible_layer/mock_sidecar/main.rs"
-
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
