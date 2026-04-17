@@ -72,12 +72,12 @@ impl LEVM {
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
         vm.execute()?;
 
-        // Build the pre and post state maps for all accounts that were touched
+        // Build the state maps for all accounts that were touched
         let pre_map = build_account_state_map(&pre_snapshot, &db.current_accounts_state, db, true);
-        let post_map =
-            build_account_state_map(&pre_snapshot, &db.current_accounts_state, db, false);
 
         if diff_mode {
+            let post_map =
+                build_account_state_map(&pre_snapshot, &db.current_accounts_state, db, false);
             Ok((
                 PrestateTrace::new(),
                 Some(PrePostState {
@@ -197,7 +197,7 @@ fn build_account_state_map(
             .filter(|(_, v)| !v.is_zero())
             .map(|(k, v)| {
                 let key_hex = format!("0x{:x}", k);
-                let val_hex = format!("0x{:x}", v);
+                let val_hex = format!("0x{:064x}", v);
                 (key_hex, val_hex)
             })
             .collect();

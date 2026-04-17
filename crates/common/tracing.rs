@@ -80,7 +80,7 @@ pub struct PrestateAccountState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     /// Storage slots as hex key -> hex value map, omitted when empty
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub storage: HashMap<String, String>,
 }
 
@@ -214,13 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn account_state_deserializes_without_optional_code_field() {
-        // `code` is `Option` so it may be absent. `storage` must be present (no
-        // `#[serde(default)]` on the field), matching how Geth actually emits it.
+    fn account_state_deserializes_without_optional_fields() {
+        // Both `code` and `storage` may be absent in serialized output
+        // (code is Option, storage has #[serde(default)]).
         let json = serde_json::json!({
             "balance": "0x0",
-            "nonce": 0,
-            "storage": {}
+            "nonce": 0
         });
 
         let state: PrestateAccountState =
