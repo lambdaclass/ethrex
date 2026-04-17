@@ -11,6 +11,7 @@
 //! unread messages.
 
 use ethrex_common::types::BlockHeader;
+use rand::RngCore;
 use serde_json::Value;
 use spawned_concurrency::{
     actor,
@@ -29,23 +30,17 @@ use tracing::{debug, warn};
 /// each notification is already serialized JSON).
 pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
 
+/// Maximum number of active subscriptions allowed per WebSocket connection.
+pub const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 128;
+
 /// Actor that manages all active WebSocket subscriptions.
 ///
 /// Each subscription is identified by a hex-encoded string ID and backed by a
 /// bounded `Sender<String>` that delivers serialised notification JSON to the
 /// corresponding WebSocket write-loop.
+#[derive(Default)]
 pub struct SubscriptionManager {
     subscribers: HashMap<String, Sender<String>>,
-    next_id: u64,
-}
-
-impl Default for SubscriptionManager {
-    fn default() -> Self {
-        Self {
-            subscribers: HashMap::new(),
-            next_id: 1,
-        }
-    }
 }
 
 /// Messages understood by the [`SubscriptionManager`].
@@ -105,10 +100,14 @@ impl SubscriptionManager {
             );
         }
 
+        // Serialize the header result once; each subscriber gets its own
+        // notification envelope with a different subscription ID.
+        let result_json = header_value.to_string();
+
         let mut dead_ids: Vec<String> = Vec::new();
 
         for (sub_id, sender) in &self.subscribers {
-            let notification = build_subscription_notification(sub_id, header_value.clone());
+            let notification = build_subscription_notification(sub_id, &result_json);
             match sender.try_send(notification) {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
@@ -132,8 +131,7 @@ impl SubscriptionManager {
         msg: subscription_manager_protocol::Subscribe,
         _ctx: &Context<Self>,
     ) -> String {
-        let id = format!("0x{:016x}", self.next_id);
-        self.next_id += 1;
+        let id = generate_subscription_id();
         self.subscribers.insert(id.clone(), msg.sender);
         id
     }
@@ -149,14 +147,18 @@ impl SubscriptionManager {
 }
 
 /// Build the standard Ethereum subscription notification envelope.
-pub fn build_subscription_notification(sub_id: &str, result: Value) -> String {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "eth_subscription",
-        "params": {
-            "subscription": sub_id,
-            "result": result,
-        }
-    })
-    .to_string()
+///
+/// Takes a pre-serialized `result_json` string to avoid re-serializing the
+/// header for every subscriber during fan-out.
+pub fn build_subscription_notification(sub_id: &str, result_json: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","method":"eth_subscription","params":{{"subscription":"{sub_id}","result":{result_json}}}}}"#
+    )
+}
+
+/// Generate a random hex subscription ID (16 bytes / 128 bits).
+fn generate_subscription_id() -> String {
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    format!("0x{}", hex::encode(bytes))
 }

@@ -788,10 +788,18 @@ pub async fn handle_eth_subscribe(
     out_tx: &tokio::sync::mpsc::Sender<String>,
     subscription_ids: &mut Vec<String>,
 ) -> Result<Value, RpcErr> {
+    use crate::subscription_manager::MAX_SUBSCRIPTIONS_PER_CONNECTION;
+
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_type = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
         RpcErr::BadParams("eth_subscribe requires a subscription type parameter".to_string())
     })?;
+
+    if subscription_ids.len() >= MAX_SUBSCRIPTIONS_PER_CONNECTION {
+        return Err(RpcErr::BadParams(format!(
+            "Too many subscriptions (max {MAX_SUBSCRIPTIONS_PER_CONNECTION})"
+        )));
+    }
 
     match sub_type {
         "newHeads" => {
