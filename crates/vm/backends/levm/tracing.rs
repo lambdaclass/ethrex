@@ -194,7 +194,8 @@ fn build_account_output(account: &LevmAccount, db: &GeneralizedDatabase) -> Pres
 /// For already-cached accounts, the pre_snapshot only contains storage slots
 /// loaded by *previous* transactions. Any slot first accessed during *this*
 /// transaction has its original value in `initial_accounts_state`. We merge
-/// both sources so the output includes every accessed slot.
+/// both sources so the output includes every accessed slot, then filter to
+/// only slots actually touched by this tx (newly loaded or value changed).
 fn build_pre_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
@@ -206,8 +207,8 @@ fn build_pre_state_map(
         let mut state = build_account_output(pre_account, db);
 
         // For already-cached accounts, merge newly-loaded slots from initial_accounts_state
-        // and filter to only slots accessed in this tx.
-        if pre_snapshot.contains_key(&addr) {
+        // and filter to only slots touched by this tx.
+        if let Some(pre_cached) = pre_snapshot.get(&addr) {
             if let Some(initial) = db.initial_accounts_state.get(&addr) {
                 for (k, v) in &initial.storage {
                     state
@@ -216,10 +217,15 @@ fn build_pre_state_map(
                         .or_insert_with(|| H256::from_uint(v));
                 }
             }
-            // Only keep slots actually accessed in this tx.
-            state
-                .storage
-                .retain(|k, _| post_account.storage.contains_key(k));
+            // Only keep slots actually touched in this tx:
+            // - Newly loaded slots (in post but not in pre_snapshot)
+            // - Slots whose value changed between pre and post
+            state.storage.retain(|k, _| {
+                if !pre_cached.storage.contains_key(k) {
+                    return true;
+                }
+                pre_cached.storage.get(k) != post_account.storage.get(k)
+            });
         }
 
         result.insert(addr, state);
@@ -237,7 +243,19 @@ fn build_post_state_map(
     let mut result = PrestateTrace::new();
 
     for (addr, _, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
-        result.insert(addr, build_account_output(post_account, db));
+        let mut state = build_account_output(post_account, db);
+
+        // For already-cached accounts, filter to only slots touched by this tx.
+        if let Some(pre_cached) = pre_snapshot.get(&addr) {
+            state.storage.retain(|k, _| {
+                if !pre_cached.storage.contains_key(k) {
+                    return true;
+                }
+                pre_cached.storage.get(k) != post_account.storage.get(k)
+            });
+        }
+
+        result.insert(addr, state);
     }
 
     result
