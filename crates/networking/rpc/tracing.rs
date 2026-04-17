@@ -3,7 +3,7 @@ use std::time::Duration;
 use ethrex_common::H256;
 use ethrex_common::{
     serde_utils,
-    tracing::{CallTraceFrame, PrePostState, PrestateTrace},
+    tracing::{CallTraceFrame, PrestateResult},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -140,15 +140,14 @@ impl RpcHandler for TraceTransactionRequest {
                 } else {
                     PrestateTracerConfig::default()
                 };
-                let (pre_trace, pre_post) = context
+                let result = context
                     .blockchain
                     .trace_transaction_prestate(self.tx_hash, reexec, timeout, config.diff_mode)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                if config.diff_mode {
-                    Ok(serde_json::to_value(pre_post.unwrap_or_default())?)
-                } else {
-                    Ok(serde_json::to_value(pre_trace)?)
+                match result {
+                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
+                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
                 }
             }
         }
@@ -237,19 +236,22 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .trace_block_prestate(block, reexec, timeout, config.diff_mode)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                if config.diff_mode {
-                    let block_trace: BlockTrace<PrePostState> = prestate_traces
-                        .into_iter()
-                        .map(|(hash, _, pre_post)| (hash, pre_post.unwrap_or_default()).into())
-                        .collect();
-                    Ok(serde_json::to_value(block_trace)?)
-                } else {
-                    let block_trace: BlockTrace<PrestateTrace> = prestate_traces
-                        .into_iter()
-                        .map(|(hash, pre_trace, _)| (hash, pre_trace).into())
-                        .collect();
-                    Ok(serde_json::to_value(block_trace)?)
-                }
+                // Each trace result is already the correct variant (Prestate or Diff)
+                // based on the diff_mode flag, so we serialize directly.
+                let block_trace: Vec<serde_json::Value> = prestate_traces
+                    .into_iter()
+                    .map(|(hash, result)| {
+                        let trace_value = match result {
+                            PrestateResult::Prestate(trace) => serde_json::to_value(trace)?,
+                            PrestateResult::Diff(diff) => serde_json::to_value(diff)?,
+                        };
+                        serde_json::to_value(BlockTraceComponent {
+                            tx_hash: hash,
+                            result: trace_value,
+                        })
+                    })
+                    .collect::<Result<_, serde_json::Error>>()?;
+                Ok(serde_json::to_value(block_trace)?)
             }
         }
     }
