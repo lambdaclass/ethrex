@@ -163,7 +163,11 @@ pub async fn start_api(
     if let Some(ref ws_config) = ws {
         let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
             ws.on_upgrade(|mut socket| async move {
-                ethrex_rpc::handle_websocket(&mut socket, &ctx.l1_ctx).await;
+                ethrex_rpc::handle_websocket(&mut socket, &ctx.l1_ctx, |req| {
+                    let c = ctx.clone();
+                    async move { map_http_requests(&req, c).await }
+                })
+                .await;
             })
         };
         let ws_router = Router::new()

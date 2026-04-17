@@ -595,7 +595,11 @@ pub async fn start_api(
     if let Some(ref ws_config) = ws {
         let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async {
             ws.on_upgrade(|mut socket| async move {
-                handle_websocket(&mut socket, &ctx).await;
+                handle_websocket(&mut socket, &ctx, |req| {
+                    let c = ctx.clone();
+                    async move { map_http_requests(&req, c).await }
+                })
+                .await;
             })
         };
         let ws_router = Router::new()
@@ -690,7 +694,19 @@ pub async fn handle_authrpc_request(
 ///
 /// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
-pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
+///
+/// The `route_request` closure handles non-subscription JSON-RPC methods.
+/// L1 passes its own `map_http_requests`; L2 passes its variant so that
+/// L2-specific methods (e.g. `ethrexL2_*`) are reachable over WebSocket.
+pub async fn handle_websocket<F, Fut, E>(
+    socket: &mut WebSocket,
+    context: &RpcApiContext,
+    route_request: F,
+) where
+    F: Fn(RpcRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, E>>,
+    E: Into<RpcErrorMetadata>,
+{
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(
         crate::subscription_manager::SUBSCRIBER_CHANNEL_CAPACITY,
     );
@@ -711,7 +727,7 @@ pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
                 };
 
                 let response = handle_ws_request(
-                    &body, context, &out_tx, &mut subscription_ids,
+                    &body, context, &out_tx, &mut subscription_ids, &route_request,
                 ).await;
                 if let Some(resp) = response
                     && socket.send(Message::Text(resp.into())).await.is_err()
@@ -735,14 +751,18 @@ pub async fn handle_websocket(socket: &mut WebSocket, context: &RpcApiContext) {
     }
 }
 
-async fn handle_ws_request(
+async fn handle_ws_request<F, Fut, E>(
     body: &str,
     context: &RpcApiContext,
     out_tx: &tokio::sync::mpsc::Sender<String>,
     subscription_ids: &mut Vec<String>,
-) -> Option<String> {
-    use crate::utils::RpcRequest;
-
+    route_request: &F,
+) -> Option<String>
+where
+    F: Fn(RpcRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, E>>,
+    E: Into<RpcErrorMetadata>,
+{
     let req: RpcRequest = match serde_json::from_str(body) {
         Ok(r) => r,
         Err(_) => {
@@ -771,8 +791,9 @@ async fn handle_ws_request(
             Some(resp.to_string())
         }
         _ => {
-            let res = map_http_requests(&req, context.clone()).await;
-            let resp = rpc_response(req.id, res).ok()?;
+            let id = req.id.clone();
+            let res = route_request(req).await;
+            let resp = rpc_response(id, res).ok()?;
             Some(resp.to_string())
         }
     }
