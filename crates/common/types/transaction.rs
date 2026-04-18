@@ -1879,6 +1879,11 @@ impl FrameTransaction {
         if self.frames.is_empty() || self.frames.len() > 64 {
             return Err("Frame count must be between 1 and 64".to_string());
         }
+        // M2: accumulate a running sum of per-frame gas_limits to catch totals
+        // that would otherwise overflow the signed-i64 range the EVM uses for
+        // tx_gas_limit arithmetic downstream. The accumulator is u128 so the
+        // addition itself cannot overflow; the rejection is against i64::MAX.
+        let mut total_frame_gas: u128 = 0;
         for (i, frame) in self.frames.iter().enumerate() {
             // Reject reserved execution modes (3-255)
             if frame.mode >= 3 {
@@ -1891,6 +1896,23 @@ impl FrameTransaction {
             // VERIFY frames must have non-zero scope in flags
             if frame.mode == 1 && (frame.flags & 0x03) == 0 {
                 return Err(format!("Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"));
+            }
+            // M1: per-frame gas_limit must fit in the signed-i64 range per spec.
+            if frame.gas_limit > i64::MAX as u64 {
+                return Err(format!(
+                    "Frame {i}: gas_limit {} exceeds 2**63-1",
+                    frame.gas_limit
+                ));
+            }
+            // M2: cumulative total of frame gas_limits must also fit in i64.
+            total_frame_gas = total_frame_gas
+                .checked_add(frame.gas_limit as u128)
+                .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
+            if total_frame_gas > i64::MAX as u128 {
+                return Err(format!(
+                    "Frame {i}: cumulative frame gas_limit {} exceeds 2**63-1",
+                    total_frame_gas
+                ));
             }
             // Atomic batch flag (bit 2 of flags) is only valid with SENDER mode
             if frame.is_atomic_batch() {
@@ -4392,5 +4414,77 @@ mod tests {
         assert!(cfg.is_amsterdam_activated(0));
         assert!(cfg.is_amsterdam_activated(1));
         assert!(cfg.is_amsterdam_activated(u64::MAX));
+    }
+
+    // M1 / M2 gas-limit bounds tests — per-frame and cumulative i64::MAX.
+
+    fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
+        let frames = limits
+            .into_iter()
+            .map(|gl| Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: gl,
+                data: Bytes::new(),
+            })
+            .collect();
+        FrameTransaction {
+            chain_id: 1,
+            nonce: 0,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        }
+    }
+
+    #[test]
+    fn test_m1_single_frame_gas_limit_over_bound_rejected() {
+        let tx = make_frame_tx_with_gas_limits(vec![(i64::MAX as u64) + 1]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("exceeds 2**63-1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_m2_cumulative_gas_limit_over_bound_rejected() {
+        // Two frames individually in-range, but their sum exceeds 2**63-1.
+        let half = (i64::MAX as u64) / 2 + 1;
+        let tx = make_frame_tx_with_gas_limits(vec![half, half]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("cumulative"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_m1_m2_just_under_bound_accepted() {
+        // Two frames with cumulative sum exactly equal to i64::MAX is allowed
+        // because the bound is "exceeds 2**63-1" (strict).
+        let a = (i64::MAX as u64) / 2;
+        let b = i64::MAX as u64 - a;
+        let tx = make_frame_tx_with_gas_limits(vec![a, b]);
+        tx.validate_static_constraints()
+            .expect("exact i64::MAX total should be accepted");
+    }
+
+    #[test]
+    fn test_m1_m2_empty_frames_rejected_with_original_error() {
+        // The empty-frames check fires before per-frame validation, so we still
+        // hit the "between 1 and 64" error — not a gas-limit error.
+        let tx = make_frame_tx_with_gas_limits(vec![]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("between 1 and 64"),
+            "unexpected error: {err}"
+        );
     }
 }
