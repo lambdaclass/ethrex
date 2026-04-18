@@ -1725,6 +1725,11 @@ pub struct Frame {
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
     pub gas_limit: u64,
+    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
+    // Only SENDER frames may carry a non-zero value (spec line 140); see
+    // `validate_static_constraints`.
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
 }
@@ -1758,6 +1763,7 @@ impl RLPEncode for Frame {
             .encode_field(&(self.flags as u64))
             .encode_field(&target_kind)
             .encode_field(&self.gas_limit)
+            .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
     }
@@ -1778,12 +1784,14 @@ impl RLPDecode for Frame {
             TxKind::Create => None,
         };
         let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
             mode,
             flags,
             target,
             gas_limit,
+            value,
             data,
         };
         Ok((frame, decoder.finish()?))
@@ -1839,11 +1847,14 @@ impl FrameTransaction {
             .iter()
             .map(|f| {
                 if f.execution_mode() == FrameMode::Verify {
+                    // Only `data` is elided; per spec line 770 everything else
+                    // on a VERIFY frame (including `value`) remains covered.
                     Frame {
                         mode: f.mode,
                         flags: f.flags,
                         target: f.target,
                         gas_limit: f.gas_limit,
+                        value: f.value,
                         data: Bytes::new(),
                     }
                 } else {
@@ -2291,8 +2302,18 @@ mod serde_impl {
         pub to: Option<Address>,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub gas_limit: u64,
+        #[serde(
+            default,
+            serialize_with = "serialize_u256_hex",
+            deserialize_with = "crate::serde_utils::u256::deser_hex_str"
+        )]
+        pub value: U256,
         #[serde(with = "crate::serde_utils::bytes")]
         pub data: Bytes,
+    }
+
+    fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format!("{value:#x}"))
     }
 
     impl From<&Frame> for FrameEntry {
@@ -2302,6 +2323,7 @@ mod serde_impl {
                 flags: value.flags as u64,
                 to: value.target,
                 gas_limit: value.gas_limit,
+                value: value.value,
                 data: value.data.clone(),
             }
         }
@@ -2314,6 +2336,7 @@ mod serde_impl {
                 flags: entry.flags as u8,
                 target: entry.to,
                 gas_limit: entry.gas_limit,
+                value: entry.value,
                 data: entry.data,
             }
         }
@@ -4204,6 +4227,7 @@ mod tests {
                     flags: 0x03, // APPROVE_PAYMENT_AND_EXECUTION
                     target: Some(Address::from_low_u64_be(0xABCD)),
                     gas_limit: 100_000,
+                    value: U256::zero(),
                     data: Bytes::from_static(b"verify_data"),
                 },
                 Frame {
@@ -4211,6 +4235,7 @@ mod tests {
                     flags: 0x00,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 200_000,
+                    value: U256::zero(),
                     data: Bytes::from_static(b"call_data"),
                 },
             ],
@@ -4230,6 +4255,7 @@ mod tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            value: U256::zero(),
             data: Bytes::from_static(b"hello"),
         };
         let encoded = frame.encode_to_vec();
@@ -4244,6 +4270,7 @@ mod tests {
             flags: 0x00,
             target: None,
             gas_limit: 10_000,
+            value: U256::zero(),
             data: Bytes::from_static(b"deploy"),
         };
         let encoded = frame.encode_to_vec();
@@ -4260,6 +4287,7 @@ mod tests {
                 flags: if mode_val == 1 { 0x03 } else { 0x00 }, // VERIFY needs nonzero scope
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                value: U256::zero(),
                 data: Bytes::new(),
             };
             let encoded = frame.encode_to_vec();
@@ -4272,6 +4300,7 @@ mod tests {
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            value: U256::zero(),
             data: Bytes::new(),
         };
         assert_eq!(frame.execution_mode(), FrameMode::Sender);
@@ -4280,6 +4309,22 @@ mod tests {
         let encoded = frame.encode_to_vec();
         let decoded = Frame::decode(&encoded).unwrap();
         assert_eq!(frame, decoded);
+    }
+
+    #[test]
+    fn frame_rlp_roundtrip_preserves_value() {
+        let frame = Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 100_000,
+            value: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
+            data: Bytes::from_static(b"hello"),
+        };
+        let encoded = frame.encode_to_vec();
+        let decoded = Frame::decode(&encoded).unwrap();
+        assert_eq!(frame, decoded);
+        assert_eq!(decoded.value, U256::from(1_000_000_000_000_000u64));
     }
 
     #[test]
@@ -4414,6 +4459,7 @@ mod tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: gl,
+                value: U256::zero(),
                 data: Bytes::new(),
             })
             .collect();
