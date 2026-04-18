@@ -119,6 +119,8 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_common::EcdsaError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("Frame transactions (EIP-8141) are not supported before the Amsterdam fork")]
+    FrameTxPreFork,
 }
 
 #[derive(Debug)]
