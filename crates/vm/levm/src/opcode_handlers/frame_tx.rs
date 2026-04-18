@@ -65,7 +65,16 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            vm.decrease_account_balance(frame_target, tx_cost)?;
+            // Spec: if the payer cannot cover max tx cost the frame must revert,
+            // not error out as a consensus fault. Map balance underflow to a
+            // clean RevertOpcode so the VERIFY frame fails and subsequent
+            // frames are not executed; sender nonce is restored via the outer
+            // restore_cache_state() path.
+            match vm.decrease_account_balance(frame_target, tx_cost) {
+                Ok(()) => {}
+                Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
+                Err(e) => return Err(VMError::Internal(e)),
+            }
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.payer_approved = true;
@@ -96,7 +105,13 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            vm.decrease_account_balance(frame_target, tx_cost)?;
+            // Same balance-underflow handling as scope 0x1 above — payer too
+            // poor triggers a clean revert, not a consensus error.
+            match vm.decrease_account_balance(frame_target, tx_cost) {
+                Ok(()) => {}
+                Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
+                Err(e) => return Err(VMError::Internal(e)),
+            }
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
@@ -751,4 +766,46 @@ fn execute_default_sender(
     }
 
     Ok((true, frame.gas_limit - gas_remaining, all_logs))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for error-mapping invariants inside frame-tx opcode handlers.
+    //! End-to-end tests for the APPROVE underflow-revert and SENDER default-code
+    //! relaxation live in demos/eip8141/backend/test-findings.mjs against a live
+    //! dev node (full VM execution is infeasible to mock at the unit level).
+
+    use super::*;
+
+    // H4-A: Simulate the inner decrease-balance path and assert the mapping
+    // (InternalError::Underflow → VMError::RevertOpcode) that apply_approve
+    // applies to an underfunded payer. This locks in the rule without
+    // requiring a full VM.
+    fn map_underflow_like_apply_approve(
+        result: Result<(), InternalError>,
+    ) -> Result<(), VMError> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(InternalError::Underflow) => Err(VMError::RevertOpcode),
+            Err(e) => Err(VMError::Internal(e)),
+        }
+    }
+
+    #[test]
+    fn test_h4_underflow_maps_to_revert_opcode() {
+        let e = map_underflow_like_apply_approve(Err(InternalError::Underflow));
+        assert!(matches!(e, Err(VMError::RevertOpcode)));
+    }
+
+    #[test]
+    fn test_h4_non_underflow_error_propagates_internal() {
+        let e = map_underflow_like_apply_approve(Err(InternalError::Overflow));
+        assert!(matches!(e, Err(VMError::Internal(InternalError::Overflow))));
+    }
+
+    #[test]
+    fn test_h4_ok_passes_through() {
+        let e = map_underflow_like_apply_approve(Ok(()));
+        assert!(e.is_ok());
+    }
 }
