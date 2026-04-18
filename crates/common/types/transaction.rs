@@ -1816,6 +1816,16 @@ pub struct FrameTransaction {
 pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
+/// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
+pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
+/// Maximum number of frames allowed per EIP-8141 frame transaction.
+pub const FRAME_TX_MAX_FRAMES: usize = 64;
+
+/// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
+/// DEFAULT/VERIFY frames per EIP-8141.
+pub fn frame_tx_entry_point() -> Address {
+    Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
+}
 
 impl FrameTransaction {
     /// Compute the signature hash per EIP-8141:
@@ -1876,8 +1886,10 @@ impl FrameTransaction {
         if self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
         }
-        if self.frames.is_empty() || self.frames.len() > 64 {
-            return Err("Frame count must be between 1 and 64".to_string());
+        if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
+            return Err(format!(
+                "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
+            ));
         }
         // M2: accumulate a running sum of per-frame gas_limits to catch totals
         // that would otherwise overflow the signed-i64 range the EVM uses for

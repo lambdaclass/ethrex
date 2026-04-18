@@ -671,8 +671,8 @@ impl<'a> VM<'a> {
             approve_called_in_current_frame: false,
         });
 
-        // ENTRY_POINT address (0xaa) used as caller for DEFAULT/VERIFY frames
-        let entry_point = Address::from_low_u64_be(0xaa);
+        // ENTRY_POINT address used as caller for DEFAULT/VERIFY frames
+        let entry_point = ethrex_common::types::frame_tx_entry_point();
 
         let mut all_logs: Vec<Log> = Vec::new();
         let sum_frame_gas_limits: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
