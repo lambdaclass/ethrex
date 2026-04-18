@@ -1365,4 +1365,52 @@ mod frame_value_transfer_tests {
         let v = U256::from(1_000_000u64);
         assert!(frame_value_exceeds_balance(v - U256::one(), v));
     }
+
+    /// Regression test for the atomic-batch unwind: any state change
+    /// performed inside a backup scope (including the outer-owned value
+    /// transfer and the EIP-7708 log emitted alongside it) must be reverted
+    /// when the enclosing batch reverts. `execute_frame_tx` pushes a batch
+    /// backup before each atomic group and calls `revert_backup()` when any
+    /// in-batch frame fails; this test exercises the Substate primitive
+    /// that guarantees the log and state deltas do not leak past the
+    /// boundary.
+    #[test]
+    fn atomic_batch_revert_unwinds_in_batch_value_effects() {
+        use ethrex_common::Address;
+
+        let mut substate = Substate::default();
+
+        // Log emitted before the batch — should survive a batch revert.
+        substate.add_log(Log {
+            address: Address::from_low_u64_be(1),
+            topics: vec![],
+            data: Bytes::from_static(b"pre-batch"),
+        });
+
+        // Enter the atomic batch: push a backup before the first in-batch frame.
+        substate.push_backup();
+
+        // Frame 1 (SENDER atomic, successful): simulate the per-frame scope,
+        // emit the EIP-7708 transfer log produced by the outer value transfer,
+        // then commit the per-frame backup.
+        substate.push_backup();
+        substate.add_log(Log {
+            address: Address::from_low_u64_be(2),
+            topics: vec![],
+            data: Bytes::from_static(b"frame-1-transfer-log"),
+        });
+        substate.commit_backup();
+
+        // Frame 2 reverts: `execute_frame_tx` reverts the batch-level backup,
+        // which undoes every in-batch substate change including Frame 1's log.
+        substate.revert_backup();
+
+        let logs = substate.extract_logs();
+        let tags: Vec<&[u8]> = logs.iter().map(|l| l.data.as_ref()).collect();
+        assert_eq!(
+            tags,
+            vec![b"pre-batch".as_ref()],
+            "atomic-batch revert must unwind in-batch value-transfer effects"
+        );
+    }
 }
