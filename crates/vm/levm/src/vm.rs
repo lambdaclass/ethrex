@@ -426,6 +426,14 @@ impl Substate {
 ///     println!("Transaction reverted");
 /// }
 /// ```
+/// EIP-8141 spec lines 346-347: the top-level `frame.value` transfer
+/// reverts the frame if the sender's balance is strictly less than the
+/// amount being sent. Factored out so the decision can be unit-tested
+/// without bringing up a full VM state.
+pub(crate) fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U256) -> bool {
+    sender_balance < frame_value
+}
+
 /// Context for frame transaction (EIP-8141) execution.
 /// This is set when executing a frame transaction and is used by
 /// APPROVE, TXPARAM, FRAMEDATALOAD, and FRAMEDATACOPY opcodes.
@@ -772,11 +780,41 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // If resolved_target has neither code nor an EIP-7702 delegation indicator,
-            // execute the default code. EIP-7702 delegations are stored as bytecode
-            // (0xef0100 || address, 23 bytes), so they are non-empty.
-            let (frame_success, frame_gas_used, frame_logs) = if bytecode.bytecode.is_empty() {
-                // Default code for EOA (no deployed code and no EIP-7702 delegation)
+            // EIP-8141 top-level value transfer: per spec lines 346-347 the
+            // outer frame call owns CALLVALUE delivery and must revert the
+            // frame if the sender cannot cover `frame.value`. Static
+            // validation already guarantees only SENDER frames reach here
+            // with a non-zero value. Running the transfer inside the
+            // per-frame backup means an atomic-batch revert (or a later
+            // run_execution revert) unwinds it the same way it unwinds any
+            // inner state change.
+            let value_transfer_reverted = if !frame.value.is_zero() {
+                let sender_balance = self.db.get_account(sender)?.info.balance;
+                if frame_value_exceeds_balance(sender_balance, frame.value) {
+                    true
+                } else {
+                    self.transfer(sender, target, frame.value)?;
+                    // EIP-7708 log parity with the top-level transfer_value
+                    // hook (see `hooks::default_hook::transfer_value`): only
+                    // Amsterdam+ and only when sender != target.
+                    if self.env.config.fork >= Fork::Amsterdam && sender != target {
+                        let log = crate::utils::create_eth_transfer_log(sender, target, frame.value);
+                        self.substate.add_log(log);
+                    }
+                    false
+                }
+            } else {
+                false
+            };
+
+            let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
+                self.substate.revert_backup();
+                self.restore_cache_state()?;
+                (false, frame.gas_limit, Vec::new())
+            } else if bytecode.bytecode.is_empty() {
+                // Default code for EOA (no deployed code and no EIP-7702 delegation).
+                // EIP-7702 delegations are stored as bytecode (0xef0100 || address,
+                // 23 bytes), so they are non-empty.
                 use crate::opcode_handlers::frame_tx::execute_default_code;
                 match execute_default_code(self, frame, sender, target) {
                     Ok((success, gas_used, logs)) => {
@@ -796,18 +834,21 @@ impl<'a> VM<'a> {
                     }
                 }
             } else {
-                // Normal code execution via CallFrame
+                // Normal code execution via CallFrame. msg_value carries
+                // `frame.value` so the contract sees the correct CALLVALUE
+                // (EIP-8141 spec line 346), but `should_transfer_value` stays
+                // false because the outer loop above already moved the funds.
                 let call_frame = CallFrame::new(
                     caller,                                    // msg_sender
                     target,                                    // to
                     target,                                    // code_address
                     bytecode,                                  // bytecode
-                    U256::zero(),       // msg_value (frames don't transfer value)
+                    frame.value,        // msg_value -- CALLVALUE
                     frame.data.clone(), // calldata
                     is_static,          // is_static
                     frame.gas_limit,    // gas_limit
                     0,                  // depth
-                    false,              // should_transfer_value
+                    false,              // should_transfer_value (outer already transferred)
                     false,              // is_create
                     0,                  // ret_offset
                     0,                  // ret_size
@@ -1284,5 +1325,44 @@ mod frame_tx_security_tests {
         assert_eq!(log_tags(&per_frame[0]), vec![0x11]);
         assert_eq!(log_tags(&per_frame[1]), vec![0x22]);
         assert_eq!(log_tags(&per_frame[2]), vec![0x33]);
+    }
+}
+
+#[cfg(test)]
+mod frame_value_transfer_tests {
+    //! EIP-8141 top-level value-transfer invariants.
+    //!
+    //! The outer `execute_frame_tx` loop owns the `frame.value` transfer: it
+    //! balance-checks the sender, performs the transfer, and records an
+    //! EIP-7708 log (when sender != target, Amsterdam+). These tests pin the
+    //! balance-check predicate; the backup-unwind coverage for atomic batch
+    //! revert lives in the regression-test commit that follows.
+    use super::*;
+    use ethrex_common::U256;
+
+    #[test]
+    fn frame_value_transfers_from_sender_to_resolved_target_on_success() {
+        // A sufficiently funded sender must not revert — the transfer proceeds.
+        let sender_balance = U256::from(10u64).saturating_mul(U256::exp10(18)); // 10 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17));           // 0.1 ETH
+        assert!(!frame_value_exceeds_balance(sender_balance, value));
+
+        // Exact-balance transfer: sender has exactly `value` — still succeeds.
+        assert!(!frame_value_exceeds_balance(value, value));
+    }
+
+    #[test]
+    fn frame_value_transfer_reverts_on_insufficient_sender_balance() {
+        // Under-funded sender → revert path taken.
+        let balance = U256::from(5u64).saturating_mul(U256::exp10(16)); // 0.05 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17));    // 0.10 ETH
+        assert!(frame_value_exceeds_balance(balance, value));
+
+        // Zero-balance / non-zero value → revert.
+        assert!(frame_value_exceeds_balance(U256::zero(), U256::one()));
+
+        // Balance just one less than value → revert.
+        let v = U256::from(1_000_000u64);
+        assert!(frame_value_exceeds_balance(v - U256::one(), v));
     }
 }
