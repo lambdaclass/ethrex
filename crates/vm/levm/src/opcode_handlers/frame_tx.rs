@@ -27,13 +27,12 @@ fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
-/// M3: Convert a U256 offset to usize, returning None when the value does not
-/// fit in usize on the current target. Per EIP-8141 spec, FRAMEDATALOAD and
-/// FRAMEDATACOPY must treat out-of-range offsets as pointing past the end of
-/// the frame's data — the load returns zero and the copy writes zero bytes —
-/// rather than halting the execution with an exceptional error.
+/// Convert a U256 offset to usize, returning None when the value does not fit
+/// in usize on the current target. Used by FRAMEDATALOAD and FRAMEDATACOPY so
+/// out-of-range offsets are treated as past-the-end rather than as an
+/// exceptional halt (per the EIP-8141 spec the load returns zero and the copy
+/// writes zero bytes).
 fn u256_to_offset(value: U256) -> Option<usize> {
-    // Upper three 64-bit limbs must be zero.
     if value.0[1] != 0 || value.0[2] != 0 || value.0[3] != 0 {
         return None;
     }
@@ -78,11 +77,9 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            // Spec: if the payer cannot cover max tx cost the frame must revert,
-            // not error out as a consensus fault. Map balance underflow to a
-            // clean RevertOpcode so the VERIFY frame fails and subsequent
-            // frames are not executed; sender nonce is restored via the outer
-            // restore_cache_state() path.
+            // Payer balance underflow is a frame-level revert, not a consensus
+            // fault: the outer restore_cache_state() path rolls back the nonce
+            // increment above when RevertOpcode propagates.
             match vm.decrease_account_balance(frame_target, tx_cost) {
                 Ok(()) => {}
                 Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
@@ -118,8 +115,7 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
-            // Same balance-underflow handling as scope 0x1 above — payer too
-            // poor triggers a clean revert, not a consensus error.
+            // See scope 0x1 above for the Underflow → RevertOpcode rationale.
             match vm.decrease_account_balance(frame_target, tx_cost) {
                 Ok(()) => {}
                 Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
@@ -261,8 +257,7 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             return Ok(OpcodeResult::Continue);
         }
 
-        // M3: Treat an out-of-usize-range offset as "past the end" — the word
-        // is zero-filled just like reading past the end of frame.data.
+        // Out-of-usize offsets are past-the-end: the word stays zero-filled.
         let mut word = [0u8; 32];
         if let Some(byte_offset) = u256_to_offset(offset) {
             let data = &frame.data;
@@ -293,9 +288,7 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
         let [mem_offset, data_offset, length, frame_index] =
             *vm.current_call_frame.stack.pop()?;
         let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
-        // M3: an out-of-range data_offset is not a halt; the spec treats it as
-        // pointing past the end of the frame's data so the destination memory
-        // is zero-filled for the full length.
+        // Out-of-usize data_offset is past-the-end: destination stays zero-filled.
         let data_offset_opt = u256_to_offset(data_offset);
 
         let new_memory_size = calculate_memory_size(mem_offset, length)?;
@@ -666,14 +659,11 @@ fn execute_default_sender(
         .as_ref()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-    // Per EIP-8141 spec (default-code §~405-409): a SENDER frame whose resolved
-    // target is not tx.sender points at an empty-code account, not the
-    // self-multicall dispatcher. The frame must succeed with empty output.
-    //
-    // Any top-level `frame.value` transfer is applied by the outer frame-call
-    // entry in execute_frame_tx (wired up by the H1 value-field work); this
-    // default-code handler only owns the "did default code run" reporting and
-    // returns zero gas. See /tmp/gap-mitigation/03-exec-fixes.md §H3.
+    // When the resolved target is not tx.sender, the frame points at an
+    // empty-code account (not the self-multicall dispatcher) and succeeds
+    // with empty output. Any top-level value transfer is applied by the
+    // outer frame-call entry in execute_frame_tx, so this handler returns
+    // zero gas — nothing ran here.
     if target != ctx.tx.sender {
         return Ok((true, 0, Vec::new()));
     }
@@ -798,20 +788,11 @@ fn execute_default_sender(
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for error-mapping invariants inside frame-tx opcode handlers.
-    //! End-to-end tests for the APPROVE underflow-revert and SENDER default-code
-    //! relaxation live in demos/eip8141/backend/test-findings.mjs against a live
-    //! dev node (full VM execution is infeasible to mock at the unit level).
-
     use super::*;
 
-    // H4-A: Simulate the inner decrease-balance path and assert the mapping
-    // (InternalError::Underflow → VMError::RevertOpcode) that apply_approve
-    // applies to an underfunded payer. This locks in the rule without
-    // requiring a full VM.
-    fn map_underflow_like_apply_approve(
-        result: Result<(), InternalError>,
-    ) -> Result<(), VMError> {
+    /// Mirrors the Underflow -> RevertOpcode mapping used inside apply_approve
+    /// so the invariant can be exercised without constructing a full VM.
+    fn map_underflow_to_revert(result: Result<(), InternalError>) -> Result<(), VMError> {
         match result {
             Ok(()) => Ok(()),
             Err(InternalError::Underflow) => Err(VMError::RevertOpcode),
@@ -820,28 +801,25 @@ mod tests {
     }
 
     #[test]
-    fn test_h4_underflow_maps_to_revert_opcode() {
-        let e = map_underflow_like_apply_approve(Err(InternalError::Underflow));
+    fn decrease_balance_underflow_maps_to_revert_opcode() {
+        let e = map_underflow_to_revert(Err(InternalError::Underflow));
         assert!(matches!(e, Err(VMError::RevertOpcode)));
     }
 
     #[test]
-    fn test_h4_non_underflow_error_propagates_internal() {
-        let e = map_underflow_like_apply_approve(Err(InternalError::Overflow));
+    fn non_underflow_internal_errors_still_propagate_as_internal() {
+        let e = map_underflow_to_revert(Err(InternalError::Overflow));
         assert!(matches!(e, Err(VMError::Internal(InternalError::Overflow))));
     }
 
     #[test]
-    fn test_h4_ok_passes_through() {
-        let e = map_underflow_like_apply_approve(Ok(()));
+    fn successful_decrease_balance_is_left_unchanged() {
+        let e = map_underflow_to_revert(Ok(()));
         assert!(e.is_ok());
     }
 
-    // M3: u256_to_offset helper — ensures large U256 offsets are reported as
-    // None so FRAMEDATALOAD / FRAMEDATACOPY can zero-fill rather than halt.
-
     #[test]
-    fn test_m3_u256_to_offset_small_values_fit() {
+    fn u256_to_offset_accepts_values_that_fit_in_usize() {
         assert_eq!(u256_to_offset(U256::zero()), Some(0));
         assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
         assert_eq!(
@@ -851,76 +829,9 @@ mod tests {
     }
 
     #[test]
-    fn test_m3_u256_to_offset_large_values_return_none() {
-        // A value greater than u64::MAX (upper limbs non-zero) cannot be a
-        // usize on any supported target.
+    fn u256_to_offset_rejects_values_that_overflow_usize() {
         let big = U256::from(u64::MAX) + U256::one();
         assert_eq!(u256_to_offset(big), None);
-
-        // Entirely maxed-out U256 must also be None.
         assert_eq!(u256_to_offset(U256::MAX), None);
-    }
-
-    // H3: SENDER default-code target relaxation. The spec requires that when
-    // `target != tx.sender` the default code returns (true, 0, []) rather than
-    // (false, 0, []). The invariant under test is the tuple contract between
-    // `execute_default_sender` and the outer frame-loop. A full VM-level
-    // integration test lives in demos/eip8141/backend/test-findings.mjs.
-
-    // Mirrors the exact branch returned by `execute_default_sender` at
-    // crates/vm/levm/src/opcode_handlers/frame_tx.rs when
-    // `target != ctx.tx.sender`. Centralising it here lets us test the
-    // (success, gas_used, logs) contract without spinning up a VM.
-    fn sender_default_code_on_non_sender_target() -> (bool, u64, Vec<Log>) {
-        (true, 0, Vec::new())
-    }
-
-    #[test]
-    fn test_h3_a_empty_data_sender_frame_non_sender_target_succeeds() {
-        // H3-A: SENDER frame targeting a non-sender empty-code EOA with empty
-        // data returns (success=true, gas_used=0, logs=[]).
-        let (success, gas_used, logs) = sender_default_code_on_non_sender_target();
-        assert!(success);
-        assert_eq!(gas_used, 0);
-        assert!(logs.is_empty());
-    }
-
-    #[test]
-    fn test_h3_b_non_empty_data_sender_frame_non_sender_target_succeeds() {
-        // H3-B: per spec, non-empty data is ignored for a CALL to an
-        // empty-code account — the tuple returned is identical to H3-A.
-        let (success, gas_used, logs) = sender_default_code_on_non_sender_target();
-        assert!(success);
-        assert_eq!(gas_used, 0);
-        assert!(logs.is_empty());
-    }
-
-    #[test]
-    fn test_h3_c_sender_multicall_regression_shape() {
-        // H3-C: when `target == tx.sender` the multicall dispatcher path runs
-        // and returns (true, gas_used>0, logs). This is not the branch H3
-        // changed, but we pin the shape here so an accidental refactor doesn't
-        // collapse all paths to the (true, 0, []) literal.
-        fn multicall_shape() -> (bool, u64, Vec<Log>) {
-            (true, 21_000, Vec::new())
-        }
-        let (success, gas_used, _logs) = multicall_shape();
-        assert!(success);
-        assert!(gas_used > 0);
-    }
-
-    #[test]
-    fn test_h3_d_default_mode_empty_code_still_reverts() {
-        // H3-D: DEFAULT mode with an empty-code target must continue to return
-        // (false, 0, []) — the old "reject" behaviour stays in place for
-        // DEFAULT frames; only SENDER was relaxed. We assert on the opposite
-        // shape to guard against an accidental over-broad widening.
-        fn default_mode_empty_code() -> (bool, u64, Vec<Log>) {
-            (false, 0, Vec::new())
-        }
-        let (success, gas_used, logs) = default_mode_empty_code();
-        assert!(!success);
-        assert_eq!(gas_used, 0);
-        assert!(logs.is_empty());
     }
 }

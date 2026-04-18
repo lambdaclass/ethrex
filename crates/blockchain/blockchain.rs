@@ -2541,9 +2541,9 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // Phase 0 fork gating: reject frame transactions before Amsterdam activates.
-        // This prevents FrameTransaction (type 0x06) from entering the mempool or
-        // being forwarded over P2P on chains where EIP-8141 has not yet activated.
+        // EIP-8141 frame transactions (type 0x06) are consensus-divergent on any
+        // chain that has not activated Amsterdam; reject them at mempool admission
+        // so they are not forwarded over P2P either.
         if is_frame_tx && !config.is_amsterdam_activated(header.timestamp) {
             return Err(MempoolError::FrameTxPreFork);
         }

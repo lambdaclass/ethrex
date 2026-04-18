@@ -606,9 +606,9 @@ impl Blockchain {
                 continue;
             }
 
-            // Phase 0 fork gating: drop EIP-8141 frame transactions that reached the
-            // payload builder before Amsterdam has activated. These must never be
-            // included in a block until the fork is live.
+            // EIP-8141 frame transactions must never be included in a block
+            // that predates the Amsterdam activation timestamp. Drop them from
+            // the pool so the builder does not retry them every block.
             if head_tx.tx_type() == TxType::Frame
                 && !chain_config.is_amsterdam_activated(context.payload.header.timestamp)
             {

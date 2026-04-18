@@ -1891,10 +1891,8 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
-        // M2: accumulate a running sum of per-frame gas_limits to catch totals
-        // that would otherwise overflow the signed-i64 range the EVM uses for
-        // tx_gas_limit arithmetic downstream. The accumulator is u128 so the
-        // addition itself cannot overflow; the rejection is against i64::MAX.
+        // Tracked as u128 so the running addition itself cannot overflow; the
+        // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
         for (i, frame) in self.frames.iter().enumerate() {
             // Reject reserved execution modes (3-255)
@@ -1909,14 +1907,12 @@ impl FrameTransaction {
             if frame.mode == 1 && (frame.flags & 0x03) == 0 {
                 return Err(format!("Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"));
             }
-            // M1: per-frame gas_limit must fit in the signed-i64 range per spec.
             if frame.gas_limit > i64::MAX as u64 {
                 return Err(format!(
                     "Frame {i}: gas_limit {} exceeds 2**63-1",
                     frame.gas_limit
                 ));
             }
-            // M2: cumulative total of frame gas_limits must also fit in i64.
             total_frame_gas = total_frame_gas
                 .checked_add(frame.gas_limit as u128)
                 .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
@@ -4356,12 +4352,6 @@ mod tests {
         assert_eq!(h1, h2);
     }
 
-    // Phase 0 fork-gating tests. These assert on the ChainConfig::is_amsterdam_activated
-    // predicate that guards frame-tx admission and execution. The mempool/payload/VM
-    // gating calls this method directly (see blockchain.rs:2535, payload.rs:607, and
-    // vm.rs execute_frame_tx). End-to-end gating behaviour is covered by the
-    // demos/eip8141/backend/test-findings.mjs harness against a live dev node.
-
     fn chain_config_with_amsterdam(amsterdam_time: Option<u64>) -> crate::types::ChainConfig {
         crate::types::ChainConfig {
             amsterdam_time,
@@ -4370,25 +4360,20 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_tx_pre_fork_chain_config_rejects() {
-        // Chain config without amsterdam_time set: any timestamp is pre-fork.
+    fn amsterdam_not_configured_is_never_active() {
         let cfg = chain_config_with_amsterdam(None);
         assert!(!cfg.is_amsterdam_activated(0));
         assert!(!cfg.is_amsterdam_activated(u64::MAX));
     }
 
     #[test]
-    fn test_frame_tx_post_fork_admits() {
-        // Happy path: amsterdam_time set to some past timestamp.
+    fn amsterdam_configured_in_the_past_is_active() {
         let cfg = chain_config_with_amsterdam(Some(1000));
         assert!(cfg.is_amsterdam_activated(2000));
     }
 
     #[test]
-    fn test_frame_tx_pre_fork_rlp_roundtrip_still_decodes() {
-        // RLP decoding itself is fork-unaware and must remain lossless so that block
-        // validators can surface a proper FrameTxPreFork error downstream rather than
-        // a corrupt-RLP error. This test locks that property in place.
+    fn frame_transaction_rlp_roundtrip_preserves_fields() {
         let tx = make_test_frame_tx();
         let mut buf = Vec::new();
         tx.encode(&mut buf);
@@ -4400,18 +4385,13 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_tx_p2p_always_rejected() {
-        // The P2P path in blockchain.rs:2685 returns an error for FrameTransaction
-        // regardless of fork. This test asserts the enum variant exists so the
-        // match arm cannot regress to being silently missing.
+    fn frame_transaction_variant_is_exposed_on_transaction_enum() {
         let tx = Transaction::FrameTransaction(make_test_frame_tx());
         assert!(matches!(tx, Transaction::FrameTransaction(_)));
     }
 
     #[test]
-    fn test_frame_tx_fork_boundary_admits() {
-        // At exactly the fork activation timestamp, Amsterdam is active
-        // (is_amsterdam_activated uses `time <= block_timestamp`).
+    fn amsterdam_activates_at_the_configured_timestamp() {
         let activation_time = 1_700_000_000u64;
         let cfg = chain_config_with_amsterdam(Some(activation_time));
         assert!(cfg.is_amsterdam_activated(activation_time));
@@ -4419,16 +4399,12 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_tx_devnet_fork_epoch_zero_admits() {
-        // Kurtosis devnet sets amsterdam_time = Some(0). Frame txs must be
-        // accepted from the genesis block onwards.
+    fn amsterdam_time_zero_is_active_from_genesis() {
         let cfg = chain_config_with_amsterdam(Some(0));
         assert!(cfg.is_amsterdam_activated(0));
         assert!(cfg.is_amsterdam_activated(1));
         assert!(cfg.is_amsterdam_activated(u64::MAX));
     }
-
-    // M1 / M2 gas-limit bounds tests — per-frame and cumulative i64::MAX.
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
         let frames = limits
@@ -4456,31 +4432,22 @@ mod tests {
     }
 
     #[test]
-    fn test_m1_single_frame_gas_limit_over_bound_rejected() {
+    fn per_frame_gas_limit_above_i64_max_is_rejected() {
         let tx = make_frame_tx_with_gas_limits(vec![(i64::MAX as u64) + 1]);
         let err = tx.validate_static_constraints().unwrap_err();
-        assert!(
-            err.contains("exceeds 2**63-1"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("exceeds 2**63-1"), "unexpected error: {err}");
     }
 
     #[test]
-    fn test_m2_cumulative_gas_limit_over_bound_rejected() {
-        // Two frames individually in-range, but their sum exceeds 2**63-1.
+    fn cumulative_frame_gas_limit_above_i64_max_is_rejected() {
         let half = (i64::MAX as u64) / 2 + 1;
         let tx = make_frame_tx_with_gas_limits(vec![half, half]);
         let err = tx.validate_static_constraints().unwrap_err();
-        assert!(
-            err.contains("cumulative"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("cumulative"), "unexpected error: {err}");
     }
 
     #[test]
-    fn test_m1_m2_just_under_bound_accepted() {
-        // Two frames with cumulative sum exactly equal to i64::MAX is allowed
-        // because the bound is "exceeds 2**63-1" (strict).
+    fn cumulative_frame_gas_limit_equal_to_i64_max_is_accepted() {
         let a = (i64::MAX as u64) / 2;
         let b = i64::MAX as u64 - a;
         let tx = make_frame_tx_with_gas_limits(vec![a, b]);
@@ -4489,14 +4456,11 @@ mod tests {
     }
 
     #[test]
-    fn test_m1_m2_empty_frames_rejected_with_original_error() {
-        // The empty-frames check fires before per-frame validation, so we still
-        // hit the "between 1 and 64" error — not a gas-limit error.
+    fn empty_frames_list_is_rejected_by_count_check_not_gas_check() {
+        // The frame-count check fires before the gas-limit accumulator runs,
+        // so an empty frame list surfaces the count error, not a gas error.
         let tx = make_frame_tx_with_gas_limits(vec![]);
         let err = tx.validate_static_constraints().unwrap_err();
-        assert!(
-            err.contains("between 1 and 64"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("between 1 and"), "unexpected error: {err}");
     }
 }

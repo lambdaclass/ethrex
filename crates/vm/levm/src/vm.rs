@@ -605,8 +605,9 @@ impl<'a> VM<'a> {
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
         use crate::errors::TxResult;
 
-        // Phase 0 fork gating: reject frame transactions observed in a block or
-        // submitted to any non-mempool entry point before Amsterdam activates.
+        // Reject frame transactions observed in a block or submitted through
+        // any non-mempool entry point before Amsterdam activates. Mirrors the
+        // EIP-4844 (Cancun) and EIP-7702 (Prague) pre-fork gates.
         if self.env.config.fork < Fork::Amsterdam {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
