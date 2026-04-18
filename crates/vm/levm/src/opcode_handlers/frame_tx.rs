@@ -27,6 +27,19 @@ fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
+/// M3: Convert a U256 offset to usize, returning None when the value does not
+/// fit in usize on the current target. Per EIP-8141 spec, FRAMEDATALOAD and
+/// FRAMEDATACOPY must treat out-of-range offsets as pointing past the end of
+/// the frame's data — the load returns zero and the copy writes zero bytes —
+/// rather than halting the execution with an exceptional error.
+fn u256_to_offset(value: U256) -> Option<usize> {
+    // Upper three 64-bit limbs must be zero.
+    if value.0[1] != 0 || value.0[2] != 0 || value.0[3] != 0 {
+        return None;
+    }
+    usize::try_from(value.0[0]).ok()
+}
+
 /// Compute the transaction's maximum cost for APPROVE payment deduction.
 /// Per spec, this is TXPARAM(0x06): max_fee_per_gas * total_gas_limit + blob cost.
 fn compute_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
@@ -248,14 +261,17 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             return Ok(OpcodeResult::Continue);
         }
 
-        let byte_offset = offset.as_u64() as usize;
-        let data = &frame.data;
+        // M3: Treat an out-of-usize-range offset as "past the end" — the word
+        // is zero-filled just like reading past the end of frame.data.
         let mut word = [0u8; 32];
-        let available = data.len().saturating_sub(byte_offset);
-        let copy_len = available.min(32);
-        if copy_len > 0 {
-            if let Some(src) = data.get(byte_offset..byte_offset + copy_len) {
-                word[..copy_len].copy_from_slice(src);
+        if let Some(byte_offset) = u256_to_offset(offset) {
+            let data = &frame.data;
+            let available = data.len().saturating_sub(byte_offset);
+            let copy_len = available.min(32);
+            if copy_len > 0 {
+                if let Some(src) = data.get(byte_offset..byte_offset + copy_len) {
+                    word[..copy_len].copy_from_slice(src);
+                }
             }
         }
 
@@ -277,7 +293,10 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
         let [mem_offset, data_offset, length, frame_index] =
             *vm.current_call_frame.stack.pop()?;
         let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
-        let data_offset = index_to_usize(data_offset.as_u64())?;
+        // M3: an out-of-range data_offset is not a halt; the spec treats it as
+        // pointing past the end of the frame's data so the destination memory
+        // is zero-filled for the full length.
+        let data_offset_opt = u256_to_offset(data_offset);
 
         let new_memory_size = calculate_memory_size(mem_offset, length)?;
         let current_memory_size = vm.current_call_frame.memory.len();
@@ -312,13 +331,15 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
 
         let data = &frame.data;
         let mut buf = vec![0u8; length];
-        let available = data.len().saturating_sub(data_offset);
-        let copy_len = length.min(available);
-        if let (Some(dst), Some(src)) = (
-            buf.get_mut(..copy_len),
-            data.get(data_offset..data_offset.saturating_add(copy_len)),
-        ) {
-            dst.copy_from_slice(src);
+        if let Some(data_offset) = data_offset_opt {
+            let available = data.len().saturating_sub(data_offset);
+            let copy_len = length.min(available);
+            if let (Some(dst), Some(src)) = (
+                buf.get_mut(..copy_len),
+                data.get(data_offset..data_offset.saturating_add(copy_len)),
+            ) {
+                dst.copy_from_slice(src);
+            }
         }
 
         vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
@@ -807,5 +828,29 @@ mod tests {
     fn test_h4_ok_passes_through() {
         let e = map_underflow_like_apply_approve(Ok(()));
         assert!(e.is_ok());
+    }
+
+    // M3: u256_to_offset helper — ensures large U256 offsets are reported as
+    // None so FRAMEDATALOAD / FRAMEDATACOPY can zero-fill rather than halt.
+
+    #[test]
+    fn test_m3_u256_to_offset_small_values_fit() {
+        assert_eq!(u256_to_offset(U256::zero()), Some(0));
+        assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
+        assert_eq!(
+            u256_to_offset(U256::from(usize::MAX as u64)),
+            Some(usize::MAX)
+        );
+    }
+
+    #[test]
+    fn test_m3_u256_to_offset_large_values_return_none() {
+        // A value greater than u64::MAX (upper limbs non-zero) cannot be a
+        // usize on any supported target.
+        let big = U256::from(u64::MAX) + U256::one();
+        assert_eq!(u256_to_offset(big), None);
+
+        // Entirely maxed-out U256 must also be None.
+        assert_eq!(u256_to_offset(U256::MAX), None);
     }
 }
