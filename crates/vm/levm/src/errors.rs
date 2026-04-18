@@ -140,8 +140,6 @@ pub enum TxValidationError {
     Type4TxAuthorizationListIsEmpty,
     #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
-    #[error("Frame transactions (EIP-8141) are not supported before the Amsterdam fork")]
-    FrameTxPreFork,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
     #[error(

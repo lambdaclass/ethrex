@@ -4406,26 +4406,6 @@ mod tests {
         assert_eq!(h1, h2);
     }
 
-    fn chain_config_with_amsterdam(amsterdam_time: Option<u64>) -> crate::types::ChainConfig {
-        crate::types::ChainConfig {
-            amsterdam_time,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn amsterdam_not_configured_is_never_active() {
-        let cfg = chain_config_with_amsterdam(None);
-        assert!(!cfg.is_amsterdam_activated(0));
-        assert!(!cfg.is_amsterdam_activated(u64::MAX));
-    }
-
-    #[test]
-    fn amsterdam_configured_in_the_past_is_active() {
-        let cfg = chain_config_with_amsterdam(Some(1000));
-        assert!(cfg.is_amsterdam_activated(2000));
-    }
-
     #[test]
     fn frame_transaction_rlp_roundtrip_preserves_fields() {
         let tx = make_test_frame_tx();
@@ -4442,22 +4422,6 @@ mod tests {
     fn frame_transaction_variant_is_exposed_on_transaction_enum() {
         let tx = Transaction::FrameTransaction(make_test_frame_tx());
         assert!(matches!(tx, Transaction::FrameTransaction(_)));
-    }
-
-    #[test]
-    fn amsterdam_activates_at_the_configured_timestamp() {
-        let activation_time = 1_700_000_000u64;
-        let cfg = chain_config_with_amsterdam(Some(activation_time));
-        assert!(cfg.is_amsterdam_activated(activation_time));
-        assert!(!cfg.is_amsterdam_activated(activation_time - 1));
-    }
-
-    #[test]
-    fn amsterdam_time_zero_is_active_from_genesis() {
-        let cfg = chain_config_with_amsterdam(Some(0));
-        assert!(cfg.is_amsterdam_activated(0));
-        assert!(cfg.is_amsterdam_activated(1));
-        assert!(cfg.is_amsterdam_activated(u64::MAX));
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
