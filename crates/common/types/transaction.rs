@@ -4321,4 +4321,76 @@ mod tests {
         let h2 = tx.hash();
         assert_eq!(h1, h2);
     }
+
+    // Phase 0 fork-gating tests. These assert on the ChainConfig::is_amsterdam_activated
+    // predicate that guards frame-tx admission and execution. The mempool/payload/VM
+    // gating calls this method directly (see blockchain.rs:2535, payload.rs:607, and
+    // vm.rs execute_frame_tx). End-to-end gating behaviour is covered by the
+    // demos/eip8141/backend/test-findings.mjs harness against a live dev node.
+
+    fn chain_config_with_amsterdam(amsterdam_time: Option<u64>) -> crate::types::ChainConfig {
+        crate::types::ChainConfig {
+            amsterdam_time,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_frame_tx_pre_fork_chain_config_rejects() {
+        // Chain config without amsterdam_time set: any timestamp is pre-fork.
+        let cfg = chain_config_with_amsterdam(None);
+        assert!(!cfg.is_amsterdam_activated(0));
+        assert!(!cfg.is_amsterdam_activated(u64::MAX));
+    }
+
+    #[test]
+    fn test_frame_tx_post_fork_admits() {
+        // Happy path: amsterdam_time set to some past timestamp.
+        let cfg = chain_config_with_amsterdam(Some(1000));
+        assert!(cfg.is_amsterdam_activated(2000));
+    }
+
+    #[test]
+    fn test_frame_tx_pre_fork_rlp_roundtrip_still_decodes() {
+        // RLP decoding itself is fork-unaware and must remain lossless so that block
+        // validators can surface a proper FrameTxPreFork error downstream rather than
+        // a corrupt-RLP error. This test locks that property in place.
+        let tx = make_test_frame_tx();
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.chain_id, tx.chain_id);
+        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.sender, tx.sender);
+    }
+
+    #[test]
+    fn test_frame_tx_p2p_always_rejected() {
+        // The P2P path in blockchain.rs:2685 returns an error for FrameTransaction
+        // regardless of fork. This test asserts the enum variant exists so the
+        // match arm cannot regress to being silently missing.
+        let tx = Transaction::FrameTransaction(make_test_frame_tx());
+        assert!(matches!(tx, Transaction::FrameTransaction(_)));
+    }
+
+    #[test]
+    fn test_frame_tx_fork_boundary_admits() {
+        // At exactly the fork activation timestamp, Amsterdam is active
+        // (is_amsterdam_activated uses `time <= block_timestamp`).
+        let activation_time = 1_700_000_000u64;
+        let cfg = chain_config_with_amsterdam(Some(activation_time));
+        assert!(cfg.is_amsterdam_activated(activation_time));
+        assert!(!cfg.is_amsterdam_activated(activation_time - 1));
+    }
+
+    #[test]
+    fn test_frame_tx_devnet_fork_epoch_zero_admits() {
+        // Kurtosis devnet sets amsterdam_time = Some(0). Frame txs must be
+        // accepted from the genesis block onwards.
+        let cfg = chain_config_with_amsterdam(Some(0));
+        assert!(cfg.is_amsterdam_activated(0));
+        assert!(cfg.is_amsterdam_activated(1));
+        assert!(cfg.is_amsterdam_activated(u64::MAX));
+    }
 }

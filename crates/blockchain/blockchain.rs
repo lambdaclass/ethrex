@@ -2541,6 +2541,13 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
+        // Phase 0 fork gating: reject frame transactions before Amsterdam activates.
+        // This prevents FrameTransaction (type 0x06) from entering the mempool or
+        // being forwarded over P2P on chains where EIP-8141 has not yet activated.
+        if is_frame_tx && !config.is_amsterdam_activated(header.timestamp) {
+            return Err(MempoolError::FrameTxPreFork);
+        }
+
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size

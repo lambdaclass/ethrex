@@ -606,6 +606,18 @@ impl Blockchain {
                 continue;
             }
 
+            // Phase 0 fork gating: drop EIP-8141 frame transactions that reached the
+            // payload builder before Amsterdam has activated. These must never be
+            // included in a block until the fork is live.
+            if head_tx.tx_type() == TxType::Frame
+                && !chain_config.is_amsterdam_activated(context.payload.header.timestamp)
+            {
+                debug!("Skipping frame transaction before Amsterdam fork: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
             #[allow(clippy::cast_possible_truncation)]

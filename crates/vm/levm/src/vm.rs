@@ -605,6 +605,14 @@ impl<'a> VM<'a> {
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
         use crate::errors::TxResult;
 
+        // Phase 0 fork gating: reject frame transactions observed in a block or
+        // submitted to any non-mempool entry point before Amsterdam activates.
+        if self.env.config.fork < Fork::Amsterdam {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::FrameTxPreFork,
+            ));
+        }
+
         let frame_tx = match &self.tx {
             Transaction::FrameTransaction(ft) => ft.clone(),
             _ => unreachable!(),
