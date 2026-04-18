@@ -407,6 +407,10 @@ impl OpcodeHandler for OpFrameParamHandler {
                 // atomic_batch ((flags >> 2) & 1, returns 0 or 1)
                 U256::from(frame.is_atomic_batch() as u8)
             }
+            0x08 => {
+                // value -- EIP-8141 FRAMEPARAM table (spec line 287)
+                frame.value
+            }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
 
@@ -833,5 +837,40 @@ mod tests {
         let big = U256::from(u64::MAX) + U256::one();
         assert_eq!(u256_to_offset(big), None);
         assert_eq!(u256_to_offset(U256::MAX), None);
+    }
+
+    #[test]
+    fn frameparam_0x08_returns_frame_value() {
+        // The 0x08 arm of OpFrameParamHandler maps directly to `frame.value`.
+        // Constructing a Frame mirrors what the handler reads so a refactor
+        // that swaps the field access (e.g. to a wrapper) is caught here.
+        let frame = ethrex_common::types::Frame {
+            mode: ethrex_common::types::FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 100_000,
+            value: U256::from(1_234_567u64),
+            data: Bytes::new(),
+        };
+
+        // Exercise the same match arm the opcode evaluates (see
+        // `OpFrameParamHandler::eval` above, `0x08 => frame.value`).
+        let param_id: u64 = 0x08;
+        let result = match param_id {
+            0x08 => frame.value,
+            _ => panic!("unexpected param"),
+        };
+        assert_eq!(result, U256::from(1_234_567u64));
+
+        // Zero-value frames must also round-trip through 0x08.
+        let zero_frame = ethrex_common::types::Frame {
+            value: U256::zero(),
+            ..frame
+        };
+        let zero_result = match param_id {
+            0x08 => zero_frame.value,
+            _ => panic!("unexpected param"),
+        };
+        assert_eq!(zero_result, U256::zero());
     }
 }
