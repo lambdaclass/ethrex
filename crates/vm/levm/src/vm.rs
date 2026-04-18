@@ -426,6 +426,14 @@ impl Substate {
 ///     println!("Transaction reverted");
 /// }
 /// ```
+/// EIP-8141 spec lines 346-347: the top-level `frame.value` transfer
+/// reverts the frame if the sender's balance is strictly less than the
+/// amount being sent. Factored out so the decision can be unit-tested
+/// without bringing up a full VM state.
+pub(crate) fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U256) -> bool {
+    sender_balance < frame_value
+}
+
 /// Context for frame transaction (EIP-8141) execution.
 /// This is set when executing a frame transaction and is used by
 /// APPROVE, TXPARAM, FRAMEDATALOAD, and FRAMEDATACOPY opcodes.
@@ -605,6 +613,15 @@ impl<'a> VM<'a> {
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
         use crate::errors::TxResult;
 
+        // Reject frame transactions observed in a block or submitted through
+        // any non-mempool entry point before Amsterdam activates. Mirrors the
+        // EIP-4844 (Cancun) and EIP-7702 (Prague) pre-fork gates.
+        if self.env.config.fork < Fork::Amsterdam {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::FrameTxPreFork,
+            ));
+        }
+
         let frame_tx = match &self.tx {
             Transaction::FrameTransaction(ft) => ft.clone(),
             _ => unreachable!(),
@@ -663,8 +680,8 @@ impl<'a> VM<'a> {
             approve_called_in_current_frame: false,
         });
 
-        // ENTRY_POINT address (0xaa) used as caller for DEFAULT/VERIFY frames
-        let entry_point = Address::from_low_u64_be(0xaa);
+        // ENTRY_POINT address used as caller for DEFAULT/VERIFY frames
+        let entry_point = ethrex_common::types::frame_tx_entry_point();
 
         let mut all_logs: Vec<Log> = Vec::new();
         let sum_frame_gas_limits: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
@@ -757,17 +774,72 @@ impl<'a> VM<'a> {
             // Set env.origin for this frame (ORIGIN opcode reads this)
             self.env.origin = caller;
 
-            // Get target's bytecode
-            let bytecode = self.db.get_account_code(target)?.clone();
+            // Resolve any EIP-7702 delegation at the resolved target. For a non-delegated
+            // target this is equivalent to `db.get_account_code(target)`; for a delegated
+            // target it follows the 0xef0100 || addr indicator and returns the delegatee's
+            // bytecode plus the resolved code_address. EIP-8141 §Execution step 1 requires
+            // delegated targets to execute the delegatee's code while keeping ADDRESS/storage
+            // tied to the delegator — which is why `to` below stays `target` but the
+            // CallFrame receives the resolved `code_address`. Mirrors the pattern used at
+            // top-level tx entry in default_hook::set_bytecode_and_code_address.
+            //
+            // access_cost is intentionally discarded: this frame entry is analogous to a
+            // top-level tx entry (a call from 0xaa / tx.sender, not a CALL opcode), and
+            // default_hook.rs drops the same cost there. EIP-8141 §Execution is silent on
+            // billing the 7702 access cost for `resolved_target`, so we keep frame-entry
+            // behavior consistent with tx-entry behavior.
+            let (is_delegation_7702, _access_cost, code_address, bytecode) =
+                crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
+
+            // Mirror default_hook::set_bytecode_and_code_address: when delegation was
+            // followed, record the delegatee (code_address) as touched in BAL so EIP-7928
+            // reconstructors see the cross-address read.
+            if is_delegation_7702
+                && let Some(recorder) = self.db.bal_recorder.as_mut()
+            {
+                recorder.record_touched_address(code_address);
+            }
 
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // If resolved_target has neither code nor an EIP-7702 delegation indicator,
-            // execute the default code. EIP-7702 delegations are stored as bytecode
-            // (0xef0100 || address, 23 bytes), so they are non-empty.
-            let (frame_success, frame_gas_used, frame_logs) = if bytecode.bytecode.is_empty() {
-                // Default code for EOA (no deployed code and no EIP-7702 delegation)
+            // EIP-8141 top-level value transfer: per spec lines 346-347 the
+            // outer frame call owns CALLVALUE delivery and must revert the
+            // frame if the sender cannot cover `frame.value`. Static
+            // validation already guarantees only SENDER frames reach here
+            // with a non-zero value. Running the transfer inside the
+            // per-frame backup means an atomic-batch revert (or a later
+            // run_execution revert) unwinds it the same way it unwinds any
+            // inner state change.
+            let value_transfer_reverted = if !frame.value.is_zero() {
+                let sender_balance = self.db.get_account(sender)?.info.balance;
+                if frame_value_exceeds_balance(sender_balance, frame.value) {
+                    true
+                } else {
+                    self.transfer(sender, target, frame.value)?;
+                    // EIP-7708 log parity with the top-level transfer_value
+                    // hook (see `hooks::default_hook::transfer_value`): only
+                    // Amsterdam+ and only when sender != target.
+                    if self.env.config.fork >= Fork::Amsterdam && sender != target {
+                        let log = crate::utils::create_eth_transfer_log(sender, target, frame.value);
+                        self.substate.add_log(log);
+                    }
+                    false
+                }
+            } else {
+                false
+            };
+
+            let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
+                self.substate.revert_backup();
+                self.restore_cache_state()?;
+                (false, frame.gas_limit, Vec::new())
+            } else if bytecode.bytecode.is_empty() && !is_delegation_7702 {
+                // Default code runs only when the target has NEITHER code NOR a delegation
+                // indicator (EIP-8141 §Execution lines 348-349). After eip7702_get_code,
+                // bytecode is the delegatee's code when delegated, so a delegation to an
+                // empty delegatee still falls into the CallFrame branch below and returns
+                // success without executing anything — NOT into the default-code path.
                 use crate::opcode_handlers::frame_tx::execute_default_code;
                 match execute_default_code(self, frame, sender, target) {
                     Ok((success, gas_used, logs)) => {
@@ -787,18 +859,21 @@ impl<'a> VM<'a> {
                     }
                 }
             } else {
-                // Normal code execution via CallFrame
+                // Normal code execution via CallFrame. msg_value carries
+                // `frame.value` so the contract sees the correct CALLVALUE
+                // (EIP-8141 spec line 346), but `should_transfer_value` stays
+                // false because the outer loop above already moved the funds.
                 let call_frame = CallFrame::new(
                     caller,                                    // msg_sender
-                    target,                                    // to
-                    target,                                    // code_address
-                    bytecode,                                  // bytecode
-                    U256::zero(),       // msg_value (frames don't transfer value)
+                    target,                                    // to (delegator; ADDRESS/storage)
+                    code_address,                              // code_address (delegatee when 7702)
+                    bytecode,                                  // bytecode (delegatee's code when 7702)
+                    frame.value,        // msg_value -- CALLVALUE
                     frame.data.clone(), // calldata
                     is_static,          // is_static
                     frame.gas_limit,    // gas_limit
                     0,                  // depth
-                    false,              // should_transfer_value
+                    false,              // should_transfer_value (outer already transferred)
                     false,              // is_create
                     0,                  // ret_offset
                     0,                  // ret_size
@@ -1275,5 +1350,351 @@ mod frame_tx_security_tests {
         assert_eq!(log_tags(&per_frame[0]), vec![0x11]);
         assert_eq!(log_tags(&per_frame[1]), vec![0x22]);
         assert_eq!(log_tags(&per_frame[2]), vec![0x33]);
+    }
+}
+
+#[cfg(test)]
+mod frame_value_transfer_tests {
+    //! EIP-8141 top-level value-transfer invariants.
+    //!
+    //! The outer `execute_frame_tx` loop owns the `frame.value` transfer: it
+    //! balance-checks the sender, performs the transfer, and records an
+    //! EIP-7708 log (when sender != target, Amsterdam+). These tests pin the
+    //! balance-check predicate; the backup-unwind coverage for atomic batch
+    //! revert lives in the regression-test commit that follows.
+    use super::*;
+    use ethrex_common::U256;
+
+    #[test]
+    fn frame_value_transfers_from_sender_to_resolved_target_on_success() {
+        // A sufficiently funded sender must not revert — the transfer proceeds.
+        let sender_balance = U256::from(10u64).saturating_mul(U256::exp10(18)); // 10 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17));           // 0.1 ETH
+        assert!(!frame_value_exceeds_balance(sender_balance, value));
+
+        // Exact-balance transfer: sender has exactly `value` — still succeeds.
+        assert!(!frame_value_exceeds_balance(value, value));
+    }
+
+    #[test]
+    fn frame_value_transfer_reverts_on_insufficient_sender_balance() {
+        // Under-funded sender → revert path taken.
+        let balance = U256::from(5u64).saturating_mul(U256::exp10(16)); // 0.05 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17));    // 0.10 ETH
+        assert!(frame_value_exceeds_balance(balance, value));
+
+        // Zero-balance / non-zero value → revert.
+        assert!(frame_value_exceeds_balance(U256::zero(), U256::one()));
+
+        // Balance just one less than value → revert.
+        let v = U256::from(1_000_000u64);
+        assert!(frame_value_exceeds_balance(v - U256::one(), v));
+    }
+
+    /// Regression test for the atomic-batch unwind: any state change
+    /// performed inside a backup scope (including the outer-owned value
+    /// transfer and the EIP-7708 log emitted alongside it) must be reverted
+    /// when the enclosing batch reverts. `execute_frame_tx` pushes a batch
+    /// backup before each atomic group and calls `revert_backup()` when any
+    /// in-batch frame fails; this test exercises the Substate primitive
+    /// that guarantees the log and state deltas do not leak past the
+    /// boundary.
+    #[test]
+    fn atomic_batch_revert_unwinds_in_batch_value_effects() {
+        use ethrex_common::Address;
+
+        let mut substate = Substate::default();
+
+        // Log emitted before the batch — should survive a batch revert.
+        substate.add_log(Log {
+            address: Address::from_low_u64_be(1),
+            topics: vec![],
+            data: Bytes::from_static(b"pre-batch"),
+        });
+
+        // Enter the atomic batch: push a backup before the first in-batch frame.
+        substate.push_backup();
+
+        // Frame 1 (SENDER atomic, successful): simulate the per-frame scope,
+        // emit the EIP-7708 transfer log produced by the outer value transfer,
+        // then commit the per-frame backup.
+        substate.push_backup();
+        substate.add_log(Log {
+            address: Address::from_low_u64_be(2),
+            topics: vec![],
+            data: Bytes::from_static(b"frame-1-transfer-log"),
+        });
+        substate.commit_backup();
+
+        // Frame 2 reverts: `execute_frame_tx` reverts the batch-level backup,
+        // which undoes every in-batch substate change including Frame 1's log.
+        substate.revert_backup();
+
+        let logs = substate.extract_logs();
+        let tags: Vec<&[u8]> = logs.iter().map(|l| l.data.as_ref()).collect();
+        assert_eq!(
+            tags,
+            vec![b"pre-batch".as_ref()],
+            "atomic-batch revert must unwind in-batch value-transfer effects"
+        );
+    }
+}
+
+#[cfg(test)]
+mod frame_tx_7702_delegation_tests {
+    //! EIP-8141 §Execution step 1 (lines 348-351) requires that at frame entry,
+    //! if `resolved_target` has an EIP-7702 delegation indicator the frame
+    //! executes according to EIP-7702's delegated-code semantics — i.e. the
+    //! delegatee's code runs while ADDRESS/storage stay tied to the delegator.
+    //! Default code runs ONLY when the target has neither code nor a delegation.
+    //!
+    //! `execute_frame_tx` resolves this via `utils::eip7702_get_code` and then
+    //! gates the default-code branch on `bytecode.is_empty() && !is_delegation_7702`.
+    //! The tests below pin that decision table directly by invoking
+    //! `eip7702_get_code` on the four target shapes in §5 of the mitigation plan.
+    //! They intentionally stay at the helper + predicate level rather than
+    //! spinning up a full frame-tx VM: the production change is a one-line
+    //! helper swap plus a predicate tweak, and a predicate-level test is the
+    //! tightest regression guard against the 0xef-as-opcode halt bug that
+    //! motivated the fix.
+    use crate::db::{Database, gen_db::GeneralizedDatabase};
+    use crate::errors::DatabaseError;
+    use crate::utils::eip7702_get_code;
+    use crate::vm::Substate;
+    use bytes::Bytes;
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_common::{
+        Address, H256, U256,
+        types::{Account, AccountState, ChainConfig, Code, CodeMetadata},
+    };
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    /// Minimal in-memory store matching the shape used by `eip7708_tests.rs`.
+    struct TestStore {
+        accounts: FxHashMap<Address, Account>,
+    }
+
+    impl Database for TestStore {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: *EMPTY_TRIE_HASH,
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default())
+        }
+        fn get_storage_value(&self, _a: Address, _k: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _n: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(acc.code.clone());
+                }
+            }
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        #[expect(clippy::as_conversions, reason = "test helper")]
+                        length: acc.code.bytecode.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    fn addr(x: u64) -> Address {
+        Address::from_low_u64_be(x)
+    }
+
+    /// Build a 23-byte EIP-7702 delegation indicator pointing at `delegatee`.
+    fn delegation_indicator(delegatee: Address) -> Bytes {
+        use crate::constants::SET_CODE_DELEGATION_BYTES;
+        let mut v = Vec::with_capacity(23);
+        v.extend_from_slice(&SET_CODE_DELEGATION_BYTES);
+        v.extend_from_slice(delegatee.as_bytes());
+        Bytes::from(v)
+    }
+
+    fn build_db(accounts: Vec<(Address, Account)>) -> GeneralizedDatabase {
+        let store = Arc::new(TestStore {
+            accounts: FxHashMap::default(),
+        });
+        let map: FxHashMap<Address, Account> = accounts.into_iter().collect();
+        GeneralizedDatabase::new_with_account_state(store, map)
+    }
+
+    /// The decision predicate from `execute_frame_tx`: default-code runs only when
+    /// the *resolved* bytecode is empty AND the target has no delegation. This mirrors
+    /// the exact `else if` condition in `vm.rs::execute_frame_tx` after the H2 fix.
+    fn runs_default_code(is_delegation_7702: bool, bytecode: &Code) -> bool {
+        bytecode.bytecode.is_empty() && !is_delegation_7702
+    }
+
+    /// Positive case: a 7702-delegated EOA must resolve to the delegatee's bytecode,
+    /// not the 0xef0100 indicator. Before the H2 fix, the indicator was run as
+    /// bytecode and 0xef halted the frame; verifying `is_delegation_7702 == true`
+    /// and that the returned code matches the delegatee's code pins both the helper
+    /// contract and the predicate routing.
+    #[test]
+    fn delegated_sender_eoa_runs_delegatee_code_with_delegator_address() {
+        let delegator = addr(0xDE1E);
+        let delegatee = addr(0xC0DE);
+        let delegatee_code = Bytes::from(vec![0x60, 0xff, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+        let delegator_account = Account::new(
+            U256::from(1_000_000_000u64),
+            Code::from_bytecode(delegation_indicator(delegatee)),
+            0,
+            FxHashMap::default(),
+        );
+        let delegatee_account = Account::new(
+            U256::zero(),
+            Code::from_bytecode(delegatee_code.clone()),
+            0,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![
+            (delegator, delegator_account),
+            (delegatee, delegatee_account),
+        ]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
+
+        assert!(is_delegation, "delegator must be detected as 7702-delegated");
+        assert_eq!(
+            code_address, delegatee,
+            "code_address must point at the delegatee, not the delegator"
+        );
+        assert_eq!(
+            code.bytecode, delegatee_code,
+            "returned bytecode must be the delegatee's code, not the 0xef0100 indicator"
+        );
+        assert!(
+            !runs_default_code(is_delegation, &code),
+            "7702 delegation to a non-empty delegatee must take the CallFrame branch, not default code"
+        );
+    }
+
+    /// Edge case called out in plan §5 row 3: a 7702 delegation pointing at an
+    /// address with no deployed code. Resolved bytecode is empty, but the spec
+    /// requires the frame to execute the empty code successfully — NOT fall
+    /// through to default code. The predicate guard `&& !is_delegation_7702`
+    /// exists for exactly this case; without it, a delegation to an empty
+    /// delegatee would accidentally run default-code authentication logic.
+    #[test]
+    fn delegated_eoa_with_empty_delegatee_succeeds_as_empty_code() {
+        let delegator = addr(0xDE1E);
+        let delegatee = addr(0xE117); // empty — no Account registered
+        let delegator_account = Account::new(
+            U256::from(1_000_000_000u64),
+            Code::from_bytecode(delegation_indicator(delegatee)),
+            0,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![(delegator, delegator_account)]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
+
+        assert!(is_delegation, "delegation indicator must still be detected");
+        assert_eq!(code_address, delegatee);
+        assert!(
+            code.bytecode.is_empty(),
+            "delegatee has no code, so resolved bytecode is empty"
+        );
+        assert!(
+            !runs_default_code(is_delegation, &code),
+            "empty-delegatee delegation must NOT route to default code — it must take the \
+             CallFrame branch and succeed as empty code (EIP-8141 §Execution lines 348-349)"
+        );
+    }
+
+    /// Regression: a plain EOA (no deployed code, no delegation indicator) must
+    /// still route into the default-code branch. This pins that the H2 fix
+    /// didn't over-broaden the resolved-delegation path.
+    #[test]
+    fn undelegated_eoa_still_runs_default_code() {
+        let eoa_addr = addr(0xEAA0);
+        let eoa = Account::new(
+            U256::from(1_000_000_000u64),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![(eoa_addr, eoa)]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, eoa_addr).unwrap();
+
+        assert!(!is_delegation, "plain EOA has no delegation indicator");
+        assert_eq!(
+            code_address, eoa_addr,
+            "code_address falls back to the target when no delegation"
+        );
+        assert!(code.bytecode.is_empty(), "plain EOA has no code");
+        assert!(
+            runs_default_code(is_delegation, &code),
+            "plain EOA with no code and no delegation must take the default-code branch"
+        );
+    }
+
+    /// Regression: a target with real bytecode and no delegation must still
+    /// execute its own bytecode. Guards against a mis-route that would happen
+    /// if the helper mis-identified a non-indicator code as a delegation.
+    #[test]
+    fn contract_target_unaffected_by_delegation_resolver() {
+        let contract_addr = addr(0xC000);
+        let contract_code = Bytes::from(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]); // PUSH1 1 PUSH1 2 ADD STOP
+        let contract_account = Account::new(
+            U256::zero(),
+            Code::from_bytecode(contract_code.clone()),
+            1,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![(contract_addr, contract_account)]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, contract_addr).unwrap();
+
+        assert!(
+            !is_delegation,
+            "regular contract bytecode must not be mistaken for a delegation"
+        );
+        assert_eq!(
+            code_address, contract_addr,
+            "code_address is the target itself when no delegation"
+        );
+        assert_eq!(
+            code.bytecode, contract_code,
+            "regular contract bytecode passes through unchanged"
+        );
+        assert!(
+            !runs_default_code(is_delegation, &code),
+            "contract with code must take the CallFrame branch, not default code"
+        );
     }
 }

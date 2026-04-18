@@ -1725,6 +1725,11 @@ pub struct Frame {
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
     pub gas_limit: u64,
+    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
+    // Only SENDER frames may carry a non-zero value (spec line 140); see
+    // `validate_static_constraints`.
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub value: U256,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub data: Bytes,
 }
@@ -1758,6 +1763,7 @@ impl RLPEncode for Frame {
             .encode_field(&(self.flags as u64))
             .encode_field(&target_kind)
             .encode_field(&self.gas_limit)
+            .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
     }
@@ -1778,12 +1784,14 @@ impl RLPDecode for Frame {
             TxKind::Create => None,
         };
         let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
             mode,
             flags,
             target,
             gas_limit,
+            value,
             data,
         };
         Ok((frame, decoder.finish()?))
@@ -1816,6 +1824,16 @@ pub struct FrameTransaction {
 pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
+/// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
+pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
+/// Maximum number of frames allowed per EIP-8141 frame transaction.
+pub const FRAME_TX_MAX_FRAMES: usize = 64;
+
+/// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
+/// DEFAULT/VERIFY frames per EIP-8141.
+pub fn frame_tx_entry_point() -> Address {
+    Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
+}
 
 impl FrameTransaction {
     /// Compute the signature hash per EIP-8141:
@@ -1829,11 +1847,14 @@ impl FrameTransaction {
             .iter()
             .map(|f| {
                 if f.execution_mode() == FrameMode::Verify {
+                    // Only `data` is elided; per spec line 770 everything else
+                    // on a VERIFY frame (including `value`) remains covered.
                     Frame {
                         mode: f.mode,
                         flags: f.flags,
                         target: f.target,
                         gas_limit: f.gas_limit,
+                        value: f.value,
                         data: Bytes::new(),
                     }
                 } else {
@@ -1876,9 +1897,14 @@ impl FrameTransaction {
         if self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
         }
-        if self.frames.is_empty() || self.frames.len() > 64 {
-            return Err("Frame count must be between 1 and 64".to_string());
+        if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
+            return Err(format!(
+                "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
+            ));
         }
+        // Tracked as u128 so the running addition itself cannot overflow; the
+        // bound below rejects tx-level totals that don't fit in signed i64.
+        let mut total_frame_gas: u128 = 0;
         for (i, frame) in self.frames.iter().enumerate() {
             // Reject reserved execution modes (3-255)
             if frame.mode >= 3 {
@@ -1891,6 +1917,30 @@ impl FrameTransaction {
             // VERIFY frames must have non-zero scope in flags
             if frame.mode == 1 && (frame.flags & 0x03) == 0 {
                 return Err(format!("Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"));
+            }
+            // Per EIP-8141 spec line 140, only SENDER frames may carry a
+            // non-zero value. DEFAULT and VERIFY frames with a non-zero
+            // value are statically invalid.
+            if frame.mode != FrameMode::Sender as u8 && !frame.value.is_zero() {
+                return Err(format!(
+                    "Frame {i}: non-zero value only allowed in SENDER mode (mode={}, value={})",
+                    frame.mode, frame.value
+                ));
+            }
+            if frame.gas_limit > i64::MAX as u64 {
+                return Err(format!(
+                    "Frame {i}: gas_limit {} exceeds 2**63-1",
+                    frame.gas_limit
+                ));
+            }
+            total_frame_gas = total_frame_gas
+                .checked_add(frame.gas_limit as u128)
+                .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
+            if total_frame_gas > i64::MAX as u128 {
+                return Err(format!(
+                    "Frame {i}: cumulative frame gas_limit {} exceeds 2**63-1",
+                    total_frame_gas
+                ));
             }
             // Atomic batch flag (bit 2 of flags) is only valid with SENDER mode
             if frame.is_atomic_batch() {
@@ -2261,8 +2311,18 @@ mod serde_impl {
         pub to: Option<Address>,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub gas_limit: u64,
+        #[serde(
+            default,
+            serialize_with = "serialize_u256_hex",
+            deserialize_with = "crate::serde_utils::u256::deser_hex_str"
+        )]
+        pub value: U256,
         #[serde(with = "crate::serde_utils::bytes")]
         pub data: Bytes,
+    }
+
+    fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&format!("{value:#x}"))
     }
 
     impl From<&Frame> for FrameEntry {
@@ -2272,6 +2332,7 @@ mod serde_impl {
                 flags: value.flags as u64,
                 to: value.target,
                 gas_limit: value.gas_limit,
+                value: value.value,
                 data: value.data.clone(),
             }
         }
@@ -2284,6 +2345,7 @@ mod serde_impl {
                 flags: entry.flags as u8,
                 target: entry.to,
                 gas_limit: entry.gas_limit,
+                value: entry.value,
                 data: entry.data,
             }
         }
@@ -4174,6 +4236,7 @@ mod tests {
                     flags: 0x03, // APPROVE_PAYMENT_AND_EXECUTION
                     target: Some(Address::from_low_u64_be(0xABCD)),
                     gas_limit: 100_000,
+                    value: U256::zero(),
                     data: Bytes::from_static(b"verify_data"),
                 },
                 Frame {
@@ -4181,6 +4244,7 @@ mod tests {
                     flags: 0x00,
                     target: Some(Address::from_low_u64_be(0x1234)),
                     gas_limit: 200_000,
+                    value: U256::zero(),
                     data: Bytes::from_static(b"call_data"),
                 },
             ],
@@ -4200,6 +4264,7 @@ mod tests {
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            value: U256::zero(),
             data: Bytes::from_static(b"hello"),
         };
         let encoded = frame.encode_to_vec();
@@ -4214,6 +4279,7 @@ mod tests {
             flags: 0x00,
             target: None,
             gas_limit: 10_000,
+            value: U256::zero(),
             data: Bytes::from_static(b"deploy"),
         };
         let encoded = frame.encode_to_vec();
@@ -4230,6 +4296,7 @@ mod tests {
                 flags: if mode_val == 1 { 0x03 } else { 0x00 }, // VERIFY needs nonzero scope
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
+                value: U256::zero(),
                 data: Bytes::new(),
             };
             let encoded = frame.encode_to_vec();
@@ -4242,6 +4309,7 @@ mod tests {
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
+            value: U256::zero(),
             data: Bytes::new(),
         };
         assert_eq!(frame.execution_mode(), FrameMode::Sender);
@@ -4250,6 +4318,22 @@ mod tests {
         let encoded = frame.encode_to_vec();
         let decoded = Frame::decode(&encoded).unwrap();
         assert_eq!(frame, decoded);
+    }
+
+    #[test]
+    fn frame_rlp_roundtrip_preserves_value() {
+        let frame = Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 100_000,
+            value: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
+            data: Bytes::from_static(b"hello"),
+        };
+        let encoded = frame.encode_to_vec();
+        let decoded = Frame::decode(&encoded).unwrap();
+        assert_eq!(frame, decoded);
+        assert_eq!(decoded.value, U256::from(1_000_000_000_000_000u64));
     }
 
     #[test]
@@ -4320,5 +4404,214 @@ mod tests {
         let h1 = tx.hash();
         let h2 = tx.hash();
         assert_eq!(h1, h2);
+    }
+
+    fn chain_config_with_amsterdam(amsterdam_time: Option<u64>) -> crate::types::ChainConfig {
+        crate::types::ChainConfig {
+            amsterdam_time,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn amsterdam_not_configured_is_never_active() {
+        let cfg = chain_config_with_amsterdam(None);
+        assert!(!cfg.is_amsterdam_activated(0));
+        assert!(!cfg.is_amsterdam_activated(u64::MAX));
+    }
+
+    #[test]
+    fn amsterdam_configured_in_the_past_is_active() {
+        let cfg = chain_config_with_amsterdam(Some(1000));
+        assert!(cfg.is_amsterdam_activated(2000));
+    }
+
+    #[test]
+    fn frame_transaction_rlp_roundtrip_preserves_fields() {
+        let tx = make_test_frame_tx();
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.chain_id, tx.chain_id);
+        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.sender, tx.sender);
+    }
+
+    #[test]
+    fn frame_transaction_variant_is_exposed_on_transaction_enum() {
+        let tx = Transaction::FrameTransaction(make_test_frame_tx());
+        assert!(matches!(tx, Transaction::FrameTransaction(_)));
+    }
+
+    #[test]
+    fn amsterdam_activates_at_the_configured_timestamp() {
+        let activation_time = 1_700_000_000u64;
+        let cfg = chain_config_with_amsterdam(Some(activation_time));
+        assert!(cfg.is_amsterdam_activated(activation_time));
+        assert!(!cfg.is_amsterdam_activated(activation_time - 1));
+    }
+
+    #[test]
+    fn amsterdam_time_zero_is_active_from_genesis() {
+        let cfg = chain_config_with_amsterdam(Some(0));
+        assert!(cfg.is_amsterdam_activated(0));
+        assert!(cfg.is_amsterdam_activated(1));
+        assert!(cfg.is_amsterdam_activated(u64::MAX));
+    }
+
+    fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
+        let frames = limits
+            .into_iter()
+            .map(|gl| Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: gl,
+                value: U256::zero(),
+                data: Bytes::new(),
+            })
+            .collect();
+        FrameTransaction {
+            chain_id: 1,
+            nonce: 0,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        }
+    }
+
+    #[test]
+    fn per_frame_gas_limit_above_i64_max_is_rejected() {
+        let tx = make_frame_tx_with_gas_limits(vec![(i64::MAX as u64) + 1]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("exceeds 2**63-1"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn cumulative_frame_gas_limit_above_i64_max_is_rejected() {
+        let half = (i64::MAX as u64) / 2 + 1;
+        let tx = make_frame_tx_with_gas_limits(vec![half, half]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("cumulative"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn cumulative_frame_gas_limit_equal_to_i64_max_is_accepted() {
+        let a = (i64::MAX as u64) / 2;
+        let b = i64::MAX as u64 - a;
+        let tx = make_frame_tx_with_gas_limits(vec![a, b]);
+        tx.validate_static_constraints()
+            .expect("exact i64::MAX total should be accepted");
+    }
+
+    #[test]
+    fn empty_frames_list_is_rejected_by_count_check_not_gas_check() {
+        // The frame-count check fires before the gas-limit accumulator runs,
+        // so an empty frame list surfaces the count error, not a gas error.
+        let tx = make_frame_tx_with_gas_limits(vec![]);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("between 1 and"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn sig_hash_covers_frame_value() {
+        // Changing `value` on any frame (SENDER or VERIFY) must change the
+        // canonical signature hash; only VERIFY.data is elided per spec.
+        let tx = make_test_frame_tx();
+        let baseline = tx.compute_sig_hash();
+
+        let mut with_sender_value = tx.clone();
+        with_sender_value.frames[1].value = U256::from(1u64);
+        assert_ne!(
+            baseline,
+            with_sender_value.compute_sig_hash(),
+            "sig_hash must change when a SENDER frame's value changes"
+        );
+
+        let mut with_verify_value = tx.clone();
+        with_verify_value.frames[0].value = U256::from(1u64);
+        assert_ne!(
+            baseline,
+            with_verify_value.compute_sig_hash(),
+            "sig_hash must change when a VERIFY frame's value changes (only data is elided)"
+        );
+
+        // Sanity: changing VERIFY.data still does NOT change the hash.
+        let mut with_verify_data = tx.clone();
+        with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
+        assert_eq!(
+            baseline,
+            with_verify_data.compute_sig_hash(),
+            "VERIFY.data must remain elided from sig_hash"
+        );
+    }
+
+    #[test]
+    fn validate_static_constraints_rejects_nonzero_value_on_non_sender_frames() {
+        // VERIFY frame with non-zero value must be rejected.
+        let verify_tx = FrameTransaction {
+            chain_id: 1,
+            nonce: 0,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x01,
+                target: None,
+                gas_limit: 50_000,
+                value: U256::from(1u64),
+                data: Bytes::new(),
+            }],
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        };
+        let err = verify_tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("non-zero value only allowed in SENDER mode"),
+            "unexpected error for VERIFY: {err}"
+        );
+
+        // DEFAULT frame with non-zero value must be rejected.
+        let default_tx = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 50_000,
+                value: U256::from(1u64),
+                data: Bytes::new(),
+            }],
+            ..verify_tx
+        };
+        let err = default_tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("non-zero value only allowed in SENDER mode"),
+            "unexpected error for DEFAULT: {err}"
+        );
+
+        // SENDER frame with a non-zero value must remain valid.
+        let sender_tx = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 50_000,
+                value: U256::from(1u64),
+                data: Bytes::new(),
+            }],
+            ..default_tx
+        };
+        sender_tx
+            .validate_static_constraints()
+            .expect("SENDER frames may carry non-zero value");
     }
 }
