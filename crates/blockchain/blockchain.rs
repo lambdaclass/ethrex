@@ -2541,13 +2541,6 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // EIP-8141 frame transactions (type 0x06) are consensus-divergent on any
-        // chain that has not activated Amsterdam; reject them at mempool admission
-        // so they are not forwarded over P2P either.
-        if is_frame_tx && !config.is_amsterdam_activated(header.timestamp) {
-            return Err(MempoolError::FrameTxPreFork);
-        }
-
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
