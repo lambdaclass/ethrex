@@ -1918,6 +1918,15 @@ impl FrameTransaction {
             if frame.mode == 1 && (frame.flags & 0x03) == 0 {
                 return Err(format!("Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"));
             }
+            // Per EIP-8141 spec line 140, only SENDER frames may carry a
+            // non-zero value. DEFAULT and VERIFY frames with a non-zero
+            // value are statically invalid.
+            if frame.mode != FrameMode::Sender as u8 && !frame.value.is_zero() {
+                return Err(format!(
+                    "Frame {i}: non-zero value only allowed in SENDER mode (mode={}, value={})",
+                    frame.mode, frame.value
+                ));
+            }
             if frame.gas_limit > i64::MAX as u64 {
                 return Err(format!(
                     "Frame {i}: gas_limit {} exceeds 2**63-1",
@@ -4508,5 +4517,101 @@ mod tests {
         let tx = make_frame_tx_with_gas_limits(vec![]);
         let err = tx.validate_static_constraints().unwrap_err();
         assert!(err.contains("between 1 and"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn sig_hash_covers_frame_value() {
+        // Changing `value` on any frame (SENDER or VERIFY) must change the
+        // canonical signature hash; only VERIFY.data is elided per spec.
+        let tx = make_test_frame_tx();
+        let baseline = tx.compute_sig_hash();
+
+        let mut with_sender_value = tx.clone();
+        with_sender_value.frames[1].value = U256::from(1u64);
+        assert_ne!(
+            baseline,
+            with_sender_value.compute_sig_hash(),
+            "sig_hash must change when a SENDER frame's value changes"
+        );
+
+        let mut with_verify_value = tx.clone();
+        with_verify_value.frames[0].value = U256::from(1u64);
+        assert_ne!(
+            baseline,
+            with_verify_value.compute_sig_hash(),
+            "sig_hash must change when a VERIFY frame's value changes (only data is elided)"
+        );
+
+        // Sanity: changing VERIFY.data still does NOT change the hash.
+        let mut with_verify_data = tx.clone();
+        with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
+        assert_eq!(
+            baseline,
+            with_verify_data.compute_sig_hash(),
+            "VERIFY.data must remain elided from sig_hash"
+        );
+    }
+
+    #[test]
+    fn validate_static_constraints_rejects_nonzero_value_on_non_sender_frames() {
+        // VERIFY frame with non-zero value must be rejected.
+        let verify_tx = FrameTransaction {
+            chain_id: 1,
+            nonce: 0,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x01,
+                target: None,
+                gas_limit: 50_000,
+                value: U256::from(1u64),
+                data: Bytes::new(),
+            }],
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        };
+        let err = verify_tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("non-zero value only allowed in SENDER mode"),
+            "unexpected error for VERIFY: {err}"
+        );
+
+        // DEFAULT frame with non-zero value must be rejected.
+        let default_tx = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 50_000,
+                value: U256::from(1u64),
+                data: Bytes::new(),
+            }],
+            ..verify_tx
+        };
+        let err = default_tx.validate_static_constraints().unwrap_err();
+        assert!(
+            err.contains("non-zero value only allowed in SENDER mode"),
+            "unexpected error for DEFAULT: {err}"
+        );
+
+        // SENDER frame with a non-zero value must remain valid.
+        let sender_tx = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 50_000,
+                value: U256::from(1u64),
+                data: Bytes::new(),
+            }],
+            ..default_tx
+        };
+        sender_tx
+            .validate_static_constraints()
+            .expect("SENDER frames may carry non-zero value");
     }
 }
