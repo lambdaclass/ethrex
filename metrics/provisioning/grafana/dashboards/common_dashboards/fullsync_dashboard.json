@@ -1,0 +1,385 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "title": "Sync Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "Idle" }, "1": { "text": "Downloading Headers" }, "2": { "text": "Downloading Bodies" }, "3": { "text": "Executing Blocks" } }, "type": "value" }
+          ],
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 2 }, { "color": "blue", "value": 3 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "fullsync_stage{instance=~\"$instance\"}", "legendFormat": "Stage" }],
+      "title": "Sync Stage",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 100, "unit": "percent",
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 33 }, { "color": "green", "value": 66 }] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [{ "expr": "block_number{instance=~\"$instance\"} / fullsync_target_block{instance=~\"$instance\"} * 100", "legendFormat": "Progress" }],
+      "title": "Overall Progress",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0 } },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "ethrex_p2p_peer_count{instance=~\"$instance\"}", "legendFormat": "Peers" }],
+      "title": "Peers",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2 } },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "expr": "gigagas{instance=~\"$instance\"}", "legendFormat": "Ggas/s" }],
+      "title": "Throughput (Ggas/s)",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "title": "Header Download",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 100, "unit": "percent", "decimals": 1,
+          "thresholds": { "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 95 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 6 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "(1 - fullsync_lowest_header{instance=~\"$instance\"} / clamp_min(fullsync_target_block{instance=~\"$instance\"}, 1)) * 100", "legendFormat": "Headers Downloaded" }],
+      "title": "Header Download Progress",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "unit": "none", "decimals": 0,
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 500 }, { "color": "green", "value": 1500 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 6 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "rate(fullsync_headers_downloaded{instance=~\"$instance\"}[5m])", "legendFormat": "hdr/s (5m avg)" }],
+      "title": "Headers per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 6 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "fullsync_lowest_header{instance=~\"$instance\"} / clamp_min(rate(fullsync_headers_downloaded{instance=~\"$instance\"}[5m]), 0.001)", "legendFormat": "Header ETA" }
+      ],
+      "title": "Header Download ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 6 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "time() - fullsync_header_stage_start_timestamp{instance=~\"$instance\"} and fullsync_header_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }
+      ],
+      "title": "Header Stage Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "none" } },
+      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 11 },
+      "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" },
+      "targets": [
+        { "expr": "fullsync_target_block{instance=~\"$instance\"} - fullsync_lowest_header{instance=~\"$instance\"}", "legendFormat": "Downloaded" },
+        { "expr": "fullsync_target_block{instance=~\"$instance\"}", "legendFormat": "Total" }
+      ],
+      "title": "",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "title": "Block Execution",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 100, "unit": "percent", "decimals": 1,
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 33 }, { "color": "green", "value": 66 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 14 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "fullsync_blocks_executed{instance=~\"$instance\"} / clamp_min(fullsync_target_block{instance=~\"$instance\"}, 1) * 100", "legendFormat": "Blocks Executed" }],
+      "title": "Block Execution Progress",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "unit": "none", "decimals": 0,
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 50 }, { "color": "green", "value": 100 }] },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 14 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "horizontal" },
+      "targets": [{ "expr": "rate(fullsync_blocks_executed{instance=~\"$instance\"}[5m])", "legendFormat": "blk/s (5m avg)" }],
+      "title": "Blocks per Second",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 14 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "(fullsync_target_block{instance=~\"$instance\"} - fullsync_blocks_executed{instance=~\"$instance\"}) / clamp_min(rate(fullsync_blocks_executed{instance=~\"$instance\"}[5m]), 0.001) and rate(fullsync_blocks_executed{instance=~\"$instance\"}[5m]) > 0", "legendFormat": "Execution ETA" }
+      ],
+      "title": "Block Execution ETA",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0 } },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 14 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "expr": "time() - fullsync_execution_stage_start_timestamp{instance=~\"$instance\"} and fullsync_execution_stage_start_timestamp{instance=~\"$instance\"} > 0", "legendFormat": "Elapsed" }
+      ],
+      "title": "Execution Stage Elapsed",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "none" } },
+      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 19 },
+      "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "center", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" },
+      "targets": [
+        { "expr": "block_number{instance=~\"$instance\"}", "legendFormat": "Executed" },
+        { "expr": "fullsync_target_block{instance=~\"$instance\"}", "legendFormat": "Target" }
+      ],
+      "title": "",
+      "type": "stat"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "title": "Batch Performance",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 80,
+            "stacking": { "mode": "normal", "group": "A" },
+            "lineWidth": 0
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "expr": "fullsync_batch_body_download_ms{instance=~\"$instance\"}", "legendFormat": "Body Download" },
+        { "expr": "fullsync_batch_execution_ms{instance=~\"$instance\"}", "legendFormat": "Execution" },
+        { "expr": "fullsync_batch_merkle_ms{instance=~\"$instance\"}", "legendFormat": "Merkle" },
+        { "expr": "fullsync_batch_store_ms{instance=~\"$instance\"}", "legendFormat": "Storage" }
+      ],
+      "title": "Batch Time Breakdown (stacked bars)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "fullsync_blocks_per_second{instance=~\"$instance\"}", "legendFormat": "Blocks/s" },
+        { "expr": "gigagas{instance=~\"$instance\"}", "legendFormat": "Ggas/s" }
+      ],
+      "title": "Execution Throughput",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 },
+      "title": "Network & Reliability",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "ethrex_p2p_peer_count{instance=~\"$instance\"}", "legendFormat": "Connected Peers" }],
+      "title": "Peer Count",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "rate(fullsync_header_failures{instance=~\"$instance\"}[5m]) * 60", "legendFormat": "Header Failures/min" },
+        { "expr": "rate(fullsync_body_failures{instance=~\"$instance\"}[5m]) * 60", "legendFormat": "Body Failures/min" }
+      ],
+      "title": "Failures per Minute",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "title": "Detailed Rates",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 40 },
+          "targets": [
+            { "expr": "fullsync_headers_per_second{instance=~\"$instance\"}", "legendFormat": "Instant" },
+            { "expr": "rate(fullsync_headers_downloaded{instance=~\"$instance\"}[5m])", "legendFormat": "Avg (5m)" }
+          ],
+          "title": "Header Download Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 40 },
+          "targets": [
+            { "expr": "fullsync_bodies_per_second{instance=~\"$instance\"}", "legendFormat": "Instant" },
+            { "expr": "rate(fullsync_bodies_downloaded{instance=~\"$instance\"}[5m])", "legendFormat": "Avg (5m)" }
+          ],
+          "title": "Body Download Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 40 },
+          "targets": [
+            { "expr": "fullsync_batch_size{instance=~\"$instance\"}", "legendFormat": "Batch Size" },
+            { "expr": "fullsync_batch_total_ms{instance=~\"$instance\"} / 1000", "legendFormat": "Batch Duration (s)" }
+          ],
+          "title": "Batch Stats",
+          "type": "timeseries"
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "title": "Cycle Statistics",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 49 },
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{ "expr": "fullsync_cycles_started{instance=~\"$instance\"}", "legendFormat": "Started" }],
+          "title": "Cycles Started",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 49 },
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{ "expr": "fullsync_cycles_completed{instance=~\"$instance\"}", "legendFormat": "Completed" }],
+          "title": "Cycles Completed",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 49 },
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{ "expr": "fullsync_header_failures{instance=~\"$instance\"}", "legendFormat": "Total" }],
+          "title": "Total Header Failures",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none" } },
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 49 },
+          "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "targets": [{ "expr": "fullsync_body_failures{instance=~\"$instance\"}", "legendFormat": "Total" }],
+          "title": "Total Body Failures",
+          "type": "stat"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["ethrex", "fullsync"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "ethrex-mainnet-8:3701", "value": "ethrex-mainnet-8:3701" },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "definition": "label_values(fullsync_stage, instance)",
+        "name": "instance",
+        "query": "label_values(fullsync_stage, instance)",
+        "refresh": 2,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "ethrex Full Sync",
+  "uid": "ethrex-fullsync"
+}
