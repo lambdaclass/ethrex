@@ -44,6 +44,9 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip nonce validation. Used by `eth_call` simulations
+    /// where the caller typically doesn't provide a nonce.
+    pub disable_nonce_check: bool,
 }
 
 /// This struct holds special configuration variables specific to the
