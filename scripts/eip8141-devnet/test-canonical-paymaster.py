@@ -88,7 +88,10 @@ def main():
     recipient_addr = bytes.fromhex(args.recipient[2:])
 
     chain_id = int(rpc(args.rpc_url, "eth_chainId", [])["result"], 16)
-    nonce = int(rpc(args.rpc_url, "eth_getTransactionCount", ["0x" + sender_addr.hex(), "latest"])["result"], 16)
+    # Use "pending" rather than "latest" so a tx that is mined but not yet
+    # reflected in the canonical head does not produce a stale nonce and a
+    # "Nonce mismatch" rejection at submission time.
+    nonce = int(rpc(args.rpc_url, "eth_getTransactionCount", ["0x" + sender_addr.hex(), "pending"])["result"], 16)
     gas_price = int(rpc(args.rpc_url, "eth_gasPrice", [])["result"], 16)
 
     sender_bal = int(rpc(args.rpc_url, "eth_getBalance", ["0x" + sender_addr.hex(), "latest"])["result"], 16)
