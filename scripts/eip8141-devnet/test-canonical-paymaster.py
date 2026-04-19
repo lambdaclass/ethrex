@@ -49,11 +49,12 @@ def rlp_encode_list(items):
     lb = len(p).to_bytes((len(p).bit_length() + 7) // 8, "big")
     return bytes([0xF7 + len(lb)]) + lb + p
 
-def encode_frame(mode, flags, target, gas_limit, data):
-    # Post-spec-update: 5-field RLP [mode, flags, target, gas_limit, data]
+def encode_frame(mode, flags, target, gas_limit, value, data):
+    # Current spec: 6-field RLP [mode, flags, target, gas_limit, value, data]
     return rlp_encode_list([rlp_encode_uint(mode), rlp_encode_uint(flags),
                             rlp_encode_address(target),
-                            rlp_encode_uint(gas_limit), rlp_encode_bytes(data)])
+                            rlp_encode_uint(gas_limit), rlp_encode_uint(value),
+                            rlp_encode_bytes(data)])
 
 def build_payload(chain_id, nonce, sender, frames_rlp, mpf, mf):
     return rlp_encode_list([rlp_encode_uint(chain_id), rlp_encode_uint(nonce),
@@ -62,6 +63,7 @@ def build_payload(chain_id, nonce, sender, frames_rlp, mpf, mf):
 
 def compute_sig_hash(chain_id, nonce, sender, frames, mpf, mf):
     elided = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"],
+              f.get("value", 0),
               b"" if f["exec_mode"] == 1 else f["data"]) for f in frames]
     return keccak(b"\x06" + build_payload(chain_id, nonce, sender, elided, mpf, mf))
 
@@ -113,20 +115,17 @@ def main():
 
     # Frame 0: VERIFY(scope=1) — sender verifies with ECDSA
     # Frame 1: VERIFY(scope=2) — CanonicalPaymaster verifies owner sig
-    # Frame 2: SENDER — transfer ETH
-    sender_call = rlp_encode_list([rlp_encode_address(recipient_addr),
-                                   rlp_encode_uint(transfer_value), rlp_encode_bytes(b"")])
-    sender_data = rlp_encode_list([sender_call])
+    # Frame 2: SENDER — transfer ETH (frame.value carries CALLVALUE; data=empty calldata)
 
-    # Post-spec-update: mode/flags split.
+    # Current spec: mode/flags split.
     # Scope bitmask: 0x01=PAYMENT, 0x02=EXECUTION.
     # Frame 0: sender authorizes EXECUTION (scope=0x02) via self-ECDSA
     # Frame 1: paymaster authorizes PAYMENT  (scope=0x01)
-    # Frame 2: SENDER-mode, no flags
+    # Frame 2: SENDER-mode, no flags, target=recipient, frame.value=transfer_value
     frames = [
-        {"mode": 1, "flags": 0x02, "exec_mode": 1, "target": sender_addr,    "gas_limit": 100_000, "data": b""},
-        {"mode": 1, "flags": 0x01, "exec_mode": 1, "target": paymaster_addr, "gas_limit": 200_000, "data": b""},
-        {"mode": 2, "flags": 0x00, "exec_mode": 2, "target": sender_addr,    "gas_limit": 100_000, "data": sender_data},
+        {"mode": 1, "flags": 0x02, "exec_mode": 1, "target": sender_addr,    "gas_limit": 100_000, "value": 0,              "data": b""},
+        {"mode": 1, "flags": 0x01, "exec_mode": 1, "target": paymaster_addr, "gas_limit": 200_000, "value": 0,              "data": b""},
+        {"mode": 2, "flags": 0x00, "exec_mode": 2, "target": recipient_addr, "gas_limit": 100_000, "value": transfer_value, "data": b""},
     ]
 
     print("Frames:")
@@ -152,7 +151,7 @@ def main():
     print()
 
     # Build raw tx
-    frames_rlp = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f["data"]) for f in frames]
+    frames_rlp = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f.get("value", 0), f["data"]) for f in frames]
     payload = build_payload(chain_id, nonce, sender_addr, frames_rlp, mpf, mf)
     raw_tx = "0x" + (b"\x06" + payload).hex()
     print(f"Tx size: {len(raw_tx)//2} bytes")
@@ -162,15 +161,64 @@ def main():
     pm_before = pm_bal
     recip_before = int(rpc(args.rpc_url, "eth_getBalance", [args.recipient, "latest"])["result"], 16)
 
-    # Send
-    print("\nSending...")
-    result = rpc(args.rpc_url, "eth_sendRawTransaction", [raw_tx])
-    if "error" in result:
-        print(f"ERROR: {result['error']}")
-        sys.exit(1)
+    # Send, retrying on nonce mismatch or "admitted-but-not-included".
+    # Rationale: under sustained traffic, the node's mempool admission view
+    # and block-inclusion view can briefly disagree. We re-fetch the pending
+    # nonce, re-sign the frame-tx (sig_hash is nonce-dependent), and resubmit.
+    MAX_ATTEMPTS = 3
+    INCLUSION_TIMEOUT_S = 20  # per-attempt window before we treat it as dropped
+    tx_hash = None
+    for send_attempt in range(1, MAX_ATTEMPTS + 1):
+        print(f"\nSending (attempt {send_attempt}/{MAX_ATTEMPTS})...")
+        result = rpc(args.rpc_url, "eth_sendRawTransaction", [raw_tx])
+        if "error" in result:
+            err = result["error"]
+            msg = err.get("message", "") if isinstance(err, dict) else str(err)
+            if "Nonce" in msg and send_attempt < MAX_ATTEMPTS:
+                print(f"  {msg} — refetching nonce and re-signing")
+                time.sleep(1)
+                nonce = int(rpc(args.rpc_url, "eth_getTransactionCount", ["0x" + sender_addr.hex(), "pending"])["result"], 16)
+                sig_hash = compute_sig_hash(chain_id, nonce, sender_addr, frames, mpf, mf)
+                sender_sig = sender_pk.sign_msg_hash(sig_hash)
+                frames[0]["data"] = bytes([0x00, sender_sig.v + 27]) + sender_sig.r.to_bytes(32, "big") + sender_sig.s.to_bytes(32, "big")
+                owner_sig = owner_pk.sign_msg_hash(sig_hash)
+                frames[1]["data"] = owner_sig.r.to_bytes(32, "big") + owner_sig.s.to_bytes(32, "big") + bytes([owner_sig.v + 27])
+                frames_rlp = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f.get("value", 0), f["data"]) for f in frames]
+                payload = build_payload(chain_id, nonce, sender_addr, frames_rlp, mpf, mf)
+                raw_tx = "0x" + (b"\x06" + payload).hex()
+                continue
+            print(f"ERROR: {err}")
+            sys.exit(1)
 
-    tx_hash = result["result"]
-    print(f"TX HASH: {tx_hash}\n")
+        tx_hash = result["result"]
+        print(f"TX HASH: {tx_hash}")
+
+        # Poll briefly for receipt; if nothing mines within INCLUSION_TIMEOUT_S
+        # the tx was likely dropped silently (nonce mismatch at block time).
+        mined = False
+        for _ in range(INCLUSION_TIMEOUT_S // 2):
+            time.sleep(2)
+            if rpc(args.rpc_url, "eth_getTransactionReceipt", [tx_hash]).get("result"):
+                mined = True
+                break
+        if mined:
+            break
+        if send_attempt < MAX_ATTEMPTS:
+            print(f"  not included within {INCLUSION_TIMEOUT_S}s — refetching nonce and resigning")
+            nonce = int(rpc(args.rpc_url, "eth_getTransactionCount", ["0x" + sender_addr.hex(), "pending"])["result"], 16)
+            sig_hash = compute_sig_hash(chain_id, nonce, sender_addr, frames, mpf, mf)
+            sender_sig = sender_pk.sign_msg_hash(sig_hash)
+            frames[0]["data"] = bytes([0x00, sender_sig.v + 27]) + sender_sig.r.to_bytes(32, "big") + sender_sig.s.to_bytes(32, "big")
+            owner_sig = owner_pk.sign_msg_hash(sig_hash)
+            frames[1]["data"] = owner_sig.r.to_bytes(32, "big") + owner_sig.s.to_bytes(32, "big") + bytes([owner_sig.v + 27])
+            frames_rlp = [encode_frame(f["mode"], f["flags"], f["target"], f["gas_limit"], f.get("value", 0), f["data"]) for f in frames]
+            payload = build_payload(chain_id, nonce, sender_addr, frames_rlp, mpf, mf)
+            raw_tx = "0x" + (b"\x06" + payload).hex()
+
+    if tx_hash is None:
+        print("ERROR: all submission attempts failed")
+        sys.exit(1)
+    print()
 
     # Wait for receipt
     for attempt in range(30):
