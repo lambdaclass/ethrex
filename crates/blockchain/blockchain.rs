@@ -57,7 +57,7 @@ use constants::{
 };
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -1207,7 +1207,6 @@ impl Blockchain {
             ChainError::WitnessGeneration("Failed to get root state node".to_string())
         })?;
 
-        let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
 
         for (i, block) in blocks.iter().enumerate() {
@@ -1218,20 +1217,14 @@ impl Blockchain {
                 .map_err(ChainError::StoreError)?
                 .ok_or(ChainError::ParentNotFound)?;
 
-            // This assumes that the user has the necessary state stored already,
-            // so if the user only has the state previous to the first block, it
-            // will fail in the second iteration of this for loop. To ensure this,
-            // doesn't fail, later in this function we store the new state after
-            // re-execution.
-            let vm_db: DynVmDatabase =
-                Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
-
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
-
+            // Execute the block. For Amsterdam+ blocks, execute_block produces a
+            // BAL that already contains all touched accounts, storage slots, and
+            // code changes. When available, we use it directly instead of wrapping
+            // with DatabaseLogger, avoiding mutex overhead on every DB call.
+            let parent_state_root = parent_header.state_root;
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
             let mut vm = match self.options.r#type {
-                BlockchainType::L1 => {
-                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
-                }
+                BlockchainType::L1 => self.new_evm(vm_db)?,
                 BlockchainType::L2(_) => {
                     let l2_config = match fee_configs {
                         Some(fee_configs) => {
@@ -1243,29 +1236,41 @@ impl Blockchain {
                             "L2Config not found for witness generation".to_string(),
                         ))?,
                     };
-                    Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
+                    Evm::new_for_l2(vm_db, *l2_config, Arc::new(NativeCrypto))?
                 }
             };
 
-            // Re-execute block with logger
-            let (execution_result, _bal) = vm.execute_block(block)?;
+            let (execution_result, bal) = vm.execute_block(block)?;
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
 
-            let mut state_accessed = logger
-                .state_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to execute with witness".to_string())
-                })?
-                .clone();
-
-            // Deduplicate storage keys while preserving access order
-            for keys in state_accessed.values_mut() {
-                let mut seen = HashSet::new();
-                keys.retain(|k| seen.insert(*k));
-            }
+            // Build state_accessed from the BAL when available (Amsterdam+).
+            // The BAL contains all accounts and storage slots touched during
+            // execution, which is exactly what DatabaseLogger would capture.
+            let state_accessed: HashMap<Address, Vec<H256>> = if let Some(ref bal) = bal {
+                let mut accessed = HashMap::new();
+                for ac in bal.accounts() {
+                    // Deduplicate storage keys (all_storage_slots chains reads
+                    // and writes which may overlap)
+                    let mut seen = HashSet::new();
+                    let storage_keys: Vec<H256> = ac
+                        .all_storage_slots()
+                        .map(|slot| H256::from_uint(&slot))
+                        .filter(|k| seen.insert(*k))
+                        .collect();
+                    accessed.insert(ac.address, storage_keys);
+                }
+                accessed
+            } else {
+                // Pre-Amsterdam: BAL is not available from the execution engine.
+                // This API does not support witness generation without BAL.
+                return Err(ChainError::WitnessGeneration(
+                    "Witness generation without BAL is not supported; \
+                     pre-Amsterdam blocks require a DatabaseLogger-backed path"
+                        .to_string(),
+                ));
+            };
 
             for (account, acc_keys) in state_accessed.iter() {
                 let slots: &mut Vec<H256> =
@@ -1273,16 +1278,11 @@ impl Blockchain {
                 slots.extend(acc_keys.iter().copied());
             }
 
-            // Get the used block hashes from the logger
-            let logger_block_hashes = logger
-                .block_hashes_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to get block hashes".to_string())
-                })?
-                .clone();
-
-            blockhash_opcode_references.extend(logger_block_hashes);
+            // BAL does not track BLOCKHASH opcode references. To ensure the
+            // witness includes all necessary ancestor headers, we include
+            // headers for the full BLOCKHASH range (up to 256 ancestors).
+            // This is slightly conservative but correct and avoids the need
+            // for DatabaseLogger's block_hashes_accessed tracking.
 
             // Access all the accounts needed for withdrawals
             if let Some(withdrawals) = block.body.withdrawals.as_ref() {
@@ -1321,25 +1321,44 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes
-            for code_hash in logger
-                .code_accessed
-                .lock()
-                .map_err(|_e| {
-                    ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?
-                .iter()
+            // Collect accessed bytecodes from all touched accounts
             {
-                let code = self
-                    .storage
-                    .get_account_code(*code_hash)
-                    .map_err(|_e| {
-                        ChainError::WitnessGeneration("Failed to get account code".to_string())
-                    })?
-                    .ok_or(ChainError::WitnessGeneration(
-                        "Failed to get account code".to_string(),
-                    ))?;
-                codes.push(code.bytecode.to_vec());
+                let mut seen_code_hashes = HashSet::new();
+                // First pass: collect bytecodes that existed in the parent state
+                for account in state_accessed.keys() {
+                    if let Ok(Some(account_state)) =
+                        self.storage.get_account_state_by_root(parent_state_root, *account)
+                    {
+                        if account_state.code_hash != *EMPTY_KECCACK_HASH
+                            && seen_code_hashes.insert(account_state.code_hash)
+                        {
+                            let code = self
+                                .storage
+                                .get_account_code(account_state.code_hash)
+                                .map_err(|_e| {
+                                    ChainError::WitnessGeneration(
+                                        "Failed to get account code".to_string(),
+                                    )
+                                })?
+                                .ok_or(ChainError::WitnessGeneration(
+                                    "Failed to get account code".to_string(),
+                                ))?;
+                            codes.push(code.bytecode.to_vec());
+                        }
+                    }
+                }
+                // Second pass: collect bytecodes for contracts deployed during
+                // this block. These don't exist in the parent state, so
+                // get_account_state_by_root above returns None for them.
+                for update in &account_updates {
+                    if let Some(ref code) = update.code {
+                        if code.hash != *EMPTY_KECCACK_HASH
+                            && seen_code_hashes.insert(code.hash)
+                        {
+                            codes.push(code.bytecode.to_vec());
+                        }
+                    }
+                }
             }
 
             // Apply account updates to the trie recording all the necessary nodes to do so
@@ -1400,17 +1419,15 @@ impl Blockchain {
             used_trie_nodes.push((*root).clone());
         }
 
-        // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
+        // Include ancestor block headers for the BLOCKHASH range. Since the BAL
+        // does not track BLOCKHASH opcode references, we conservatively include
+        // all ancestor headers from the parent of the first block back to the
+        // oldest reachable ancestor (up to 256 blocks, the BLOCKHASH limit).
         let mut block_headers_bytes = Vec::new();
 
-        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
-        let first_needed_block_hash = first_blockhash_opcode_number
-            .and_then(|n| {
-                (*n < first_block_header.number.saturating_sub(1))
-                    .then(|| blockhash_opcode_references.get(n))?
-                    .copied()
-            })
-            .unwrap_or(first_block_header.parent_hash);
+        // Anchored to the first block so we cover all BLOCKHASH lookups
+        // across the entire batch.
+        let first_needed_block_number = first_block_header.number.saturating_sub(256);
 
         // At the beginning this is the header of the last block to execute.
         let mut current_header = blocks
@@ -1419,21 +1436,18 @@ impl Blockchain {
             .header
             .clone();
 
-        // Headers from latest - 1 until we reach first block header we need.
-        // We do it this way because we want to fetch headers by hash, not by number
-        while current_header.hash() != first_needed_block_hash {
+        // Walk backwards from the last block's parent to the oldest needed header.
+        while current_header.number > first_needed_block_number {
             let parent_hash = current_header.parent_hash;
-            let current_number = current_header.number - 1;
 
-            current_header = self
+            let Some(parent_header) = self
                 .storage
                 .get_block_header_by_hash(parent_hash)?
-                .ok_or_else(|| {
-                    ChainError::WitnessGeneration(format!(
-                        "Failed to get block {current_number} header"
-                    ))
-                })?;
+            else {
+                break; // Reached the oldest stored header
+            };
 
+            current_header = parent_header;
             block_headers_bytes.push(current_header.encode_to_vec());
         }
 
