@@ -268,7 +268,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             credible_layer: if opts.credible_layer_opts.credible_layer {
                 CredibleLayerConfig {
                     sidecar_url: opts.credible_layer_opts.credible_layer_url,
-                    state_oracle_address: opts.credible_layer_opts.credible_layer_state_oracle,
                 }
             } else {
                 CredibleLayerConfig::default()
@@ -1097,15 +1096,6 @@ pub struct CredibleLayerOptions {
         help_heading = "Credible Layer options"
     )]
     pub credible_layer_url: Option<String>,
-    #[arg(
-        long = "credible-layer-state-oracle",
-        value_name = "ADDRESS",
-        env = "ETHREX_CREDIBLE_LAYER_STATE_ORACLE",
-        requires = "credible_layer",
-        help = "Address of the already-deployed State Oracle contract on L2. The State Oracle maps protected contracts to their active assertions and is required by the Credible Layer sidecar. Deploy it separately using the Phylax toolchain (see crates/l2/contracts/src/credible_layer/README.md).",
-        help_heading = "Credible Layer options"
-    )]
-    pub credible_layer_state_oracle: Option<Address>,
 }
 
 #[derive(Parser)]

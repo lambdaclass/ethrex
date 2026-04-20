@@ -1,79 +1,98 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, mpsc};
+use ethrex_common::types::{BlockHeader, Transaction, TxKind};
+use ethrex_common::{Address, H256};
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
+};
+use tokio::sync::mpsc;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
-use super::errors::CredibleLayerError;
 use super::sidecar_proto::{
-    self, CommitHead, Event, GetTransactionRequest, NewIteration, ResultStatus, Transaction,
-    TransactionResult, TxExecutionId, sidecar_transport_client::SidecarTransportClient,
+    self, AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv, CommitHead, Event,
+    GetTransactionRequest, NewIteration, ResultStatus, Transaction as SidecarTransaction,
+    TransactionEnv, TxExecutionId, sidecar_transport_client::SidecarTransportClient,
 };
 
-/// Configuration for the Credible Layer gRPC client.
-#[derive(Debug, Clone)]
-pub struct CredibleLayerConfig {
-    /// gRPC endpoint URL for the sidecar (e.g., "http://localhost:50051")
-    pub sidecar_url: String,
-    /// Timeout for waiting for a transaction result from the sidecar
-    pub result_timeout: Duration,
-    /// Timeout for the GetTransaction fallback poll
-    pub poll_timeout: Duration,
+use super::errors::CredibleLayerError;
+
+#[protocol]
+pub trait CredibleLayerProtocol: Send + Sync {
+    /// Notify the sidecar that a new block iteration has started.
+    fn new_iteration(&self, header: BlockHeader) -> Result<(), ActorError>;
+
+    /// Notify the sidecar that a block has been committed.
+    fn commit_head(
+        &self,
+        block_number: u64,
+        block_hash: H256,
+        timestamp: u64,
+        tx_count: u64,
+        last_tx_hash: Option<H256>,
+    ) -> Result<(), ActorError>;
+
+    /// Send a transaction event to the sidecar (pre-execution, fire-and-forget).
+    fn send_transaction(
+        &self,
+        tx_hash: H256,
+        block_number: u64,
+        tx_index: u64,
+        sender: Address,
+        tx: Transaction,
+    ) -> Result<(), ActorError>;
+
+    /// Poll the sidecar for a transaction verdict (post-execution).
+    /// Returns `true` if the transaction should be included, `false` if it should be dropped.
+    /// On any error or timeout, returns `true` (permissive — liveness over safety).
+    fn check_transaction(&self, tx_hash: H256, block_number: u64, tx_index: u64) -> Response<bool>;
 }
 
-impl Default for CredibleLayerConfig {
-    fn default() -> Self {
-        Self {
-            sidecar_url: "http://localhost:50051".to_string(),
-            result_timeout: Duration::from_millis(500),
-            poll_timeout: Duration::from_millis(200),
-        }
-    }
-}
-
-/// gRPC client for communicating with the Credible Layer Assertion Enforcer sidecar.
+/// gRPC client actor for communicating with the Credible Layer Assertion Enforcer sidecar.
 ///
-/// Maintains a persistent bidirectional `StreamEvents` gRPC stream. Events are sent
-/// via an mpsc channel that feeds the stream. Transaction results are retrieved via
-/// the `GetTransaction` unary RPC.
+/// Maintains a persistent bidirectional `StreamEvents` gRPC stream via a background task.
+/// Events are sent through an mpsc channel that feeds the stream. Transaction results
+/// are retrieved via the `GetTransaction` unary RPC.
 pub struct CredibleLayerClient {
-    config: CredibleLayerConfig,
     /// Sender side of the persistent StreamEvents stream
     event_sender: mpsc::Sender<Event>,
     /// Monotonically increasing event ID counter
-    event_id_counter: AtomicU64,
+    event_id_counter: u64,
     /// Current iteration ID (incremented per block)
-    iteration_id: AtomicU64,
+    iteration_id: u64,
     /// gRPC client for unary calls (GetTransaction)
-    grpc_client: Arc<Mutex<SidecarTransportClient<Channel>>>,
+    grpc_client: SidecarTransportClient<Channel>,
     /// Whether the StreamEvents stream is currently connected.
-    /// When false, evaluate_transaction skips immediately (permissive).
+    /// When false, send handlers skip immediately (permissive).
     stream_connected: Arc<AtomicBool>,
 }
 
+#[actor(protocol = CredibleLayerProtocol)]
 impl CredibleLayerClient {
-    /// Create a new client with lazy connection to the sidecar.
-    /// Opens a persistent StreamEvents bidirectional stream in the background.
-    pub async fn connect(config: CredibleLayerConfig) -> Result<Self, CredibleLayerError> {
-        info!(
-            url = %config.sidecar_url,
-            "Configuring Credible Layer sidecar client"
-        );
+    /// Spawn the Credible Layer client actor.
+    pub async fn spawn(sidecar_url: String) -> Result<ActorRef<Self>, CredibleLayerError> {
+        let client = Self::new(sidecar_url).await?;
+        Ok(client.start())
+    }
 
-        let channel = Channel::from_shared(config.sidecar_url.clone())
+    async fn new(sidecar_url: String) -> Result<Self, CredibleLayerError> {
+        info!(url = %sidecar_url, "Configuring Credible Layer sidecar client");
+
+        let channel = Channel::from_shared(sidecar_url)
             .map_err(|e| CredibleLayerError::Internal(format!("Invalid URL: {e}")))?
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(5))
             .connect_lazy();
 
-        let mut client = SidecarTransportClient::new(channel.clone());
+        let mut stream_client = SidecarTransportClient::new(channel.clone());
         let stream_connected = Arc::new(AtomicBool::new(false));
         let stream_connected_bg = stream_connected.clone();
 
-        // Create the event channel. The sender goes to the client, the receiver
-        // is owned by the background stream task.
         let (event_tx, mut event_rx) = mpsc::channel::<Event>(256);
 
         // Background task: maintains a persistent StreamEvents connection.
@@ -81,18 +100,17 @@ impl CredibleLayerClient {
         // Reconnects automatically if the connection drops.
         tokio::spawn(async move {
             loop {
-                // Create a new gRPC-side channel for each connection attempt
                 let (grpc_tx, grpc_rx) = mpsc::channel::<Event>(64);
                 let grpc_stream = tokio_stream::wrappers::ReceiverStream::new(grpc_rx);
 
-                match client.stream_events(grpc_stream).await {
+                match stream_client.stream_events(grpc_stream).await {
                     Ok(response) => {
                         info!("StreamEvents stream connected to sidecar");
                         stream_connected_bg.store(true, Ordering::Relaxed);
                         let mut ack_stream = response.into_inner();
 
-                        // Send an initial CommitHead (block 0) as the first event on
-                        // every new stream — the sidecar requires CommitHead first.
+                        // Send an initial CommitHead (block 0) — the sidecar requires
+                        // CommitHead as the first event on every new stream.
                         let init_commit = Event {
                             event_id: 0,
                             event: Some(sidecar_proto::event::Event::CommitHead(CommitHead {
@@ -114,31 +132,20 @@ impl CredibleLayerClient {
                         // while also reading acks
                         loop {
                             tokio::select! {
-                                // Read events from the main channel and forward to gRPC
                                 event = event_rx.recv() => {
                                     match event {
                                         Some(e) => {
-                                            let event_type = match &e.event {
-                                                Some(sidecar_proto::event::Event::CommitHead(_)) => "CommitHead",
-                                                Some(sidecar_proto::event::Event::NewIteration(_)) => "NewIteration",
-                                                Some(sidecar_proto::event::Event::Transaction(_)) => "Transaction",
-                                                Some(sidecar_proto::event::Event::Reorg(_)) => "Reorg",
-                                                None => "None",
-                                            };
-                                            info!("Forwarding {event_type} event to gRPC stream (event_id={})", e.event_id);
                                             if grpc_tx.send(e).await.is_err() {
                                                 warn!("gRPC stream send failed, reconnecting");
                                                 break;
                                             }
                                         }
                                         None => {
-                                            // Main channel closed — client dropped
                                             warn!("Event channel closed, stopping stream task");
                                             return;
                                         }
                                     }
                                 }
-                                // Read acks from sidecar
                                 ack = ack_stream.message() => {
                                     match ack {
                                         Ok(Some(a)) => {
@@ -171,109 +178,162 @@ impl CredibleLayerClient {
         info!("Credible Layer client ready (persistent stream opened)");
 
         Ok(Self {
-            config,
             event_sender: event_tx,
-            event_id_counter: AtomicU64::new(1),
-            iteration_id: AtomicU64::new(0),
-            grpc_client: Arc::new(Mutex::new(SidecarTransportClient::new(channel))),
+            event_id_counter: 1,
+            iteration_id: 0,
+            grpc_client: SidecarTransportClient::new(channel),
             stream_connected,
         })
     }
 
-    /// Get the next event ID.
-    fn next_event_id(&self) -> u64 {
-        self.event_id_counter.fetch_add(1, Ordering::Relaxed)
+    fn next_event_id(&mut self) -> u64 {
+        let id = self.event_id_counter;
+        self.event_id_counter += 1;
+        id
     }
 
-    /// Get the current iteration ID.
-    pub fn current_iteration_id(&self) -> u64 {
-        self.iteration_id.load(Ordering::Relaxed)
-    }
-
-    /// Send a CommitHead event (previous block finalized).
-    pub async fn send_commit_head(
-        &self,
-        commit_head: CommitHead,
-    ) -> Result<(), CredibleLayerError> {
+    async fn send_event(&mut self, event_payload: sidecar_proto::event::Event) {
         let event = Event {
             event_id: self.next_event_id(),
-            event: Some(sidecar_proto::event::Event::CommitHead(commit_head)),
+            event: Some(event_payload),
         };
-        self.event_sender
-            .send(event)
-            .await
-            .map_err(|_| CredibleLayerError::StreamClosed)
+        if self.event_sender.send(event).await.is_err() {
+            warn!("Failed to send event: stream channel closed");
+        }
     }
 
-    /// Send a NewIteration event (new block started) and increment the iteration ID.
-    pub async fn send_new_iteration(
-        &self,
-        new_iteration: NewIteration,
-    ) -> Result<(), CredibleLayerError> {
-        self.iteration_id.fetch_add(1, Ordering::Relaxed);
-        let event = Event {
-            event_id: self.next_event_id(),
-            event: Some(sidecar_proto::event::Event::NewIteration(new_iteration)),
+    #[send_handler]
+    async fn handle_new_iteration(
+        &mut self,
+        msg: credible_layer_protocol::NewIteration,
+        _ctx: &Context<Self>,
+    ) {
+        self.iteration_id += 1;
+        let header = &msg.header;
+
+        let block_env = BlockEnv {
+            number: u64_to_u256_bytes(header.number),
+            beneficiary: header.coinbase.as_bytes().to_vec(),
+            timestamp: u64_to_u256_bytes(header.timestamp),
+            gas_limit: header.gas_limit,
+            basefee: header.base_fee_per_gas.unwrap_or(0),
+            difficulty: header.difficulty.to_big_endian().to_vec(),
+            prevrandao: Some(header.prev_randao.to_fixed_bytes().to_vec()),
+            blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+                excess_blob_gas: 0,
+                blob_gasprice: vec![0u8; 16],
+            }),
         };
-        self.event_sender
-            .send(event)
-            .await
-            .map_err(|_| CredibleLayerError::StreamClosed)
+        let new_iteration = NewIteration {
+            block_env: Some(block_env),
+            iteration_id: self.iteration_id,
+            parent_block_hash: Some(header.parent_hash.to_fixed_bytes().to_vec()),
+            parent_beacon_block_root: header
+                .parent_beacon_block_root
+                .map(|h| h.to_fixed_bytes().to_vec()),
+        };
+        self.send_event(sidecar_proto::event::Event::NewIteration(new_iteration))
+            .await;
     }
 
-    /// Send a Transaction event and wait for the sidecar's verdict.
-    ///
-    /// Returns `true` if the transaction should be included, `false` if it should be dropped.
-    /// On any error or timeout, returns `true` (permissive behavior).
-    pub async fn evaluate_transaction(&self, transaction: Transaction) -> bool {
-        // Fast path: if the stream isn't connected, skip evaluation (permissive).
-        // This avoids blocking block production when the sidecar isn't running.
+    #[send_handler]
+    async fn handle_commit_head(
+        &mut self,
+        msg: credible_layer_protocol::CommitHead,
+        _ctx: &Context<Self>,
+    ) {
+        let commit_head = CommitHead {
+            last_tx_hash: msg.last_tx_hash.map(|h| h.to_fixed_bytes().to_vec()),
+            n_transactions: msg.tx_count,
+            block_number: u64_to_u256_bytes(msg.block_number),
+            selected_iteration_id: self.iteration_id,
+            block_hash: Some(msg.block_hash.to_fixed_bytes().to_vec()),
+            parent_beacon_block_root: None,
+            timestamp: u64_to_u256_bytes(msg.timestamp),
+        };
+        self.send_event(sidecar_proto::event::Event::CommitHead(commit_head))
+            .await;
+    }
+
+    #[send_handler]
+    async fn handle_send_transaction(
+        &mut self,
+        msg: credible_layer_protocol::SendTransaction,
+        _ctx: &Context<Self>,
+    ) {
+        if !self.stream_connected.load(Ordering::Relaxed) {
+            return;
+        }
+        let tx_execution_id = Some(TxExecutionId {
+            block_number: u64_to_u256_bytes(msg.block_number),
+            iteration_id: self.iteration_id,
+            tx_hash: msg.tx_hash.as_bytes().to_vec(),
+            index: msg.tx_index,
+        });
+        let tx_env = build_transaction_env(&msg.tx, msg.sender);
+        let sidecar_tx = SidecarTransaction {
+            tx_execution_id,
+            tx_env: Some(tx_env),
+            prev_tx_hash: None,
+        };
+        self.send_event(sidecar_proto::event::Event::Transaction(sidecar_tx))
+            .await;
+    }
+
+    #[request_handler]
+    async fn handle_check_transaction(
+        &mut self,
+        msg: credible_layer_protocol::CheckTransaction,
+        _ctx: &Context<Self>,
+    ) -> bool {
         if !self.stream_connected.load(Ordering::Relaxed) {
             return true;
         }
 
-        let tx_exec_id = transaction.tx_execution_id.clone();
-        let tx_hash = tx_exec_id
-            .as_ref()
-            .map(|id| id.tx_hash.clone())
-            .unwrap_or_default();
-        let block_number = tx_exec_id
-            .as_ref()
-            .map(|id| id.block_number.clone())
-            .unwrap_or_default();
-        let index = tx_exec_id.as_ref().map(|id| id.index).unwrap_or(0);
-
-        // Send the transaction event on the persistent stream
-        let event = Event {
-            event_id: self.next_event_id(),
-            event: Some(sidecar_proto::event::Event::Transaction(transaction)),
+        let tx_exec_id = TxExecutionId {
+            block_number: u64_to_u256_bytes(msg.block_number),
+            iteration_id: self.iteration_id,
+            tx_hash: msg.tx_hash.as_bytes().to_vec(),
+            index: msg.tx_index,
         };
-        if self.event_sender.send(event).await.is_err() {
-            warn!("StreamEvents channel closed, including tx (permissive)");
-            return true;
-        }
 
-        // Poll for result with retries (sidecar evaluates async).
-        // The sidecar needs time to receive the tx event (via async stream),
-        // evaluate it, and make the result available.
         let poll_attempts = 10;
         let poll_interval = Duration::from_millis(200);
+        let poll_timeout = Duration::from_millis(200);
+
         for attempt in 0..poll_attempts {
             tokio::time::sleep(poll_interval).await;
-            let result = self
-                .poll_transaction_result(&tx_hash, &block_number, index)
-                .await;
-            match result {
-                PollResult::Found(include) => return include,
-                PollResult::NotFound => {
-                    debug!(
-                        "GetTransaction poll attempt {}/{}: not found yet",
-                        attempt + 1,
-                        poll_attempts
-                    );
-                    continue;
+            let request = GetTransactionRequest {
+                tx_execution_id: Some(tx_exec_id.clone()),
+            };
+            match tokio::time::timeout(poll_timeout, self.grpc_client.get_transaction(request))
+                .await
+            {
+                Ok(Ok(response)) => {
+                    let inner = response.into_inner();
+                    match inner.outcome {
+                        Some(sidecar_proto::get_transaction_response::Outcome::Result(result)) => {
+                            return result.status() != ResultStatus::AssertionFailed;
+                        }
+                        Some(sidecar_proto::get_transaction_response::Outcome::NotFound(_)) => {
+                            debug!(
+                                "GetTransaction poll attempt {}/{}: not found yet",
+                                attempt + 1,
+                                poll_attempts
+                            );
+                            continue;
+                        }
+                        None => continue,
+                    }
                 }
-                PollResult::Error => return true, // permissive
+                Ok(Err(status)) => {
+                    warn!(%status, "GetTransaction poll failed, including tx (permissive)");
+                    return true;
+                }
+                Err(_) => {
+                    warn!("GetTransaction poll timed out, including tx (permissive)");
+                    return true;
+                }
             }
         }
         warn!(
@@ -281,200 +341,83 @@ impl CredibleLayerClient {
         );
         true
     }
-
-    /// Poll for a transaction result via GetTransaction unary RPC.
-    async fn poll_transaction_result(
-        &self,
-        tx_hash: &[u8],
-        block_number: &[u8],
-        index: u64,
-    ) -> PollResult {
-        let tx_exec_id = TxExecutionId {
-            block_number: block_number.to_vec(),
-            iteration_id: self.current_iteration_id(),
-            tx_hash: tx_hash.to_vec(),
-            index,
-        };
-
-        let request = GetTransactionRequest {
-            tx_execution_id: Some(tx_exec_id),
-        };
-
-        let poll_result = tokio::time::timeout(self.config.poll_timeout, async {
-            let mut client = self.grpc_client.lock().await;
-            client.get_transaction(request).await
-        })
-        .await;
-
-        match poll_result {
-            Ok(Ok(response)) => {
-                let inner = response.into_inner();
-                match inner.outcome {
-                    Some(sidecar_proto::get_transaction_response::Outcome::Result(result)) => {
-                        PollResult::Found(!is_assertion_failed(&result))
-                    }
-                    Some(sidecar_proto::get_transaction_response::Outcome::NotFound(_)) => {
-                        PollResult::NotFound
-                    }
-                    None => PollResult::NotFound,
-                }
-            }
-            Ok(Err(status)) => {
-                warn!(%status, "GetTransaction poll failed, including tx (permissive)");
-                PollResult::Error
-            }
-            Err(_) => {
-                warn!("GetTransaction poll timed out, including tx (permissive)");
-                PollResult::Error
-            }
-        }
-    }
 }
 
-enum PollResult {
-    Found(bool), // true = include, false = drop
-    NotFound,
-    Error,
+/// Encode a u64 as a 32-byte big-endian U256 for protobuf fields.
+fn u64_to_u256_bytes(value: u64) -> Vec<u8> {
+    let mut buf = [0u8; 32];
+    buf[24..].copy_from_slice(&value.to_be_bytes());
+    buf.to_vec()
 }
 
-/// Check if a TransactionResult indicates assertion failure.
-fn is_assertion_failed(result: &TransactionResult) -> bool {
-    result.status() == ResultStatus::AssertionFailed
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-    use crate::sequencer::credible_layer::sidecar_proto::{
-        CommitHead, NewIteration, ResultStatus, TransactionResult, TxExecutionId,
+/// Build a `TransactionEnv` protobuf message from an ethrex transaction and its sender.
+fn build_transaction_env(tx: &Transaction, sender: Address) -> TransactionEnv {
+    let transact_to = match tx.to() {
+        TxKind::Call(addr) => addr.as_bytes().to_vec(),
+        TxKind::Create => vec![],
     };
 
-    #[test]
-    fn config_default_url_is_localhost_50051() {
-        let cfg = CredibleLayerConfig::default();
-        assert_eq!(cfg.sidecar_url, "http://localhost:50051");
-    }
+    let value_bytes = tx.value().to_big_endian();
 
-    #[test]
-    fn config_default_result_timeout_is_500ms() {
-        let cfg = CredibleLayerConfig::default();
-        assert_eq!(cfg.result_timeout, Duration::from_millis(500));
-    }
+    let mut gas_price_bytes = [0u8; 16];
+    let gas_price_u128 = tx.gas_price().as_u128();
+    gas_price_bytes.copy_from_slice(&gas_price_u128.to_be_bytes());
 
-    #[test]
-    fn config_default_poll_timeout_is_200ms() {
-        let cfg = CredibleLayerConfig::default();
-        assert_eq!(cfg.poll_timeout, Duration::from_millis(200));
-    }
+    let gas_priority_fee = tx.max_priority_fee().map(|fee| {
+        let mut buf = [0u8; 16];
+        buf[8..].copy_from_slice(&fee.to_be_bytes());
+        buf.to_vec()
+    });
 
-    fn make_result(status: ResultStatus) -> TransactionResult {
-        TransactionResult {
-            tx_execution_id: None,
-            status: status as i32,
-            gas_used: 0,
-            error: String::new(),
-        }
-    }
+    let access_list = tx
+        .access_list()
+        .iter()
+        .map(|(addr, keys)| AccessListItem {
+            address: addr.as_bytes().to_vec(),
+            storage_keys: keys.iter().map(|k| k.as_bytes().to_vec()).collect(),
+        })
+        .collect();
 
-    #[test]
-    fn assertion_failed_returns_true_for_assertion_failed_status() {
-        assert!(is_assertion_failed(&make_result(
-            ResultStatus::AssertionFailed
-        )));
-    }
+    let authorization_list = tx
+        .authorization_list()
+        .map(|list| {
+            list.iter()
+                .map(|auth| {
+                    let chain_id_bytes = auth.chain_id.to_big_endian();
+                    let r_bytes = auth.r_signature.to_big_endian();
+                    let s_bytes = auth.s_signature.to_big_endian();
+                    Authorization {
+                        chain_id: chain_id_bytes.to_vec(),
+                        address: auth.address.as_bytes().to_vec(),
+                        nonce: auth.nonce,
+                        y_parity: auth.y_parity.as_u32(),
+                        r: r_bytes.to_vec(),
+                        s: s_bytes.to_vec(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    #[test]
-    fn assertion_failed_returns_false_for_success_status() {
-        assert!(!is_assertion_failed(&make_result(ResultStatus::Success)));
-    }
-
-    #[test]
-    fn assertion_failed_returns_false_for_reverted_status() {
-        assert!(!is_assertion_failed(&make_result(ResultStatus::Reverted)));
-    }
-
-    #[test]
-    fn assertion_failed_returns_false_for_halted_status() {
-        assert!(!is_assertion_failed(&make_result(ResultStatus::Halted)));
-    }
-
-    #[test]
-    fn assertion_failed_returns_false_for_failed_status() {
-        assert!(!is_assertion_failed(&make_result(ResultStatus::Failed)));
-    }
-
-    #[test]
-    fn assertion_failed_returns_false_for_unspecified_status() {
-        assert!(!is_assertion_failed(&make_result(
-            ResultStatus::Unspecified
-        )));
-    }
-
-    #[test]
-    fn commit_head_fields_are_set_correctly() {
-        let block_number: Vec<u8> = std::iter::repeat(0u8)
-            .take(31)
-            .chain(std::iter::once(42u8))
-            .collect();
-        let timestamp: Vec<u8> = std::iter::repeat(0u8)
-            .take(31)
-            .chain(std::iter::once(1u8))
-            .collect();
-        let ch = CommitHead {
-            last_tx_hash: None,
-            n_transactions: 5,
-            block_number: block_number.clone(),
-            selected_iteration_id: 3,
-            block_hash: None,
-            parent_beacon_block_root: None,
-            timestamp: timestamp.clone(),
-        };
-        assert_eq!(ch.n_transactions, 5);
-        assert_eq!(ch.block_number, block_number);
-        assert_eq!(ch.selected_iteration_id, 3);
-    }
-
-    #[test]
-    fn tx_execution_id_fields_are_set_correctly() {
-        let id = TxExecutionId {
-            block_number: vec![0; 32],
-            iteration_id: 7,
-            tx_hash: vec![0xab; 32],
-            index: 2,
-        };
-        assert_eq!(id.iteration_id, 7);
-        assert_eq!(id.index, 2);
-    }
-
-    #[test]
-    fn new_iteration_has_expected_iteration_id() {
-        use crate::sequencer::credible_layer::sidecar_proto::BlockEnv;
-        let ni = NewIteration {
-            block_env: Some(BlockEnv {
-                number: vec![0; 32],
-                beneficiary: vec![0; 20],
-                timestamp: vec![0; 32],
-                gas_limit: 30_000_000,
-                basefee: 1_000_000_000,
-                difficulty: vec![0; 32],
-                prevrandao: None,
-                blob_excess_gas_and_price: None,
-            }),
-            iteration_id: 42,
-            parent_block_hash: None,
-            parent_beacon_block_root: None,
-        };
-        assert_eq!(ni.iteration_id, 42);
-    }
-
-    #[test]
-    fn event_id_counter_increments() {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let c = AtomicU64::new(1);
-        assert_eq!(c.fetch_add(1, Ordering::Relaxed), 1);
-        assert_eq!(c.fetch_add(1, Ordering::Relaxed), 2);
-        assert_eq!(c.fetch_add(1, Ordering::Relaxed), 3);
+    #[allow(clippy::as_conversions)]
+    TransactionEnv {
+        tx_type: u8::from(tx.tx_type()) as u32,
+        caller: sender.as_bytes().to_vec(),
+        gas_limit: tx.gas_limit(),
+        gas_price: gas_price_bytes.to_vec(),
+        transact_to,
+        value: value_bytes.to_vec(),
+        data: tx.data().to_vec(),
+        nonce: tx.nonce(),
+        chain_id: tx.chain_id(),
+        access_list,
+        gas_priority_fee,
+        blob_hashes: tx
+            .blob_versioned_hashes()
+            .iter()
+            .map(|h| h.as_bytes().to_vec())
+            .collect(),
+        max_fee_per_blob_gas: vec![0u8; 16],
+        authorization_list,
     }
 }

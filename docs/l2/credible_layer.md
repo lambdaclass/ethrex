@@ -32,10 +32,11 @@ Per block:
 1. **CommitHead** → sidecar (previous block finalized, with block hash and tx count)
 2. **NewIteration** → sidecar (new block env: number, timestamp, coinbase, gas limit, basefee)
 3. For each candidate transaction:
-   - **Transaction** → sidecar (tx data: type, caller, gas, to, value, data, nonce, ...)
-   - ← **TransactionResult** (status: SUCCESS, ASSERTION_FAILED, etc.)
-   - If `ASSERTION_FAILED`: skip the transaction
-   - Otherwise: include it
+   - **Transaction** → sidecar (pre-execution: tx data sent via StreamEvents)
+   - Execute the transaction in the local EVM
+   - ← **GetTransaction** poll (post-execution: fetch the sidecar's verdict)
+   - If `ASSERTION_FAILED`: undo execution and drop the transaction
+   - Otherwise: keep it in the block
 
 Privileged transactions (L1→L2 deposits) bypass the Credible Layer in this first version of the integration.
 
@@ -48,7 +49,7 @@ Privileged transactions (L1→L2 deposits) bypass the Credible Layer in this fir
 | File | Role |
 |------|------|
 | `crates/l2/sequencer/credible_layer/mod.rs` | Module root, proto imports |
-| `crates/l2/sequencer/credible_layer/client.rs` | `CredibleLayerClient` — gRPC client for the sidecar; handles block building validation (StreamEvents, GetTransaction) |
+| `crates/l2/sequencer/credible_layer/client.rs` | `CredibleLayerClient` — GenServer actor wrapping the gRPC sidecar client (StreamEvents, GetTransaction) |
 | `crates/l2/sequencer/credible_layer/errors.rs` | Error types |
 | `crates/l2/proto/sidecar.proto` | Sidecar gRPC protocol definition |
 | `crates/l2/sequencer/block_producer.rs` | Block producer — sends CommitHead + NewIteration |
@@ -63,7 +64,6 @@ CLI flags:
 |------|-------------|---------|
 | `--credible-layer` | Enable the Credible Layer integration (required gate flag) | `false` |
 | `--credible-layer-url` | gRPC endpoint for the sidecar (requires `--credible-layer`) | (none) |
-| `--credible-layer-state-oracle` | Address of the deployed State Oracle contract on L2 (requires `--credible-layer`) | (none) |
 
 When `--credible-layer` is not set, Credible Layer is completely disabled with zero overhead.
 
@@ -453,5 +453,4 @@ rm -rf /tmp/credible-layer-contracts /tmp/credible-layer-starter /tmp/sidecar-in
 - [Linea/Besu Integration](https://docs.phylax.systems/credible/network-integrations/architecture-linea)
 - [credible-std Library](https://github.com/phylaxsystems/credible-std)
 - [Besu Plugin Reference](https://github.com/phylaxsystems/credible-layer-besu-plugin)
-- [credible-sdk (sidecar source)](https://github.com/phylaxsystems/credible-sdk)
 - [sidecar.proto](../../crates/l2/proto/sidecar.proto)

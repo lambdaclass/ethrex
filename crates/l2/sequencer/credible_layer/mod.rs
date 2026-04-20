@@ -1,10 +1,10 @@
 /// Credible Layer integration with the Phylax Credible Layer.
 ///
-/// This module implements a gRPC client that communicates with the Credible Layer
+/// This module implements a gRPC client actor that communicates with the Credible Layer
 /// Assertion Enforcer sidecar during block building. Transactions that fail assertion
 /// validation are dropped before block inclusion.
 ///
-/// The integration is opt-in via the `--credible-layer-url` CLI flag.
+/// The integration is opt-in via the `--credible-layer` CLI flag.
 /// When disabled, there is zero overhead.
 pub mod client;
 pub mod errors;

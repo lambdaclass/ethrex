@@ -38,11 +38,8 @@ use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 use std::str::FromStr;
 
-use super::credible_layer::{
-    CredibleLayerClient,
-    client::CredibleLayerConfig as ClientCredibleLayerConfig,
-    sidecar_proto::{BlobExcessGasAndPrice, BlockEnv, CommitHead, NewIteration},
-};
+use super::credible_layer::CredibleLayerClient;
+use super::credible_layer::client::CredibleLayerProtocol;
 use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
@@ -69,7 +66,7 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
-    credible_layer: Option<Arc<CredibleLayerClient>>,
+    credible_layer: Option<ActorRef<CredibleLayerClient>>,
     /// Actor handle for sending new block headers to WS subscribers.
     subscription_manager: Option<ActorRef<SubscriptionManager>>,
 }
@@ -93,7 +90,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
-        credible_layer_url: Option<String>,
+        credible_layer: Option<ActorRef<CredibleLayerClient>>,
         subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
@@ -119,27 +116,6 @@ impl BlockProducer {
                 "The coinbase address and operator fee vault address are the same. Coinbase balance behavior will be affected.",
             );
         }
-
-        let credible_layer = if let Some(url) = credible_layer_url {
-            let cb_config = ClientCredibleLayerConfig {
-                sidecar_url: url,
-                ..Default::default()
-            };
-            match CredibleLayerClient::connect(cb_config).await {
-                Ok(client) => {
-                    info!("Credible Layer sidecar connected");
-                    Some(Arc::new(client))
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to connect to Credible Layer sidecar: {e}. Proceeding without credible layer."
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         Ok(Self {
             store,
@@ -192,42 +168,8 @@ impl BlockProducer {
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 
         // Credible Layer: send NewIteration before building the block.
-        // CommitHead is sent AFTER the block is stored (see below).
-        // The sidecar flow per block: NewIteration → Transaction(s) → CommitHead
-        if let Some(cb) = &self.credible_layer {
-            let block_number_bytes = u64_to_u256_bytes(payload.header.number);
-            let timestamp_bytes = u64_to_u256_bytes(payload.header.timestamp);
-            let beneficiary_bytes = payload.header.coinbase.as_bytes().to_vec();
-            let difficulty_bytes = payload.header.difficulty.to_big_endian().to_vec();
-            let prevrandao = Some(payload.header.prev_randao.to_fixed_bytes().to_vec());
-            let block_env = BlockEnv {
-                number: block_number_bytes,
-                beneficiary: beneficiary_bytes,
-                timestamp: timestamp_bytes,
-                gas_limit: payload.header.gas_limit,
-                basefee: payload.header.base_fee_per_gas.unwrap_or(0),
-                difficulty: difficulty_bytes,
-                prevrandao,
-                blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
-                    excess_blob_gas: 0,
-                    blob_gasprice: vec![0u8; 16], // u128 big-endian = 0
-                }),
-            };
-            let iteration_id = cb.current_iteration_id() + 1;
-            let parent_block_hash = Some(payload.header.parent_hash.to_fixed_bytes().to_vec());
-            let parent_beacon_block_root = payload
-                .header
-                .parent_beacon_block_root
-                .map(|h| h.to_fixed_bytes().to_vec());
-            let new_iteration = NewIteration {
-                block_env: Some(block_env),
-                iteration_id,
-                parent_block_hash,
-                parent_beacon_block_root,
-            };
-            if let Err(e) = cb.send_new_iteration(new_iteration).await {
-                warn!("Failed to send NewIteration to credible layer: {e}");
-            }
+        if let Some(ref cl) = self.credible_layer {
+            let _ = cl.new_iteration(payload.header.clone());
         }
 
         let registered_chains = self.get_registered_l2_chain_ids().await?;
@@ -293,33 +235,23 @@ impl BlockProducer {
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
-        // Credible Layer: send CommitHead AFTER block is stored (matches Besu plugin flow)
-        if let Some(cb) = &self.credible_layer {
+        // Credible Layer: send CommitHead after block is stored
+        if let Some(ref cl) = self.credible_layer {
             let last_tx_hash = self
                 .store
                 .get_block_by_hash(block_hash)
                 .await
                 .ok()
                 .flatten()
-                .and_then(|b| {
-                    b.body
-                        .transactions
-                        .last()
-                        .map(|tx| tx.hash().to_fixed_bytes().to_vec())
-                });
+                .and_then(|b| b.body.transactions.last().map(|tx| tx.hash()));
             #[allow(clippy::as_conversions)]
-            let commit_head = CommitHead {
+            let _ = cl.commit_head(
+                block_number,
+                block_hash,
+                block_header.timestamp,
+                transactions_count as u64,
                 last_tx_hash,
-                n_transactions: transactions_count as u64,
-                block_number: u64_to_u256_bytes(block_number),
-                selected_iteration_id: cb.current_iteration_id(),
-                block_hash: Some(block_hash.to_fixed_bytes().to_vec()),
-                parent_beacon_block_root: None,
-                timestamp: u64_to_u256_bytes(block_header.timestamp),
-            };
-            if let Err(e) = cb.send_commit_head(commit_head).await {
-                warn!("Failed to send CommitHead to credible layer: {e}");
-            }
+            );
         }
 
         // Notify all eth_subscribe("newHeads") subscribers.
@@ -399,13 +331,6 @@ impl BlockProducer {
     }
 }
 
-/// Encode a u64 as a 32-byte big-endian U256 for protobuf fields.
-fn u64_to_u256_bytes(value: u64) -> Vec<u8> {
-    let mut buf = [0u8; 32];
-    buf[24..].copy_from_slice(&value.to_be_bytes());
-    buf.to_vec()
-}
-
 #[actor(protocol = BlockProducerProtocol)]
 impl BlockProducer {
     #[expect(clippy::too_many_arguments)]
@@ -417,9 +342,9 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        credible_layer: Option<ActorRef<CredibleLayerClient>>,
         subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
-        let credible_layer_url = cfg.credible_layer.sidecar_url.clone();
         let block_producer = Self::new(
             &cfg.block_producer,
             cfg.eth.rpc_url,
@@ -429,7 +354,7 @@ impl BlockProducer {
             sequencer_state,
             router_address,
             l2_gas_limit,
-            credible_layer_url,
+            credible_layer,
             subscription_manager,
         )
         .await?;

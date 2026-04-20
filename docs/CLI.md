@@ -686,9 +686,13 @@ L2 options:
           [default: 1729]
 
 Credible Layer options:
+      --credible-layer
+          Enable the Credible Layer integration. Required before using any --credible-layer-* flags.
+
+          [env: ETHREX_CREDIBLE_LAYER=]
+
       --credible-layer-url <URL>
-          gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
-          When set, enables transaction validation against assertions during block building.
+          gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051).
 
           [env: ETHREX_CREDIBLE_LAYER_URL=]
 
