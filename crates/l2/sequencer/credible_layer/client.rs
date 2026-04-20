@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ethrex_common::types::{BlockHeader, Transaction, TxKind};
@@ -8,19 +6,21 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
+    tasks::{
+        Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after, spawn_listener,
+    },
 };
 use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
+use super::errors::CredibleLayerError;
 use super::sidecar_proto::{
     self, AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv, CommitHead, Event,
     GetTransactionRequest, NewIteration, ResultStatus, Transaction as SidecarTransaction,
     TransactionEnv, TxExecutionId, sidecar_transport_client::SidecarTransportClient,
 };
-
-use super::errors::CredibleLayerError;
 
 #[protocol]
 pub trait CredibleLayerProtocol: Send + Sync {
@@ -51,16 +51,31 @@ pub trait CredibleLayerProtocol: Send + Sync {
     /// Returns `true` if the transaction should be included, `false` if it should be dropped.
     /// On any error or timeout, returns `true` (permissive — liveness over safety).
     fn check_transaction(&self, tx_hash: H256, block_number: u64, tx_index: u64) -> Response<bool>;
+
+    /// Attempt to (re)connect to the sidecar. Scheduled by `send_after` on failure.
+    fn reconnect(&self) -> Result<(), ActorError>;
+
+    /// Process a stream ack from the sidecar. When `disconnected` is true,
+    /// the stream has ended and a reconnect is scheduled.
+    fn handle_stream_ack(
+        &self,
+        disconnected: bool,
+        success: bool,
+        event_id: u64,
+        message: String,
+    ) -> Result<(), ActorError>;
 }
 
 /// gRPC client actor for communicating with the Credible Layer Assertion Enforcer sidecar.
 ///
-/// Maintains a persistent bidirectional `StreamEvents` gRPC stream via a background task.
-/// Events are sent through an mpsc channel that feeds the stream. Transaction results
-/// are retrieved via the `GetTransaction` unary RPC.
+/// Maintains a persistent bidirectional `StreamEvents` gRPC stream. Connection is
+/// established in `#[started]` and ack messages are bridged into the actor via
+/// `spawn_listener`. Reconnection on failure is scheduled with `send_after`.
 pub struct CredibleLayerClient {
-    /// Sender side of the persistent StreamEvents stream
-    event_sender: mpsc::Sender<Event>,
+    /// gRPC channel (lazy — shared between stream and unary clients)
+    channel: Channel,
+    /// Sender for forwarding events to the active gRPC stream. None when disconnected.
+    event_sender: Option<mpsc::Sender<Event>>,
     /// Monotonically increasing event ID counter
     event_id_counter: u64,
     /// Current iteration ID (incremented per block)
@@ -68,19 +83,18 @@ pub struct CredibleLayerClient {
     /// gRPC client for unary calls (GetTransaction)
     grpc_client: SidecarTransportClient<Channel>,
     /// Whether the StreamEvents stream is currently connected.
-    /// When false, send handlers skip immediately (permissive).
-    stream_connected: Arc<AtomicBool>,
+    connected: bool,
 }
 
 #[actor(protocol = CredibleLayerProtocol)]
 impl CredibleLayerClient {
     /// Spawn the Credible Layer client actor.
     pub async fn spawn(sidecar_url: String) -> Result<ActorRef<Self>, CredibleLayerError> {
-        let client = Self::new(sidecar_url).await?;
+        let client = Self::new(sidecar_url)?;
         Ok(client.start())
     }
 
-    async fn new(sidecar_url: String) -> Result<Self, CredibleLayerError> {
+    fn new(sidecar_url: String) -> Result<Self, CredibleLayerError> {
         info!(url = %sidecar_url, "Configuring Credible Layer sidecar client");
 
         let channel = Channel::from_shared(sidecar_url)
@@ -89,101 +103,92 @@ impl CredibleLayerClient {
             .timeout(Duration::from_secs(5))
             .connect_lazy();
 
-        let mut stream_client = SidecarTransportClient::new(channel.clone());
-        let stream_connected = Arc::new(AtomicBool::new(false));
-        let stream_connected_bg = stream_connected.clone();
-
-        let (event_tx, mut event_rx) = mpsc::channel::<Event>(256);
-
-        // Background task: maintains a persistent StreamEvents connection.
-        // Reads events from the mpsc channel and forwards them to the gRPC stream.
-        // Reconnects automatically if the connection drops.
-        tokio::spawn(async move {
-            loop {
-                let (grpc_tx, grpc_rx) = mpsc::channel::<Event>(64);
-                let grpc_stream = tokio_stream::wrappers::ReceiverStream::new(grpc_rx);
-
-                match stream_client.stream_events(grpc_stream).await {
-                    Ok(response) => {
-                        info!("StreamEvents stream connected to sidecar");
-                        stream_connected_bg.store(true, Ordering::Relaxed);
-                        let mut ack_stream = response.into_inner();
-
-                        // Send an initial CommitHead (block 0) — the sidecar requires
-                        // CommitHead as the first event on every new stream.
-                        let init_commit = Event {
-                            event_id: 0,
-                            event: Some(sidecar_proto::event::Event::CommitHead(CommitHead {
-                                last_tx_hash: None,
-                                n_transactions: 0,
-                                block_number: vec![0u8; 32],
-                                selected_iteration_id: 0,
-                                block_hash: Some(vec![0u8; 32]),
-                                parent_beacon_block_root: None,
-                                timestamp: vec![0u8; 32],
-                            })),
-                        };
-                        if grpc_tx.send(init_commit).await.is_err() {
-                            warn!("Failed to send initial CommitHead");
-                            continue;
-                        }
-
-                        // Forward events from the main channel to the gRPC stream
-                        // while also reading acks
-                        loop {
-                            tokio::select! {
-                                event = event_rx.recv() => {
-                                    match event {
-                                        Some(e) => {
-                                            if grpc_tx.send(e).await.is_err() {
-                                                warn!("gRPC stream send failed, reconnecting");
-                                                break;
-                                            }
-                                        }
-                                        None => {
-                                            warn!("Event channel closed, stopping stream task");
-                                            return;
-                                        }
-                                    }
-                                }
-                                ack = ack_stream.message() => {
-                                    match ack {
-                                        Ok(Some(a)) => {
-                                            if !a.success {
-                                                warn!(event_id = a.event_id, msg = %a.message, "Sidecar rejected event");
-                                            }
-                                        }
-                                        Ok(None) => {
-                                            info!("StreamEvents ack stream ended, reconnecting");
-                                            break;
-                                        }
-                                        Err(status) => {
-                                            warn!(%status, "StreamEvents ack error, reconnecting");
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(status) => {
-                        warn!(%status, "StreamEvents connect failed, retrying in 5s");
-                    }
-                }
-                stream_connected_bg.store(false, Ordering::Relaxed);
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        });
-
-        info!("Credible Layer client ready (persistent stream opened)");
-
         Ok(Self {
-            event_sender: event_tx,
+            grpc_client: SidecarTransportClient::new(channel.clone()),
+            channel,
+            event_sender: None,
             event_id_counter: 1,
             iteration_id: 0,
-            grpc_client: SidecarTransportClient::new(channel),
-            stream_connected,
+            connected: false,
         })
+    }
+
+    /// Attempt to establish a bidirectional StreamEvents connection with the sidecar.
+    /// On success, stores the event sender and spawns an ack listener.
+    /// On failure, schedules a retry via `send_after`.
+    async fn try_connect(&mut self, ctx: &Context<Self>) {
+        let mut stream_client = SidecarTransportClient::new(self.channel.clone());
+        let (tx, rx) = mpsc::channel::<Event>(64);
+        let grpc_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+
+        match stream_client.stream_events(grpc_stream).await {
+            Ok(response) => {
+                info!("StreamEvents stream connected to sidecar");
+
+                // The sidecar requires CommitHead as the first event on every new stream.
+                let init_commit = Event {
+                    event_id: 0,
+                    event: Some(sidecar_proto::event::Event::CommitHead(CommitHead {
+                        last_tx_hash: None,
+                        n_transactions: 0,
+                        block_number: vec![0u8; 32],
+                        selected_iteration_id: 0,
+                        block_hash: Some(vec![0u8; 32]),
+                        parent_beacon_block_root: None,
+                        timestamp: vec![0u8; 32],
+                    })),
+                };
+                if tx.send(init_commit).await.is_err() {
+                    warn!("Failed to send initial CommitHead, scheduling reconnect");
+                    send_after(
+                        Duration::from_secs(5),
+                        ctx.clone(),
+                        credible_layer_protocol::Reconnect,
+                    );
+                    return;
+                }
+
+                self.event_sender = Some(tx);
+                self.connected = true;
+
+                // Bridge the ack stream into actor messages via spawn_listener.
+                // When the stream ends or errors, a final "disconnected" message is sent.
+                let ack_stream = response.into_inner();
+                let mapped = ack_stream
+                    .map(|result| match result {
+                        Ok(ack) => credible_layer_protocol::HandleStreamAck {
+                            disconnected: false,
+                            success: ack.success,
+                            event_id: ack.event_id,
+                            message: ack.message,
+                        },
+                        Err(status) => credible_layer_protocol::HandleStreamAck {
+                            disconnected: true,
+                            success: false,
+                            event_id: 0,
+                            message: status.to_string(),
+                        },
+                    })
+                    .chain(tokio_stream::once(
+                        credible_layer_protocol::HandleStreamAck {
+                            disconnected: true,
+                            success: false,
+                            event_id: 0,
+                            message: "ack stream ended".into(),
+                        },
+                    ));
+
+                spawn_listener(ctx.clone(), mapped);
+            }
+            Err(status) => {
+                warn!(%status, "StreamEvents connect failed, retrying in 5s");
+                send_after(
+                    Duration::from_secs(5),
+                    ctx.clone(),
+                    credible_layer_protocol::Reconnect,
+                );
+            }
+        }
     }
 
     fn next_event_id(&mut self) -> u64 {
@@ -192,13 +197,63 @@ impl CredibleLayerClient {
         id
     }
 
+    /// Send an event on the active gRPC stream. If the channel is closed,
+    /// marks the connection as disconnected.
     async fn send_event(&mut self, event_payload: sidecar_proto::event::Event) {
         let event = Event {
             event_id: self.next_event_id(),
             event: Some(event_payload),
         };
-        if self.event_sender.send(event).await.is_err() {
-            warn!("Failed to send event: stream channel closed");
+        if let Some(ref sender) = self.event_sender {
+            if sender.send(event).await.is_err() {
+                warn!("Event channel closed, marking disconnected");
+                self.connected = false;
+                self.event_sender = None;
+            }
+        }
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        self.try_connect(ctx).await;
+    }
+
+    #[send_handler]
+    async fn handle_reconnect(
+        &mut self,
+        _msg: credible_layer_protocol::Reconnect,
+        ctx: &Context<Self>,
+    ) {
+        if self.connected {
+            return;
+        }
+        self.try_connect(ctx).await;
+    }
+
+    #[send_handler]
+    async fn handle_handle_stream_ack(
+        &mut self,
+        msg: credible_layer_protocol::HandleStreamAck,
+        ctx: &Context<Self>,
+    ) {
+        if msg.disconnected {
+            if !self.connected {
+                return;
+            }
+            info!("Sidecar stream disconnected: {}", msg.message);
+            self.connected = false;
+            self.event_sender = None;
+            send_after(
+                Duration::from_secs(5),
+                ctx.clone(),
+                credible_layer_protocol::Reconnect,
+            );
+        } else if !msg.success {
+            warn!(
+                event_id = msg.event_id,
+                msg = %msg.message,
+                "Sidecar rejected event"
+            );
         }
     }
 
@@ -261,7 +316,7 @@ impl CredibleLayerClient {
         msg: credible_layer_protocol::SendTransaction,
         _ctx: &Context<Self>,
     ) {
-        if !self.stream_connected.load(Ordering::Relaxed) {
+        if !self.connected {
             return;
         }
         let tx_execution_id = Some(TxExecutionId {
@@ -286,7 +341,7 @@ impl CredibleLayerClient {
         msg: credible_layer_protocol::CheckTransaction,
         _ctx: &Context<Self>,
     ) -> bool {
-        if !self.stream_connected.load(Ordering::Relaxed) {
+        if !self.connected {
             return true;
         }
 
