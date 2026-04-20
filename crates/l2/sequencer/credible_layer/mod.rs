@@ -1,5 +1,3 @@
-/// Credible Layer integration with the Phylax Assertion Enforcer sidecar.
-///
 /// This module implements a gRPC client actor that communicates with the sidecar
 /// during block building. Transactions that fail assertion validation are dropped
 /// before block inclusion.
