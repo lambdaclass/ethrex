@@ -72,15 +72,13 @@ pub trait CredibleLayerProtocol: Send + Sync {
 /// established in `#[started]` and ack messages are bridged into the actor via
 /// `spawn_listener`. Reconnection on failure is scheduled with `send_after`.
 pub struct CredibleLayerClient {
-    /// gRPC channel (lazy). Used to create new stream/unary clients.
-    channel: Channel,
     /// Feeds events into the gRPC StreamEvents bidirectional stream. None when disconnected.
     stream_tx: Option<mpsc::Sender<Event>>,
     /// Monotonically increasing event ID counter
     event_id_counter: u64,
     /// Current iteration ID (incremented per block)
     iteration_id: u64,
-    /// gRPC client for unary calls (GetTransaction)
+    /// gRPC client — used for unary GetTransaction calls and cloned for stream connections.
     grpc_client: SidecarTransportClient<Channel>,
     /// Whether the StreamEvents stream is currently connected.
     connected: bool,
@@ -104,8 +102,7 @@ impl CredibleLayerClient {
             .connect_lazy();
 
         Ok(Self {
-            grpc_client: SidecarTransportClient::new(channel.clone()),
-            channel,
+            grpc_client: SidecarTransportClient::new(channel),
             stream_tx: None,
             event_id_counter: 1,
             iteration_id: 0,
@@ -117,7 +114,7 @@ impl CredibleLayerClient {
     /// On success, stores the event sender and spawns an ack listener.
     /// On failure, schedules a retry via `send_after`.
     async fn try_connect(&mut self, ctx: &Context<Self>) {
-        let mut stream_client = SidecarTransportClient::new(self.channel.clone());
+        let mut stream_client = self.grpc_client.clone();
         let (tx, rx) = mpsc::channel::<Event>(64);
         let grpc_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
 
