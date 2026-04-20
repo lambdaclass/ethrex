@@ -1,114 +1,103 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 620" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="13">
   <defs>
     <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6" fill="#94a3b8"/>
     </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#34d399"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+      <path d="M8,0 L0,3 L8,6" fill="#f87171"/>
+    </marker>
     <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6" fill="#60a5fa"/>
     </marker>
-    <marker id="arrow-left" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
-      <path d="M8,0 L0,3 L8,6" fill="#94a3b8"/>
+    <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+      <path d="M8,0 L0,3 L8,6" fill="#a78bfa"/>
     </marker>
   </defs>
 
   <!-- Background -->
-  <rect width="920" height="620" rx="12" fill="#0f172a"/>
+  <rect width="900" height="560" rx="12" fill="#0f172a"/>
 
-  <!-- ethrex L2 Sequencer box -->
-  <rect x="30" y="20" width="560" height="440" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
+  <!-- ═══════════ ethrex L2 Sequencer box ═══════════ -->
+  <rect x="30" y="20" width="530" height="390" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
   <text x="50" y="46" fill="#e2e8f0" font-size="15" font-weight="600">ethrex L2 Sequencer</text>
 
-  <!-- User -> RPC -> Aeges -> Mempool -->
-  <text x="30" y="86" fill="#cbd5e1" font-size="12">User</text>
-  <line x1="58" y1="82" x2="88" y2="82" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
-  <text x="92" y="86" fill="#cbd5e1" font-size="12">tx</text>
-  <line x1="106" y1="82" x2="126" y2="82" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
-  <rect x="130" y="70" width="50" height="24" rx="4" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="142" y="86" fill="#e2e8f0" font-size="12">RPC</text>
-  <line x1="184" y1="82" x2="214" y2="82" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
-  <rect x="218" y="70" width="100" height="24" rx="4" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="232" y="86" fill="#fbbf24" font-size="12">Aeges check</text>
-  <line x1="322" y1="82" x2="362" y2="82" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
-  <rect x="366" y="70" width="80" height="24" rx="4" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="380" y="86" fill="#e2e8f0" font-size="12">Mempool</text>
+  <!-- User -> RPC -> Mempool -->
+  <text x="50" y="82" fill="#cbd5e1" font-size="12">User</text>
+  <line x1="80" y1="78" x2="110" y2="78" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
+  <text x="118" y="82" fill="#cbd5e1" font-size="11">tx</text>
+  <line x1="132" y1="78" x2="152" y2="78" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="156" y="66" width="50" height="24" rx="4" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="168" y="82" fill="#e2e8f0" font-size="12">RPC</text>
+  <line x1="210" y1="78" x2="260" y2="78" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
+  <rect x="264" y="66" width="80" height="24" rx="4" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="278" y="82" fill="#e2e8f0" font-size="12">Mempool</text>
 
   <!-- Arrow down from Mempool -->
-  <line x1="406" y1="94" x2="406" y2="120" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="304" y1="90" x2="304" y2="116" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
 
-  <!-- Block Producer box -->
-  <rect x="60" y="126" width="500" height="186" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <text x="80" y="150" fill="#e2e8f0" font-size="13" font-weight="600">Block Producer: fill_transactions()</text>
+  <!-- ═══════════ Block Producer box ═══════════ -->
+  <rect x="60" y="122" width="470" height="200" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="80" y="146" fill="#e2e8f0" font-size="13" font-weight="600">Block Producer: fill_transactions()</text>
+  <text x="100" y="170" fill="#94a3b8" font-size="12">For each tx:</text>
 
-  <!-- For each tx section -->
-  <text x="100" y="178" fill="#94a3b8" font-size="12">For each tx:</text>
+  <!-- Step 1: Send Transaction (pre-execution) -->
+  <text x="116" y="192" fill="#34d399" font-size="12">1. Send Transaction</text>
+  <line x1="256" y1="188" x2="590" y2="188" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-green)"/>
 
-  <!-- Send Transaction arrow -->
-  <text x="116" y="200" fill="#34d399" font-size="12">Send Transaction</text>
-  <line x1="244" y1="196" x2="610" y2="196" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-blue)"/>
+  <!-- Step 2: Execute tx locally -->
+  <text x="116" y="214" fill="#e2e8f0" font-size="12">2. Execute tx in EVM</text>
 
-  <!-- Await verdict arrow -->
-  <text x="116" y="222" fill="#f87171" font-size="12">Await verdict</text>
-  <line x1="610" y1="218" x2="244" y2="218" stroke="#f87171" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-left)"/>
+  <!-- Step 3: Poll for verdict (post-execution) -->
+  <text x="116" y="236" fill="#f87171" font-size="12">3. Poll verdict</text>
+  <line x1="590" y1="232" x2="232" y2="232" stroke="#f87171" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-red)"/>
 
-  <!-- ASSERTION_FAILED -->
-  <text x="116" y="244" fill="#fbbf24" font-size="12">ASSERTION_FAILED?</text>
-  <text x="268" y="244" fill="#f87171" font-size="12">Skip tx</text>
-
-  <!-- Otherwise include -->
-  <text x="116" y="266" fill="#94a3b8" font-size="12">Otherwise:</text>
-  <text x="196" y="266" fill="#34d399" font-size="12">include tx</text>
+  <!-- Result handling -->
+  <text x="116" y="258" fill="#fbbf24" font-size="12">ASSERTION_FAILED?</text>
+  <text x="276" y="258" fill="#f87171" font-size="12">undo + drop tx</text>
 
   <!-- On block sealed -->
-  <text x="80" y="298" fill="#e2e8f0" font-size="12" font-weight="500">On block sealed:</text>
-  <text x="100" y="318" fill="#94a3b8" font-size="12">Send CommitHead</text>
-  <line x1="230" y1="314" x2="610" y2="314" stroke="#60a5fa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-blue)"/>
+  <text x="80" y="290" fill="#e2e8f0" font-size="12" font-weight="500">On block sealed:</text>
+  <text x="100" y="310" fill="#94a3b8" font-size="12">NewIteration / CommitHead</text>
+  <line x1="280" y1="306" x2="590" y2="306" stroke="#60a5fa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-blue)"/>
 
-  <!-- WebSocket server -->
-  <rect x="60" y="340" width="260" height="50" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <text x="80" y="362" fill="#e2e8f0" font-size="12" font-weight="500">WebSocket server (:1730)</text>
-  <text x="96" y="380" fill="#a78bfa" font-size="11">eth_subscribe("newHeads")</text>
-  <line x1="610" y1="365" x2="324" y2="365" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-left)"/>
+  <!-- ═══════════ WebSocket + debug_trace ═══════════ -->
+  <rect x="60" y="334" width="240" height="32" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="80" y="354" fill="#a78bfa" font-size="11">eth_subscribe("newHeads") :1730</text>
+  <line x1="590" y1="350" x2="304" y2="350" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-purple)"/>
 
-  <!-- debug_traceBlockByNumber -->
-  <rect x="60" y="400" width="260" height="50" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <text x="80" y="422" fill="#e2e8f0" font-size="12" font-weight="500">debug_traceBlockByNumber</text>
-  <text x="96" y="440" fill="#a78bfa" font-size="11">prestateTracer (diff mode)</text>
-  <line x1="610" y1="425" x2="324" y2="425" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-left)"/>
+  <rect x="60" y="374" width="240" height="32" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="80" y="394" fill="#a78bfa" font-size="11">debug_traceBlockByNumber :1729</text>
+  <line x1="590" y1="390" x2="304" y2="390" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-purple)"/>
 
-  <!-- Credible Layer Sidecar box -->
-  <rect x="620" y="140" width="270" height="200" rx="8" fill="#172554" stroke="#1d4ed8" stroke-width="1.5"/>
-  <text x="648" y="172" fill="#93c5fd" font-size="14" font-weight="600">Credible Layer</text>
-  <text x="648" y="192" fill="#93c5fd" font-size="14" font-weight="600">Sidecar</text>
-  <text x="648" y="214" fill="#60a5fa" font-size="12">(Assertion Enforcer)</text>
+  <!-- ═══════════ Credible Layer Sidecar box ═══════════ -->
+  <rect x="600" y="130" width="270" height="200" rx="8" fill="#172554" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="620" y="122" fill="#60a5fa" font-size="10" font-weight="600">gRPC :50051</text>
+  <text x="640" y="166" fill="#93c5fd" font-size="14" font-weight="600">Credible Layer Sidecar</text>
+  <text x="640" y="188" fill="#60a5fa" font-size="12">(Assertion Enforcer)</text>
+  <line x1="640" y1="200" x2="844" y2="200" stroke="#1e3a5f" stroke-width="1"/>
+  <text x="640" y="224" fill="#94a3b8" font-size="12">Runs PhEVM to</text>
+  <text x="640" y="242" fill="#94a3b8" font-size="12">evaluate assertions</text>
+  <line x1="640" y1="254" x2="844" y2="254" stroke="#1e3a5f" stroke-width="1"/>
+  <text x="640" y="278" fill="#94a3b8" font-size="12">Tracks chain state</text>
+  <text x="640" y="296" fill="#94a3b8" font-size="12">via WS + traces</text>
+  <text x="640" y="320" fill="#94a3b8" font-size="12">GetTransaction for verdicts</text>
 
-  <!-- Sidecar details -->
-  <line x1="648" y1="228" x2="862" y2="228" stroke="#1e3a5f" stroke-width="1"/>
-  <text x="648" y="252" fill="#94a3b8" font-size="12">Runs PhEVM to</text>
-  <text x="648" y="270" fill="#94a3b8" font-size="12">evaluate assertions</text>
-  <line x1="648" y1="282" x2="862" y2="282" stroke="#1e3a5f" stroke-width="1"/>
-  <text x="648" y="306" fill="#94a3b8" font-size="12">Tracks chain state</text>
-  <text x="648" y="324" fill="#94a3b8" font-size="12">via WS + traces</text>
+  <!-- ═══════════ On-chain section ═══════════ -->
+  <line x1="310" y1="410" x2="310" y2="450" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="340" y="444" fill="#94a3b8" font-size="12">On-chain (L2)</text>
 
-  <!-- Connector line from sequencer to on-chain -->
-  <line x1="310" y1="460" x2="310" y2="490" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
-
-  <!-- On-chain (L2) label -->
-  <text x="268" y="510" fill="#94a3b8" font-size="12">On-chain (L2)</text>
-
-  <!-- On-chain boxes -->
-  <rect x="140" y="520" width="440" height="80" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
+  <rect x="120" y="460" width="460" height="80" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
 
   <!-- State Oracle -->
-  <rect x="160" y="536" width="180" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="186" y="556" fill="#fbbf24" font-size="13" font-weight="500">State Oracle</text>
-  <text x="178" y="574" fill="#94a3b8" font-size="11">(registry of assertions)</text>
+  <rect x="140" y="476" width="190" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="172" y="496" fill="#fbbf24" font-size="13" font-weight="500">State Oracle</text>
+  <text x="162" y="514" fill="#94a3b8" font-size="11">(registry of assertions)</text>
 
   <!-- Assertion DA -->
-  <rect x="370" y="536" width="180" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="400" y="556" fill="#fbbf24" font-size="13" font-weight="500">Assertion DA</text>
-  <text x="394" y="574" fill="#94a3b8" font-size="11">(bytecode storage)</text>
-
-  <!-- gRPC label -->
-  <rect x="614" y="122" width="52" height="18" rx="3" fill="#1e3a5f"/>
-  <text x="622" y="135" fill="#60a5fa" font-size="10" font-weight="600">gRPC</text>
+  <rect x="360" y="476" width="190" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="394" y="496" fill="#fbbf24" font-size="13" font-weight="500">Assertion DA</text>
+  <text x="388" y="514" fill="#94a3b8" font-size="11">(bytecode storage)</text>
 </svg>
