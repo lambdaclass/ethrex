@@ -12,7 +12,7 @@ use crate::{
     utils::RpcErr,
 };
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt, calculate_base_fee_per_blob_gas,
+    Block, BlockBody, BlockHash, BlockHeader, Receipt, calculate_base_fee_per_blob_gas,
 };
 use ethrex_storage::Store;
 
@@ -177,7 +177,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let receipts = get_all_block_rpc_receipts(block_number, header, body, storage).await?;
+        let receipts = get_all_block_rpc_receipts(header, body, storage).await?;
 
         serde_json::to_value(&receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -274,7 +274,7 @@ impl RpcHandler for GetRawReceipts {
             (Some(header), Some(body)) => (header, body),
             _ => return Ok(Value::Null),
         };
-        let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
+        let receipts: Vec<String> = get_all_block_receipts(header, body, storage)
             .await?
             .iter()
             .map(|receipt| {
@@ -330,16 +330,25 @@ impl RpcHandler for GetBlobBaseFee {
 }
 
 pub async fn get_all_block_rpc_receipts(
-    block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<RpcReceipt>, RpcErr> {
-    let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(receipts);
+        return Ok(Vec::new());
     }
+    let block_hash = header.hash();
+    let tx_count = body.transactions.len() as u64;
+
+    // One batched MultiGet instead of N sequential reads. Keys share the
+    // `block_hash` prefix so RocksDB can coalesce them into a single SST
+    // block read.
+    let raw_receipts = storage
+        .get_receipts_by_block_hash(block_hash, tx_count)
+        .await
+        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
     let config = storage.get_chain_config();
     let blob_base_fee = calculate_base_fee_per_blob_gas(
         header.excess_blob_gas.unwrap_or_default(),
@@ -352,17 +361,18 @@ pub async fn get_all_block_rpc_receipts(
     let blob_base_fee_u64: u64 = blob_base_fee
         .try_into()
         .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
-    // Fetch receipt info from block
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
-    // Fetch receipt for each tx in the block and add block and tx info
+
+    let mut receipts = Vec::with_capacity(raw_receipts.len());
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
-    for (index, tx) in body.transactions.iter().enumerate() {
+    for (index, (tx, receipt)) in body
+        .transactions
+        .iter()
+        .zip(raw_receipts.into_iter())
+        .enumerate()
+    {
         let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
             tx.clone(),
@@ -371,37 +381,26 @@ pub async fn get_all_block_rpc_receipts(
             blob_base_fee_u64,
             base_fee_per_gas,
         )?;
-        let receipt = RpcReceipt::new(
-            receipt.clone(),
-            tx_info,
-            block_info.clone(),
-            current_log_index,
-        );
+        let rpc_receipt = RpcReceipt::new(receipt, tx_info, block_info.clone(), current_log_index);
         last_cumulative_gas_used += gas_used;
-        current_log_index += receipt.logs.len() as u64;
-        receipts.push(receipt);
+        current_log_index += rpc_receipt.logs.len() as u64;
+        receipts.push(rpc_receipt);
     }
     Ok(receipts)
 }
 
 pub async fn get_all_block_receipts(
-    block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<Receipt>, RpcErr> {
-    let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(receipts);
+        return Ok(Vec::new());
     }
-    for (index, _) in body.transactions.iter().enumerate() {
-        let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
-        receipts.push(receipt);
-    }
-    Ok(receipts)
+    let block_hash = header.hash();
+    storage
+        .get_receipts_by_block_hash(block_hash, body.transactions.len() as u64)
+        .await
+        .map_err(|e| RpcErr::Internal(e.to_string()))
 }

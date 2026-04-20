@@ -35,6 +35,15 @@ pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
 /// - [`Vec<u8>`] = `receipt.encode_to_vec()`
 pub const RECEIPTS: &str = "receipts";
 
+/// Per-block receipt metadata column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - Key: `block_hash.as_bytes()` (32 bytes)
+/// - Value: packed `[u32 gas_used_le | u32 log_index_offset_le]` * N_transactions
+///
+/// Written once at block commit; lets `eth_getTransactionReceipt` read a single
+/// receipt in O(1) DB reads instead of fetching every receipt in the block to
+/// compute cumulative fields.
+pub const BLOCK_RECEIPT_META: &str = "block_receipt_meta";
+
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
@@ -102,7 +111,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -113,6 +122,7 @@ pub const TABLES: [&str; 19] = [
     PENDING_BLOCKS,
     TRANSACTION_LOCATIONS,
     RECEIPTS,
+    BLOCK_RECEIPT_META,
     SNAP_STATE,
     INVALID_CHAINS,
     ACCOUNT_TRIE_NODES,
