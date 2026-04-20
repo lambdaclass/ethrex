@@ -72,16 +72,17 @@ pub trait CredibleLayerProtocol: Send + Sync {
 /// established in `#[started]` and ack messages are bridged into the actor via
 /// `spawn_listener`. Reconnection on failure is scheduled with `send_after`.
 pub struct CredibleLayerClient {
-    /// Feeds events into the gRPC StreamEvents bidirectional stream. None when disconnected.
-    stream_tx: Option<mpsc::Sender<Event>>,
+    /// Write handle for the gRPC StreamEvents bidirectional stream (Rust equivalent
+    /// of Java gRPC's `StreamObserver.onNext()`). None when disconnected.
+    sidecar_tx: Option<mpsc::Sender<Event>>,
     /// Monotonically increasing event ID counter
     event_id_counter: u64,
     /// Current iteration ID (incremented per block)
     iteration_id: u64,
-    /// gRPC client — used for unary GetTransaction calls and cloned for stream connections.
-    grpc_client: SidecarTransportClient<Channel>,
-    /// Whether the StreamEvents stream is currently connected.
-    connected: bool,
+    /// gRPC client for sidecar RPCs (StreamEvents, GetTransaction).
+    sidecar_client: SidecarTransportClient<Channel>,
+    /// Whether the StreamEvents stream is currently active.
+    stream_connected: bool,
 }
 
 #[actor(protocol = CredibleLayerProtocol)]
@@ -102,25 +103,24 @@ impl CredibleLayerClient {
             .connect_lazy();
 
         Ok(Self {
-            grpc_client: SidecarTransportClient::new(channel),
-            stream_tx: None,
+            sidecar_client: SidecarTransportClient::new(channel),
+            sidecar_tx: None,
             event_id_counter: 1,
             iteration_id: 0,
-            connected: false,
+            stream_connected: false,
         })
     }
 
     /// Attempt to establish a bidirectional StreamEvents connection with the sidecar.
     /// On success, stores the event sender and spawns an ack listener.
     /// On failure, schedules a retry via `send_after`.
-    async fn try_connect(&mut self, ctx: &Context<Self>) {
-        let mut stream_client = self.grpc_client.clone();
+    async fn open_event_stream(&mut self, ctx: &Context<Self>) {
         let (tx, rx) = mpsc::channel::<Event>(64);
         let grpc_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
 
-        match stream_client.stream_events(grpc_stream).await {
+        match self.sidecar_client.stream_events(grpc_stream).await {
             Ok(response) => {
-                info!("StreamEvents stream connected to sidecar");
+                info!("StreamEvents stream stream_connected to sidecar");
 
                 // The sidecar requires CommitHead as the first event on every new stream.
                 let init_commit = Event {
@@ -145,8 +145,8 @@ impl CredibleLayerClient {
                     return;
                 }
 
-                self.stream_tx = Some(tx);
-                self.connected = true;
+                self.sidecar_tx = Some(tx);
+                self.stream_connected = true;
 
                 // Bridge the ack stream into actor messages via spawn_listener.
                 // When the stream ends or errors, a final "disconnected" message is sent.
@@ -199,18 +199,18 @@ impl CredibleLayerClient {
             event_id: self.next_event_id(),
             event: Some(event_payload),
         };
-        if let Some(ref sender) = self.stream_tx {
+        if let Some(ref sender) = self.sidecar_tx {
             if sender.send(event).await.is_err() {
                 warn!("Event channel closed, marking disconnected");
-                self.connected = false;
-                self.stream_tx = None;
+                self.stream_connected = false;
+                self.sidecar_tx = None;
             }
         }
     }
 
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
-        self.try_connect(ctx).await;
+        self.open_event_stream(ctx).await;
     }
 
     #[send_handler]
@@ -219,10 +219,10 @@ impl CredibleLayerClient {
         _msg: credible_layer_protocol::Reconnect,
         ctx: &Context<Self>,
     ) {
-        if self.connected {
+        if self.stream_connected {
             return;
         }
-        self.try_connect(ctx).await;
+        self.open_event_stream(ctx).await;
     }
 
     #[send_handler]
@@ -232,12 +232,12 @@ impl CredibleLayerClient {
         ctx: &Context<Self>,
     ) {
         if msg.disconnected {
-            if !self.connected {
+            if !self.stream_connected {
                 return;
             }
             info!("Sidecar stream disconnected: {}", msg.message);
-            self.connected = false;
-            self.stream_tx = None;
+            self.stream_connected = false;
+            self.sidecar_tx = None;
             send_after(
                 Duration::from_secs(5),
                 ctx.clone(),
@@ -311,7 +311,7 @@ impl CredibleLayerClient {
         msg: credible_layer_protocol::SendTransaction,
         _ctx: &Context<Self>,
     ) {
-        if !self.connected {
+        if !self.stream_connected {
             return;
         }
         let tx_execution_id = Some(TxExecutionId {
@@ -336,7 +336,7 @@ impl CredibleLayerClient {
         msg: credible_layer_protocol::CheckTransaction,
         _ctx: &Context<Self>,
     ) -> bool {
-        if !self.connected {
+        if !self.stream_connected {
             return true;
         }
 
@@ -356,7 +356,7 @@ impl CredibleLayerClient {
             let request = GetTransactionRequest {
                 tx_execution_id: Some(tx_exec_id.clone()),
             };
-            match tokio::time::timeout(poll_timeout, self.grpc_client.get_transaction(request))
+            match tokio::time::timeout(poll_timeout, self.sidecar_client.get_transaction(request))
                 .await
             {
                 Ok(Ok(response)) => {
