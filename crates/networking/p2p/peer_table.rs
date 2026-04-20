@@ -1055,24 +1055,31 @@ impl PeerTableServer {
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
-        // Check both main contacts and replacements in each bucket.
-        // Replacements may contain fresher peers that haven't been tried yet.
-        for bucket in &self.buckets {
-            for (node_id, contact) in bucket.contacts.iter().chain(bucket.replacements.iter()) {
-                if !self.peers.contains_key(node_id)
-                    && !self.already_tried_peers.contains(node_id)
+        // Collect all eligible contacts across all buckets (main + replacements)
+        // and pick one randomly to avoid sequential bias toward sparse low-numbered
+        // buckets. Most contacts cluster in high-numbered buckets (253-255) due to
+        // XOR distance distribution, so sequential traversal would waste attempts
+        // on the sparse lower buckets before reaching them.
+        let eligible: Vec<(H256, Contact)> = self
+            .iter_contacts()
+            .filter(|(node_id, contact)| {
+                !self.peers.contains_key(*node_id)
+                    && !self.already_tried_peers.contains(*node_id)
                     && contact.knows_us
                     && !contact.unwanted
                     && contact.is_fork_id_valid != Some(false)
-                {
-                    self.already_tried_peers.insert(*node_id);
-                    return Some(contact.clone());
-                }
-            }
+            })
+            .map(|(id, c)| (*id, c.clone()))
+            .collect();
+
+        if let Some((node_id, contact)) = eligible.choose(&mut rand::rngs::OsRng).cloned() {
+            self.already_tried_peers.insert(node_id);
+            Some(contact)
+        } else {
+            tracing::trace!("Resetting list of tried peers.");
+            self.already_tried_peers.clear();
+            None
         }
-        tracing::trace!("Resetting list of tried peers.");
-        self.already_tried_peers.clear();
-        None
     }
 
     fn do_get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
