@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ethrex_common::types::{BlockHeader, Transaction, TxKind};
+use ethrex_common::types::{BlockHeader, Transaction};
 use ethrex_common::{Address, H256};
 use spawned_concurrency::{
     actor,
@@ -17,9 +17,9 @@ use tracing::{debug, info, warn};
 
 use super::errors::CredibleLayerError;
 use super::sidecar_proto::{
-    self, AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv, CommitHead, Event,
-    GetTransactionRequest, NewIteration, ResultStatus, Transaction as SidecarTransaction,
-    TransactionEnv, TxExecutionId, sidecar_transport_client::SidecarTransportClient,
+    self, BlobExcessGasAndPrice, BlockEnv, CommitHead, Event, GetTransactionRequest, NewIteration,
+    ResultStatus, Transaction as SidecarTransaction, TxExecutionId,
+    sidecar_transport_client::SidecarTransportClient,
 };
 
 #[protocol]
@@ -320,7 +320,7 @@ impl CredibleLayerClient {
             tx_hash: msg.tx_hash.as_bytes().to_vec(),
             index: msg.tx_index,
         });
-        let tx_env = build_transaction_env(&msg.tx, msg.sender);
+        let tx_env = (msg.tx, msg.sender).into();
         let sidecar_tx = SidecarTransaction {
             tx_execution_id,
             tx_env: Some(tx_env),
@@ -398,75 +398,4 @@ fn u64_to_u256_bytes(value: u64) -> Vec<u8> {
     let mut buf = [0u8; 32];
     buf[24..].copy_from_slice(&value.to_be_bytes());
     buf.to_vec()
-}
-
-/// Build a `TransactionEnv` protobuf message from an ethrex transaction and its sender.
-fn build_transaction_env(tx: &Transaction, sender: Address) -> TransactionEnv {
-    let transact_to = match tx.to() {
-        TxKind::Call(addr) => addr.as_bytes().to_vec(),
-        TxKind::Create => vec![],
-    };
-
-    let value_bytes = tx.value().to_big_endian();
-
-    let mut gas_price_bytes = [0u8; 16];
-    let gas_price_u128 = tx.gas_price().as_u128();
-    gas_price_bytes.copy_from_slice(&gas_price_u128.to_be_bytes());
-
-    let gas_priority_fee = tx.max_priority_fee().map(|fee| {
-        let mut buf = [0u8; 16];
-        buf[8..].copy_from_slice(&fee.to_be_bytes());
-        buf.to_vec()
-    });
-
-    let access_list = tx
-        .access_list()
-        .iter()
-        .map(|(addr, keys)| AccessListItem {
-            address: addr.as_bytes().to_vec(),
-            storage_keys: keys.iter().map(|k| k.as_bytes().to_vec()).collect(),
-        })
-        .collect();
-
-    let authorization_list = tx
-        .authorization_list()
-        .map(|list| {
-            list.iter()
-                .map(|auth| {
-                    let chain_id_bytes = auth.chain_id.to_big_endian();
-                    let r_bytes = auth.r_signature.to_big_endian();
-                    let s_bytes = auth.s_signature.to_big_endian();
-                    Authorization {
-                        chain_id: chain_id_bytes.to_vec(),
-                        address: auth.address.as_bytes().to_vec(),
-                        nonce: auth.nonce,
-                        y_parity: auth.y_parity.as_u32(),
-                        r: r_bytes.to_vec(),
-                        s: s_bytes.to_vec(),
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    TransactionEnv {
-        tx_type: u32::from(u8::from(tx.tx_type())),
-        caller: sender.as_bytes().to_vec(),
-        gas_limit: tx.gas_limit(),
-        gas_price: gas_price_bytes.to_vec(),
-        transact_to,
-        value: value_bytes.to_vec(),
-        data: tx.data().to_vec(),
-        nonce: tx.nonce(),
-        chain_id: tx.chain_id(),
-        access_list,
-        gas_priority_fee,
-        blob_hashes: tx
-            .blob_versioned_hashes()
-            .iter()
-            .map(|h| h.as_bytes().to_vec())
-            .collect(),
-        max_fee_per_blob_gas: vec![0u8; 16],
-        authorization_list,
-    }
 }
