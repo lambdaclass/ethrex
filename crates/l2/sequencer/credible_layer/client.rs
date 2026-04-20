@@ -57,7 +57,7 @@ pub trait CredibleLayerProtocol: Send + Sync {
 
     /// Process a stream ack from the sidecar. When `disconnected` is true,
     /// the stream has ended and a reconnect is scheduled.
-    fn handle_stream_ack(
+    fn stream_ack(
         &self,
         disconnected: bool,
         success: bool,
@@ -72,10 +72,10 @@ pub trait CredibleLayerProtocol: Send + Sync {
 /// established in `#[started]` and ack messages are bridged into the actor via
 /// `spawn_listener`. Reconnection on failure is scheduled with `send_after`.
 pub struct CredibleLayerClient {
-    /// gRPC channel (lazy — shared between stream and unary clients)
+    /// gRPC channel (lazy). Used to create new stream/unary clients.
     channel: Channel,
-    /// Sender for forwarding events to the active gRPC stream. None when disconnected.
-    event_sender: Option<mpsc::Sender<Event>>,
+    /// Feeds events into the gRPC StreamEvents bidirectional stream. None when disconnected.
+    stream_tx: Option<mpsc::Sender<Event>>,
     /// Monotonically increasing event ID counter
     event_id_counter: u64,
     /// Current iteration ID (incremented per block)
@@ -106,7 +106,7 @@ impl CredibleLayerClient {
         Ok(Self {
             grpc_client: SidecarTransportClient::new(channel.clone()),
             channel,
-            event_sender: None,
+            stream_tx: None,
             event_id_counter: 1,
             iteration_id: 0,
             connected: false,
@@ -148,7 +148,7 @@ impl CredibleLayerClient {
                     return;
                 }
 
-                self.event_sender = Some(tx);
+                self.stream_tx = Some(tx);
                 self.connected = true;
 
                 // Bridge the ack stream into actor messages via spawn_listener.
@@ -156,27 +156,25 @@ impl CredibleLayerClient {
                 let ack_stream = response.into_inner();
                 let mapped = ack_stream
                     .map(|result| match result {
-                        Ok(ack) => credible_layer_protocol::HandleStreamAck {
+                        Ok(ack) => credible_layer_protocol::StreamAck {
                             disconnected: false,
                             success: ack.success,
                             event_id: ack.event_id,
                             message: ack.message,
                         },
-                        Err(status) => credible_layer_protocol::HandleStreamAck {
+                        Err(status) => credible_layer_protocol::StreamAck {
                             disconnected: true,
                             success: false,
                             event_id: 0,
                             message: status.to_string(),
                         },
                     })
-                    .chain(tokio_stream::once(
-                        credible_layer_protocol::HandleStreamAck {
-                            disconnected: true,
-                            success: false,
-                            event_id: 0,
-                            message: "ack stream ended".into(),
-                        },
-                    ));
+                    .chain(tokio_stream::once(credible_layer_protocol::StreamAck {
+                        disconnected: true,
+                        success: false,
+                        event_id: 0,
+                        message: "ack stream ended".into(),
+                    }));
 
                 spawn_listener(ctx.clone(), mapped);
             }
@@ -204,11 +202,11 @@ impl CredibleLayerClient {
             event_id: self.next_event_id(),
             event: Some(event_payload),
         };
-        if let Some(ref sender) = self.event_sender {
+        if let Some(ref sender) = self.stream_tx {
             if sender.send(event).await.is_err() {
                 warn!("Event channel closed, marking disconnected");
                 self.connected = false;
-                self.event_sender = None;
+                self.stream_tx = None;
             }
         }
     }
@@ -231,9 +229,9 @@ impl CredibleLayerClient {
     }
 
     #[send_handler]
-    async fn handle_handle_stream_ack(
+    async fn handle_stream_ack(
         &mut self,
-        msg: credible_layer_protocol::HandleStreamAck,
+        msg: credible_layer_protocol::StreamAck,
         ctx: &Context<Self>,
     ) {
         if msg.disconnected {
@@ -242,7 +240,7 @@ impl CredibleLayerClient {
             }
             info!("Sidecar stream disconnected: {}", msg.message);
             self.connected = false;
-            self.event_sender = None;
+            self.stream_tx = None;
             send_after(
                 Duration::from_secs(5),
                 ctx.clone(),
