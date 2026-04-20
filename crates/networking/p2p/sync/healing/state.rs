@@ -158,6 +158,21 @@ async fn heal_state_trie(
         // other yield point) and the response channel is empty.
         tokio::task::yield_now().await;
 
+        // Check staleness and exit conditions at the top of the loop so that
+        // `continue` statements elsewhere (e.g. the no-peer-available branch)
+        // cannot skip them and cause the loop to spin forever.
+        if !is_stale && current_unix_time() > staleness_timestamp {
+            debug!("state healing is stale");
+            is_stale = true;
+        }
+        if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
+            debug!("Finished inflight tasks");
+            for result in db_joinset.join_all().await {
+                result?;
+            }
+            break;
+        }
+
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
@@ -382,20 +397,8 @@ async fn heal_state_trie(
             }
             break;
         }
-
-        // We check with a clock if we are stale
-        if !is_stale && current_unix_time() > staleness_timestamp {
-            debug!("state healing is stale");
-            is_stale = true;
-        }
-
-        if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            debug!("Finished inflight tasks");
-            for result in db_joinset.join_all().await {
-                result?;
-            }
-            break;
-        }
+        // Staleness and stale-exit checks are at the top of the loop so
+        // that `continue` can never bypass them.
     }
     debug!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage
