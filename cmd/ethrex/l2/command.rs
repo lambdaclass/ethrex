@@ -305,13 +305,13 @@ impl Command {
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
-                let mut current_block = U256::zero();
-                while current_block < U256::from(64) {
+                let mut current_block = 0u64;
+                while current_block < 64 {
                     current_block = eth_client.get_block_number().await?;
                     tokio::time::sleep(Duration::from_secs(12)).await;
                 }
                 current_block = current_block
-                    .checked_sub(U256::from(64))
+                    .checked_sub(64)
                     .ok_or_eyre("Cannot get finalized block")?;
 
                 let event_signature = keccak("BatchCommitted(bytes32)");
@@ -322,8 +322,8 @@ impl Command {
 
                     let logs = eth_client
                         .get_logs(
-                            current_block,
-                            current_block,
+                            U256::from(current_block),
+                            U256::from(current_block),
                             contract_address,
                             vec![event_signature],
                         )
@@ -332,10 +332,7 @@ impl Command {
                     if !logs.is_empty() {
                         // Get parent beacon block root hash from block
                         let block = eth_client
-                            .get_block_by_number(
-                                BlockIdentifier::Number(current_block.as_u64()),
-                                false,
-                            )
+                            .get_block_by_number(BlockIdentifier::Number(current_block), false)
                             .await?;
                         let parent_beacon_hash = block
                             .header
@@ -375,7 +372,7 @@ impl Command {
                         println!("Saved blobs for slot {target_slot}");
                     }
 
-                    current_block += U256::one();
+                    current_block += 1;
                 }
             }
             Command::Reconstruct {
