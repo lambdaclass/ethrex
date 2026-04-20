@@ -23,7 +23,9 @@ ethrex communicates with the sidecar via **gRPC** using the protocol defined in 
 |-----|------|---------|
 | `StreamEvents` | Bidirectional stream | Send block lifecycle events (CommitHead, NewIteration, Transaction) |
 | `SubscribeResults` | Server stream | Receive transaction verdicts as they complete |
-| `GetTransaction` | Unary | Fallback polling for a single result |
+| `GetTransaction` | Unary | Poll for a single transaction result |
+
+> **Note:** `SubscribeResults` is not yet consumed by ethrex. Transaction verdicts are currently obtained by polling `GetTransaction`. A future improvement should subscribe to `SubscribeResults` as the primary mechanism and use `GetTransaction` only as a fallback.
 
 ### Block Building Flow
 

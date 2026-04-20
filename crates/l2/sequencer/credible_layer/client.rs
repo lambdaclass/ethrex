@@ -330,6 +330,12 @@ impl CredibleLayerClient {
             .await;
     }
 
+    // TODO: Use the SubscribeResults server stream as the primary mechanism for
+    // receiving transaction verdicts (like the Besu plugin does). Store pushed
+    // results in a tx_results map via a result_received handler, and check the
+    // map here before falling back to GetTransaction polling. The stream delivers
+    // results faster since they're pushed as soon as the sidecar finishes evaluating,
+    // while polling adds latency from repeated round-trips.
     #[request_handler]
     async fn handle_check_transaction(
         &mut self,
