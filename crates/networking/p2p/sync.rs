@@ -161,22 +161,25 @@ impl Syncer {
             // If the error is irrecoverable, we exit ethrex
             Err(error) => {
                 let recoverable = error.is_recoverable();
-                self.diagnostics.write().await.current_phase = "idle".to_string();
                 debug!(
                     error_type = %error,
                     recoverable = recoverable,
                     action = if recoverable { "retry" } else { "exit" },
                     "Sync cycle error classification"
                 );
-                self.diagnostics.write().await.push_error(SyncErrorEvent {
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    error_type: format!("{:?}", std::mem::discriminant(&error)),
-                    error_message: error.to_string(),
-                    recoverable,
-                });
+                {
+                    let mut diag = self.diagnostics.write().await;
+                    diag.current_phase = "idle".to_string();
+                    diag.push_error(SyncErrorEvent {
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        error_type: format!("{:?}", std::mem::discriminant(&error)),
+                        error_message: error.to_string(),
+                        recoverable,
+                    });
+                }
                 match recoverable {
                     false => {
                         // We exit the node, as we can't recover this error

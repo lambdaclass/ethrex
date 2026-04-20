@@ -220,7 +220,8 @@ fn format_object_array_table(arr: &[Value]) -> String {
             .zip(&col_widths)
             .map(|(val, w)| {
                 let truncated = if val.len() > *w {
-                    format!("{}…", &val[..*w - 1])
+                    let s: String = val.chars().take(*w - 1).collect();
+                    format!("{s}…")
                 } else {
                     val.clone()
                 };
