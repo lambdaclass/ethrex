@@ -208,7 +208,7 @@ docker run -d --name assertion-da -p 5001:5001 \
 PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 
 rex deploy \
-  --contract-path <ethrex_repo>/crates/l2/contracts/src/credible_layer/OwnableTarget.sol \
+  --contract-path <ethrex_repo>/tooling/l2/credible_layer/OwnableTarget.sol \
   --private-key $PK --rpc-url http://localhost:1729 --print-address --remappings ""
 ```
 

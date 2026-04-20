@@ -11,7 +11,7 @@ The **State Oracle** is the on-chain registry that maps protected contracts to t
 assertions. It is maintained by Phylax Systems and must be deployed separately using the
 Phylax toolchain before starting the Credible Layer sidecar.
 
-See the [Credible Layer docs](../../../../docs/l2/credible_layer.md) for deployment instructions.
+See the [Credible Layer docs](../../../docs/l2/credible_layer.md) for deployment instructions.
 
 ### References
 
