@@ -1,10 +1,10 @@
-/// Credible Layer integration with the Phylax Credible Layer.
+/// Credible Layer integration with the Phylax Assertion Enforcer sidecar.
 ///
-/// This module implements a gRPC client actor that communicates with the Credible Layer
-/// Assertion Enforcer sidecar during block building. Transactions that fail assertion
-/// validation are dropped before block inclusion.
+/// This module implements a gRPC client actor that communicates with the sidecar
+/// during block building. Transactions that fail assertion validation are dropped
+/// before block inclusion.
 ///
-/// The integration is opt-in via the `--credible-layer` CLI flag.
+/// The integration is opt-in via the `--credible-layer-url` CLI flag.
 /// When disabled, there is zero overhead.
 pub mod client;
 pub mod errors;
@@ -19,12 +19,11 @@ pub mod sidecar_proto {
 
 // Conversions from ethrex types to sidecar protobuf types.
 
-impl From<(ethrex_common::types::Transaction, ethrex_common::Address)>
-    for sidecar_proto::TransactionEnv
-{
-    fn from((tx, sender): (ethrex_common::types::Transaction, ethrex_common::Address)) -> Self {
-        use ethrex_common::types::TxKind;
+use ethrex_common::Address;
+use ethrex_common::types::{Transaction, TxKind};
 
+impl From<(Transaction, Address)> for sidecar_proto::TransactionEnv {
+    fn from((tx, sender): (Transaction, Address)) -> Self {
         let transact_to = match tx.to() {
             TxKind::Call(addr) => addr.as_bytes().to_vec(),
             TxKind::Create => vec![],

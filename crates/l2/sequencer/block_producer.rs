@@ -81,7 +81,7 @@ pub struct BlockProducerHealth {
 
 impl BlockProducer {
     #[expect(clippy::too_many_arguments)]
-    pub async fn new(
+    pub fn new(
         config: &BlockProducerConfig,
         l1_rpc_url: Vec<Url>,
         store: Store,
@@ -215,6 +215,7 @@ impl BlockProducer {
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let transactions_count = block.body.transactions.len();
+        let last_tx_hash = block.body.transactions.last().map(|tx| tx.hash());
         let block_number = block.header.number;
         let block_hash = block.hash();
         // Save the header for newHeads notifications before block is moved into store_block.
@@ -237,13 +238,6 @@ impl BlockProducer {
 
         // Credible Layer: send CommitHead after block is stored
         if let Some(ref cl) = self.credible_layer {
-            let last_tx_hash = self
-                .store
-                .get_block_by_hash(block_hash)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|b| b.body.transactions.last().map(|tx| tx.hash()));
             let tx_count: u64 = transactions_count
                 .try_into()
                 .map_err(|_| BlockProducerError::Custom("tx count overflow".into()))?;
@@ -358,8 +352,7 @@ impl BlockProducer {
             l2_gas_limit,
             credible_layer,
             subscription_manager,
-        )
-        .await?;
+        )?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);
         Ok(actor_ref)
     }
