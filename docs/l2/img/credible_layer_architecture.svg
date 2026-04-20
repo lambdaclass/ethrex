@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" font-family="Inter, system-ui, -apple-system, sans-serif" font-size="13">
   <defs>
     <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6" fill="#94a3b8"/>
@@ -12,16 +12,13 @@
     <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6" fill="#60a5fa"/>
     </marker>
-    <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
-      <path d="M8,0 L0,3 L8,6" fill="#a78bfa"/>
-    </marker>
   </defs>
 
   <!-- Background -->
-  <rect width="900" height="560" rx="12" fill="#0f172a"/>
+  <rect width="900" height="480" rx="12" fill="#0f172a"/>
 
   <!-- ═══════════ ethrex L2 Sequencer box ═══════════ -->
-  <rect x="30" y="20" width="530" height="390" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
+  <rect x="30" y="20" width="460" height="310" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
   <text x="50" y="46" fill="#e2e8f0" font-size="15" font-weight="600">ethrex L2 Sequencer</text>
 
   <!-- User -> RPC -> Mempool -->
@@ -39,20 +36,20 @@
   <line x1="304" y1="90" x2="304" y2="116" stroke="#94a3b8" stroke-width="1" marker-end="url(#arrow)"/>
 
   <!-- ═══════════ Block Producer box ═══════════ -->
-  <rect x="60" y="122" width="470" height="200" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <rect x="60" y="122" width="400" height="200" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
   <text x="80" y="146" fill="#e2e8f0" font-size="13" font-weight="600">Block Producer: fill_transactions()</text>
   <text x="100" y="170" fill="#94a3b8" font-size="12">For each tx:</text>
 
   <!-- Step 1: Send Transaction (pre-execution) -->
   <text x="116" y="192" fill="#34d399" font-size="12">1. Send Transaction</text>
-  <line x1="256" y1="188" x2="590" y2="188" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-green)"/>
+  <line x1="256" y1="188" x2="510" y2="188" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-green)"/>
 
   <!-- Step 2: Execute tx locally -->
   <text x="116" y="214" fill="#e2e8f0" font-size="12">2. Execute tx in EVM</text>
 
   <!-- Step 3: Poll for verdict (post-execution) -->
   <text x="116" y="236" fill="#f87171" font-size="12">3. Poll verdict</text>
-  <line x1="590" y1="232" x2="232" y2="232" stroke="#f87171" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-red)"/>
+  <line x1="510" y1="232" x2="232" y2="232" stroke="#f87171" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrow-red)"/>
 
   <!-- Result handling -->
   <text x="116" y="258" fill="#fbbf24" font-size="12">ASSERTION_FAILED?</text>
@@ -61,43 +58,46 @@
   <!-- On block sealed -->
   <text x="80" y="290" fill="#e2e8f0" font-size="12" font-weight="500">On block sealed:</text>
   <text x="100" y="310" fill="#94a3b8" font-size="12">NewIteration / CommitHead</text>
-  <line x1="280" y1="306" x2="590" y2="306" stroke="#60a5fa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-blue)"/>
-
-  <!-- ═══════════ WebSocket + debug_trace ═══════════ -->
-  <rect x="60" y="334" width="240" height="32" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <text x="80" y="354" fill="#a78bfa" font-size="11">eth_subscribe("newHeads") :1730</text>
-  <line x1="590" y1="350" x2="304" y2="350" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-purple)"/>
-
-  <rect x="60" y="374" width="240" height="32" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <text x="80" y="394" fill="#a78bfa" font-size="11">debug_traceBlockByNumber :1729</text>
-  <line x1="590" y1="390" x2="304" y2="390" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-purple)"/>
+  <line x1="280" y1="306" x2="510" y2="306" stroke="#60a5fa" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-blue)"/>
 
   <!-- ═══════════ Credible Layer Sidecar box ═══════════ -->
-  <rect x="600" y="130" width="270" height="200" rx="8" fill="#172554" stroke="#1d4ed8" stroke-width="1.5"/>
-  <text x="620" y="122" fill="#60a5fa" font-size="10" font-weight="600">gRPC :50051</text>
-  <text x="640" y="166" fill="#93c5fd" font-size="14" font-weight="600">Credible Layer Sidecar</text>
-  <text x="640" y="188" fill="#60a5fa" font-size="12">(Assertion Enforcer)</text>
-  <line x1="640" y1="200" x2="844" y2="200" stroke="#1e3a5f" stroke-width="1"/>
-  <text x="640" y="224" fill="#94a3b8" font-size="12">Runs PhEVM to</text>
-  <text x="640" y="242" fill="#94a3b8" font-size="12">evaluate assertions</text>
-  <line x1="640" y1="254" x2="844" y2="254" stroke="#1e3a5f" stroke-width="1"/>
-  <text x="640" y="278" fill="#94a3b8" font-size="12">Tracks chain state</text>
-  <text x="640" y="296" fill="#94a3b8" font-size="12">via WS + traces</text>
-  <text x="640" y="320" fill="#94a3b8" font-size="12">GetTransaction for verdicts</text>
+  <rect x="520" y="50" width="350" height="280" rx="8" fill="#172554" stroke="#1d4ed8" stroke-width="1.5"/>
+  <text x="540" y="42" fill="#60a5fa" font-size="10" font-weight="600">gRPC :50051</text>
+  <text x="560" y="82" fill="#93c5fd" font-size="14" font-weight="600">Credible Layer Sidecar</text>
+  <text x="560" y="102" fill="#60a5fa" font-size="12">(Assertion Enforcer)</text>
+
+  <line x1="560" y1="114" x2="844" y2="114" stroke="#1e3a5f" stroke-width="1"/>
+  <text x="560" y="138" fill="#94a3b8" font-size="12">Runs PhEVM to evaluate assertions</text>
+  <text x="560" y="158" fill="#94a3b8" font-size="12">GetTransaction for verdicts</text>
+
+  <line x1="560" y1="170" x2="844" y2="170" stroke="#1e3a5f" stroke-width="1"/>
+  <text x="560" y="194" fill="#e2e8f0" font-size="12" font-weight="500">Reads from ethrex:</text>
+  <text x="576" y="216" fill="#a78bfa" font-size="11">eth_subscribe("newHeads") :1730</text>
+  <text x="576" y="236" fill="#a78bfa" font-size="11">debug_traceBlockByNumber :1729</text>
+
+  <line x1="560" y1="248" x2="844" y2="248" stroke="#1e3a5f" stroke-width="1"/>
+  <text x="560" y="272" fill="#e2e8f0" font-size="12" font-weight="500">Reads from external:</text>
+  <text x="576" y="294" fill="#a78bfa" font-size="11">Assertion DA (bytecode)</text>
+  <text x="576" y="314" fill="#a78bfa" font-size="11">State Oracle indexer (GraphQL)</text>
 
   <!-- ═══════════ On-chain section ═══════════ -->
-  <line x1="310" y1="410" x2="310" y2="450" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="340" y="444" fill="#94a3b8" font-size="12">On-chain (L2)</text>
+  <line x1="260" y1="330" x2="260" y2="370" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="290" y="366" fill="#94a3b8" font-size="12">On-chain (L2)</text>
 
-  <rect x="120" y="460" width="460" height="80" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
+  <rect x="120" y="380" width="280" height="80" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
+  <rect x="140" y="396" width="240" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="196" y="416" fill="#fbbf24" font-size="13" font-weight="500">State Oracle</text>
+  <text x="186" y="434" fill="#94a3b8" font-size="11">(registry of assertions)</text>
 
-  <!-- State Oracle -->
-  <rect x="140" y="476" width="190" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="172" y="496" fill="#fbbf24" font-size="13" font-weight="500">State Oracle</text>
-  <text x="162" y="514" fill="#94a3b8" font-size="11">(registry of assertions)</text>
+  <!-- ═══════════ Off-chain services ═══════════ -->
+  <rect x="520" y="380" width="350" height="80" rx="8" fill="none" stroke="#334155" stroke-width="1.5"/>
+  <text x="540" y="372" fill="#94a3b8" font-size="11">Off-chain services</text>
 
-  <!-- Assertion DA -->
-  <rect x="360" y="476" width="190" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
-  <text x="394" y="496" fill="#fbbf24" font-size="13" font-weight="500">Assertion DA</text>
-  <text x="388" y="514" fill="#94a3b8" font-size="11">(bytecode storage)</text>
+  <rect x="540" y="396" width="150" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="564" y="416" fill="#fbbf24" font-size="13" font-weight="500">Assertion DA</text>
+  <text x="556" y="434" fill="#94a3b8" font-size="11">(bytecode storage)</text>
+
+  <rect x="710" y="396" width="140" height="48" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+  <text x="736" y="416" fill="#fbbf24" font-size="13" font-weight="500">Indexer</text>
+  <text x="720" y="434" fill="#94a3b8" font-size="11">(State Oracle events)</text>
 </svg>
