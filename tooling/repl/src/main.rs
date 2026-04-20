@@ -22,14 +22,6 @@ struct Cli {
     /// Execute a single command and exit
     #[arg(short = 'x', long)]
     execute: Option<String>,
-
-    /// Port to listen for EIP-8025 proof callbacks (GeneratedProof POSTs)
-    #[arg(long = "proof-callback-port", default_value = "9200")]
-    proof_callback_port: u16,
-
-    /// Timeout in seconds for the proof callback listener (proof generation can take minutes)
-    #[arg(long = "proof-callback-timeout", default_value = "300")]
-    proof_callback_timeout: u64,
 }
 
 #[tokio::main]
@@ -41,8 +33,6 @@ async fn main() {
         cli.authrpc_jwtsecret,
         cli.history_file,
         cli.execute,
-        cli.proof_callback_port,
-        cli.proof_callback_timeout,
     )
     .await;
 }
