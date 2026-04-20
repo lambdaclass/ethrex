@@ -156,6 +156,8 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
+            // Release the reservation we made before spawning the task.
+            peers.peer_table.dec_requests(peer_id)?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -243,19 +245,19 @@ async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
 
-                let peer_table = peers.peer_table.clone();
+                // Reserve a request slot before spawning so get_best_peer sees
+                // this peer as busy immediately, preventing spawn floods.
+                // Workers call outgoing_request directly (not make_request) to
+                // avoid a double increment. Released via dec_requests on try_recv.
+                peers.peer_table.inc_requests(peer_id)?;
+
                 let batch_len = batch.len();
                 tokio::spawn(async move {
                     debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
                     // TODO: check errors to determine whether the current block is stale
-                    let response = request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
+                    let response =
+                        request_state_trienodes(peer_id, connection, state_root, batch.clone())
+                            .await;
                     debug!(
                         "HEAL WORKER returned: peer={peer_id} ok={} err={:?}",
                         response.is_ok(),

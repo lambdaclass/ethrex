@@ -1067,13 +1067,13 @@ pub async fn request_storage_ranges(
 pub async fn request_state_trienodes(
     peer_id: H256,
     mut connection: PeerConnection,
-    peer_table: PeerTable,
     state_root: H256,
     paths: Vec<RequestMetadata>,
 ) -> Result<Vec<Node>, SnapError> {
     let expected_nodes = paths.len();
-    // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-    // This is so we avoid penalizing peers due to requesting stale data
+    // The caller already holds a request reservation for this peer
+    // (via `inc_requests` before spawning), so we call `outgoing_request`
+    // directly instead of `make_request` to avoid a double increment.
 
     let request_id = rand::random();
     let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
@@ -1086,14 +1086,9 @@ pub async fn request_state_trienodes(
             .collect(),
         bytes: MAX_RESPONSE_BYTES,
     });
-    let nodes = match PeerHandler::make_request(
-        &peer_table,
-        peer_id,
-        &mut connection,
-        request,
-        PEER_REPLY_TIMEOUT,
-    )
-    .await
+    let nodes = match connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await
     {
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
             .nodes
