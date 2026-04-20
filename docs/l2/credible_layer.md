@@ -2,7 +2,7 @@
 
 ## Overview
 
-Credible Layer integrates ethrex L2 with [Phylax Systems' Credible Layer](https://docs.phylax.systems/credible/credible-introduction) — a pre-execution security infrastructure that validates transactions against on-chain assertions before block inclusion. Transactions that violate an assertion are silently dropped before they land on-chain.
+ethrex L2 integrates with the [Credible Layer](https://docs.phylax.systems/credible/credible-introduction) — a pre-execution security infrastructure by Phylax Systems that validates transactions against on-chain assertions before block inclusion. Transactions that violate an assertion are silently dropped before they land on-chain.
 
 ### Architecture
 
