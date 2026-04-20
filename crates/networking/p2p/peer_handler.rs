@@ -1,7 +1,7 @@
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
+    peer_table::{PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -170,6 +170,16 @@ impl PeerHandler {
                 .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?;
 
+            let selected_peers: Vec<_> = peer_connection
+                .iter()
+                .take(MAX_PEERS_TO_ASK)
+                .map(|(id, _)| *id)
+                .collect();
+            debug!(
+                retry = retries,
+                peers_selected = ?selected_peers,
+                "request_block_headers: resolving sync head with peers"
+            );
             for (peer_id, mut connection) in peer_connection.into_iter().take(MAX_PEERS_TO_ASK) {
                 match ask_peer_head_number(
                     peer_id,
@@ -183,10 +193,16 @@ impl PeerHandler {
                     Ok(number) => {
                         sync_head_number = number;
                         if number != 0 {
+                            #[cfg(feature = "metrics")]
+                            ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("found");
                             break;
                         }
+                        #[cfg(feature = "metrics")]
+                        ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("unknown");
                     }
                     Err(err) => {
+                        #[cfg(feature = "metrics")]
+                        ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("timeout");
                         debug!(
                             "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
                         );
@@ -578,6 +594,14 @@ impl PeerHandler {
         }
         Ok(None)
     }
+    /// Returns diagnostic snapshots for all connected peers (scores, requests, eligibility).
+    pub async fn read_peer_diagnostics(&self) -> Vec<PeerDiagnostics> {
+        self.peer_table
+            .get_peer_diagnostics()
+            .await
+            .unwrap_or_default()
+    }
+
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
         self.peer_table

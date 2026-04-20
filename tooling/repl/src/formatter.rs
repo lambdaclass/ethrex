@@ -70,48 +70,64 @@ fn format_object_box(map: &serde_json::Map<String, Value>, title: &str) -> Strin
 
     let rows = flatten_object(map, "");
 
-    let key_w = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    let val_w = rows
-        .iter()
-        .map(|(_, v)| v.len())
-        .max()
-        .unwrap_or(0)
-        .min(MAX_VALUE_DISPLAY_LEN);
-    let content_w = key_w + 3 + val_w;
-    let box_w = content_w + 4; // "│ " + content + " │"
+    // Separate scalar rows from table sections (arrays of objects rendered below the box)
+    let mut scalar_rows = Vec::new();
+    let mut table_sections: Vec<(String, String)> = Vec::new();
+    for (key, value) in rows {
+        if value.starts_with('\n') && value.contains("items)") {
+            table_sections.push((key, value));
+        } else {
+            scalar_rows.push((key, value));
+        }
+    }
 
     let mut out = String::new();
 
-    // Top border
-    if title.is_empty() {
-        out.push_str(&format!("┌{}┐\n", "─".repeat(box_w - 2)));
-    } else {
-        let fill = (box_w - 2).saturating_sub(title.len() + 1);
-        out.push_str(&format!("┌─{}{}┐\n", title.bold(), "─".repeat(fill)));
+    if !scalar_rows.is_empty() {
+        let key_w = scalar_rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+        let val_w = scalar_rows
+            .iter()
+            .map(|(_, v)| v.len())
+            .max()
+            .unwrap_or(0)
+            .min(MAX_VALUE_DISPLAY_LEN);
+        let content_w = key_w + 3 + val_w;
+        let box_w = content_w + 4;
+
+        if title.is_empty() {
+            out.push_str(&format!("┌{}┐\n", "─".repeat(box_w - 2)));
+        } else {
+            let fill = (box_w - 2).saturating_sub(title.len() + 1);
+            out.push_str(&format!("┌─{}{}┐\n", title.bold(), "─".repeat(fill)));
+        }
+
+        for (key, value) in &scalar_rows {
+            let display_val = truncate_middle(value, val_w);
+            let key_pad = " ".repeat(key_w.saturating_sub(key.len()));
+            let val_pad = " ".repeat(val_w.saturating_sub(display_val.len()));
+            out.push_str(&format!(
+                "│ {}{}   {}{} │\n",
+                key_pad,
+                key.cyan(),
+                colorize_inline(&display_val),
+                val_pad,
+            ));
+        }
+
+        out.push_str(&format!("└{}┘", "─".repeat(box_w - 2)));
     }
 
-    // Rows
-    for (key, value) in &rows {
-        let display_val = truncate_middle(value, val_w);
-        let key_pad = " ".repeat(key_w.saturating_sub(key.len()));
-        let val_pad = " ".repeat(val_w.saturating_sub(display_val.len()));
-        out.push_str(&format!(
-            "│ {}{}   {}{} │\n",
-            key_pad,
-            key.cyan(),
-            colorize_inline(&display_val),
-            val_pad,
-        ));
+    // Render table sections below the box
+    for (key, table) in &table_sections {
+        out.push_str(&format!("\n  {}:{}", key.cyan(), table));
     }
-
-    // Bottom border
-    out.push_str(&format!("└{}┘", "─".repeat(box_w - 2)));
 
     out
 }
 
 /// Flatten a JSON object into (key, plain-text-value) pairs.
 /// Nested objects are expanded with dot-separated keys.
+/// Arrays of objects are rendered as inline tables.
 fn flatten_object(map: &serde_json::Map<String, Value>, prefix: &str) -> Vec<(String, String)> {
     let mut rows = Vec::new();
     for (key, value) in map {
@@ -124,6 +140,10 @@ fn flatten_object(map: &serde_json::Map<String, Value>, prefix: &str) -> Vec<(St
             Value::Object(nested) if !nested.is_empty() => {
                 rows.extend(flatten_object(nested, &full_key));
             }
+            Value::Array(arr) if !arr.is_empty() && arr.iter().all(|v| v.is_object()) => {
+                // Render array of objects as a table
+                rows.push((full_key, format_object_array_table(arr)));
+            }
             Value::Array(arr) => {
                 let items: Vec<String> = arr.iter().map(inline_value).collect();
                 rows.push((full_key, items.join(", ")));
@@ -134,6 +154,85 @@ fn flatten_object(map: &serde_json::Map<String, Value>, prefix: &str) -> Vec<(St
         }
     }
     rows
+}
+
+/// Render an array of objects as a compact table with headers.
+fn format_object_array_table(arr: &[Value]) -> String {
+    if arr.is_empty() {
+        return "[]".to_string();
+    }
+
+    // Collect all keys from all objects to build columns
+    let mut columns: Vec<String> = Vec::new();
+    for item in arr {
+        if let Value::Object(map) = item {
+            for key in map.keys() {
+                if !columns.contains(key) {
+                    columns.push(key.clone());
+                }
+            }
+        }
+    }
+
+    if columns.is_empty() {
+        return "[]".to_string();
+    }
+
+    // Compute column widths
+    let col_values: Vec<Vec<String>> = arr
+        .iter()
+        .map(|item| {
+            columns
+                .iter()
+                .map(|col| item.get(col).map(inline_value).unwrap_or_default())
+                .collect()
+        })
+        .collect();
+
+    let col_widths: Vec<usize> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, header)| {
+            let max_val = col_values.iter().map(|row| row[i].len()).max().unwrap_or(0);
+            header.len().max(max_val).min(30)
+        })
+        .collect();
+
+    let mut out = String::new();
+
+    // Header
+    out.push('\n');
+    let header_parts: Vec<String> = columns
+        .iter()
+        .zip(&col_widths)
+        .map(|(h, w)| format!("{:>width$}", h, width = *w))
+        .collect();
+    out.push_str(&format!("      {}", header_parts.join("  ")));
+
+    // Separator
+    let sep_parts: Vec<String> = col_widths.iter().map(|w| "─".repeat(*w)).collect();
+    out.push_str(&format!("\n      {}", sep_parts.join("──")));
+
+    // Rows
+    for row in &col_values {
+        let parts: Vec<String> = row
+            .iter()
+            .zip(&col_widths)
+            .map(|(val, w)| {
+                let truncated = if val.len() > *w {
+                    let s: String = val.chars().take(*w - 1).collect();
+                    format!("{s}…")
+                } else {
+                    val.clone()
+                };
+                format!("{:>width$}", truncated, width = *w)
+            })
+            .collect();
+        out.push_str(&format!("\n      {}", parts.join("  ")));
+    }
+
+    out.push_str(&format!("\n      ({} items)", arr.len()));
+    out
 }
 
 /// Convert a Value to a plain-text string for table cells.
