@@ -1629,6 +1629,10 @@ async fn handle_incoming_message(
                         let blk_number = block.header.number;
                         let blk_hash = block.hash();
 
+                        // Serialize with the sync cycle and NewBlock handler.
+                        let canonical_lock = blockchain.polygon_canonical_lock();
+                        let _canonical_guard = canonical_lock.lock().await;
+
                         // Skip if already processed or in-flight
                         let latest = storage.get_latest_block_number().await.unwrap_or(0);
                         if blk_number <= latest || !blockchain.mark_polygon_in_flight(blk_hash) {
