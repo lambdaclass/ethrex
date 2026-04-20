@@ -62,7 +62,8 @@ const MAX_REPLACEMENTS_PER_BUCKET: usize = 10;
 /// This pool is separate from the k-bucket routing table and retains
 /// more contacts for RLPx connection initiation than the k-bucket
 /// structure allows (256 × 16 = 4,096 vs this larger capacity).
-const MAX_CONNECTION_POOL_SIZE: usize = 50_000;
+/// 10K matches what Reth and Nethermind use for their candidate pools.
+const MAX_CONNECTION_POOL_SIZE: usize = 10_000;
 
 /// A single k-bucket in the Kademlia routing table.
 /// Each bucket stores contacts at a specific XOR distance range from the local node.
