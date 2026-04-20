@@ -56,7 +56,6 @@ Privileged transactions (L1→L2 deposits) bypass the Credible Layer in this fir
 | `crates/l2/proto/sidecar.proto` | Sidecar gRPC protocol definition |
 | `crates/l2/sequencer/block_producer.rs` | Block producer — sends CommitHead + NewIteration |
 | `crates/l2/sequencer/block_producer/payload_builder.rs` | Transaction selection — sends Transaction events |
-| `crates/networking/rpc/tracing.rs` | prestateTracer implementation |
 
 ### Configuration
 

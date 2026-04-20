@@ -1203,6 +1203,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
+ "hex",
  "rayon",
  "rustc-hash 2.1.1",
  "serde",
