@@ -50,7 +50,9 @@ pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 pub const STORAGE_BATCH_SIZE: usize = 300;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 500;
+/// Matches bsc-geth's maxTrieRequestCount = maxRequestSize / 512B (avg node size),
+/// sized to fill MAX_RESPONSE_BYTES (512 KiB) per round-trip.
+pub const NODE_BATCH_SIZE: usize = 1024;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
