@@ -498,8 +498,15 @@ impl Mempool {
     }
 }
 
+/// Filter applied by the payload builder when querying pending transactions
+/// from the pool. NOT a mempool admission gate — all fields here are
+/// query-time filters used to pick block-includable transactions. Admission
+/// rules are enforced in `Blockchain::validate_transaction`.
 #[derive(Debug, Default)]
 pub struct PendingTxFilter {
+    /// Minimum effective priority fee for a transaction to be surfaced to
+    /// the payload builder. This is a block-building filter, not an
+    /// admission check — see `crates/common/types/constants.rs::MIN_GAS_TIP`.
     pub min_tip: Option<u64>,
     pub base_fee: Option<u64>,
     pub blob_fee: Option<u64>,
