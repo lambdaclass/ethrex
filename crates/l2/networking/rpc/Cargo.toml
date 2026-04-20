@@ -39,7 +39,7 @@ url.workspace = true
 path = "./lib.rs"
 
 [features]
-stateless-validation = ["ethrex-rpc/stateless-validation"]
+eip-8025 = ["ethrex-rpc/eip-8025"]
 
 [lints.clippy]
 unwrap_used = "deny"

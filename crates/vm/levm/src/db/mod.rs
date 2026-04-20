@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 pub mod guest_program_state_db;
 
 // Type aliases for cache storage maps

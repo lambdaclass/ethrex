@@ -3,10 +3,6 @@ pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
-#[cfg(feature = "stateless-validation")]
-pub mod proof;
-#[cfg(feature = "stateless-validation")]
-pub mod proof_types;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -46,14 +42,6 @@ pub const CAPABILITIES: [&str; 24] = [
     "engine_getClientVersionV1",
 ];
 
-/// EIP-8025 proof capabilities, advertised only when the feature is enabled.
-#[cfg(feature = "stateless-validation")]
-pub const EIP8025_CAPABILITIES: [&str; 3] = [
-    "engine_requestProofsV1",
-    "engine_verifyExecutionProofV1",
-    "engine_verifyNewPayloadRequestHeaderV1",
-];
-
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
     fn from(val: ExchangeCapabilitiesRequest) -> Self {
         RpcRequest {
@@ -78,15 +66,6 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
     }
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        #[cfg(not(feature = "stateless-validation"))]
-        {
-            Ok(json!(CAPABILITIES))
-        }
-        #[cfg(feature = "stateless-validation")]
-        {
-            let mut caps: Vec<&str> = CAPABILITIES.to_vec();
-            caps.extend_from_slice(&EIP8025_CAPABILITIES);
-            Ok(json!(caps))
-        }
+        Ok(json!(CAPABILITIES))
     }
 }

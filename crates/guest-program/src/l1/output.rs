@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(not(feature = "stateless-validation"))]
+#[cfg(not(feature = "eip-8025"))]
 use ethrex_common::{H256, U256};
 
 /// Output of the L1 stateless validation program.
-#[cfg(not(feature = "stateless-validation"))]
+#[cfg(not(feature = "eip-8025"))]
 #[derive(Serialize, Deserialize)]
 pub struct ProgramOutput {
     /// Initial state trie root hash.
@@ -19,7 +19,7 @@ pub struct ProgramOutput {
     pub transaction_count: U256,
 }
 
-#[cfg(not(feature = "stateless-validation"))]
+#[cfg(not(feature = "eip-8025"))]
 impl ProgramOutput {
     /// Encode the output to bytes for commitment.
     pub fn encode(&self) -> Vec<u8> {
@@ -38,7 +38,7 @@ impl ProgramOutput {
 ///
 /// The output is a 33-byte commitment: the `hash_tree_root` of the
 /// `NewPayloadRequest` (32 bytes) followed by a validity flag (1 byte).
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 #[derive(Serialize, Deserialize)]
 pub struct ProgramOutput {
     /// The `hash_tree_root` of the `NewPayloadRequest`.
@@ -47,7 +47,7 @@ pub struct ProgramOutput {
     pub valid: bool,
 }
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 impl ProgramOutput {
     /// Encode the output to 33 bytes: `root ++ valid`.
     pub fn encode(&self) -> Vec<u8> {

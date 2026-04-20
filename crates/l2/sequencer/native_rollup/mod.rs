@@ -1,8 +1,7 @@
 //! Native Rollup L2 PoC — parallel L2 mode where blocks are produced and
 //! committed via the EXECUTE precompile on L1.
 //!
-//! This module provides the actors (GenServers) that implement the native
-//! rollup L2 lifecycle:
+//! This module provides the actors that implement the native rollup L2 lifecycle:
 //!
 //! - **NativeL1Watcher**: polls L1 for `L1MessageRecorded` events and pushes
 //!   them into a shared queue
@@ -24,7 +23,7 @@ use ethrex_common::Address;
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_rpc::clients::eth::EthClient;
 use reqwest::Url;
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
+use spawned_concurrency::tasks::ActorRef;
 use tracing::info;
 
 use block_producer::{NativeBlockProducer, NativeBlockProducerConfig};
@@ -63,12 +62,12 @@ pub struct NativeRollupConfig {
 
 /// Start the native rollup L2 actors.
 ///
-/// Spawns three GenServers:
+/// Spawns three actors:
 /// 1. NativeL1Watcher — polls L1 for L1MessageRecorded events
 /// 2. NativeBlockProducer — drains L1 messages, builds relayer txs, produces blocks
 /// 3. NativeL1Advancer — reads blocks from Store, generates witness, submits to L1
 ///
-/// Returns handles to the spawned actors.
+/// Returns refs to the spawned actors.
 #[allow(clippy::type_complexity)]
 pub fn start_native_rollup_l2(
     store: Store,
@@ -76,9 +75,9 @@ pub fn start_native_rollup_l2(
     config: NativeRollupConfig,
 ) -> Result<
     (
-        GenServerHandle<NativeL1Watcher>,
-        GenServerHandle<NativeBlockProducer>,
-        GenServerHandle<NativeL1Advancer>,
+        ActorRef<NativeL1Watcher>,
+        ActorRef<NativeBlockProducer>,
+        ActorRef<NativeL1Advancer>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -94,14 +93,13 @@ pub fn start_native_rollup_l2(
     let eth_client = EthClient::new_with_multiple_urls(config.l1_rpc_urls.clone())?;
 
     // 1. Spawn NativeL1Watcher
-    let watcher = NativeL1Watcher::new(
+    let watcher_ref = NativeL1Watcher::spawn(
         eth_client.clone(),
         config.contract_address,
         pending_l1_messages.clone(),
         config.watch_interval_ms,
         config.max_block_step,
     );
-    let watcher_handle = watcher.start();
     info!("  NativeL1Watcher started");
 
     // 2. Spawn NativeBlockProducer
@@ -113,17 +111,16 @@ pub fn start_native_rollup_l2(
         chain_id: config.chain_id,
         relayer_signer: config.relayer_signer,
     };
-    let producer = NativeBlockProducer::new(
+    let producer_ref = NativeBlockProducer::spawn(
         store.clone(),
         producer_config,
         blockchain.clone(),
         pending_l1_messages,
     );
-    let producer_handle = producer.start();
     info!("  NativeBlockProducer started");
 
     // 3. Spawn NativeL1Advancer
-    let advancer = NativeL1Advancer::new(
+    let advancer_ref = NativeL1Advancer::spawn(
         eth_client,
         config.contract_address,
         config.l1_signer,
@@ -132,8 +129,7 @@ pub fn start_native_rollup_l2(
         relayer_address,
         config.advance_interval_ms,
     );
-    let advancer_handle = advancer.start();
     info!("  NativeL1Advancer started");
 
-    Ok((watcher_handle, producer_handle, advancer_handle))
+    Ok((watcher_ref, producer_ref, advancer_ref))
 }

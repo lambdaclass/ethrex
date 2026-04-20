@@ -5,8 +5,11 @@ use crate::{
 use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::input::ProgramInput;
 use serde::{Serialize, de::DeserializeOwned};
-use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle, send_after};
+use spawned_concurrency::{
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorStart as _, Backend, Context, Handler, send_after},
+};
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -41,21 +44,21 @@ pub struct ProverPullConfig {
     pub commit_hash: String,
 }
 
-/// Messages the prover GenServer accepts via `cast`.
-#[derive(Clone)]
-pub enum InMessage {
+/// Protocol for the generic Prover actor.
+#[protocol]
+pub trait ProverProtocol: Send + Sync {
     /// Poll all coordinator endpoints for work, prove, and submit.
     /// After completing one cycle, reschedules itself via `send_after`.
-    Poll,
+    fn poll(&self) -> Result<(), ActorError>;
     /// Stop the prover gracefully.
-    Abort,
+    fn abort(&self) -> Result<(), ActorError>;
 }
 
 /// Generic prover that polls coordinator endpoints for work, proves, and submits.
 ///
-/// Implements `GenServer` with a periodic polling loop: each `Poll` message triggers
-/// one cycle across all configured endpoints, then schedules the next `Poll` after
-/// the configured delay. Send `Abort` to stop the prover cleanly.
+/// Uses a periodic polling loop: each `Poll` message triggers one cycle across
+/// all configured endpoints, then schedules the next `Poll` after the configured
+/// delay. Send `Abort` to stop the prover cleanly.
 ///
 /// - `B` is the backend (SP1, RISC0, Exec, etc.)
 /// - `I` is the input type received from the coordinator (e.g., `ProverInputData` for L2,
@@ -195,37 +198,37 @@ where
     }
 }
 
-impl<B, I> GenServer for Prover<B, I>
+// Manual Actor + Handler impls because `#[actor]` doesn't support generic impl blocks.
+impl<B, I> Actor for Prover<B, I>
 where
     B: ProverBackend + Send + Sync + 'static,
     I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
-    type OutMsg = Unused;
-    type Error = crate::BackendError;
+}
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            InMessage::Poll => {
-                self.poll_endpoints().await;
-                send_after(
-                    Duration::from_millis(self.config.proving_time_ms),
-                    handle.clone(),
-                    InMessage::Poll,
-                );
-                CastResponse::NoReply
-            }
-            InMessage::Abort => {
-                // start_blocking keeps the prover loop alive even if the caller aborts the task.
-                // Returning CastResponse::Stop ends the blocking runner cleanly.
-                CastResponse::Stop
-            }
-        }
+impl<B, I> Handler<prover_protocol::Poll> for Prover<B, I>
+where
+    B: ProverBackend + Send + Sync + 'static,
+    I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    async fn handle(&mut self, _msg: prover_protocol::Poll, ctx: &Context<Self>) {
+        self.poll_endpoints().await;
+        send_after(
+            Duration::from_millis(self.config.proving_time_ms),
+            ctx.clone(),
+            prover_protocol::Poll,
+        );
+    }
+}
+
+impl<B, I> Handler<prover_protocol::Abort> for Prover<B, I>
+where
+    B: ProverBackend + Send + Sync + 'static,
+    I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    async fn handle(&mut self, _msg: prover_protocol::Abort, ctx: &Context<Self>) {
+        // Stopping the actor ends the blocking runner cleanly.
+        ctx.stop();
     }
 }
 
@@ -234,7 +237,7 @@ where
 /// The caller provides the `ProverPullConfig` and the type parameter `I` determines
 /// the input type used in the protocol.
 ///
-/// The prover runs as a GenServer on a blocking thread (via `start_blocking`) since
+/// The prover runs as an actor on a blocking thread (via `Backend::Blocking`) since
 /// proving is CPU-intensive. This function blocks until the prover is stopped.
 pub async fn start_prover<I>(backend_type: BackendType, config: ProverPullConfig)
 where
@@ -243,42 +246,42 @@ where
     match backend_type {
         BackendType::Exec => {
             let prover: Prover<ExecBackend, I> = Prover::new(ExecBackend::new(), config);
-            let mut handle = prover.start_blocking();
-            let _ = handle.cast(InMessage::Poll).await;
-            handle.cancellation_token().cancelled().await;
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
         }
         #[cfg(feature = "sp1")]
         BackendType::SP1 => {
             use crate::backend::sp1::{PROVER_SETUP, Sp1Backend, init_prover_setup};
             PROVER_SETUP.get_or_init(|| init_prover_setup(None));
             let prover: Prover<Sp1Backend, I> = Prover::new(Sp1Backend::new(), config);
-            let mut handle = prover.start_blocking();
-            let _ = handle.cast(InMessage::Poll).await;
-            handle.cancellation_token().cancelled().await;
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
         }
         #[cfg(feature = "risc0")]
         BackendType::RISC0 => {
             use crate::backend::Risc0Backend;
             let prover: Prover<Risc0Backend, I> = Prover::new(Risc0Backend::new(), config);
-            let mut handle = prover.start_blocking();
-            let _ = handle.cast(InMessage::Poll).await;
-            handle.cancellation_token().cancelled().await;
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
         }
         #[cfg(feature = "zisk")]
         BackendType::ZisK => {
             use crate::backend::ZiskBackend;
             let prover: Prover<ZiskBackend, I> = Prover::new(ZiskBackend::new(), config);
-            let mut handle = prover.start_blocking();
-            let _ = handle.cast(InMessage::Poll).await;
-            handle.cancellation_token().cancelled().await;
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
         }
         #[cfg(feature = "openvm")]
         BackendType::OpenVM => {
             use crate::backend::OpenVmBackend;
             let prover: Prover<OpenVmBackend, I> = Prover::new(OpenVmBackend::new(), config);
-            let mut handle = prover.start_blocking();
-            let _ = handle.cast(InMessage::Poll).await;
-            handle.cancellation_token().cancelled().await;
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
         }
     }
 }

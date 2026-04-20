@@ -56,7 +56,7 @@ fn run_execute(
 /// Extract `execution_payload.gas_used` from SSZ-encoded `StatelessInput`.
 fn extract_gas_used(calldata: &[u8]) -> Result<u64, VMError> {
     use ethrex_common::types::stateless_ssz::SszStatelessInput;
-    use ssz::SszDecode;
+    use libssz::SszDecode;
 
     let input = SszStatelessInput::from_ssz_bytes(calldata).map_err(|e| {
         VMError::Internal(InternalError::Custom(format!(
@@ -70,7 +70,7 @@ fn extract_gas_used(calldata: &[u8]) -> Result<u64, VMError> {
 /// Validate L2-specific constraints on the ExecutionPayload.
 fn validate_l2_constraints(calldata: &[u8]) -> Result<(), VMError> {
     use ethrex_common::types::stateless_ssz::SszStatelessInput;
-    use ssz::SszDecode;
+    use libssz::SszDecode;
 
     let input = SszStatelessInput::from_ssz_bytes(calldata).map_err(|e| {
         VMError::Internal(InternalError::Custom(format!(

@@ -10,23 +10,17 @@ license.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-levm = { path = "./levm", default-features = false }
-ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
 derive_more = { version = "1.0.0", features = ["full"] }
 bytes.workspace = true
 thiserror.workspace = true
-lazy_static.workspace = true
 tracing.workspace = true
 serde.workspace = true
-rkyv.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 
-bincode = "1"
 dyn-clone = "1.0"
-
-ethereum-types.workspace = true
 
 [lib]
 path = "./lib.rs"
@@ -41,7 +35,7 @@ sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
 risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0", "c-kzg"]
 zisk = ["ethrex-levm/zisk", "ethrex-common/zisk"]
 openvm = ["ethrex-levm/openvm", "ethrex-common/openvm"]
-stateless-validation = ["ethrex-levm/stateless-validation"]
+eip-8025 = ["ethrex-levm/eip-8025"]
 perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
 
 debug = ["ethrex-levm/debug"]

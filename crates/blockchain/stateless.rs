@@ -16,8 +16,8 @@ use ethrex_common::types::stateless_ssz::{
 use ethrex_crypto::Crypto;
 use ethrex_guest_program::common::{ExecutionError, execute_blocks};
 use ethrex_guest_program::l1::new_payload_request_to_block;
-use ssz::SszEncode;
-use ssz_merkle::HashTreeRoot;
+use libssz::SszEncode;
+use libssz_merkle::{HashTreeRoot, Sha2Hasher};
 
 /// Result of `verify_stateless_new_payload`.
 pub struct StatelessValidationResult {
@@ -42,7 +42,7 @@ pub fn verify_stateless_new_payload(
     chain_config: &SszChainConfig,
     crypto: Arc<dyn Crypto>,
 ) -> StatelessValidationResult {
-    let request_root = new_payload_request.hash_tree_root();
+    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
 
     let successful = match verify_inner(new_payload_request, execution_witness, crypto) {
         Ok(()) => {
@@ -164,7 +164,7 @@ pub struct StatelessExecutor {
 impl ethrex_vm::StatelessValidator for StatelessExecutor {
     fn verify(&self, input: &[u8]) -> Result<Vec<u8>, ethrex_vm::VMError> {
         use ethrex_vm::{InternalError, VMError};
-        use ssz::SszDecode;
+        use libssz::SszDecode;
 
         // Deserialize SSZ input
         tracing::debug!(

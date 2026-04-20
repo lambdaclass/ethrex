@@ -1,4 +1,4 @@
-//! NativeBlockProducer GenServer — produces L2 blocks compatible with the
+//! NativeBlockProducer actor — produces L2 blocks compatible with the
 //! EXECUTE precompile on L1.
 //!
 //! Follows the same pattern as `payload_builder.rs` in the L2 stack:
@@ -34,8 +34,11 @@ use ethrex_l2_sdk::calldata::encode_calldata;
 // carried via parent_beacon_block_root in the block header.
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
-use spawned_concurrency::tasks::{
-    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_after},
 };
 use tracing::{debug, error, info, warn};
 
@@ -50,11 +53,6 @@ pub struct NativeBlockProducerConfig {
     pub chain_id: u64,
     /// Signer for the relayer that calls L2Bridge.processL1Message().
     pub relayer_signer: Signer,
-}
-
-#[derive(Clone)]
-pub enum CastMsg {
-    Produce,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,13 +70,18 @@ pub enum NativeBlockProducerError {
     #[error("Encoding error: {0}")]
     Encoding(String),
     #[error("Internal error: {0}")]
-    Internal(#[from] spawned_concurrency::error::GenServerError),
+    Internal(#[from] spawned_concurrency::error::ActorError),
     #[error("System time error: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
     #[error("Signer error: {0}")]
     Signer(String),
     #[error("Mempool error: {0}")]
     Mempool(String),
+}
+
+#[protocol]
+pub trait NativeBlockProducerProtocol: Send + Sync {
+    fn produce(&self) -> Result<(), ActorError>;
 }
 
 pub struct NativeBlockProducer {
@@ -318,7 +321,7 @@ impl NativeBlockProducer {
 
             relayer_txs.push_back(HeadTransaction {
                 tx: MempoolTransaction::new(tx, relayer_address),
-                tip: 0,
+                tip: U256::zero(),
             });
         }
 
@@ -430,48 +433,40 @@ impl NativeBlockProducer {
     }
 }
 
-impl GenServer for NativeBlockProducer {
-    type CallMsg = ();
-    type CastMsg = CastMsg;
-    type OutMsg = ();
-    type Error = NativeBlockProducerError;
+#[actor(protocol = NativeBlockProducerProtocol)]
+impl NativeBlockProducer {
+    pub fn spawn(
+        store: Store,
+        config: NativeBlockProducerConfig,
+        blockchain: Arc<Blockchain>,
+        pending_l1_messages: PendingL1Messages,
+    ) -> ActorRef<NativeBlockProducer> {
+        let producer = Self::new(store, config, blockchain, pending_l1_messages);
+        producer.start()
+    }
 
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        handle
-            .clone()
-            .cast(CastMsg::Produce)
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(native_block_producer_protocol::Produce)
+            .inspect_err(|e| error!("NativeBlockProducer: failed to send initial Produce: {e}"));
+    }
+
+    #[send_handler]
+    async fn handle_produce(
+        &mut self,
+        _msg: native_block_producer_protocol::Produce,
+        ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .produce_block()
             .await
-            .map_err(NativeBlockProducerError::Internal)?;
-        Ok(Success(self))
-    }
+            .inspect_err(|e| error!("NativeBlockProducer error: {e}"));
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            CastMsg::Produce => {
-                let _ = self
-                    .produce_block()
-                    .await
-                    .inspect_err(|e| error!("NativeBlockProducer error: {e}"));
-
-                send_after(
-                    Duration::from_millis(self.config.block_time_ms),
-                    handle.clone(),
-                    CastMsg::Produce,
-                );
-                CastResponse::NoReply
-            }
-        }
-    }
-
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> spawned_concurrency::tasks::CallResponse<Self> {
-        spawned_concurrency::tasks::CallResponse::Reply(())
+        send_after(
+            Duration::from_millis(self.config.block_time_ms),
+            ctx.clone(),
+            native_block_producer_protocol::Produce,
+        );
     }
 }

@@ -26,16 +26,19 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
-use spawned_concurrency::tasks::{
-    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_after},
 };
 use tracing::{debug, error, info};
 
 const ADVANCE_FUNCTION_SIGNATURE: &str = "advance(uint256,bytes,bytes32,bytes32)";
 
-#[derive(Clone)]
-pub enum CastMsg {
-    Advance,
+#[protocol]
+pub trait NativeL1AdvancerProtocol: Send + Sync {
+    fn advance(&self) -> Result<(), ActorError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,7 +48,7 @@ pub enum NativeL1AdvancerError {
     #[error("Encoding error: {0}")]
     Encoding(String),
     #[error("Internal error: {0}")]
-    Internal(#[from] spawned_concurrency::error::GenServerError),
+    Internal(#[from] spawned_concurrency::error::ActorError),
     #[error("Signer error: {0}")]
     Signer(String),
     #[error("Store error: {0}")]
@@ -147,7 +150,7 @@ impl NativeL1Advancer {
         // Debug: verify SSZ round-trip locally before sending
         {
             use ethrex_common::types::stateless_ssz::SszStatelessInput;
-            use ssz::SszDecode;
+            use libssz::SszDecode;
             let decoded = SszStatelessInput::from_ssz_bytes(&ssz_input)
                 .map_err(|e| NativeL1AdvancerError::Encoding(format!("SSZ decode check: {e}")))?;
             let reconstructed = ethrex_guest_program::l1::new_payload_request_to_block(
@@ -314,8 +317,8 @@ pub fn build_ssz_stateless_input(
 ) -> Result<Vec<u8>, String> {
     use ethrex_common::types::stateless_ssz::*;
     use ethrex_rlp::encode::RLPEncode;
-    use ssz::SszEncode;
-    use ssz_types::SszList;
+    use libssz::SszEncode;
+    use libssz_types::SszList;
 
     // 1. Convert Block → SSZ ExecutionPayload
     let transactions: Vec<SszList<u8, 1_073_741_824>> = body
@@ -423,7 +426,7 @@ fn internal_witness_to_ssz(
 ) -> Result<ethrex_common::types::stateless_ssz::SszExecutionWitness, String> {
     use ethrex_common::types::stateless_ssz::SszExecutionWitness;
     use ethrex_rlp::encode::RLPEncode;
-    use ssz_types::SszList;
+    use libssz_types::SszList;
 
     // State: encode trie nodes back to their RLP preimage bytes.
     // The internal witness stores them as embedded Node structures.
@@ -506,41 +509,52 @@ fn collect_node_preimages(node: &ethrex_trie::Node, preimages: &mut Vec<Vec<u8>>
     }
 }
 
-impl GenServer for NativeL1Advancer {
-    type CallMsg = ();
-    type CastMsg = CastMsg;
-    type OutMsg = ();
-    type Error = NativeL1AdvancerError;
-
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        handle
-            .clone()
-            .cast(CastMsg::Advance)
-            .await
-            .map_err(NativeL1AdvancerError::Internal)?;
-        Ok(Success(self))
+#[actor(protocol = NativeL1AdvancerProtocol)]
+impl NativeL1Advancer {
+    pub fn spawn(
+        eth_client: EthClient,
+        contract_address: Address,
+        signer: Signer,
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        relayer_address: Address,
+        advance_interval_ms: u64,
+    ) -> ActorRef<NativeL1Advancer> {
+        let advancer = Self::new(
+            eth_client,
+            contract_address,
+            signer,
+            store,
+            blockchain,
+            relayer_address,
+            advance_interval_ms,
+        );
+        advancer.start()
     }
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            CastMsg::Advance => {
-                let _ = self
-                    .advance_next_block()
-                    .await
-                    .inspect_err(|e| error!("NativeL1Advancer error: {e}"));
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(native_l1_advancer_protocol::Advance)
+            .inspect_err(|e| error!("NativeL1Advancer: failed to send initial Advance: {e}"));
+    }
 
-                send_after(
-                    Duration::from_millis(self.advance_interval_ms),
-                    handle.clone(),
-                    CastMsg::Advance,
-                );
-            }
-        }
-        CastResponse::NoReply
+    #[send_handler]
+    async fn handle_advance(
+        &mut self,
+        _msg: native_l1_advancer_protocol::Advance,
+        ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .advance_next_block()
+            .await
+            .inspect_err(|e| error!("NativeL1Advancer error: {e}"));
+
+        send_after(
+            Duration::from_millis(self.advance_interval_ms),
+            ctx.clone(),
+            native_l1_advancer_protocol::Advance,
+        );
     }
 }
 
@@ -619,7 +633,7 @@ mod tests {
 
         // SSZ → deserialize → reconstruct Block
         use ethrex_common::types::stateless_ssz::SszStatelessInput;
-        use ssz::SszDecode;
+        use libssz::SszDecode;
         let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes)
             .expect("SSZ deserialization should succeed");
 

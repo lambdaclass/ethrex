@@ -1,4 +1,4 @@
-//! NativeL1Watcher GenServer — polls L1 for `L1MessageRecorded` events
+//! NativeL1Watcher actor — polls L1 for `L1MessageRecorded` events
 //! from the NativeRollup.sol contract and pushes them into the shared
 //! `PendingL1Messages` queue.
 
@@ -11,8 +11,11 @@ use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::receipt::RpcLog;
-use spawned_concurrency::tasks::{
-    CastResponse, GenServer, GenServerHandle, InitResult, Success, send_after,
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_after},
 };
 use tracing::{debug, error, info, warn};
 
@@ -23,9 +26,19 @@ use super::types::{L1Message, PendingL1Messages};
 static L1_MESSAGE_RECORDED_TOPIC: LazyLock<H256> =
     LazyLock::new(|| keccak(b"L1MessageRecorded(address,address,uint256,uint256,bytes,uint256)"));
 
-#[derive(Clone)]
-pub enum CastMsg {
-    Poll,
+#[protocol]
+pub trait NativeL1WatcherProtocol: Send + Sync {
+    fn poll(&self) -> Result<(), ActorError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum NativeL1WatcherError {
+    #[error("EthClient error: {0}")]
+    EthClient(#[from] ethrex_rpc::clients::eth::errors::EthClientError),
+    #[error("Internal error: {0}")]
+    Internal(#[from] spawned_concurrency::error::ActorError),
+    #[error("Parse error: {0}")]
+    Parse(String),
 }
 
 pub struct NativeL1Watcher {
@@ -35,16 +48,6 @@ pub struct NativeL1Watcher {
     last_block_fetched: U256,
     check_interval_ms: u64,
     max_block_step: U256,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum NativeL1WatcherError {
-    #[error("EthClient error: {0}")]
-    EthClient(#[from] ethrex_rpc::clients::eth::errors::EthClientError),
-    #[error("Internal error: {0}")]
-    Internal(#[from] spawned_concurrency::error::GenServerError),
-    #[error("Parse error: {0}")]
-    Parse(String),
 }
 
 impl NativeL1Watcher {
@@ -69,7 +72,7 @@ impl NativeL1Watcher {
         let topic = *L1_MESSAGE_RECORDED_TOPIC;
 
         let latest_block = match self.eth_client.get_block_number().await {
-            Ok(n) => n,
+            Ok(n) => U256::from(n),
             Err(e) => {
                 error!("NativeL1Watcher: failed to get block number: {e}");
                 return;
@@ -245,45 +248,39 @@ impl NativeL1Watcher {
     }
 }
 
-impl GenServer for NativeL1Watcher {
-    type CallMsg = ();
-    type CastMsg = CastMsg;
-    type OutMsg = ();
-    type Error = NativeL1WatcherError;
-
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // Schedule the first poll immediately
-        handle
-            .clone()
-            .cast(CastMsg::Poll)
-            .await
-            .map_err(NativeL1WatcherError::Internal)?;
-        Ok(Success(self))
+#[actor(protocol = NativeL1WatcherProtocol)]
+impl NativeL1Watcher {
+    pub fn spawn(
+        eth_client: EthClient,
+        contract_address: Address,
+        pending_messages: PendingL1Messages,
+        check_interval_ms: u64,
+        max_block_step: u64,
+    ) -> ActorRef<NativeL1Watcher> {
+        let watcher = Self::new(
+            eth_client,
+            contract_address,
+            pending_messages,
+            check_interval_ms,
+            max_block_step,
+        );
+        watcher.start()
     }
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            CastMsg::Poll => {
-                self.poll_l1_messages().await;
-                send_after(
-                    Duration::from_millis(self.check_interval_ms),
-                    handle.clone(),
-                    CastMsg::Poll,
-                );
-                CastResponse::NoReply
-            }
-        }
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(native_l1_watcher_protocol::Poll)
+            .inspect_err(|e| error!("NativeL1Watcher: failed to send initial Poll: {e}"));
     }
 
-    async fn handle_call(
-        &mut self,
-        _message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> spawned_concurrency::tasks::CallResponse<Self> {
-        spawned_concurrency::tasks::CallResponse::Reply(())
+    #[send_handler]
+    async fn handle_poll(&mut self, _msg: native_l1_watcher_protocol::Poll, ctx: &Context<Self>) {
+        self.poll_l1_messages().await;
+        send_after(
+            Duration::from_millis(self.check_interval_ms),
+            ctx.clone(),
+            native_l1_watcher_protocol::Poll,
+        );
     }
 }

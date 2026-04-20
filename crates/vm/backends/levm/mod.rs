@@ -62,9 +62,6 @@ use std::sync::mpsc::Sender;
 pub struct LEVM;
 
 /// Checks that adding `tx_gas_limit` to `block_gas_used` doesn't exceed `block_gas_limit`.
-/// NOTE: Message must contain "Gas allowance exceeded" and "Block gas used overflow"
-/// as literal substrings for the EELS exception mapper (see execution-specs ethrex.py).
-/// Can be simplified once we update the mapper regexes.
 fn check_gas_limit(
     block_gas_used: u64,
     tx_gas_limit: u64,
@@ -72,7 +69,7 @@ fn check_gas_limit(
 ) -> Result<(), EvmError> {
     if tx_gas_limit > block_gas_limit.saturating_sub(block_gas_used) {
         return Err(EvmError::Transaction(format!(
-            "Gas allowance exceeded: Block gas used overflow: \
+            "Gas allowance exceeded: \
              used {block_gas_used} + tx limit {tx_gas_limit} > block limit {block_gas_limit}"
         )));
     }
@@ -130,14 +127,15 @@ impl LEVM {
                 })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            // Pre-tx gas limit guard: on Amsterdam, use max(regular, state) per EIP-8037;
-            // pre-Amsterdam uses cumulative_gas_used (post-refund sum).
-            let pre_tx_gas = if is_amsterdam {
-                block_regular_gas_used.max(block_state_gas_used)
-            } else {
-                cumulative_gas_used
-            };
-            check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
+            // Pre-tx gas limit guard:
+            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
+            // state) can legally exceed the block gas limit as long as
+            // max(sum_regular, sum_state) stays within it. Block-level overflow is
+            // detected post-execution.
+            if !is_amsterdam {
+                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            }
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -181,6 +179,20 @@ impl LEVM {
                     report.gas_used,
                     report.gas_spent,
                 );
+
+                // DoS protection: early exit if either regular or state gas exceeds the limit.
+                // Since block_gas_used = max(regular, state), if either component exceeds
+                // the limit, we know the block is invalid and can safely reject without
+                // violating EIP-8037 semantics.
+                if block_regular_gas_used > block.header.gas_limit
+                    || block_state_gas_used > block.header.gas_limit
+                {
+                    return Err(EvmError::Transaction(format!(
+                        "Gas allowance exceeded: Block gas used overflow: \
+                         block_gas_used {block_gas_used} > block_gas_limit {}",
+                        block.header.gas_limit
+                    )));
+                }
             } else {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
@@ -193,6 +205,17 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // EIP-7778 (Amsterdam+): block-level gas overflow check.
+        // Per-tx checks are skipped for Amsterdam because block gas is computed
+        // from pre-refund values; overflow can only be detected after execution.
+        if is_amsterdam && block_gas_used > block.header.gas_limit {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: Block gas used overflow: \
+                 block_gas_used {block_gas_used} > block_gas_limit {}",
+                block.header.gas_limit
+            )));
         }
 
         // Set BAL index for post-execution phase (requests + withdrawals, uint16)
@@ -433,14 +456,15 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
-            // Pre-tx gas limit guard: on Amsterdam, use max(regular, state) per EIP-8037;
-            // pre-Amsterdam uses cumulative_gas_used (post-refund sum).
-            let pre_tx_gas = if is_amsterdam {
-                block_regular_gas_used.max(block_state_gas_used)
-            } else {
-                cumulative_gas_used
-            };
-            check_gas_limit(pre_tx_gas, tx.gas_limit(), block.header.gas_limit)?;
+            // Pre-tx gas limit guard:
+            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
+            // state) can legally exceed the block gas limit as long as
+            // max(sum_regular, sum_state) stays within it. Block-level overflow is
+            // detected post-execution.
+            if !is_amsterdam {
+                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            }
 
             // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
             if is_amsterdam {
@@ -487,6 +511,20 @@ impl LEVM {
             if is_amsterdam {
                 // Amsterdam+: block gas = max(regular_sum, state_sum)
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+
+                // DoS protection: early exit if either regular or state gas exceeds the limit.
+                // Since block_gas_used = max(regular, state), if either component exceeds
+                // the limit, we know the block is invalid and can safely reject without
+                // violating EIP-8037 semantics.
+                if block_regular_gas_used > block.header.gas_limit
+                    || block_state_gas_used > block.header.gas_limit
+                {
+                    return Err(EvmError::Transaction(format!(
+                        "Gas allowance exceeded: Block gas used overflow: \
+                         block_gas_used {block_gas_used} > block_gas_limit {}",
+                        block.header.gas_limit
+                    )));
+                }
             } else {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
@@ -499,6 +537,17 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // EIP-7778 (Amsterdam+): block-level gas overflow check.
+        // Per-tx checks are skipped for Amsterdam because block gas is computed
+        // from pre-refund values; overflow can only be detected after execution.
+        if is_amsterdam && block_gas_used > block.header.gas_limit {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: Block gas used overflow: \
+                 block_gas_used {block_gas_used} > block_gas_limit {}",
+                block.header.gas_limit
+            )));
         }
 
         #[cfg(feature = "perf_opcode_timings")]
@@ -978,35 +1027,21 @@ impl LEVM {
         //    balance in the BAL won't match execution that ran all txs).
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        for (tx_idx, _, report, _, _, _) in &exec_results {
-            // Prospective check: rejects block if running_gas + tx.gas_limit() > block_limit.
-            // Uses max(regular, state) per EIP-8037 block gas definition.
-            let running_block_gas = block_regular_gas_used.max(block_state_gas_used);
-            let tx_gas_limit = txs_with_sender[*tx_idx].0.gas_limit();
-            if tx_gas_limit > header.gas_limit.saturating_sub(running_block_gas) {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded: Block gas used overflow: \
-                     used {running_block_gas} + tx limit {tx_gas_limit} > block limit {}",
-                    header.gas_limit
-                )));
-            }
+        for (_, _, report, _, _, _) in &exec_results {
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
-            // Post-tx check: needed because all txs are already executed — if the last tx
-            // pushes actual gas over the limit, there's no next iteration to catch it
-            // like the sequential path does.
-            let running_block_gas_after = block_regular_gas_used.max(block_state_gas_used);
-            if running_block_gas_after > header.gas_limit {
-                return Err(EvmError::Transaction(format!(
-                    "Gas allowance exceeded: Block gas used overflow: \
-                     used {running_block_gas_after} > block limit {}",
-                    header.gas_limit
-                )));
-            }
         }
         let block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+        // EIP-7778: block-level overflow check using pre-refund gas.
+        if block_gas_used > header.gas_limit {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: Block gas used overflow: \
+                 block_gas_used {block_gas_used} > block_gas_limit {}",
+                header.gas_limit
+            )));
+        }
 
         // 4. Per-tx BAL validation — now safe to run after gas limit is confirmed OK.
         //    Also mark off storage_reads that appear in per-tx execution state.
@@ -2244,9 +2279,9 @@ pub fn extract_all_requests_levm(
 /// Calculating gas_price according to EIP-1559 rules
 /// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
 pub fn calculate_gas_price_for_generic(tx: &GenericTransaction, basefee: u64) -> U256 {
-    if tx.gas_price != 0 {
+    if !tx.gas_price.is_zero() {
         // Legacy gas field was specified, use it
-        tx.gas_price.into()
+        tx.gas_price
     } else {
         // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
         min(

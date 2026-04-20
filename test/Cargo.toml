@@ -11,11 +11,10 @@ path = "src/lib.rs"
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
-stateless-validation = [
-    "ethrex-levm/stateless-validation",
-    "ethrex-common/stateless-validation",
-    "ethrex-guest-program/stateless-validation",
-    "ethrex-l2/stateless-validation",
+eip-8025 = [
+    "ethrex-levm/eip-8025",
+    "ethrex-common/eip-8025",
+    "ethrex-l2/eip-8025",
 ]
 
 [dependencies]
@@ -38,7 +37,6 @@ hex-literal.workspace = true
 ethereum-types.workspace = true
 rkyv.workspace = true
 rand.workspace = true
-tempfile.workspace = true
 secp256k1.workspace = true
 k256.workspace = true
 proptest = "1.0.0"
@@ -61,7 +59,7 @@ ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }
-ssz = { git = "ssh://git@github.com/lambdaclass/libssz" }
+libssz.workspace = true
 ethrex-crypto.workspace = true
 
 [[test]]

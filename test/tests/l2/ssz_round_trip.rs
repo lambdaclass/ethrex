@@ -13,7 +13,7 @@ use ethrex_common::{Address, H256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_guest_program::l1::new_payload_request_to_block;
 use ethrex_l2::sequencer::native_rollup::l1_advancer::build_ssz_stateless_input;
-use ssz::SszDecode;
+use libssz::SszDecode;
 
 /// Build a minimal L2-style block (Shanghai chain, empty txs).
 fn make_test_block() -> (BlockHeader, BlockBody) {

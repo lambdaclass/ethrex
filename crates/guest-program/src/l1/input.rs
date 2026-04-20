@@ -3,7 +3,13 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
 /// Input for the L1 stateless validation program.
 #[derive(
-    Default, serde::Serialize, serde::Deserialize, rkyv::Deserialize, rkyv::Serialize, rkyv::Archive,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    rkyv::Archive,
 )]
 pub struct ProgramInput {
     /// Blocks to execute.
@@ -26,22 +32,25 @@ impl ProgramInput {
 /// EIP-8025 length-prefixed wire format:
 ///
 ///   `[ssz_len: u32 LE] [ssz_bytes] [rkyv_bytes]`
-#[cfg(feature = "stateless-validation")]
+///
+/// Returns an error if rkyv serialization of the execution witness fails.
+#[cfg(feature = "eip-8025")]
 pub fn encode_eip8025(
-    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
+    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
-) -> Vec<u8> {
-    use ssz::SszEncode;
+) -> Result<Vec<u8>, ProgramInputEncodeError> {
+    use libssz::SszEncode;
 
     let ssz_bytes = new_payload_request.to_ssz();
     let ssz_len = ssz_bytes.len() as u32;
-    let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness).expect("rkyv encode");
+    let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness)
+        .map_err(|e| ProgramInputEncodeError::Rkyv(e.to_string()))?;
 
     let mut out = Vec::with_capacity(4 + ssz_bytes.len() + rkyv_bytes.len());
     out.extend_from_slice(&ssz_len.to_le_bytes());
     out.extend_from_slice(&ssz_bytes);
     out.extend_from_slice(&rkyv_bytes);
-    out
+    Ok(out)
 }
 
 /// Decode the EIP-8025 length-prefixed wire format into a `NewPayloadRequest`
@@ -49,22 +58,23 @@ pub fn encode_eip8025(
 ///
 /// The caller is responsible for converting the `NewPayloadRequest` into blocks
 /// and constructing a `ProgramInput`.
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 pub fn decode_eip8025(
     bytes: &[u8],
 ) -> Result<
     (
-        ethrex_common::types::stateless_ssz::NewPayloadRequest,
+        ethrex_common::types::eip8025_ssz::NewPayloadRequest,
         ExecutionWitness,
     ),
     ProgramInputDecodeError,
 > {
-    use ssz::SszDecode;
+    use libssz::SszDecode;
 
     if bytes.len() < 4 {
         return Err(ProgramInputDecodeError::TooShort);
     }
-    let ssz_len = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes")) as usize;
+    // Safety: we already checked bytes.len() >= 4 above, so this slice is exactly 4 bytes.
+    let ssz_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
     if bytes.len() < 4 + ssz_len {
         return Err(ProgramInputDecodeError::TooShort);
     }
@@ -72,7 +82,7 @@ pub fn decode_eip8025(
     let rkyv_bytes = &bytes[4 + ssz_len..];
 
     let new_payload_request =
-        ethrex_common::types::stateless_ssz::NewPayloadRequest::from_ssz_bytes(ssz_bytes)
+        ethrex_common::types::eip8025_ssz::NewPayloadRequest::from_ssz_bytes(ssz_bytes)
             .map_err(ProgramInputDecodeError::Ssz)?;
     let execution_witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(rkyv_bytes)
         .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;
@@ -80,15 +90,30 @@ pub fn decode_eip8025(
     Ok((new_payload_request, execution_witness))
 }
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 #[derive(Debug)]
-pub enum ProgramInputDecodeError {
-    TooShort,
-    Ssz(ssz::DecodeError),
+pub enum ProgramInputEncodeError {
     Rkyv(String),
 }
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
+impl core::fmt::Display for ProgramInputEncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Rkyv(e) => write!(f, "rkyv encode error: {e}"),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug)]
+pub enum ProgramInputDecodeError {
+    TooShort,
+    Ssz(libssz::DecodeError),
+    Rkyv(String),
+}
+
+#[cfg(feature = "eip-8025")]
 impl core::fmt::Display for ProgramInputDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

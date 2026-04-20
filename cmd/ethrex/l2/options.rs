@@ -3,7 +3,7 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_common::Address;
 use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
@@ -23,12 +23,13 @@ use std::{
 };
 use tracing::Level;
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 use ethrex_l2::NativeRollupConfig;
 
 use clap::ArgAction;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+pub const DEFAULT_SPONSORED_GAS_LIMIT: u64 = 500_000;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -48,6 +49,15 @@ pub struct Options {
     //TODO: make optional when the the sponsored feature is complete
     #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: SecretKey,
+    #[arg(
+        long = "sponsored-gas-limit",
+        default_value_t = DEFAULT_SPONSORED_GAS_LIMIT,
+        value_name = "GAS_LIMIT",
+        env = "ETHREX_SPONSORED_GAS_LIMIT",
+        help = "Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.",
+        help_heading = "L2 options"
+    )]
+    pub sponsored_gas_limit: u64,
 }
 
 impl Default for Options {
@@ -60,6 +70,7 @@ impl Default for Options {
                 "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
             )
             .unwrap(),
+            sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
         }
     }
 }
@@ -113,7 +124,7 @@ pub struct SequencerOptions {
     pub no_monitor: bool,
     #[arg(
         id = "native_rollups",
-        long = "stateless-validation",
+        long = "eip-8025",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_NATIVE_ROLLUPS",
@@ -122,16 +133,16 @@ pub struct SequencerOptions {
         help = "Enable native rollup L2 mode."
     )]
     pub native_rollups: bool,
-    #[cfg(feature = "stateless-validation")]
+    #[cfg(feature = "eip-8025")]
     #[command(flatten)]
     pub native_rollup_opts: NativeRollupOptions,
 }
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 #[derive(Parser, Debug)]
 pub struct NativeRollupOptions {
     #[arg(
-        long = "stateless-validation.contract-address",
+        long = "eip-8025.contract-address",
         value_name = "ADDRESS",
         env = "ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS",
         help_heading = "Native rollups options",
@@ -139,7 +150,7 @@ pub struct NativeRollupOptions {
     )]
     pub contract_address: Option<Address>,
     #[arg(
-        long = "stateless-validation.relayer-pk",
+        long = "eip-8025.relayer-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
@@ -149,7 +160,7 @@ pub struct NativeRollupOptions {
     )]
     pub relayer_private_key: SecretKey,
     #[arg(
-        long = "stateless-validation.l1-pk",
+        long = "eip-8025.l1-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_L1_PK",
@@ -159,7 +170,7 @@ pub struct NativeRollupOptions {
     )]
     pub l1_private_key: SecretKey,
     #[arg(
-        long = "stateless-validation.block-time",
+        long = "eip-8025.block-time",
         id = "native_rollups_block_time_ms",
         default_value = "10000",
         value_name = "UINT64",
@@ -169,7 +180,7 @@ pub struct NativeRollupOptions {
     )]
     pub block_time_ms: u64,
     #[arg(
-        long = "stateless-validation.advance-interval",
+        long = "eip-8025.advance-interval",
         id = "native_rollups_advance_interval_ms",
         default_value = "3000",
         value_name = "UINT64",
@@ -180,7 +191,7 @@ pub struct NativeRollupOptions {
     pub advance_interval_ms: u64,
 }
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 impl Default for NativeRollupOptions {
     fn default() -> Self {
         Self {
@@ -257,7 +268,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 base_fee_vault_address: opts.block_producer_opts.base_fee_vault_address,
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
-                block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -628,15 +638,6 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
-    #[arg(
-        long = "block-producer.block-gas-limit",
-        default_value = "30000000",
-        value_name = "UINT64",
-        env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
-        help = "Maximum gas limit for the L2 blocks.",
-        help_heading = "Block producer options"
-    )]
-    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -653,7 +654,6 @@ impl Default for BlockProducerOptions {
             operator_fee_per_gas: None,
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
-            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
@@ -1258,7 +1258,7 @@ impl Default for ProverClientOptions {
     }
 }
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 impl NativeRollupOptions {
     pub fn to_config(
         &self,

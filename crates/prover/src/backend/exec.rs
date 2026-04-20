@@ -24,10 +24,9 @@ impl ExecBackend {
     /// Core execution - runs the guest program directly.
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
         let crypto = Arc::new(NativeCrypto);
-        // In L1 EIP-8025 mode (stateless-validation without l2), execution_program
-        // takes (NewPayloadRequest, ExecutionWitness) which doesn't match ProgramInput.
-        // Use execute_blocks directly instead.
-        #[cfg(all(feature = "stateless-validation", not(feature = "l2")))]
+        // In EIP-8025 mode, execution_program takes (NewPayloadRequest, ExecutionWitness)
+        // which doesn't match ProgramInput. Use execute_blocks directly instead.
+        #[cfg(feature = "eip-8025")]
         {
             use ethrex_common::types::ELASTICITY_MULTIPLIER;
             use ethrex_vm::Evm;
@@ -47,7 +46,7 @@ impl ExecBackend {
                 valid: true,
             })
         }
-        #[cfg(any(not(feature = "stateless-validation"), feature = "l2"))]
+        #[cfg(not(feature = "eip-8025"))]
         {
             ethrex_guest_program::execution::execution_program(input, crypto)
                 .map_err(BackendError::execution)

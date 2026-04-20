@@ -7,7 +7,6 @@ documentation.workspace = true
 license.workspace = true
 
 [dependencies]
-lazy_static.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
@@ -16,18 +15,14 @@ derive_more = { version = "1.0.0", features = ["full"] }
 bytes.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_json.workspace = true
 
-datatest-stable = "0.2.9"
-walkdir = "2.5.0"
-sha3 = "0.10.8"
 malachite = "0.6.1"
 strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
 rayon.workspace = true
 
 bitvec = { version = "1.0.1", features = ["alloc"] }
-ssz = { git = "ssh://git@github.com/lambdaclass/libssz", optional = true }
+libssz = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex.workspace = true
@@ -41,7 +36,7 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
-stateless-validation = ["ethrex-common/stateless-validation", "dep:ssz"]
+eip-8025 = ["ethrex-common/eip-8025", "dep:libssz"]
 perf_opcode_timings = []
 # zkVM feature stubs — implementations have moved to ethrex-crypto's NativeCrypto/ZkVMCrypto
 sp1 = []

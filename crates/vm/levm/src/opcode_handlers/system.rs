@@ -468,6 +468,12 @@ pub struct OpCreateHandler;
 impl OpcodeHandler for OpCreateHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // EIP-8037 (Amsterdam+): is_static check before stack pops and gas charging,
+        // consistent with SSTORE, CALL, and SELFDESTRUCT.
+        if vm.env.config.fork >= Fork::Amsterdam && vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
         let [value_in_wei, code_offset, code_len] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
@@ -479,12 +485,6 @@ impl OpcodeHandler for OpCreateHandler {
                 vm.env.config.fork,
             )?)?;
 
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation BEFORE
-        // generic_create() reserves child gas.
-        if vm.env.config.fork >= Fork::Amsterdam {
-            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
-        }
-
         vm.generic_create(value_in_wei, code_offset, code_len, None)
     }
 }
@@ -493,6 +493,12 @@ pub struct OpCreate2Handler;
 impl OpcodeHandler for OpCreate2Handler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // EIP-8037 (Amsterdam+): is_static check before stack pops and gas charging,
+        // consistent with SSTORE, CALL, and SELFDESTRUCT.
+        if vm.env.config.fork >= Fork::Amsterdam && vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
         let [value_in_wei, code_offset, code_len, salt] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
@@ -503,12 +509,6 @@ impl OpcodeHandler for OpCreate2Handler {
                 code_len,
                 vm.env.config.fork,
             )?)?;
-
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation BEFORE
-        // generic_create() reserves child gas.
-        if vm.env.config.fork >= Fork::Amsterdam {
-            vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
-        }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))
     }
@@ -678,8 +678,7 @@ impl<'a> VM<'a> {
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
-        // Validations that can cause out of gas.
-        // 1. [EIP-3860] / [EIP-7954] - Cant exceed init code max size
+        // [EIP-3860] / [EIP-7954] - Cant exceed init code max size
         let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
             AMSTERDAM_INIT_CODE_MAX_SIZE
         } else {
@@ -689,9 +688,16 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation AFTER
+        // initcode size validation, so oversized CREATE doesn't burn state gas.
+        if self.env.config.fork >= Fork::Amsterdam {
+            self.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
+        }
+
         let current_call_frame = &mut self.current_call_frame;
-        // 2. CREATE can't be called in a static context
-        if current_call_frame.is_static {
+
+        // Pre-Amsterdam: is_static check happens here, before gas reservation
+        if self.env.config.fork < Fork::Amsterdam && current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 

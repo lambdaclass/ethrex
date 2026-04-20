@@ -42,7 +42,7 @@ use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
 };
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 use ethrex_common::types::GenesisAccount;
 
 #[derive(Parser)]
@@ -346,6 +346,14 @@ pub struct DeployerOptions {
     )]
     pub inclusion_max_wait: u64,
     #[arg(
+        long = "l2-gas-limit",
+        default_value = "30000000",
+        env = "ETHREX_L2_GAS_LIMIT",
+        help_heading = "Deployer options",
+        help = "L2 block gas limit. Stored in CommonBridge and used to bound privileged transaction gas."
+    )]
+    pub l2_gas_limit: u64,
+    #[arg(
         long,
         default_value = "false",
         env = "ETHREX_USE_COMPILED_GENESIS",
@@ -380,7 +388,7 @@ pub struct DeployerOptions {
     )]
     pub initial_fee_token: Option<Address>,
     #[arg(
-        long = "stateless-validation",
+        long = "eip-8025",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_NATIVE_ROLLUPS",
@@ -389,9 +397,9 @@ pub struct DeployerOptions {
         help = "If set, deploy NativeRollup.sol instead of the standard L2 contracts."
     )]
     pub native_rollups: bool,
-    #[cfg(feature = "stateless-validation")]
+    #[cfg(feature = "eip-8025")]
     #[arg(
-        long = "stateless-validation.relayer-pk",
+        long = "eip-8025.relayer-pk",
         value_name = "PRIVATE_KEY",
         value_parser = parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
@@ -477,12 +485,13 @@ impl Default for DeployerOptions {
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
+            l2_gas_limit: 30_000_000,
             use_compiled_genesis: true,
             router: None,
             deploy_router: false,
             initial_fee_token: None,
             native_rollups: false,
-            #[cfg(feature = "stateless-validation")]
+            #[cfg(feature = "eip-8025")]
             native_rollups_relayer_pk: SecretKey::from_slice(
                 &hex::decode("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
                     .expect("Valid hex"),
@@ -583,14 +592,14 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 /// Creation bytecode of the NativeRollup contract (for deployment to L1).
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 const NATIVE_ROLLUP_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/NativeRollup.bytecode"
 ));
 
 /// Runtime bytecode of the L2Bridge contract (for L2 genesis predeploy).
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 const L2_BRIDGE_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/L2Bridge.bytecode"
@@ -602,7 +611,8 @@ const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],addres
 
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address, uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str =
+    "initialize(address,address,uint256,address,uint256,uint256)";
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 
@@ -1412,6 +1422,7 @@ async fn initialize_contracts(
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(contract_addresses.router.unwrap_or_default()),
             Value::Uint(genesis.config.chain_id.into()),
+            Value::Uint(opts.l2_gas_limit.into()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -1750,7 +1761,7 @@ fn write_contract_addresses_to_env(
 // Native Rollups Deployment
 // =============================================================================
 
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 pub async fn deploy_native_rollup_contracts(
     opts: DeployerOptions,
 ) -> Result<Address, DeployerError> {
@@ -1949,7 +1960,7 @@ pub async fn deploy_native_rollup_contracts(
 /// Returns the accounts that the deployer needs to inject: L2Bridge predeploy,
 /// relayer account, and prefunded test accounts. These are merged into the
 /// existing genesis (which already contains system contracts, chain config, etc.).
-#[cfg(feature = "stateless-validation")]
+#[cfg(feature = "eip-8025")]
 fn build_native_l2_alloc(
     relayer_address: Address,
 ) -> Result<std::collections::BTreeMap<Address, GenesisAccount>, DeployerError> {

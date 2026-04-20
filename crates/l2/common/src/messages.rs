@@ -140,7 +140,9 @@ impl L2Message {
         let tx_id = U256::from_big_endian(log.data.get(128..160)?);
         // 160 to 192 is the offset for calldata
         let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
-        let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
+        let calldata = log
+            .data
+            .get(224..224 + usize::try_from(calldata_len).ok()?)?;
 
         Some(L2Message {
             dest_chain_id,
