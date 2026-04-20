@@ -1087,7 +1087,7 @@ impl PeerTableServer {
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
-        // Draw from the flat connection pool (up to 50K contacts) rather than
+        // Draw from the flat connection pool (up to 10K contacts) rather than
         // the k-bucket routing table (capped at ~4K). This gives the initiator
         // access to a much larger and more diverse set of candidates.
         // K-bucket state is checked for filtering when available; contacts not
