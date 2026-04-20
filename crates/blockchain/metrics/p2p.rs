@@ -98,7 +98,7 @@ impl MetricsP2P {
             kademlia_insert_contact_duration: Histogram::with_opts(
                 HistogramOpts::new(
                     "ethrex_kademlia_insert_contact_duration_seconds",
-                    "Duration of Kademlia insert_contact operations",
+                    "Duration of peer table contact insertion operations",
                 )
                 .buckets(vec![
                     0.000_001, 0.000_005, 0.000_01, 0.000_05, 0.000_1, 0.000_5, 0.001, 0.01,
@@ -108,7 +108,7 @@ impl MetricsP2P {
             kademlia_iter_contacts_duration: Histogram::with_opts(
                 HistogramOpts::new(
                     "ethrex_kademlia_iter_contacts_duration_seconds",
-                    "Duration of Kademlia iter_contacts full-scan operations",
+                    "Duration of peer table full-scan operations",
                 )
                 .buckets(vec![
                     0.000_01, 0.000_05, 0.000_1, 0.000_5, 0.001, 0.005, 0.01, 0.05, 0.1,
