@@ -74,6 +74,20 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 /// Maximum number of concurrent in-flight requests during storage healing.
 pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
+/// Soft limit on the number of entries in the storage healing queue.
+///
+/// Each `StorageHealingQueueEntry` holds a cloned trie `Node` (branch nodes are
+/// ~1 KB on the heap via `Box<BranchNode>`), three `Nibbles` paths (~200 B), and
+/// `HashMap` bucket overhead — on the order of 1 KB per entry. At 1_000_000
+/// entries that's ~1 GB of resident memory for the pending-parents map alone.
+///
+/// When this threshold is exceeded, the dispatcher stops issuing new download
+/// requests and waits for in-flight responses to drain the queue via
+/// `commit_node` cascades. Because the download queue is a max-heap by depth,
+/// in-flight work is the deepest available — which is what frees pending
+/// parents fastest.
+pub const HEALING_QUEUE_SOFT_LIMIT: usize = 1_000_000;
+
 // =============================================================================
 // BLOCK SYNC CONFIGURATION
 // =============================================================================
