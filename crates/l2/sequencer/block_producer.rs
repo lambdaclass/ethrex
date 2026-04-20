@@ -244,12 +244,14 @@ impl BlockProducer {
                 .ok()
                 .flatten()
                 .and_then(|b| b.body.transactions.last().map(|tx| tx.hash()));
-            #[allow(clippy::as_conversions)]
+            let tx_count: u64 = transactions_count
+                .try_into()
+                .map_err(|_| BlockProducerError::Custom("tx count overflow".into()))?;
             let _ = cl.commit_head(
                 block_number,
                 block_hash,
                 block_header.timestamp,
-                transactions_count as u64,
+                tx_count,
                 last_tx_hash,
             );
         }

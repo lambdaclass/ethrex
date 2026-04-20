@@ -399,9 +399,8 @@ fn build_transaction_env(tx: &Transaction, sender: Address) -> TransactionEnv {
         })
         .unwrap_or_default();
 
-    #[allow(clippy::as_conversions)]
     TransactionEnv {
-        tx_type: u8::from(tx.tx_type()) as u32,
+        tx_type: u32::from(u8::from(tx.tx_type())),
         caller: sender.as_bytes().to_vec(),
         gas_limit: tx.gas_limit(),
         gas_price: gas_price_bytes.to_vec(),

@@ -62,10 +62,9 @@ CLI flags:
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--credible-layer` | Enable the Credible Layer integration (required gate flag) | `false` |
-| `--credible-layer-url` | gRPC endpoint for the sidecar (requires `--credible-layer`) | (none) |
+| `--credible-layer-url` | gRPC endpoint for the sidecar. Passing this flag enables the integration. | (none) |
 
-When `--credible-layer` is not set, Credible Layer is completely disabled with zero overhead.
+When `--credible-layer-url` is not set, Credible Layer is completely disabled with zero overhead.
 
 ### Sidecar Requirements
 
@@ -147,7 +146,6 @@ RUST_LOG=info ../../target/release/ethrex l2 \
   --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --credible-layer \
   --credible-layer-url http://localhost:50051 \
   --ws.enabled --ws.port 1730 &
 

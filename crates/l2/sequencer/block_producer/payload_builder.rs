@@ -221,8 +221,13 @@ pub async fn fill_transactions(
         // transactions for accurate state tracking, even if privileged txs are never dropped.
         if let Some(ref cl) = credible_layer {
             if !head_tx.is_privileged() {
-                #[allow(clippy::as_conversions)]
-                let tx_index = context.payload.body.transactions.len() as u64;
+                let tx_index: u64 = context
+                    .payload
+                    .body
+                    .transactions
+                    .len()
+                    .try_into()
+                    .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
                 let _ = cl.send_transaction(
                     tx_hash,
                     context.block_number(),
@@ -265,8 +270,13 @@ pub async fn fill_transactions(
         // If the sidecar rejected the transaction, undo execution and drop it.
         if let Some(ref cl) = credible_layer {
             if !head_tx.is_privileged() {
-                #[allow(clippy::as_conversions)]
-                let check_tx_index = context.payload.body.transactions.len() as u64;
+                let check_tx_index: u64 = context
+                    .payload
+                    .body
+                    .transactions
+                    .len()
+                    .try_into()
+                    .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
                 let include = cl
                     .check_transaction(tx_hash, context.block_number(), check_tx_index)
                     .await

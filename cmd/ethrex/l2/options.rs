@@ -265,12 +265,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 start_at: opts.state_updater_opts.start_at,
                 l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
             },
-            credible_layer: if opts.credible_layer_opts.credible_layer {
-                CredibleLayerConfig {
-                    sidecar_url: opts.credible_layer_opts.credible_layer_url,
-                }
-            } else {
-                CredibleLayerConfig::default()
+            credible_layer: CredibleLayerConfig {
+                sidecar_url: opts.credible_layer_opts.credible_layer_url,
             },
         })
     }
@@ -307,7 +303,6 @@ impl SequencerOptions {
         self.state_updater_opts
             .populate_with_defaults(&defaults.state_updater_opts);
         // admin_opts contains only non-optional fields.
-        // credible_layer_opts contains only optional fields, nothing to populate.
     }
 }
 
@@ -1079,20 +1074,10 @@ impl Default for AdminOptions {
 #[derive(Parser, Default, Debug)]
 pub struct CredibleLayerOptions {
     #[arg(
-        long = "credible-layer",
-        action = clap::ArgAction::SetTrue,
-        default_value = "false",
-        env = "ETHREX_CREDIBLE_LAYER",
-        help = "Enable the Credible Layer integration. Required before using any --credible-layer-* flags.",
-        help_heading = "Credible Layer options"
-    )]
-    pub credible_layer: bool,
-    #[arg(
         long = "credible-layer-url",
         value_name = "URL",
         env = "ETHREX_CREDIBLE_LAYER_URL",
-        requires = "credible_layer",
-        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051).",
+        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051). Passing this flag enables the integration.",
         help_heading = "Credible Layer options"
     )]
     pub credible_layer_url: Option<String>,
