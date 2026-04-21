@@ -6,7 +6,7 @@ use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -98,6 +98,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -107,9 +108,10 @@ pub async fn request_account_range(
     let limit_u256 = U256::from_big_endian(&limit.0);
 
     let range = limit_u256 - start_u256;
-    let chunk_count = U256::from(ACCOUNT_RANGE_CHUNK_COUNT)
-        .min(range.max(U256::one()))
-        .as_usize();
+    // Bounded by ACCOUNT_RANGE_CHUNK_COUNT (800), always fits in usize.
+    let chunk_count =
+        usize::try_from(U256::from(ACCOUNT_RANGE_CHUNK_COUNT).min(range.max(U256::one())))
+            .expect("chunk_count bounded by ACCOUNT_RANGE_CHUNK_COUNT");
     let chunk_size = range / chunk_count;
 
     // list of tasks to be executed
@@ -193,7 +195,7 @@ pub async fn request_account_range(
 
         if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
             // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id).await?;
+            peers.peer_table.dec_requests(peer_id)?;
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -205,10 +207,10 @@ pub async fn request_account_range(
                 completed_tasks += 1;
             }
             if accounts.is_empty() {
-                peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure(peer_id)?;
                 continue;
             }
-            peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success(peer_id)?;
 
             downloaded_count += accounts.len() as u64;
 
@@ -223,7 +225,7 @@ pub async fn request_account_range(
 
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
             .unwrap_or(None)
@@ -256,6 +258,7 @@ pub async fn request_account_range(
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                diagnostics,
             )
             .await
             .expect("Should be able to update pivot")
@@ -265,7 +268,7 @@ pub async fn request_account_range(
         // this peer as busy immediately, preventing spawn floods.
         // Workers call outgoing_request directly (not make_request) to
         // avoid a double increment. Released via dec_requests on try_recv.
-        peers.peer_table.inc_requests(peer_id).await?;
+        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(request_account_range_worker(
             peer_id,
@@ -395,7 +398,7 @@ pub async fn request_bytecodes(
                 remaining_end,
             } = result;
             // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id).await?;
+            peers.peer_table.dec_requests(peer_id)?;
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -408,13 +411,13 @@ pub async fn request_bytecodes(
                 completed_tasks += 1;
             }
             if bytecodes.is_empty() {
-                peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure(peer_id)?;
                 continue;
             }
 
             downloaded_count += bytecodes.len() as u64;
 
-            peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success(peer_id)?;
             for (i, bytecode) in bytecodes.into_iter().enumerate() {
                 all_bytecodes[start_index + i] = bytecode;
             }
@@ -422,7 +425,7 @@ pub async fn request_bytecodes(
 
         let Some((peer_id, mut connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
             .unwrap_or(None)
@@ -456,7 +459,7 @@ pub async fn request_bytecodes(
             .collect();
 
         // Reserve a request slot before spawning (see account range comment).
-        peers.peer_table.inc_requests(peer_id).await?;
+        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(async move {
             let empty_task_result = TaskResult {
@@ -658,7 +661,7 @@ pub async fn request_storage_ranges(
                 remaining_hash_range: (hash_start, hash_end),
             } = result;
             // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id).await?;
+            peers.peer_table.dec_requests(peer_id)?;
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -787,7 +790,9 @@ pub async fn request_storage_ranges(
                         .checked_mul(slots_per_chunk)
                         .unwrap_or(U256::MAX);
 
-                    let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+                    let chunk_count = usize::try_from(missing_storage_range / chunk_size)
+                        .unwrap_or(ACCOUNT_RANGE_CHUNK_COUNT)
+                        .max(1);
 
                     let first_acc_hash = *accounts_by_root_hash[remaining_start]
                         .1
@@ -885,7 +890,7 @@ pub async fn request_storage_ranges(
             }
 
             if account_storages.is_empty() {
-                peers.peer_table.record_failure(&peer_id).await?;
+                peers.peer_table.record_failure(peer_id)?;
                 continue;
             }
             if let Some(hash_end) = hash_end {
@@ -895,7 +900,7 @@ pub async fn request_storage_ranges(
                 }
             }
 
-            peers.peer_table.record_success(&peer_id).await?;
+            peers.peer_table.record_success(peer_id)?;
 
             let n_storages = account_storages.len();
             let n_slots = account_storages
@@ -955,7 +960,7 @@ pub async fn request_storage_ranges(
 
         let Some((peer_id, connection)) = peers
             .peer_table
-            .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
             .unwrap_or(None)
@@ -995,7 +1000,7 @@ pub async fn request_storage_ranges(
             );
         }
         // Reserve a request slot before spawning (see account range comment).
-        peers.peer_table.inc_requests(peer_id).await?;
+        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(request_storage_ranges_worker(
             task,
@@ -1053,7 +1058,7 @@ pub async fn request_storage_ranges(
 pub async fn request_state_trienodes(
     peer_id: H256,
     mut connection: PeerConnection,
-    mut peer_table: PeerTable,
+    peer_table: PeerTable,
     state_root: H256,
     paths: Vec<RequestMetadata>,
 ) -> Result<Vec<Node>, SnapError> {
@@ -1073,7 +1078,7 @@ pub async fn request_state_trienodes(
         bytes: MAX_RESPONSE_BYTES,
     });
     let nodes = match PeerHandler::make_request(
-        &mut peer_table,
+        &peer_table,
         peer_id,
         &mut connection,
         request,
@@ -1118,7 +1123,7 @@ pub async fn request_state_trienodes(
 pub async fn request_storage_trienodes(
     peer_id: H256,
     mut connection: PeerConnection,
-    mut peer_table: PeerTable,
+    peer_table: PeerTable,
     get_trie_nodes: GetTrieNodes,
 ) -> Result<TrieNodes, RequestStorageTrieNodesError> {
     // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
@@ -1126,7 +1131,7 @@ pub async fn request_storage_trienodes(
     let request_id = get_trie_nodes.id;
     let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
     match PeerHandler::make_request(
-        &mut peer_table,
+        &peer_table,
         peer_id,
         &mut connection,
         request,
@@ -1277,6 +1282,7 @@ async fn request_storage_ranges_worker(
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
         response_bytes: MAX_RESPONSE_BYTES,
     });
+    tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", "Sending storage range request");
     let Ok(RLPxMessage::StorageRanges(StorageRanges {
         id: _,
         slots,
@@ -1287,11 +1293,17 @@ async fn request_storage_ranges_worker(
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await
     else {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
+        tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
         tracing::debug!("Failed to get storage range");
         tx.send(empty_task_result).await.ok();
         return Ok(());
     };
     if slots.is_empty() && proof.is_empty() {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
+        tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
         tx.send(empty_task_result).await.ok();
         tracing::debug!("Received empty storage range");
         return Ok(());
@@ -1387,6 +1399,7 @@ async fn request_storage_ranges_worker(
     } else {
         (start + account_storages.len(), end, H256::zero())
     };
+    let slot_count: usize = account_storages.iter().map(|s| s.len()).sum();
     let task_result = StorageTaskResult {
         start_index: start,
         account_storages,
@@ -1395,6 +1408,9 @@ async fn request_storage_ranges_worker(
         remaining_end,
         remaining_hash_range: (remaining_start_hash, task.end_hash),
     };
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
+    tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
 }

@@ -10,7 +10,7 @@ use crate::{
         },
     },
     metrics::METRICS,
-    peer_table::{DiscoveryProtocol, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
+    peer_table::{ContactValidation, DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
     rlpx::utils::compress_pubkey,
     types::{INITIAL_ENR_SEQ, Node, NodeRecord},
     utils::{distance, node_id},
@@ -18,18 +18,22 @@ use crate::{
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512};
 use ethrex_storage::{Store, error::StoreError};
+use lru::LruCache;
 use rand::{Rng, RngCore, rngs::OsRng};
 use rustc_hash::{FxHashMap, FxHashSet};
 use secp256k1::{PublicKey, SecretKey, ecdsa::Signature};
 use spawned_concurrency::{
-    messages::Unused,
+    actor,
+    error::ActorError,
+    protocol,
     tasks::{
-        CastResponse, GenServer, GenServerHandle, InitResult::Success, send_after, send_interval,
+        Actor, ActorRef, ActorStart as _, Context, Handler, send_after, send_interval,
         send_message_on,
     },
 };
 use std::{
     net::{IpAddr, SocketAddr},
+    num::NonZero,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -40,9 +44,9 @@ use tracing::{error, info, trace, warn};
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
 const MAX_ENRS_PER_MESSAGE: usize = 3;
 /// Interval between revalidation checks (how often we run the revalidation loop).
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Nodes not validated within this interval are candidates for revalidation.
-const REVALIDATION_INTERVAL: Duration = Duration::from_secs(30);
+const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 /// The initial interval between peer lookups, until the number of peers reaches
 /// [target_peers](DiscoverySideCarState::target_peers), or the number of
 /// contacts reaches [target_contacts](DiscoverySideCarState::target_contacts).
@@ -56,6 +60,15 @@ const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Minimum interval between WHOAREYOU packets to the same IP address.
 /// Prevents amplification attacks where attackers spoof source IPs.
 const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
+/// Maximum number of entries in the per-IP WHOAREYOU rate limit cache.
+/// Bounded via LRU to prevent memory exhaustion from spoofed source IPs.
+const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
+/// Maximum number of WHOAREYOU packets sent globally per second.
+/// Caps total outgoing WHOAREYOU bandwidth regardless of source IP.
+/// Note: uses a fixed-window counter, so up to 2x this limit can be sent in a
+/// short burst at window boundaries. This is acceptable since the global limit
+/// is a secondary defense — the per-IP limit is the primary protection.
+const GLOBAL_WHOAREYOU_RATE_LIMIT: u32 = 100;
 /// Time window for collecting IP votes from PONG recipient_addr.
 /// Votes older than this are discarded. Reference: nim-eth uses 5 minutes.
 const IP_VOTE_WINDOW: Duration = Duration::from_secs(300);
@@ -73,7 +86,7 @@ pub enum DiscoveryServerError {
     #[error("Unknown or invalid contact")]
     InvalidContact,
     #[error(transparent)]
-    PeerTable(#[from] PeerTableError),
+    PeerTable(#[from] ActorError),
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("Internal error {0}")]
@@ -88,18 +101,13 @@ impl From<ethrex_rlp::error::RLPDecodeError> for DiscoveryServerError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum InMessage {
-    Message(Box<Discv5Message>),
-    Revalidate,
-    Lookup,
-    Prune,
-    Shutdown,
-}
-
-#[derive(Debug, Clone)]
-pub enum OutMessage {
-    Done,
+#[protocol]
+pub trait Discv5ServerProtocol: Send + Sync {
+    fn recv_message(&self, message: Box<Discv5Message>) -> Result<(), ActorError>;
+    fn revalidate(&self) -> Result<(), ActorError>;
+    fn lookup(&self) -> Result<(), ActorError>;
+    fn prune(&self) -> Result<(), ActorError>;
+    fn shutdown(&self) -> Result<(), ActorError>;
 }
 
 #[derive(Debug)]
@@ -122,7 +130,12 @@ pub struct DiscoveryServer {
     /// Tracks last WHOAREYOU send time per (source IP, node ID) to prevent amplification attacks.
     /// Keyed by (IP, node_id) so that distinct nodes behind the same IP (e.g. Docker) are not
     /// blocked by each other's handshakes.
-    pub whoareyou_rate_limit: FxHashMap<(IpAddr, H256), Instant>,
+    /// Bounded via LRU cache to prevent memory exhaustion from spoofed IPs.
+    pub whoareyou_rate_limit: LruCache<(IpAddr, H256), Instant>,
+    /// Global WHOAREYOU rate limit: count of packets sent in the current second.
+    pub whoareyou_global_count: u32,
+    /// Start of the current global rate limit window.
+    pub whoareyou_global_window_start: Instant,
     /// Tracks the source IP that each session was established from.
     /// Used to detect IP changes: if a packet arrives from a different IP than the session was
     /// established with, we invalidate the session by sending WHOAREYOU (PingMultiIP behaviour).
@@ -136,20 +149,21 @@ pub struct DiscoveryServer {
     pub first_ip_vote_round_completed: bool,
 }
 
+#[actor(protocol = Discv5ServerProtocol)]
 impl DiscoveryServer {
     /// Spawn the discv5 discovery server.
     ///
-    /// The server receives packets from the multiplexer via GenServer casts.
+    /// The server receives packets from the multiplexer via actor sends.
     /// The `udp_socket` is shared with the multiplexer and used for sending only.
     pub async fn spawn(
         storage: Store,
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
-        mut peer_table: PeerTable,
+        peer_table: PeerTable,
         bootnodes: Vec<Node>,
         initial_lookup_interval: f64,
-    ) -> Result<GenServerHandle<Self>, DiscoveryServerError> {
+    ) -> Result<ActorRef<Self>, DiscoveryServerError> {
         info!(protocol = "discv5", "Starting discovery server");
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
@@ -170,7 +184,12 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             session_ips: Default::default(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
@@ -182,9 +201,7 @@ impl DiscoveryServer {
             count = bootnodes.len(),
             "Adding bootnodes"
         );
-        peer_table
-            .new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)
-            .await?;
+        peer_table.new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)?;
 
         Ok(discovery_server.start())
     }
@@ -206,7 +223,12 @@ impl DiscoveryServer {
             counter: 0,
             pending_by_nonce: Default::default(),
             pending_challenges: Default::default(),
-            whoareyou_rate_limit: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
             session_ips: Default::default(),
             ip_votes: Default::default(),
             ip_vote_period_start: None,
@@ -214,11 +236,93 @@ impl DiscoveryServer {
         }
     }
 
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        send_interval(
+            REVALIDATION_CHECK_INTERVAL,
+            ctx.clone(),
+            discv5_server_protocol::Revalidate,
+        );
+        send_interval(PRUNE_INTERVAL, ctx.clone(), discv5_server_protocol::Prune);
+        let _ = ctx.send(discv5_server_protocol::Lookup);
+        send_message_on(
+            ctx.clone(),
+            tokio::signal::ctrl_c(),
+            discv5_server_protocol::Shutdown,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_message_msg(
+        &mut self,
+        msg: discv5_server_protocol::RecvMessage,
+        _ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .handle_packet(*msg.message)
+            .await
+            // log level trace as we don't want to spam decoding errors from bad peers.
+            .inspect_err(
+                |e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"),
+            );
+    }
+
+    #[send_handler]
+    async fn handle_revalidate(
+        &mut self,
+        _msg: discv5_server_protocol::Revalidate,
+        _ctx: &Context<Self>,
+    ) {
+        trace!(protocol = "discv5", received = "Revalidate");
+        let _ = self.do_revalidate().await.inspect_err(
+            |e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"),
+        );
+    }
+
+    #[send_handler]
+    async fn handle_lookup(&mut self, _msg: discv5_server_protocol::Lookup, ctx: &Context<Self>) {
+        trace!(protocol = "discv5", received = "Lookup");
+        let _ = self.do_lookup().await.inspect_err(
+            |e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"),
+        );
+
+        let interval = self.get_lookup_interval().await;
+        send_after(interval, ctx.clone(), discv5_server_protocol::Lookup);
+    }
+
+    #[send_handler]
+    async fn handle_prune(&mut self, _msg: discv5_server_protocol::Prune, _ctx: &Context<Self>) {
+        trace!(protocol = "discv5", received = "Prune");
+        let _ = self
+            .do_prune()
+            .await
+            .inspect_err(|e| error!(protocol = "discv5", err=?e, "Error Pruning peer table"));
+        self.cleanup_stale_entries();
+    }
+
+    #[send_handler]
+    async fn handle_shutdown(
+        &mut self,
+        _msg: discv5_server_protocol::Shutdown,
+        ctx: &Context<Self>,
+    ) {
+        ctx.stop();
+    }
+
     async fn handle_packet(
         &mut self,
         Discv5Message { packet, from }: Discv5Message,
     ) -> Result<(), DiscoveryServerError> {
         // TODO retrieve session info
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            match packet.header.flag {
+                0x01 => METRICS_P2P.inc_discv5_incoming("WhoAreYou"),
+                0x02 => METRICS_P2P.inc_discv5_incoming("Handshake"),
+                _ => {} // Ordinary messages are tracked in handle_message
+            }
+        }
         match packet.header.flag {
             0x00 => self.handle_ordinary(packet, from).await,
             0x01 => self.handle_who_are_you(packet, from).await,
@@ -229,6 +333,7 @@ impl DiscoveryServer {
             }
         }
     }
+
     async fn handle_ordinary(
         &mut self,
         packet: Packet,
@@ -262,7 +367,7 @@ impl DiscoveryServer {
                         // Clear the rate limit for the new address so the WHOAREYOU
                         // is not suppressed. The sender proved identity by successfully
                         // decrypting, so this is not an amplification attack.
-                        self.whoareyou_rate_limit.remove(&(addr.ip(), src_id));
+                        self.whoareyou_rate_limit.pop(&(addr.ip(), src_id));
                         return self
                             .send_who_are_you(packet.header.nonce, src_id, addr)
                             .await;
@@ -342,9 +447,7 @@ impl DiscoveryServer {
             &node.node_id(),
         );
 
-        self.peer_table
-            .set_session_info(node.node_id(), session)
-            .await?;
+        self.peer_table.set_session_info(node.node_id(), session)?;
 
         // Check enr-seq to decide if we have to send the local ENR in the handshake.
         let whoareyou = WhoAreYou::decode(&packet)?;
@@ -427,8 +530,7 @@ impl DiscoveryServer {
         // Add the peer to the peer table
         if let Some(record) = &authdata.record {
             self.peer_table
-                .new_contact_records(vec![record.clone()], self.local_node.node_id())
-                .await?;
+                .new_contact_records(vec![record.clone()], self.local_node.node_id())?;
         }
 
         // Derive session keys (we are the recipient, node B)
@@ -443,9 +545,7 @@ impl DiscoveryServer {
 
         // Store the session and record the source IP it was established from.
         // This is used in handle_ordinary to detect IP changes (PingMultiIP behaviour).
-        self.peer_table
-            .set_session_info(src_id, session.clone())
-            .await?;
+        self.peer_table.set_session_info(src_id, session.clone())?;
         self.session_ips.insert(src_id, addr.ip());
 
         // Decrypt and handle the contained message
@@ -462,21 +562,19 @@ impl DiscoveryServer {
             .await
     }
 
-    async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        let contacts = self
+    async fn do_revalidate(&mut self) -> Result<(), DiscoveryServerError> {
+        if let Some(contact) = self
             .peer_table
-            .get_contacts_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
-            .await?;
-
-        for contact in contacts {
-            if let Err(e) = self.send_ping(&contact.node).await {
-                trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
-            }
+            .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv5)
+            .await?
+            && let Err(e) = self.send_ping(&contact.node).await
+        {
+            trace!(protocol = "discv5", node = %contact.node.node_id(), err = ?e, "Failed to send revalidation PING");
         }
         Ok(())
     }
 
-    async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
+    async fn do_lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self
             .peer_table
             .get_contact_for_lookup(DiscoveryProtocol::Discv5)
@@ -485,15 +583,12 @@ impl DiscoveryServer {
             let find_node_msg = self.get_random_find_node_message(&contact.node);
             if let Err(e) = self.send_ordinary(find_node_msg, &contact.node).await {
                 error!(protocol = "discv5", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
+                self.peer_table.set_disposable(contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
             }
 
             self.peer_table
-                .increment_find_node_sent(&contact.node.node_id())
-                .await?;
+                .increment_find_node_sent(contact.node.node_id())?;
         }
         Ok(())
     }
@@ -518,8 +613,8 @@ impl DiscoveryServer {
         })
     }
 
-    async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
-        self.peer_table.prune().await?;
+    async fn do_prune(&mut self) -> Result<(), DiscoveryServerError> {
+        self.peer_table.prune_table()?;
         Ok(())
     }
 
@@ -573,8 +668,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // Validate and record PONG (clears ping_req_id if matches)
         self.peer_table
-            .record_pong_received(&sender_id, pong_message.req_id)
-            .await?;
+            .record_pong_received(sender_id, pong_message.req_id)?;
 
         // If sender's enr_seq is higher than our cached version, request updated ENR.
         if let Some(contact) = self.peer_table.get_contact(sender_id).await? {
@@ -616,11 +710,11 @@ impl DiscoveryServer {
         // respond since the sender proved identity via the handshake.
         let send_to_contact = match self
             .peer_table
-            .validate_contact(&sender_id, sender_addr.ip())
+            .validate_contact(sender_id, sender_addr.ip())
             .await?
         {
-            PeerTableOutMessage::Contact(contact) => Some(*contact),
-            PeerTableOutMessage::UnknownContact => None,
+            ContactValidation::Valid(contact) => Some(*contact),
+            ContactValidation::UnknownContact => None,
             reason => {
                 trace!(from = %sender_id, ?reason, "Rejected FINDNODE");
                 return Ok(());
@@ -683,8 +777,7 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         // TODO(#3746): check that we requested neighbors from the node
         self.peer_table
-            .new_contact_records(nodes_message.nodes, self.local_node.node_id())
-            .await?;
+            .new_contact_records(nodes_message.nodes, self.local_node.node_id())?;
         Ok(())
     }
 
@@ -699,9 +792,7 @@ impl DiscoveryServer {
         self.send_ordinary(ping, node).await?;
 
         // Record ping sent for later PONG verification
-        self.peer_table
-            .record_ping_sent(&node.node_id(), req_id)
-            .await?;
+        self.peer_table.record_ping_sent(node.node_id(), req_id)?;
 
         Ok(())
     }
@@ -711,6 +802,11 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing(message.metric_label());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message: message.clone(),
@@ -718,9 +814,10 @@ impl DiscoveryServer {
         let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
             Some(s) => s.outbound_key,
             None => {
-                warn!(
-                    "No session found for {:?} in send_ordinary, falling back to zeroed key",
-                    node.node_id()
+                trace!(
+                    protocol = "discv5",
+                    node = %node.node_id(),
+                    "No session found in send_ordinary, using zeroed key to trigger handshake"
                 );
                 [0; 16]
             }
@@ -752,7 +849,11 @@ impl DiscoveryServer {
         match self.peer_table.get_session_info(*node_id).await? {
             Some(s) => Ok(s.outbound_key),
             None => {
-                warn!("No session found for {node_id:?}, falling back to zeroed key");
+                trace!(
+                    protocol = "discv5",
+                    node = %node_id,
+                    "No session found in resolve_outbound_key, using zeroed key"
+                );
                 Ok([0; 16])
             }
         }
@@ -768,6 +869,11 @@ impl DiscoveryServer {
         addr: SocketAddr,
         encrypt_key: &[u8; 16],
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing(message.metric_label());
+        }
         let ordinary = Ordinary {
             src_id: self.local_node.node_id(),
             message,
@@ -791,6 +897,11 @@ impl DiscoveryServer {
         node: Node,
         record: Option<NodeRecord>,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing("Handshake");
+        }
         let handshake = Handshake {
             src_id: self.local_node.node_id(),
             id_signature: signature.serialize_compact().to_vec(),
@@ -801,9 +912,10 @@ impl DiscoveryServer {
         let encrypt_key = match self.peer_table.get_session_info(node.node_id()).await? {
             Some(s) => s.outbound_key,
             None => {
-                warn!(
-                    "No session found for {:?} in send_handshake, falling back to zeroed key",
-                    node.node_id()
+                trace!(
+                    protocol = "discv5",
+                    node = %node.node_id(),
+                    "No session found in send_handshake, using zeroed key"
                 );
                 [0; 16]
             }
@@ -830,12 +942,38 @@ impl DiscoveryServer {
         src_id: H256,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_outgoing("WhoAreYou");
+        }
         // Rate limit: prevent amplification attacks by limiting WHOAREYOU per (IP, node).
         // Keyed by (IP, src_id) so distinct nodes behind the same IP are not blocked.
         // Exception: if we already have a pending challenge for src_id (e.g. HandshakeResend),
         // allow re-sending WHOAREYOU freely — this is a legitimate handshake retry, not an attack.
         let rate_key = (addr.ip(), src_id);
         let now = Instant::now();
+
+        // Global rate limit: cap total outgoing WHOAREYOU bandwidth
+        if now.duration_since(self.whoareyou_global_window_start) >= Duration::from_secs(1) {
+            // Reset window
+            self.whoareyou_global_count = 0;
+            self.whoareyou_global_window_start = now;
+        }
+        if self.whoareyou_global_count >= GLOBAL_WHOAREYOU_RATE_LIMIT {
+            // Log once per window (when count first hits the limit) to avoid flooding
+            // logs during an attack while still signaling it's ongoing.
+            if self.whoareyou_global_count == GLOBAL_WHOAREYOU_RATE_LIMIT {
+                self.whoareyou_global_count = GLOBAL_WHOAREYOU_RATE_LIMIT + 1;
+                warn!(
+                    protocol = "discv5",
+                    "Global WHOAREYOU rate limit reached ({GLOBAL_WHOAREYOU_RATE_LIMIT}/s), \
+                     dropping excess packets. This is normal during initial discovery or \
+                     network churn; persistent occurrences may indicate a DoS attempt"
+                );
+            }
+            return Ok(());
+        }
 
         // If we already have a pending challenge for this node (e.g. the peer retransmitted its
         // ordinary packet before completing the handshake), re-send the original WHOAREYOU bytes
@@ -852,6 +990,8 @@ impl DiscoveryServer {
             return Ok(());
         }
 
+        // Per-(IP, node) rate limit: prevent amplification attacks.
+        // Keyed by (IP, src_id) so distinct nodes behind the same IP are not blocked.
         // Skip rate limiting for private/local IPs -- amplification attacks
         // are not a concern on local networks, and Docker/Hive tests use the
         // same private IP for many nodes.
@@ -866,7 +1006,10 @@ impl DiscoveryServer {
             );
             return Ok(());
         }
-        self.whoareyou_rate_limit.insert(rate_key, now);
+
+        // Update rate limit trackers
+        self.whoareyou_rate_limit.push(rate_key, now);
+        self.whoareyou_global_count += 1;
 
         let mut rng = OsRng;
 
@@ -935,6 +1078,8 @@ impl DiscoveryServer {
 
     /// Remove stale entries from caches.
     /// Called periodically to prevent unbounded growth.
+    /// Note: whoareyou_rate_limit is an LRU cache with bounded capacity,
+    /// so it doesn't need periodic cleanup.
     pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
 
@@ -954,12 +1099,6 @@ impl DiscoveryServer {
             });
         let removed_challenges = before_challenges - self.pending_challenges.len();
 
-        // Clean stale WHOAREYOU rate limit entries
-        let before_rate_limits = self.whoareyou_rate_limit.len();
-        self.whoareyou_rate_limit
-            .retain(|_key, timestamp| now.duration_since(*timestamp) < WHOAREYOU_RATE_LIMIT);
-        let removed_rate_limits = before_rate_limits - self.whoareyou_rate_limit.len();
-
         // Check if IP voting round should end (in case no new votes triggered it)
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW
@@ -967,15 +1106,14 @@ impl DiscoveryServer {
             self.finalize_ip_vote_round();
         }
 
-        let total_removed = removed_messages + removed_challenges + removed_rate_limits;
+        let total_removed = removed_messages + removed_challenges;
         if total_removed > 0 {
             trace!(
                 protocol = "discv5",
-                "Cleaned up {} stale entries ({} messages, {} challenges, {} rate limits)",
+                "Cleaned up {} stale entries ({} messages, {} challenges)",
                 total_removed,
                 removed_messages,
                 removed_challenges,
-                removed_rate_limits
             );
         }
     }
@@ -1098,6 +1236,11 @@ impl DiscoveryServer {
         if sender_id == self.local_node.node_id() {
             return Ok(());
         }
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv5_incoming(ordinary.message.metric_label());
+        }
         match ordinary.message {
             Message::Ping(ping_message) => {
                 // Spec: request-id MUST be ≤ 8 bytes; drop oversized requests silently.
@@ -1144,71 +1287,6 @@ impl DiscoveryServer {
     }
 }
 
-impl GenServer for DiscoveryServer {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = DiscoveryServerError;
-
-    async fn init(
-        self,
-        handle: &GenServerHandle<Self>,
-    ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        send_interval(
-            REVALIDATION_CHECK_INTERVAL,
-            handle.clone(),
-            InMessage::Revalidate,
-        );
-        send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
-        let _ = handle.clone().cast(InMessage::Lookup).await;
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
-
-        Ok(Success(self))
-    }
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            Self::CastMsg::Message(message) => {
-                let _ = self
-                    .handle_packet(*message)
-                    .await
-                    // log level trace as we don't want to spam decoding errors from bad peers.
-                    .inspect_err(
-                        |e| trace!(protocol = "discv5", err=%e, "Error Handling Discovery message"),
-                    );
-            }
-            Self::CastMsg::Revalidate => {
-                trace!(protocol = "discv5", received = "Revalidate");
-                let _ = self.revalidate().await.inspect_err(
-                    |e| error!(protocol = "discv5", err=%e, "Error revalidating discovered peers"),
-                );
-            }
-            Self::CastMsg::Lookup => {
-                trace!(protocol = "discv5", received = "Lookup");
-                let _ = self.lookup().await.inspect_err(
-                    |e| error!(protocol = "discv5", err=%e, "Error performing Discovery lookup"),
-                );
-
-                let interval = self.get_lookup_interval().await;
-                send_after(interval, handle.clone(), Self::CastMsg::Lookup);
-            }
-            Self::CastMsg::Prune => {
-                trace!(protocol = "discv5", received = "Prune");
-                let _ = self.prune().await.inspect_err(
-                    |e| error!(protocol = "discv5", err=?e, "Error Pruning peer table"),
-                );
-                self.cleanup_stale_entries();
-            }
-            Self::CastMsg::Shutdown => return CastResponse::Stop,
-        }
-        CastResponse::NoReply
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Discv5Message {
     from: SocketAddr,
@@ -1221,21 +1299,607 @@ impl Discv5Message {
     }
 }
 
-pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
-    // Smooth progression curve
-    // See https://easings.net/#easeInOutCubic
-    let ease_in_out_cubic = if progress < 0.5 {
-        4.0 * progress.powf(3.0)
-    } else {
-        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
-    };
-    Duration::from_micros(
-        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
-        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
-    )
-}
+pub use crate::discovery::lookup_interval_function;
 
 fn generate_req_id() -> Bytes {
     let mut rng = OsRng;
     Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        discv5::{messages::PongMessage, server::DiscoveryServer, session::Session},
+        peer_table::{PeerTableServer, PeerTableServerProtocol as _},
+        types::{Node, NodeRecord},
+    };
+    use bytes::Bytes;
+    use ethrex_common::H256;
+    use ethrex_storage::{EngineType, Store};
+    use lru::LruCache;
+    use rand::{SeedableRng, rngs::StdRng};
+    use rustc_hash::FxHashSet;
+    use secp256k1::SecretKey;
+    use std::{
+        net::{IpAddr, SocketAddr},
+        num::NonZero,
+        sync::Arc,
+        time::Instant,
+    };
+    use tokio::net::UdpSocket;
+
+    use super::MAX_WHOAREYOU_RATE_LIMIT_ENTRIES;
+
+    #[tokio::test]
+    async fn test_next_nonce_counter() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let n1 = server.next_nonce(&mut rng);
+        let n2 = server.next_nonce(&mut rng);
+
+        assert_eq!(&n1[..4], &[0, 0, 0, 0]);
+        assert_eq!(&n2[..4], &[0, 0, 0, 1]);
+        assert_ne!(&n1[4..], &n2[4..]);
+    }
+
+    #[tokio::test]
+    async fn test_whoareyou_rate_limiting() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        // Use port 0 to let the OS assign an available port
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let nonce = [0u8; 12];
+        let addr: SocketAddr = "192.168.1.1:30303".parse().unwrap();
+        let src_id1 = H256::from_low_u64_be(1);
+        let src_id2 = H256::from_low_u64_be(2);
+        let src_id3 = H256::from_low_u64_be(3);
+
+        // Initially, rate limit map should be empty
+        assert!(server.whoareyou_rate_limit.is_empty());
+
+        // First call should NOT be rate limited
+        let _ = server.send_who_are_you(nonce, src_id1, addr).await;
+
+        // Should have recorded the IP in rate limit map
+        assert!(
+            server
+                .whoareyou_rate_limit
+                .peek(&(addr.ip(), src_id1))
+                .is_some()
+        );
+        // Should have added a pending challenge (proves packet was processed)
+        assert!(server.pending_challenges.contains_key(&src_id1));
+
+        // Same IP but different node_id should NOT be rate limited
+        let _ = server.send_who_are_you(nonce, src_id2, addr).await;
+        assert!(server.pending_challenges.contains_key(&src_id2));
+
+        // Same node_id and same IP should be rate limited
+        let _ = server.send_who_are_you(nonce, src_id1, addr).await;
+
+        // Call with DIFFERENT IP should NOT be rate limited
+        let addr2: SocketAddr = "192.168.1.2:30303".parse().unwrap();
+        let _ = server.send_who_are_you(nonce, src_id3, addr2).await;
+        assert!(server.pending_challenges.contains_key(&src_id3));
+        assert_eq!(server.whoareyou_rate_limit.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_enr_update_request_on_pong() {
+        // Create local node
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        // Create remote node - use a template node for IP/ports, but the record will use remote_signer's key
+        let remote_signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let remote_node_template = Node::from_enode_url(
+            "enode://a448f24c6d18e575453db127a3d8eeeea3e3426f0db43bd52067d85cc5a1e87ad09f44b2bbaa66bb3a8c47cff8082ca4cde4b03f5ba52c1e92b3d2b9125d6da5@127.0.0.1:30304",
+        ).expect("Bad enode url");
+
+        // Create NodeRecord for the remote node with seq = 5
+        // Note: from_node uses remote_signer's public key, so we derive node_id from the record
+        let remote_record =
+            NodeRecord::from_node(&remote_node_template, 5, &remote_signer).unwrap();
+        let remote_node = Node::from_enr(&remote_record).expect("Should create node from record");
+        let remote_node_id = remote_node.node_id();
+
+        let peer_table = PeerTableServer::spawn(
+            10,
+            Store::new("", EngineType::InMemory).expect("Failed to create store"),
+        );
+
+        // Add the remote node as a contact with its ENR record
+        peer_table
+            .new_contact_records(vec![remote_record], local_node.node_id())
+            .unwrap();
+
+        // Set up a session for the remote node (required for send_ordinary)
+        let session = Session {
+            outbound_key: [0u8; 16],
+            inbound_key: [0u8; 16],
+        };
+        peer_table
+            .set_session_info(remote_node_id, session)
+            .unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table,
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        // Verify the contact was added
+        let contact = server.peer_table.get_contact(remote_node_id).await.unwrap();
+        assert!(
+            contact.is_some(),
+            "Contact should have been added to peer_table"
+        );
+        let contact = contact.unwrap();
+        assert_eq!(
+            contact.record.as_ref().map(|r| r.seq),
+            Some(5),
+            "Contact should have ENR with seq=5"
+        );
+
+        // Test 1: PONG with same enr_seq should NOT trigger FINDNODE
+        let pong_same_seq = PongMessage {
+            req_id: Bytes::from(vec![1, 2, 3]),
+            enr_seq: 5, // Same as cached
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        let initial_pending_count = server.pending_by_nonce.len();
+        server
+            .handle_pong(pong_same_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for matching enr_seq");
+        // No new message should be pending (no FINDNODE sent)
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count);
+
+        // Test 2: PONG with higher enr_seq should trigger FINDNODE
+        let pong_higher_seq = PongMessage {
+            req_id: Bytes::from(vec![4, 5, 6]),
+            enr_seq: 10, // Higher than cached (5)
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        server
+            .handle_pong(pong_higher_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for higher enr_seq");
+        // A new message should be pending (FINDNODE sent)
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
+
+        // Test 3: PONG with lower enr_seq should NOT trigger FINDNODE
+        let pong_lower_seq = PongMessage {
+            req_id: Bytes::from(vec![7, 8, 9]),
+            enr_seq: 3, // Lower than cached (5)
+            recipient_addr: "127.0.0.1:30303".parse().unwrap(),
+        };
+        server
+            .handle_pong(pong_lower_seq, remote_node_id)
+            .await
+            .expect("handle_pong failed for lower enr_seq");
+        // No new message should be pending
+        assert_eq!(server.pending_by_nonce.len(), initial_pending_count + 1);
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_updates_ip_on_threshold() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let original_seq = local_node_record.seq;
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+
+        // Vote 1 - should not update yet
+        server.record_ip_vote(new_ip, voter1);
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
+
+        // Vote 2 from different peer - should not update yet
+        server.record_ip_vote(new_ip, voter2);
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(2));
+
+        // Vote 3 from different peer - should trigger update (threshold reached)
+        server.record_ip_vote(new_ip, voter3);
+        assert_eq!(server.local_node.ip, new_ip);
+        assert_eq!(server.local_node_record.seq, original_seq + 1);
+        // Votes should be cleared after update
+        assert!(server.ip_votes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_same_peer_votes_once() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
+        let same_voter = H256::from_low_u64_be(1);
+
+        // Same peer voting 3 times should only count as 1 vote
+        server.record_ip_vote(new_ip, same_voter);
+        server.record_ip_vote(new_ip, same_voter);
+        server.record_ip_vote(new_ip, same_voter);
+
+        // Should still only have 1 vote (same peer)
+        assert_eq!(server.ip_votes.get(&new_ip).map(|v| v.len()), Some(1));
+        // IP should not change
+        assert_eq!(server.local_node.ip, original_ip);
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_no_update_if_same_ip() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+        let original_seq = local_node_record.seq;
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+
+        // Vote 3 times for the same IP we already have (from different peers)
+        // This triggers the first round to end after 3 votes
+        server.record_ip_vote(original_ip, voter1);
+        server.record_ip_vote(original_ip, voter2);
+        server.record_ip_vote(original_ip, voter3);
+
+        // IP and seq should remain unchanged (winner is our current IP)
+        assert_eq!(server.local_node.ip, original_ip);
+        assert_eq!(server.local_node_record.seq, original_seq);
+        // Votes cleared because round ended (even though no IP change)
+        assert!(server.ip_votes.is_empty());
+        // First round should now be completed
+        assert!(server.first_ip_vote_round_completed);
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_split_votes_no_update() {
+        // Tests that when votes are split and no IP reaches threshold, IP is not updated
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let original_ip = local_node.ip;
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let ip1: IpAddr = "203.0.113.50".parse().unwrap();
+        let ip2: IpAddr = "203.0.113.51".parse().unwrap();
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+
+        // First round: votes are split between two IPs
+        // Vote 1: ip1
+        server.record_ip_vote(ip1, voter1);
+        assert_eq!(server.local_node.ip, original_ip); // No change yet
+
+        // Vote 2: ip2
+        server.record_ip_vote(ip2, voter2);
+        assert_eq!(server.local_node.ip, original_ip); // No change yet
+
+        // Vote 3: ip1 - triggers first round end (3 total votes)
+        // ip1 has 2 votes, ip2 has 1 vote, but ip1 doesn't reach threshold of 3
+        server.record_ip_vote(ip1, voter3);
+        // IP should NOT change because no IP reached threshold
+        assert_eq!(server.local_node.ip, original_ip);
+        // Round still ends and votes are cleared
+        assert!(server.ip_votes.is_empty());
+        assert!(server.first_ip_vote_round_completed);
+    }
+
+    #[tokio::test]
+    async fn test_ip_vote_cleanup() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let ip: IpAddr = "203.0.113.50".parse().unwrap();
+        let voter1 = H256::from_low_u64_be(1);
+
+        // Manually insert a vote and set period start
+        let mut voters = FxHashSet::default();
+        voters.insert(voter1);
+        server.ip_votes.insert(ip, voters);
+        server.ip_vote_period_start = Some(Instant::now());
+        assert_eq!(server.ip_votes.len(), 1);
+
+        // Cleanup should retain votes (round hasn't timed out yet)
+        server.cleanup_stale_entries();
+        assert_eq!(server.ip_votes.len(), 1);
+
+        // Cleanup didn't finalize because the 5-minute window hasn't elapsed
+        assert!(!server.first_ip_vote_round_completed);
+    }
+
+    #[tokio::test]
+    async fn test_ip_voting_ignores_private_ips() {
+        let local_node = Node::from_enode_url(
+            "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
+        ).expect("Bad enode url");
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
+
+        let mut server = DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
+            peer_table: PeerTableServer::spawn(
+                10,
+                Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            ),
+            initial_lookup_interval: 1000.0,
+            counter: 0,
+            pending_by_nonce: Default::default(),
+            pending_challenges: Default::default(),
+            whoareyou_rate_limit: LruCache::new(
+                NonZero::new(MAX_WHOAREYOU_RATE_LIMIT_ENTRIES)
+                    .expect("MAX_WHOAREYOU_RATE_LIMIT_ENTRIES must be non-zero"),
+            ),
+            whoareyou_global_count: 0,
+            whoareyou_global_window_start: Instant::now(),
+            ip_votes: Default::default(),
+            ip_vote_period_start: None,
+            first_ip_vote_round_completed: false,
+            session_ips: Default::default(),
+        };
+
+        let voter1 = H256::from_low_u64_be(1);
+        let voter2 = H256::from_low_u64_be(2);
+        let voter3 = H256::from_low_u64_be(3);
+
+        // Private IPs should be ignored
+        let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
+        server.record_ip_vote(private_ip, voter1);
+        server.record_ip_vote(private_ip, voter2);
+        server.record_ip_vote(private_ip, voter3);
+        assert!(server.ip_votes.is_empty());
+
+        // Loopback should be ignored
+        let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+        server.record_ip_vote(loopback, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // Link-local should be ignored
+        let link_local: IpAddr = "169.254.1.1".parse().unwrap();
+        server.record_ip_vote(link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 loopback should be ignored
+        let ipv6_loopback: IpAddr = "::1".parse().unwrap();
+        server.record_ip_vote(ipv6_loopback, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 link-local (fe80::/10) should be ignored
+        let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
+        server.record_ip_vote(ipv6_link_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // IPv6 unique local (fc00::/7) should be ignored
+        let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
+        server.record_ip_vote(ipv6_unique_local, voter1);
+        assert!(server.ip_votes.is_empty());
+
+        // Public IP should be recorded
+        let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
+        server.record_ip_vote(public_ip, voter1);
+        assert_eq!(server.ip_votes.get(&public_ip).map(|v| v.len()), Some(1));
+    }
 }

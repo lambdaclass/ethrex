@@ -367,6 +367,49 @@ impl Message {
     }
 }
 
+impl Message {
+    /// Returns a short, stable label suitable for use as a Prometheus metric label value.
+    pub fn metric_label(&self) -> &'static str {
+        match self {
+            Message::Hello(_) => "Hello",
+            Message::Disconnect(_) => "Disconnect",
+            Message::Ping(_) => "Ping",
+            Message::Pong(_) => "Pong",
+            Message::Status68(_) => "Status",
+            Message::Status69(_) => "Status",
+            Message::Status70(_) => "Status",
+            Message::GetBlockHeaders(_) => "GetBlockHeaders",
+            Message::BlockHeaders(_) => "BlockHeaders",
+            Message::Transactions(_) => "Transactions",
+            Message::GetBlockBodies(_) => "GetBlockBodies",
+            Message::BlockBodies(_) => "BlockBodies",
+            Message::NewPooledTransactionHashes(_) => "NewPooledTransactionHashes",
+            Message::GetPooledTransactions(_) => "GetPooledTransactions",
+            Message::PooledTransactions(_) => "PooledTransactions",
+            Message::GetReceipts68(_) => "GetReceipts",
+            Message::GetReceipts69(_) => "GetReceipts",
+            Message::GetReceipts70(_) => "GetReceipts",
+            Message::Receipts68(_) => "Receipts",
+            Message::Receipts69(_) => "Receipts",
+            Message::Receipts70(_) => "Receipts",
+            Message::BlockRangeUpdate(_) => "BlockRangeUpdate",
+            Message::GetAccountRange(_) => "GetAccountRange",
+            Message::AccountRange(_) => "AccountRange",
+            Message::GetStorageRanges(_) => "GetStorageRanges",
+            Message::StorageRanges(_) => "StorageRanges",
+            Message::GetByteCodes(_) => "GetByteCodes",
+            Message::ByteCodes(_) => "ByteCodes",
+            Message::GetTrieNodes(_) => "GetTrieNodes",
+            Message::TrieNodes(_) => "TrieNodes",
+            #[cfg(feature = "l2")]
+            Message::L2(l2_msg) => match l2_msg {
+                L2Message::NewBlock(_) => "L2NewBlock",
+                L2Message::BatchSealed(_) => "L2BatchSealed",
+            },
+        }
+    }
+}
+
 impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -1,7 +1,7 @@
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
-    peer_table::{PeerData, PeerTable, PeerTableError},
+    peer_table::{PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -18,7 +18,7 @@ use ethrex_common::{
     types::{BlockBody, BlockHeader, validate_block_body},
 };
 use ethrex_crypto::NativeCrypto;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
     sync::atomic::Ordering,
@@ -40,7 +40,7 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
-    pub initiator: GenServerHandle<RLPxInitiator>,
+    pub initiator: ActorRef<RLPxInitiator>,
 }
 
 pub enum BlockRequestOrder {
@@ -51,7 +51,7 @@ pub enum BlockRequestOrder {
 async fn ask_peer_head_number(
     peer_id: H256,
     connection: &mut PeerConnection,
-    peer_table: &mut PeerTable,
+    peer_table: &PeerTable,
     sync_head: H256,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
@@ -97,7 +97,7 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable, initiator: GenServerHandle<RLPxInitiator>) -> PeerHandler {
+    pub fn new(peer_table: PeerTable, initiator: ActorRef<RLPxInitiator>) -> PeerHandler {
         Self {
             peer_table,
             initiator,
@@ -107,15 +107,15 @@ impl PeerHandler {
     pub(crate) async fn make_request(
         // TODO: We should receive the PeerHandler (or self) instead, but since it is not yet spawnified it cannot be shared
         // Fix this to avoid passing the PeerTable as a parameter
-        peer_table: &mut PeerTable,
+        peer_table: &PeerTable,
         peer_id: H256,
         connection: &mut PeerConnection,
         message: RLPxMessage,
         timeout: Duration,
     ) -> Result<RLPxMessage, PeerConnectionError> {
-        peer_table.inc_requests(peer_id).await?;
+        peer_table.inc_requests(peer_id)?;
         let result = connection.outgoing_request(message, timeout).await;
-        peer_table.dec_requests(peer_id).await?;
+        peer_table.dec_requests(peer_id)?;
         result
     }
 
@@ -125,7 +125,10 @@ impl PeerHandler {
         &mut self,
         capabilities: &[Capability],
     ) -> Result<Option<(H256, PeerConnection)>, PeerHandlerError> {
-        return Ok(self.peer_table.get_random_peer(capabilities).await?);
+        Ok(self
+            .peer_table
+            .get_random_peer(capabilities.to_vec())
+            .await?)
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -164,14 +167,24 @@ impl PeerHandler {
             }
             let peer_connection = self
                 .peer_table
-                .get_peer_connections(&SUPPORTED_ETH_CAPABILITIES)
+                .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?;
 
+            let selected_peers: Vec<_> = peer_connection
+                .iter()
+                .take(MAX_PEERS_TO_ASK)
+                .map(|(id, _)| *id)
+                .collect();
+            debug!(
+                retry = retries,
+                peers_selected = ?selected_peers,
+                "request_block_headers: resolving sync head with peers"
+            );
             for (peer_id, mut connection) in peer_connection.into_iter().take(MAX_PEERS_TO_ASK) {
                 match ask_peer_head_number(
                     peer_id,
                     &mut connection,
-                    &mut self.peer_table,
+                    &self.peer_table,
                     sync_head,
                     retries,
                 )
@@ -180,10 +193,16 @@ impl PeerHandler {
                     Ok(number) => {
                         sync_head_number = number;
                         if number != 0 {
+                            #[cfg(feature = "metrics")]
+                            ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("found");
                             break;
                         }
+                        #[cfg(feature = "metrics")]
+                        ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("unknown");
                     }
                     Err(err) => {
+                        #[cfg(feature = "metrics")]
+                        ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("timeout");
                         debug!(
                             "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
                         );
@@ -248,11 +267,11 @@ impl PeerHandler {
                 task_receiver.try_recv()
             {
                 // Release the reservation we made before spawning the task.
-                self.peer_table.dec_requests(peer_id).await?;
+                self.peer_table.dec_requests(peer_id)?;
 
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table.record_failure(peer_id)?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -294,12 +313,12 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.peer_table.record_success(&peer_id).await?;
+                self.peer_table.record_success(peer_id)?;
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut connection)) = self
                 .peer_table
-                .get_best_peer(&SUPPORTED_ETH_CAPABILITIES)
+                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?
             else {
                 // Log ~ once every 10 seconds
@@ -338,7 +357,7 @@ impl PeerHandler {
             // (dec_requests on try_recv). The worker calls
             // outgoing_request directly (not make_request) since we
             // already hold the reservation.
-            self.peer_table.inc_requests(peer_id).await?;
+            self.peer_table.inc_requests(peer_id)?;
             debug!("Downloader {peer_id} is now busy");
 
             // Run download_chunk_from_peer in a different Tokio task.
@@ -429,7 +448,7 @@ impl PeerHandler {
                     id: _,
                     block_headers,
                 })) = PeerHandler::make_request(
-                    &mut self.peer_table,
+                    &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
@@ -523,7 +542,7 @@ impl PeerHandler {
                     id: _,
                     block_bodies,
                 })) = PeerHandler::make_request(
-                    &mut self.peer_table,
+                    &self.peer_table,
                     peer_id,
                     &mut connection,
                     request,
@@ -533,14 +552,14 @@ impl PeerHandler {
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(&peer_id).await?;
+                        self.peer_table.record_success(peer_id)?;
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
-                self.peer_table.record_failure(&peer_id).await?;
+                self.peer_table.record_failure(peer_id)?;
                 Ok(None)
             }
         }
@@ -571,7 +590,7 @@ impl PeerHandler {
                         "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
                     );
                     validation_success = false;
-                    self.peer_table.record_critical_failure(&peer_id).await?;
+                    self.peer_table.record_critical_failure(peer_id)?;
                     break;
                 }
                 res.push(body);
@@ -583,6 +602,14 @@ impl PeerHandler {
         }
         Ok(None)
     }
+    /// Returns diagnostic snapshots for all connected peers (scores, requests, eligibility).
+    pub async fn read_peer_diagnostics(&self) -> Vec<PeerDiagnostics> {
+        self.peer_table
+            .get_peer_diagnostics()
+            .await
+            .unwrap_or_default()
+    }
+
     /// Returns the PeerData for each connected Peer
     pub async fn read_connected_peers(&mut self) -> Vec<PeerData> {
         self.peer_table
@@ -612,7 +639,7 @@ impl PeerHandler {
         });
         debug!("get_block_header: requesting header with number {block_number}");
         match PeerHandler::make_request(
-            &mut self.peer_table,
+            &self.peer_table,
             peer_id,
             connection,
             request,
@@ -689,7 +716,28 @@ pub enum PeerHandlerError {
     #[error("No response from peer")]
     NoResponseFromPeer,
     #[error("Error in Peer Table: {0}")]
-    PeerTableError(#[from] PeerTableError),
+    PeerTableError(#[from] ActorError),
     #[error("Snap error: {0}")]
     Snap(#[from] SnapError),
+}
+
+impl PeerHandlerError {
+    /// Transient errors caused by individual peer interactions (bad/slow/absent
+    /// responses) that should trigger a retry. Actor/storage/snap failures
+    /// indicate a more fundamental problem and should be surfaced as fatal.
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            PeerHandlerError::SendMessageToPeer(_)
+            | PeerHandlerError::BlockHeaders
+            | PeerHandlerError::UnexpectedResponseFromPeer(_)
+            | PeerHandlerError::EmptyResponseFromPeer(_)
+            | PeerHandlerError::ReceiveMessageFromPeer(_)
+            | PeerHandlerError::ReceiveMessageFromPeerTimeout(_)
+            | PeerHandlerError::InvalidHeaders
+            | PeerHandlerError::NoResponseFromPeer => true,
+            PeerHandlerError::StorageFull
+            | PeerHandlerError::PeerTableError(_)
+            | PeerHandlerError::Snap(_) => false,
+        }
+    }
 }
