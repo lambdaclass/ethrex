@@ -10,11 +10,12 @@ use std::time::Duration;
 // RESPONSE LIMITS
 // =============================================================================
 
-/// Maximum response size in bytes for snap protocol requests (512 KB).
+/// Maximum response size in bytes for snap protocol requests (2 MiB).
 ///
-/// This limits the amount of data a peer can return in a single response,
-/// preventing memory exhaustion and ensuring reasonable response times.
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+/// Matches bsc-geth/geth's `softResponseLimit` so peers can fill responses
+/// up to their own cap. Lower values (we were at 512 KiB) leave bandwidth
+/// on the table on every round-trip.
+pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum number of accounts/items to request in a single snap request.
 ///
@@ -51,8 +52,8 @@ pub const STORAGE_BATCH_SIZE: usize = 300;
 
 /// Number of trie nodes to request per batch during state/storage healing.
 /// Matches bsc-geth's maxTrieRequestCount = maxRequestSize / 512B (avg node size),
-/// sized to fill MAX_RESPONSE_BYTES (512 KiB) per round-trip.
-pub const NODE_BATCH_SIZE: usize = 1024;
+/// sized to fill MAX_RESPONSE_BYTES (2 MiB) per round-trip.
+pub const NODE_BATCH_SIZE: usize = 4096;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
