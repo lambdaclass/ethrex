@@ -26,3 +26,8 @@ runs:
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
 
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ github.token }}
+

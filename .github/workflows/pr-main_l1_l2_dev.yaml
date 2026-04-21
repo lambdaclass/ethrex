@@ -58,11 +58,6 @@ jobs:
       - name: Install solc
         uses: ./.github/actions/install-solc
 
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Start ethrex
         run: |
           COMPILE_CONTRACTS=1 cargo run --release --bin ethrex -F l2,l2-sql -- l2 --dev \
