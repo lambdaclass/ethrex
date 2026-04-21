@@ -372,14 +372,15 @@ docker logs credible-sidecar 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "trigger_re
 
 ### Step 9: Test — violating transaction is DROPPED
 
-Send a `transferOwnership` call. The sidecar detects the assertion violation and ethrex drops the transaction:
+Send a `transferOwnership` call. The sidecar detects the assertion violation and ethrex drops the transaction. Verify the owner before and after to confirm state was not corrupted:
 
 ```bash
 PK=0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
 OWNABLE_TARGET=<address from step 6>
 
-# Check current owner
+# Record the current owner (should be the deployer address)
 rex call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
+# Example output: 0x0000000000000000000000008943545177806ed17b9f23f0a21ee5948ecaa776
 
 # Try to transfer ownership (this should time out — tx never included!)
 timeout 25 rex send $OWNABLE_TARGET "transferOwnership(address)" \
@@ -387,9 +388,9 @@ timeout 25 rex send $OWNABLE_TARGET "transferOwnership(address)" \
   -k $PK --rpc-url http://localhost:1729
 # Expected: times out with no output (tx was dropped by Credible Layer)
 
-# Verify owner is UNCHANGED
+# Verify owner is UNCHANGED — must match the value from before
 rex call $OWNABLE_TARGET "owner()" --rpc-url http://localhost:1729
-# Should still be the original deployer address
+# Must return the same deployer address as above (not 0x0...01)
 ```
 
 Check sidecar logs to confirm the assertion caught it:
