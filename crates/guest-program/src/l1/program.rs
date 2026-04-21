@@ -113,7 +113,7 @@ fn new_payload_request_to_block(
 ) -> Result<ethrex_common::types::Block, String> {
     use bytes::Bytes;
     use ethrex_common::constants::DEFAULT_OMMERS_HASH;
-    use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
+    use ethrex_common::types::requests::compute_requests_hash;
     use ethrex_common::types::{
         Block, BlockBody, BlockHeader, Transaction, Withdrawal, compute_transactions_root,
         compute_withdrawals_root,
@@ -144,15 +144,8 @@ fn new_payload_request_to_block(
         })
         .collect();
 
-    // Build execution_requests from the SSZ field for requests_hash
-    let execution_requests: Vec<EncodedRequests> = req
-        .execution_requests
-        .iter()
-        .map(|r| {
-            let raw: Vec<u8> = r.iter().copied().collect();
-            EncodedRequests(Bytes::from(raw))
-        })
-        .collect();
+    // Build execution_requests from the SSZ typed ExecutionRequests field
+    let execution_requests = req.execution_requests.to_encoded_requests();
     let requests_hash = compute_requests_hash(&execution_requests);
 
     // Convert base_fee_per_gas from [u8; 32] LE uint256 to u64
