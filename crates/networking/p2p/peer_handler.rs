@@ -456,21 +456,29 @@ impl PeerHandler {
                 )
                 .await
                 {
-                    if !block_headers.is_empty()
-                        && are_block_headers_chained(&block_headers, &order)
-                    {
-                        return Ok(Some(block_headers));
-                    } else {
-                        warn!(
-                            "[SYNCING] Received empty/invalid headers from peer, penalizing peer {peer_id}"
+                    if block_headers.is_empty() {
+                        // Empty response is valid per eth spec (peer may not have these blocks)
+                        debug!(
+                            "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
                         return Ok(None);
                     }
+                    if are_block_headers_chained(&block_headers, &order) {
+                        self.peer_table.record_success(peer_id)?;
+                        return Ok(Some(block_headers));
+                    }
+                    // Non-empty but unchained headers is a protocol violation
+                    warn!(
+                        "[SYNCING] Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
+                    );
+                    self.peer_table.record_failure(peer_id)?;
+                    return Ok(None);
                 }
                 // Timeouted
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
+                self.peer_table.record_failure(peer_id)?;
                 Ok(None)
             }
         }
