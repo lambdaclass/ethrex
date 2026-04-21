@@ -72,32 +72,7 @@ pub fn execution_program(
     // Compute the hash_tree_root before consuming the payload.
     let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
 
-    // Transform SSZ NewPayloadRequest → Block
-    let block = new_payload_request_to_block(&new_payload_request, crypto.as_ref())
-        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-
-    // Validate block_hash: the SSZ payload carries block_hash which must match
-    // the hash of the reconstructed block header.
-    let computed_hash = block.hash();
-    let expected_hash =
-        ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
-    if computed_hash != expected_hash {
-        return Err(ExecutionError::Internal(format!(
-            "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
-        )));
-    }
-
-    // Validate blob versioned hashes
-    validate_versioned_hashes(&block, &new_payload_request)?;
-
-    // Execute statelessly — reuse the common `execute_blocks` infrastructure
-    let _result = execute_blocks(
-        &[block],
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-        crypto.clone(),
-    )?;
+    validate_eip8025_execution(&new_payload_request, execution_witness, crypto)?;
 
     Ok(ProgramOutput {
         new_payload_request_root: request_root,
@@ -115,11 +90,19 @@ pub fn execution_program_eip8025_bytes(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
+    use libssz_merkle::{HashTreeRoot, Sha2Hasher};
+
     let (new_payload_request, execution_witness) = super::decode_eip8025(bytes).map_err(|err| {
         ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
     })?;
 
-    execution_program(new_payload_request, execution_witness, crypto)
+    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
+    let valid = validate_eip8025_execution(&new_payload_request, execution_witness, crypto).is_ok();
+
+    Ok(ProgramOutput {
+        new_payload_request_root: request_root,
+        valid,
+    })
 }
 
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
@@ -239,6 +222,42 @@ fn validate_versioned_hashes(
             "versioned hashes mismatch between NewPayloadRequest and transactions".to_string(),
         ));
     }
+
+    Ok(())
+}
+
+#[cfg(feature = "eip-8025")]
+fn validate_eip8025_execution(
+    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
+    crypto: Arc<dyn Crypto>,
+) -> Result<(), ExecutionError> {
+    // Transform SSZ NewPayloadRequest → Block
+    let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
+        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
+
+    // Validate block_hash: the SSZ payload carries block_hash which must match
+    // the hash of the reconstructed block header.
+    let computed_hash = block.hash();
+    let expected_hash =
+        ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
+    if computed_hash != expected_hash {
+        return Err(ExecutionError::Internal(format!(
+            "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
+        )));
+    }
+
+    // Validate blob versioned hashes
+    validate_versioned_hashes(&block, new_payload_request)?;
+
+    // Execute statelessly — reuse the common `execute_blocks` infrastructure
+    let _result = execute_blocks(
+        &[block],
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+        crypto.clone(),
+    )?;
 
     Ok(())
 }
