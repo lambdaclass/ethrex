@@ -410,7 +410,6 @@ pub struct PeerTableServer {
     buckets: Vec<KBucket>,
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
-    discarded_contacts: FxHashSet<H256>,
     target_peers: usize,
     store: Store,
     /// Standalone session store, independent of contacts.
@@ -436,7 +435,6 @@ impl PeerTableServer {
             buckets: vec![KBucket::default(); NUMBER_OF_BUCKETS],
             peers: Default::default(),
             already_tried_peers: Default::default(),
-            discarded_contacts: Default::default(),
             target_peers,
             store,
             sessions: Default::default(),
@@ -1047,7 +1045,8 @@ impl PeerTableServer {
 
     /// Prune disposable contacts from both main and replacement lists.
     /// When a main contact is removed, a replacement is automatically promoted.
-    /// Also removes discarded contacts from the connection pool.
+    /// Pruned contacts remain in the connection pool so they can be retried
+    /// later — the RLPx handshake will reject them if they're truly bad.
     fn prune(&mut self) {
         for bucket in &mut self.buckets {
             // Collect disposable contacts from main list
@@ -1061,67 +1060,54 @@ impl PeerTableServer {
             // Remove from main list and promote replacements
             for node_id in main_disposable {
                 bucket.remove_and_promote(&node_id);
-                self.discarded_contacts.insert(node_id);
             }
 
             // Remove disposable contacts from replacement list
             // (these don't get promoted, just removed)
-            let replacement_disposable: Vec<H256> = bucket
-                .replacements
-                .iter()
-                .filter(|(_, c)| c.disposable)
-                .map(|(id, _)| *id)
-                .collect();
-
-            bucket
-                .replacements
-                .retain(|(id, _)| !replacement_disposable.contains(id));
-            for node_id in replacement_disposable {
-                self.discarded_contacts.insert(node_id);
-            }
+            bucket.replacements.retain(|(_, c)| !c.disposable);
         }
-
-        // Remove discarded contacts from the connection pool
-        self.connection_pool
-            .retain(|id, _| !self.discarded_contacts.contains(id));
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
-        // Draw from the flat connection pool (up to 10K contacts) rather than
-        // the k-bucket routing table (capped at ~4K). This gives the initiator
-        // access to a much larger and more diverse set of candidates.
-        // K-bucket state is checked for filtering when available; contacts not
-        // in k-buckets are assumed eligible (the RLPx handshake will reject
-        // incompatible peers).
-        let eligible: Vec<(H256, Node)> = self
-            .connection_pool
-            .iter()
-            .filter(|(node_id, _)| {
-                !self.peers.contains_key(*node_id)
-                    && !self.already_tried_peers.contains(*node_id)
-                    && !self.discarded_contacts.contains(*node_id)
-                    && self
-                        .get_contact_or_replacement(node_id)
-                        .map(|c| c.knows_us && !c.unwanted && c.is_fork_id_valid != Some(false))
-                        .unwrap_or(true)
-            })
-            .map(|(id, node)| (*id, node.clone()))
-            .collect();
+        // Draw from the flat connection pool using O(1) random index probing.
+        // Pick a random start index and scan forward (wrapping) until we find
+        // an eligible candidate or complete a full loop.
+        let pool_len = self.connection_pool.len();
+        if pool_len == 0 {
+            return None;
+        }
 
-        if let Some((node_id, node)) = eligible.choose(&mut rand::rngs::OsRng).cloned() {
+        let start = rand::random::<usize>() % pool_len;
+        for offset in 0..pool_len {
+            let idx = (start + offset) % pool_len;
+            let Some((node_id, node)) = self.connection_pool.get_index(idx) else {
+                continue;
+            };
+            let node_id = *node_id;
+
+            if self.peers.contains_key(&node_id)
+                || self.already_tried_peers.contains(&node_id)
+                || self
+                    .get_contact_or_replacement(&node_id)
+                    .map(|c| !c.knows_us || c.unwanted || c.is_fork_id_valid == Some(false))
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let node = node.clone();
             self.already_tried_peers.insert(node_id);
-            // Return a Contact from k-buckets if available (full state),
-            // otherwise construct a minimal one from the pool entry.
             let contact = self
                 .get_contact_or_replacement(&node_id)
                 .cloned()
                 .unwrap_or_else(|| Contact::new(node, DiscoveryProtocol::Discv4));
-            Some(contact)
-        } else {
-            tracing::trace!("Resetting list of tried peers.");
-            self.already_tried_peers.clear();
-            None
+            return Some(contact);
         }
+
+        // Exhausted all candidates — reset tried set for next cycle.
+        tracing::trace!("Resetting list of tried peers.");
+        self.already_tried_peers.clear();
+        None
     }
 
     fn do_get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
@@ -1132,9 +1118,7 @@ impl PeerTableServer {
                     && !c.disposable
             })
             .map(|(_, c)| c)
-            .collect::<Vec<_>>()
             .choose(&mut rand::rngs::OsRng)
-            .cloned()
             .cloned()
     }
 
@@ -1236,7 +1220,7 @@ impl PeerTableServer {
     async fn do_new_contacts(&mut self, nodes: Vec<Node>, protocol: DiscoveryProtocol) {
         for node in nodes {
             let node_id = node.node_id();
-            if self.discarded_contacts.contains(&node_id) || node_id == self.local_node_id {
+            if node_id == self.local_node_id {
                 continue;
             }
             #[cfg(feature = "metrics")]
@@ -1272,7 +1256,7 @@ impl PeerTableServer {
             }
             if let Ok(node) = Node::from_enr(&node_record) {
                 let node_id = node.node_id();
-                if self.discarded_contacts.contains(&node_id) || node_id == self.local_node_id {
+                if node_id == self.local_node_id {
                     continue;
                 }
 
