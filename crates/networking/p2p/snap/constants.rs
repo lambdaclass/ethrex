@@ -10,11 +10,11 @@ use std::time::Duration;
 // RESPONSE LIMITS
 // =============================================================================
 
-/// Maximum response size in bytes for snap protocol requests (512 KB).
+/// Maximum response size in bytes for snap protocol requests (2 MB, matching geth/Bor softResponseLimit).
 ///
 /// This limits the amount of data a peer can return in a single response,
 /// preventing memory exhaustion and ensuring reasonable response times.
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum number of accounts/items to request in a single snap request.
 ///
