@@ -84,19 +84,28 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 /// cap), so sized to allow full utilization with 100+ snap-capable peers.
 pub const MAX_IN_FLIGHT_REQUESTS: u32 = 256;
 
-/// Soft limit on the number of entries in the storage healing queue.
+/// Soft limit on the number of entries in the storage healing queue
+/// (`StorageHealingQueue` — the pending-parents `HashMap` drained by
+/// `commit_node` cascades). Sized to bound resident memory of that map near
+/// ~1 GB.
 ///
-/// Each `StorageHealingQueueEntry` holds a cloned trie `Node` (branch nodes are
-/// ~1 KB on the heap via `Box<BranchNode>`), three `Nibbles` paths (~200 B), and
-/// `HashMap` bucket overhead — on the order of 1 KB per entry. At 1_000_000
-/// entries that's ~1 GB of resident memory for the pending-parents map alone.
+/// Per-entry cost, branch-dominated worst case:
+/// - `NodeResponse.node`: a branch `Node` is a `Box<BranchNode>` with 16
+///   `NodeRef` choices (~56 B each in the `Hash` variant) plus `ValueRLP`
+///   header, ≈ 950 B on the heap.
+/// - `NodeResponse.node_request`: three `Nibbles` (each a `Vec<u8>`, ~24 B
+///   header + up to 64 B data) + one `H256`, ≈ 250 B inline+heap.
+/// - `HashMap<(Nibbles, Nibbles), _>` key and bucket overhead, ≈ 100 B.
 ///
-/// When this threshold is exceeded, the dispatcher stops issuing new download
-/// requests and waits for in-flight responses to drain the queue via
-/// `commit_node` cascades. Because the download queue is a max-heap by depth,
-/// in-flight work is the deepest available — which is what frees pending
-/// parents fastest.
-pub const HEALING_QUEUE_SOFT_LIMIT: usize = 1_000_000;
+/// Total ≈ 1.3 KB per entry → 800_000 entries ≈ 1.0 GB. Leaf-dominated
+/// entries are smaller, so this is an upper-bound estimate. The limit gates
+/// `healing_queue` only; `download_queue` is a separate (smaller) allocation.
+///
+/// When exceeded, the dispatcher stops issuing new download requests and
+/// waits for in-flight responses to drain the queue. The download queue is a
+/// max-heap by depth, so in-flight work is the deepest available — which
+/// frees pending parents fastest via `commit_node` cascades.
+pub const HEALING_QUEUE_SOFT_LIMIT: usize = 800_000;
 
 // =============================================================================
 // BLOCK SYNC CONFIGURATION
