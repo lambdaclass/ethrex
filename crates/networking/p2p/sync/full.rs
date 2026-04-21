@@ -7,7 +7,10 @@ use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+use ethrex_blockchain::{
+    BatchBlockProcessingFailure, Blockchain,
+    error::{ChainError, InvalidBlockError},
+};
 use ethrex_common::{H256, types::Block};
 use ethrex_storage::Store;
 use tokio::time::Instant;
@@ -60,7 +63,7 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
-            if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
                     "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
                 );
@@ -68,12 +71,14 @@ pub async fn sync_cycle_full(
             }
             attempts += 1;
             warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
             );
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         };
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
+        // Reset failure counter on success so it tracks consecutive failures
+        attempts = 0;
 
         let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
         let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
@@ -281,4 +286,45 @@ async fn add_blocks(
     blockchain
         .add_blocks_in_pipeline_batches(blocks, sub_batch_size, cancel_token)
         .await
+}
+
+/// Returns true for errors that arise from EVM execution and could differ
+/// between batch mode (shared VM state) and single-block pipeline mode.
+/// Pre-execution validation errors (header, body, structural) would fail
+/// identically in both modes, so retrying them is pointless.
+fn is_post_execution_error(err: &InvalidBlockError) -> bool {
+    matches!(
+        err,
+        InvalidBlockError::GasUsedMismatch(_, _)
+            | InvalidBlockError::StateRootMismatch
+            | InvalidBlockError::ReceiptsRootMismatch
+            | InvalidBlockError::RequestsHashMismatch
+            | InvalidBlockError::BlockAccessListHashMismatch
+            | InvalidBlockError::BlobGasUsedMismatch
+    )
+}
+
+async fn run_blocks_pipeline(
+    blockchain: Arc<Blockchain>,
+    blocks: Vec<Block>,
+) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+    tokio::task::spawn_blocking(move || {
+        let mut last_valid_hash = H256::default();
+        for block in blocks {
+            let block_hash = block.hash();
+            blockchain.add_block_pipeline(block, None).map_err(|e| {
+                (
+                    e,
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash,
+                        failed_block_hash: block_hash,
+                    }),
+                )
+            })?;
+            last_valid_hash = block_hash;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| (ChainError::Custom(e.to_string()), None))?
 }
