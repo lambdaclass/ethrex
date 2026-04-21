@@ -79,7 +79,9 @@ pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 
 /// Maximum number of concurrent in-flight requests during storage healing.
-pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
+/// bsc-geth allows one concurrent heal request per connected peer (no global
+/// cap), so sized to allow full utilization with 100+ snap-capable peers.
+pub const MAX_IN_FLIGHT_REQUESTS: u32 = 256;
 
 // =============================================================================
 // BLOCK SYNC CONFIGURATION

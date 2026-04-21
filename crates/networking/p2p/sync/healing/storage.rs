@@ -9,8 +9,8 @@ use crate::{
     snap::{
         RequestStorageTrieNodesError,
         constants::{
-            MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
-            STORAGE_BATCH_SIZE,
+            MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, NODE_BATCH_SIZE,
+            SHOW_PROGRESS_INTERVAL_DURATION,
         },
         request_storage_trienodes,
     },
@@ -348,7 +348,7 @@ async fn ask_peers_for_nodes(
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             return;
         };
-        let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
+        let at = download_queue.len().saturating_sub(NODE_BATCH_SIZE);
         let download_chunk = download_queue.split_off(at);
         let req_id: u64 = random();
         let (paths, inflight_requests_data) = create_node_requests(download_chunk);
