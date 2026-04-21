@@ -75,6 +75,13 @@ pub async fn heal_state_trie_wrap(
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
+// TODO: `paths` and `healing_queue` are both unbounded here. Storage healing
+// caps its pending-parents map via `HEALING_QUEUE_SOFT_LIMIT` and uses a
+// depth-ordered download queue to keep memory in check; state healing has
+// no equivalent guard. The state trie is much smaller than aggregate storage
+// so this has not been a problem in practice, but if state-healing OOMs ever
+// appear the same pattern (depth-priority heap + soft-limit backpressure)
+// applies.
 #[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
     state_root: H256,
