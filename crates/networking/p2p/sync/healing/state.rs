@@ -163,9 +163,6 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
-            // Note: dec_requests is called inside the worker task itself so
-            // that the slot is released even when this loop exits before
-            // draining all in-flight responses.
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -253,12 +250,13 @@ async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
 
-                // Reserve a request slot before spawning so get_best_peer sees
-                // this peer as busy immediately, preventing spawn floods.
-                // The slot is released inside the worker (after the request
-                // completes, before the task ends) so it always fires — even
-                // if the main loop exits early or `tx.send` fails.
-                peers.peer_table.inc_requests(peer_id)?;
+                // We intentionally do not call `inc_requests` / `dec_requests`
+                // here. The heal loop's flow is naturally serial: paths only
+                // grow from responses, so spawn rate is bounded by the
+                // response rate. Tracking per-peer request counts just opens
+                // a leak window (if the main loop exits before draining
+                // in-flight responses, `dec_requests` never fires and peers
+                // end up permanently "busy" from the peer table's view).
 
                 let batch_len = batch.len();
                 let peer_table = peers.peer_table.clone();
@@ -267,7 +265,7 @@ async fn heal_state_trie(
                     let response = request_state_trienodes(
                         peer_id,
                         connection,
-                        peer_table.clone(),
+                        peer_table,
                         state_root,
                         batch.clone(),
                     )
@@ -277,9 +275,6 @@ async fn heal_state_trie(
                         response.is_ok(),
                         response.as_ref().err(),
                     );
-                    // Release the peer request slot before exiting the task,
-                    // regardless of whether tx.send succeeds.
-                    let _ = peer_table.dec_requests(peer_id);
                     // TODO: add error handling
                     tx.send((peer_id, response, batch)).await.inspect_err(
                         |err| debug!(error=?err, "Failed to send state trie nodes response"),
