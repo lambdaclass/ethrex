@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::MAX_HEADER_FETCH_ATTEMPTS;
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
@@ -445,10 +445,15 @@ async fn request_forward_headers(
             forward_start,
             peer_count, failures, "Forward sync: requesting headers by number"
         );
+        // Headers are small (~500B each); 1024 fits well under the response
+        // limit. Using EXECUTE_BATCH_SIZE lets the outer loop keep iterating
+        // (via `batch_size >= EXECUTE_BATCH_SIZE`) until we drain what a peer
+        // can serve, instead of exiting after 128 blocks and waiting for the
+        // sync bridge to re-trigger on the next BlockRangeUpdate.
         match peers
             .request_block_headers_from_number(
                 forward_start,
-                MAX_BLOCK_BODIES_TO_REQUEST as u64,
+                *EXECUTE_BATCH_SIZE as u64,
                 BlockRequestOrder::OldToNew,
             )
             .await?
