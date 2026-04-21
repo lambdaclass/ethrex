@@ -22,7 +22,6 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
     let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
     let peer_table = peer_table.unwrap_or_else(|| {
         PeerTableServer::spawn(
-            local_node.node_id(),
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         )
@@ -156,12 +155,13 @@ async fn test_enr_update_request_on_pong() {
     let remote_node_id = remote_node.node_id();
 
     let peer_table = PeerTableServer::spawn(
-        local_node.node_id(),
         10,
         Store::new("", EngineType::InMemory).expect("Failed to create store"),
     );
 
-    peer_table.new_contact_records(vec![remote_record]).unwrap();
+    peer_table
+        .new_contact_records(vec![remote_record], local_node.node_id())
+        .unwrap();
 
     let session = Session {
         outbound_key: [0u8; 16],
