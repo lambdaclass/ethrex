@@ -689,39 +689,43 @@ impl PeerHandler {
         &mut self,
         all_headers: &[BlockHeader],
     ) -> Result<Vec<BlockBody>, PeerHandlerError> {
-        // Split headers into chunks, each tagged with its index for ordered reassembly
+        // Split into chunks tagged by their absolute start offset in all_headers.
+        // Using offsets (not chunk indices) lets partial-response remainders be
+        // re-queued and reassembled in the correct position.
         let mut tasks_queue: VecDeque<(usize, Vec<BlockHeader>)> = all_headers
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
             .enumerate()
-            .map(|(i, chunk)| (i, chunk.to_vec()))
+            .map(|(i, chunk)| (i * MAX_BLOCK_BODIES_TO_REQUEST, chunk.to_vec()))
             .collect();
 
-        let total_chunks = tasks_queue.len();
-        // Pre-allocate results slots; each slot is filled when its chunk completes
-        let mut results: Vec<Option<Vec<BlockBody>>> = vec![None; total_chunks];
+        // Completed segments keyed by start offset — bodies cover exactly the
+        // range [start_offset, start_offset + bodies.len()) of all_headers.
+        let mut segments: Vec<(usize, Vec<BlockBody>)> = Vec::new();
+        let mut delivered_bodies = 0usize;
+        let total_bodies = all_headers.len();
 
-        // Channel for completed tasks to report back
-        // Each result contains: chunk_index, bodies (empty on failure), peer_id, headers (for retry)
+        // Channel for completed tasks to report back.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(
             usize,
             Vec<BlockBody>,
             H256,
             PeerConnection,
             Vec<BlockHeader>,
-        )>(total_chunks + 1);
+        )>(tasks_queue.len() + 1);
 
         loop {
             // Collect completed tasks (non-blocking)
-            while let Ok((chunk_idx, bodies, peer_id, _connection, chunk_headers)) = rx.try_recv()
+            while let Ok((start_offset, bodies, peer_id, _connection, chunk_headers)) =
+                rx.try_recv()
             {
                 self.peer_table.dec_requests(peer_id)?;
 
                 if bodies.is_empty() {
                     self.peer_table.record_failure(peer_id)?;
                     debug!(
-                        "Failed to download body chunk {chunk_idx} from peer {peer_id}, re-queuing"
+                        "Failed to download body chunk @{start_offset} from peer {peer_id}, re-queuing"
                     );
-                    tasks_queue.push_back((chunk_idx, chunk_headers));
+                    tasks_queue.push_back((start_offset, chunk_headers));
                     continue;
                 }
 
@@ -731,7 +735,7 @@ impl PeerHandler {
                 for (header, body) in chunk_headers[..bodies.len()].iter().zip(bodies) {
                     if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
                         warn!(
-                            "Invalid block body error {e}, discarding peer {peer_id} and retrying chunk {chunk_idx}..."
+                            "Invalid block body error {e}, discarding peer {peer_id} and retrying chunk @{start_offset}..."
                         );
                         valid = false;
                         self.peer_table.record_critical_failure(peer_id)?;
@@ -741,31 +745,30 @@ impl PeerHandler {
                 }
 
                 if !valid {
-                    tasks_queue.push_back((chunk_idx, chunk_headers));
+                    tasks_queue.push_back((start_offset, chunk_headers));
                     continue;
                 }
 
                 // If peer returned fewer bodies than requested, re-queue the remainder
+                // at its actual offset so reassembly stays ordered.
                 if validated.len() < chunk_headers.len() {
                     let remaining_headers = chunk_headers[validated.len()..].to_vec();
+                    let remainder_offset = start_offset + validated.len();
                     debug!(
-                        "Chunk {chunk_idx}: got {}/{} bodies, re-queuing remainder",
+                        "Chunk @{start_offset}: got {}/{} bodies, re-queuing remainder @{remainder_offset}",
                         validated.len(),
                         chunk_headers.len()
                     );
-                    // Store partial result and create a new chunk index for the remainder
-                    // We'll append to the results vec
-                    let new_idx = results.len();
-                    results.push(None);
-                    tasks_queue.push_back((new_idx, remaining_headers));
+                    tasks_queue.push_back((remainder_offset, remaining_headers));
                 }
 
                 self.peer_table.record_success(peer_id)?;
-                results[chunk_idx] = Some(validated);
+                delivered_bodies += validated.len();
+                segments.push((start_offset, validated));
             }
 
-            // Check if all original data has been collected
-            if results.iter().all(|r| r.is_some()) && tasks_queue.is_empty() {
+            // Check if all bodies have been collected
+            if delivered_bodies >= total_bodies && tasks_queue.is_empty() {
                 break;
             }
 
@@ -779,7 +782,7 @@ impl PeerHandler {
                 continue;
             };
 
-            let Some((chunk_idx, chunk_headers)) = tasks_queue.pop_front() else {
+            let Some((start_offset, chunk_headers)) = tasks_queue.pop_front() else {
                 // All tasks dispatched but not all completed yet; wait for results
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
@@ -797,7 +800,7 @@ impl PeerHandler {
                         .unwrap_or_default();
 
                 task_tx
-                    .send((chunk_idx, bodies, peer_id, connection, chunk_headers))
+                    .send((start_offset, bodies, peer_id, connection, chunk_headers))
                     .await
                     .inspect_err(|err| {
                         error!("Failed to send body result through channel. Error: {err}")
@@ -805,9 +808,10 @@ impl PeerHandler {
             });
         }
 
-        // Reassemble in order
-        let mut all_bodies = Vec::with_capacity(all_headers.len());
-        for bodies in results.into_iter().flatten() {
+        // Reassemble: sort segments by start offset and concatenate.
+        segments.sort_by_key(|(offset, _)| *offset);
+        let mut all_bodies = Vec::with_capacity(total_bodies);
+        for (_, bodies) in segments {
             all_bodies.extend(bodies);
         }
 
