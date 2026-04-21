@@ -6,7 +6,6 @@ RUN apt-get update && apt-get install -y \
     libc6 \
     libssl-dev \
     ca-certificates \
-    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
@@ -41,6 +40,11 @@ FROM chef AS builder
 # BUILD_FLAGS: Additional cargo flags (features, etc.)
 ARG PROFILE="release"
 ARG BUILD_FLAGS=""
+
+# Install protoc only for L2 builds (crates/l2/build.rs compiles sidecar.proto via tonic_build)
+RUN if echo "$BUILD_FLAGS" | grep -q "l2"; then \
+    apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*; fi
 
 COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS

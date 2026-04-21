@@ -44,7 +44,7 @@ use ethrex_common::Address;
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::SecretKey;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct RpcApiContext {
     pub l1_ctx: ethrex_rpc::RpcApiContext,
     pub valid_delegation_addresses: Vec<Address>,
@@ -72,7 +72,7 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
     ws: Option<WebSocketConfig>,

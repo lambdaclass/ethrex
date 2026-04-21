@@ -88,13 +88,12 @@ pub struct CredibleLayerClient {
 #[actor(protocol = CredibleLayerProtocol)]
 impl CredibleLayerClient {
     /// Spawn the Credible Layer client actor.
-    pub async fn spawn(sidecar_url: String) -> Result<ActorRef<Self>, CredibleLayerError> {
+    pub async fn spawn(sidecar_url: String) -> Result<ActorRef<Self>, Box<CredibleLayerError>> {
         let client = Self::new(sidecar_url)?;
         Ok(client.start())
     }
 
-    #[allow(clippy::result_large_err)]
-    fn new(sidecar_url: String) -> Result<Self, CredibleLayerError> {
+    fn new(sidecar_url: String) -> Result<Self, Box<CredibleLayerError>> {
         info!(url = %sidecar_url, "Configuring Credible Layer sidecar client");
 
         let channel = Channel::from_shared(sidecar_url)
