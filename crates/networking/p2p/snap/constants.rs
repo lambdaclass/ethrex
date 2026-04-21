@@ -147,7 +147,7 @@ pub fn seconds_per_block_for_chain(chain_id: u64) -> u64 {
 ///
 /// This is used to adjust timestamp-based pivot updates and to find "safe"
 /// blocks in the chain that are unlikely to be re-orged.
-pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.95;
 
 // =============================================================================
 // PROGRESS REPORTING
