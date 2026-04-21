@@ -47,10 +47,10 @@ pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64;
 pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 
 /// Number of storage accounts to process per batch during state healing.
-pub const STORAGE_BATCH_SIZE: usize = 300;
+pub const STORAGE_BATCH_SIZE: usize = 1024;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 500;
+pub const NODE_BATCH_SIZE: usize = 1024;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
@@ -72,7 +72,7 @@ pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 
 /// Maximum number of concurrent in-flight requests during storage healing.
-pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
+pub const MAX_IN_FLIGHT_REQUESTS: u32 = 256;
 
 /// Soft limit on the number of entries in the storage healing queue
 /// (`StorageHealingQueue` — the pending-parents `HashMap` drained by
