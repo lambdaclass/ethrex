@@ -87,6 +87,11 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run tooling cargo check
         run: cargo check --workspace --all-targets
         working-directory: tooling
@@ -116,6 +121,11 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run unit tests
         run: |

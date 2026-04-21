@@ -99,6 +99,11 @@ jobs:
           mkdir -p crates/guest-program/bin/sp1/out
           touch crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-elf
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
